@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Linq;
 using ValheimBakaLoader.Game;
 using ValheimBakaLoader.Tools.Models;
@@ -10,7 +12,7 @@ namespace ValheimBakaLoader.Tests.Game
     /// dedicated-server log messages go in, repository state and
     /// PlayerStatusChanged events come out.
     /// </summary>
-    public class ValheimServerTests : BaseTest
+    public class ValheimServerTests : BaseTest, IDisposable
     {
         // Verbatim message templates emitted by valheim_server.exe. These are
         // the game's wire format, not ours - do not reword them.
@@ -23,12 +25,27 @@ namespace ValheimBakaLoader.Tests.Game
         private readonly ValheimServer Server;
         private readonly IPlayerDataRepository Players;
 
+        // Throwaway on-disk sandbox (dummy exe + save folder) so Start()'s
+        // path validation passes on any machine - CI runners included -
+        // without a real Valheim install. The process itself is never
+        // launched; BaseTest swaps in MockProcessProvider.
+        private readonly string SandboxDir;
+
         private PlayerInfo LastChangedPlayer;
 
         public ValheimServerTests()
         {
             Server = GetService<ValheimServer>();
             Players = GetService<IPlayerDataRepository>();
+
+            SandboxDir = Path.Combine(Path.GetTempPath(), "vbl-tests-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path.Combine(SandboxDir, "saves"));
+            File.WriteAllBytes(Path.Combine(SandboxDir, "valheim_server.exe"), Array.Empty<byte>());
+        }
+
+        public void Dispose()
+        {
+            try { Directory.Delete(SandboxDir, true); } catch { /* best-effort temp cleanup */ }
         }
 
         [Fact]
@@ -173,9 +190,8 @@ namespace ValheimBakaLoader.Tests.Game
         /// <summary>
         /// Pushes a formatted log line through the server's log pipeline.
         /// The server only creates its logger on Start(), so the first line
-        /// boots it with throwaway options. Start() validates the exe and
-        /// save paths on disk, which is why these tests only pass on a
-        /// machine with the Valheim dedicated server installed.
+        /// boots it with throwaway options pointed at the temp sandbox, which
+        /// satisfies Start()'s on-disk exe/save-path validation everywhere.
         /// </summary>
         private void Feed(string template, params object[] args)
         {
@@ -194,8 +210,8 @@ namespace ValheimBakaLoader.Tests.Game
                     BackupShort = 60,
                     BackupLong = 120,
                     LogToFile = false,
-                    ServerExePath = @"%ProgramFiles(x86)%\Steam\steamapps\common\Valheim dedicated server\valheim_server.exe",
-                    SaveDataFolderPath = @"%USERPROFILE%\AppData\LocalLow\IronGate\Valheim",
+                    ServerExePath = Path.Combine(SandboxDir, "valheim_server.exe"),
+                    SaveDataFolderPath = Path.Combine(SandboxDir, "saves"),
                 });
             }
 
