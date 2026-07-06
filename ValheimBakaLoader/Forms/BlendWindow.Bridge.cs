@@ -1,6 +1,7 @@
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -126,13 +127,24 @@ namespace ValheimBakaLoader.Forms
                 CurrentProfile ??= StartProfile;
             }
 
+            var proceed = true;
             try
             {
-                CheckForExistingServerProcess();
+                proceed = CheckForExistingServerProcess();
             }
             catch (Exception ex)
             {
                 Logger.Warning(ex, "Orphaned-server check failed");
+            }
+
+            if (!proceed)
+            {
+                // Another BakaLoader instance is still in charge of the running server.
+                // This instance must bow out - adopting the server here would put it in
+                // BOTH instances' kill-on-close job objects, so closing EITHER window
+                // would kill it. Exiting the new instance is the only safe move.
+                BeginInvoke(new Action(Close));
+                return;
             }
 
             if (StartServerAutomatically)
@@ -141,16 +153,60 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
-        private void CheckForExistingServerProcess()
+        /// <summary>
+        /// Handles a server process that is already running at startup. Returns false when
+        /// this instance must exit (another BakaLoader instance owns the server), true to
+        /// continue normal startup.
+        /// </summary>
+        private bool CheckForExistingServerProcess()
         {
             // Scope discovery to the executable BakaLoader is configured to manage so
             // we never adopt or kill an unrelated valheim_server install.
             var existing = ValheimServer.FindExistingServerProcess(GetServerExePath());
-            if (existing == null) return;
-
-            Logger.Warning("Found an already-running Valheim server process (PID {pid})", existing.Id);
+            if (existing == null) return true;
 
             var nl = Environment.NewLine;
+
+            // If another BakaLoader instance is alive, the server almost certainly belongs
+            // to it - and its kill-on-close job object means closing that instance would
+            // kill the server. Never offer adoption here: the only safe action is closing
+            // THIS (new) instance and leaving the old one in charge.
+            var other = FindOtherBakaLoaderInstance();
+            if (other != null)
+            {
+                var otherVersion = TryGetProcessVersion(other);
+                var otherLabel = otherVersion != null
+                    ? $"another BakaLoader (version {otherVersion}, PID {other.Id})"
+                    : $"another BakaLoader (PID {other.Id})";
+
+                Logger.Warning(
+                    "Server PID {serverPid} is managed by another BakaLoader instance (PID {otherPid}) - this instance will close",
+                    existing.Id, other.Id);
+
+                var page = new TaskDialogPage
+                {
+                    Caption = Resources.ApplicationTitle,
+                    Heading = "Another BakaLoader is already running",
+                    Text =
+                        $"A Valheim dedicated server (PID {existing.Id}) is already running and " +
+                        $"{otherLabel} is managing it.{nl}{nl}" +
+                        $"That BakaLoader stays in charge - it cannot be closed automatically, because " +
+                        $"closing it shuts down the server it is running.{nl}{nl}" +
+                        $"This new window will close. To switch to this version, stop the server in the " +
+                        $"old BakaLoader, close it, then launch this one again.",
+                    Icon = TaskDialogIcon.Warning,
+                    AllowCancel = false,
+                };
+                page.Buttons.Clear();
+                page.Buttons.Add(new TaskDialogButton("Close this"));
+
+                TaskDialog.ShowDialog(this, page);
+                return false;
+            }
+
+            // No other BakaLoader instance: this is a genuine orphan (BakaLoader crashed or
+            // was closed without stopping the server) - offer adoption as before.
+            Logger.Warning("Found an already-running Valheim server process (PID {pid})", existing.Id);
             var result = MessageBox.Show(
                 $"A Valheim dedicated server is already running (PID {existing.Id}).{nl}{nl}" +
                 $"This can happen if BakaLoader was closed without stopping the server, " +
@@ -189,6 +245,42 @@ namespace ValheimBakaLoader.Forms
                 }
             }
             // Cancel = leave it alone, user can manage manually
+            return true;
+        }
+
+        /// <summary>
+        /// Another live BakaLoader process (same exe name, different PID), or null.
+        /// </summary>
+        private static Process FindOtherBakaLoaderInstance()
+        {
+            try
+            {
+                using var me = Process.GetCurrentProcess();
+                return Process.GetProcessesByName(me.ProcessName)
+                    .FirstOrDefault(p => p.Id != me.Id);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Product version of a process's main module ("0.9.26"), or null when unreadable.</summary>
+        private static string TryGetProcessVersion(Process process)
+        {
+            try
+            {
+                var version = process.MainModule?.FileVersionInfo?.ProductVersion;
+                if (string.IsNullOrWhiteSpace(version)) return null;
+
+                // Trim SourceRevisionId build metadata: "0.9.26+build2026-..." -> "0.9.26"
+                var plus = version.IndexOf('+');
+                return plus > 0 ? version[..plus] : version;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private void AutoStartServer()
@@ -213,6 +305,84 @@ namespace ValheimBakaLoader.Forms
                 Logger.Error(ex, "Failed to auto-start server for profile {profile}", StartProfile);
             }
         }
+
+        #region Close guard (save the world before the hearth goes out)
+
+        private bool _closeGuardPassed;
+        private bool _closeShutdownInProgress;
+
+        /// <summary>
+        /// The window X (and Alt+F4) while the server is running would otherwise let the
+        /// kill-on-close job object hard-kill valheim_server with no final world save.
+        /// Instead: notify the user (calling out any vikings still online), then shut the
+        /// server down gracefully (close request, not /F - Valheim flushes a final world
+        /// save on the way down) and only close BakaLoader once it has stopped.
+        /// </summary>
+        private void OnCloseRequested(object sender, FormClosingEventArgs e)
+        {
+            if (_closeGuardPassed) return;
+            if (Server.Status == ServerStatus.Stopped) return;
+
+            e.Cancel = true;
+            if (_closeShutdownInProgress) return; // already saving + shutting down
+
+            var online = PlayerDataProvider.Data
+                .Count(pl => pl.PlayerStatus == PlayerStatus.Online || pl.PlayerStatus == PlayerStatus.Joining);
+
+            var nl = Environment.NewLine;
+            var playersLine = online > 0
+                ? $"{online} viking{(online == 1 ? " is" : "s are")} still online and will be disconnected.{nl}{nl}"
+                : "";
+
+            var page = new TaskDialogPage
+            {
+                Caption = Resources.ApplicationTitle,
+                Heading = online > 0 ? "Vikings are still online" : "The server is still running",
+                Text = playersLine +
+                    "The world will be saved and the server shut down gracefully before BakaLoader closes.",
+                Icon = online > 0 ? TaskDialogIcon.Warning : TaskDialogIcon.Information,
+                AllowCancel = true,
+            };
+            var shutdown = new TaskDialogButton("Save && shut down");
+            page.Buttons.Clear();
+            page.Buttons.Add(shutdown);
+            page.Buttons.Add(TaskDialogButton.Cancel);
+
+            if (TaskDialog.ShowDialog(this, page) != shutdown) return;
+
+            ShutDownServerThenClose();
+        }
+
+        private async void ShutDownServerThenClose()
+        {
+            _closeShutdownInProgress = true;
+            try
+            {
+                Logger.Information("Close requested while the server is running - saving world and shutting down first");
+
+                // Bounded wait so a wedged server can never trap the user in a window
+                // that refuses to close. Stop() is a graceful close request, so Valheim
+                // saves the world on the way down; it no-ops until CanStop (e.g. while
+                // the server is still Starting), hence the retry inside the loop.
+                var deadline = DateTime.UtcNow.AddSeconds(60);
+                while (Server.Status != ServerStatus.Stopped && DateTime.UtcNow < deadline)
+                {
+                    if (Server.CanStop) Server.Stop();
+                    await Task.Delay(250);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Graceful shutdown before close failed");
+            }
+            finally
+            {
+                _closeGuardPassed = true;
+                Close();
+            }
+        }
+
+        #endregion
 
         /// <summary>StartProfile's saved preferences, or defaults when the profile is missing.</summary>
         private ServerPreferences LoadStartupPrefs()

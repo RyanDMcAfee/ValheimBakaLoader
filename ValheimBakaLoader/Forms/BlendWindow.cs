@@ -120,7 +120,9 @@ namespace ValheimBakaLoader.Forms
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(1280, 800);
+            // Wide enough that the Hearth status row (incl. the Douse box) fits without
+            // clipping at the default size.
+            ClientSize = new Size(1408, 800);
             MinimumSize = new Size(1024, 680);
             BackColor = Color.FromArgb(0x0A, 0x0B, 0x0D); // matches the Blend backdrop while loading
             Text = Properties.Resources.ApplicationTitle;
@@ -137,6 +139,8 @@ namespace ValheimBakaLoader.Forms
 
             Load += OnFormLoad;
             Shown += OnFormShown;
+            // Save-the-world-first close guard (implemented in BlendWindow.Bridge.cs).
+            FormClosing += OnCloseRequested;
         }
 
         private void OnFormShown(object sender, EventArgs e)

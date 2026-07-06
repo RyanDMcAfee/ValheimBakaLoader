@@ -986,6 +986,7 @@ function netModal(){
     :`<div class="subval" style="padding:4px 2px">${TT("no vikings connected")}</div>`;
   const m=modalOpen(
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᚾ</span>Network</div>`+
+    `<div class="mbody">`+
     `<div class="dsec">Addresses</div>`+
     addrRow("Public",(S.extIp||"-")+":"+port,true)+
     addrRow("LAN",(S.intIp||"-")+":"+port,true)+
@@ -1003,6 +1004,7 @@ function netModal(){
     (n.at?"":`<div class="subval" style="margin:2px 0 6px">no report yet - appears in the first ~10 min after the server starts</div>`)+
     `<div class="dsec">Sessions</div>`+sess+
     `<div class="subval" style="margin-top:8px">per-player ping isn't reported by the dedicated server - players can check theirs in-game with F2</div>`+
+    `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelectorAll("[data-copy]").forEach(c=>c.addEventListener("click",()=>{
@@ -1028,6 +1030,7 @@ async function savesModal(){
   const avg=S.saveDur.length?Math.round(S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length):null;
   const m=modalOpen(
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᛉ</span>World Saves · ${esc(world||"-")}</div>`+
+    `<div class="mbody">`+
     `<div class="dsec">Rhythm</div>`+
     `<div class="dstats">`+
       `<div class="dstat"><div class="bigval" style="font-size:20px">${$("#saveCountdown").textContent}</div><div class="subval">until next save</div></div>`+
@@ -1038,6 +1041,7 @@ async function savesModal(){
     `<div class="dsec">World files</div>`+files+
     `<div class="dsec">Backups <span class="subval" style="text-transform:none;letter-spacing:0">· ${bk.length} on disk</span></div>`+bkRows+
     (info?.folder?`<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(info.folder)}</div>`:"")+
+    `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mOpenWorlds">Open folder</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelector("#mOpenWorlds").addEventListener("click",()=>{
