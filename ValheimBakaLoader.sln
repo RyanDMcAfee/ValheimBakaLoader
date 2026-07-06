@@ -1,0 +1,37 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.31019.35
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ValheimBakaLoader", "ValheimBakaLoader\ValheimBakaLoader.csproj", "{DC84CCCF-D315-483E-B7CF-732312B55389}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ValheimBakaLoader.Tests", "ValheimBakaLoader.Tests\ValheimBakaLoader.Tests.csproj", "{22F12ECA-242A-4D4D-9C2E-5949F353AD29}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ValheimBakaLoader.Tools", "ValheimBakaLoader.Tools\ValheimBakaLoader.Tools.csproj", "{39BE3CA2-906A-446F-95DA-E37C359B6197}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DC84CCCF-D315-483E-B7CF-732312B55389}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DC84CCCF-D315-483E-B7CF-732312B55389}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DC84CCCF-D315-483E-B7CF-732312B55389}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DC84CCCF-D315-483E-B7CF-732312B55389}.Release|Any CPU.Build.0 = Release|Any CPU
+		{22F12ECA-242A-4D4D-9C2E-5949F353AD29}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{22F12ECA-242A-4D4D-9C2E-5949F353AD29}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{22F12ECA-242A-4D4D-9C2E-5949F353AD29}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{22F12ECA-242A-4D4D-9C2E-5949F353AD29}.Release|Any CPU.Build.0 = Release|Any CPU
+		{39BE3CA2-906A-446F-95DA-E37C359B6197}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{39BE3CA2-906A-446F-95DA-E37C359B6197}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{39BE3CA2-906A-446F-95DA-E37C359B6197}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{39BE3CA2-906A-446F-95DA-E37C359B6197}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3EF14BED-79B8-4319-8C20-74190095B34B}
+	EndGlobalSection
+EndGlobal

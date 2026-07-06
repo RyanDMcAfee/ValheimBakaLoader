@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Valheim BakaLoader</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- TITLEBAR -->
+  <div class="titlebar" id="titlebar">
+    <div class="wordmark"><span class="rune">ᛒ</span>BAKALOADER <span class="dot">·</span> <span class="srv" id="tbSrv">BAKA GAIJIN</span></div>
+    <div class="tb-spacer"></div>
+    <div class="cmdchip" id="cmdchip"><span>Command</span><kbd>Ctrl+K</kbd></div>
+    <div class="winbtns">
+      <div class="winbtn" data-win="minimize" title="Minimize"><svg viewBox="0 0 11 11"><line x1="1" y1="8.5" x2="10" y2="8.5" stroke="currentColor" stroke-width="1.4"/></svg></div>
+      <div class="winbtn" data-win="maximize" title="Maximize"><svg viewBox="0 0 11 11"><rect x="1.7" y="1.7" width="7.6" height="7.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></div>
+      <div class="winbtn close" data-win="close" title="Close"><svg viewBox="0 0 11 11"><path d="M1.5 1.5 L9.5 9.5 M9.5 1.5 L1.5 9.5" stroke="currentColor" stroke-width="1.4"/></svg></div>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- SIDEBAR -->
+    <nav class="side">
+      <div class="navitem active" data-page="hearth"><span class="rune">ᚠ</span><span class="lbl">Hearth</span></div>
+      <div class="navitem" data-page="vikings"><span class="rune">ᛗ</span><span class="lbl">Vikings</span></div>
+      <div class="navitem" data-page="mods"><span class="rune">ᚱ</span><span class="lbl">Mods</span></div>
+      <div class="navitem" data-page="world"><span class="rune">ᛃ</span><span class="lbl">World</span></div>
+      <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl">Runes</span></div>
+      <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl">Saga</span></div>
+      <div class="side-foot">
+        <span class="moon">☾</span><span id="sideVer">v0.9.11</span>
+        <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of<br>mead&nbsp;⚑</a>
+      </div>
+    </nav>
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="pages">
+
+        <!-- ============ PAGE: HEARTH ============ -->
+        <section class="page active" id="page-hearth">
+          <div class="pagehead">
+            <h1><span class="r">ᚠ</span>HEARTH</h1>
+            <span class="sub" id="hearthSub">Final Sunset · dedicated server ops</span>
+            <div class="grow"></div>
+            <button class="btn btn-ember btn-sm" id="sailBtn">ᛟ&nbsp; Sail Forth</button>
+          </div>
+
+          <div class="bento">
+            <!-- HEARTH FLAME -->
+            <div class="card hov b-hearth hearth-card" id="hearthCard">
+              <div class="microlabel"><span class="r">ᚠ</span>Hearth Status</div>
+              <div class="flamebox">
+                <div class="flame">
+                  <div class="glow"></div>
+                  <div class="tongue t1"></div>
+                  <div class="tongue t2"></div>
+                  <div class="tongue t3"></div>
+                  <span class="spark" style="left:44%;--dx:-14px;animation-delay:0s"></span>
+                  <span class="spark" style="left:52%;--dx:10px;animation-delay:.7s"></span>
+                  <span class="spark" style="left:48%;--dx:-6px;animation-delay:1.3s"></span>
+                  <span class="spark" style="left:56%;--dx:16px;animation-delay:1.9s"></span>
+                  <svg class="logs-svg" width="110" height="22" viewBox="0 0 110 22">
+                    <rect x="8" y="10" width="94" height="8" rx="4" fill="#3A2A18" stroke="#57402280" stroke-width="1" transform="rotate(-4 55 14)"/>
+                    <rect x="14" y="6" width="82" height="8" rx="4" fill="#4A3620" stroke="#6B4E2A80" stroke-width="1" transform="rotate(5 55 10)"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="hearth-meta">
+                <div class="hstatus">
+                  <span class="hstate" id="hState">BURNING · <span id="upTime">4h 32m</span></span>
+                  <span class="hpid" id="hPid">RUNNING · PID 150428 · valheim_server.x86_64</span>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="stokeBtn" title="Restart the server · warns players in-game first">Stoke</button>
+                <button class="btn btn-cold btn-sm" id="douseBtn">Douse</button>
+              </div>
+            </div>
+
+            <!-- VIKINGS -->
+            <div class="card hov b-vikings" data-goto="vikings">
+              <div class="microlabel"><span class="r">ᛗ</span>Vikings <span style="margin-left:auto" class="pill green" id="homeVikPill">2 / 10 online</span></div>
+              <div id="homeVik"></div>
+            </div>
+
+            <!-- SAVES -->
+            <div class="card hov b-saves" id="savesCard" title="Click for save details">
+              <div class="microlabel"><span class="r">ᛉ</span>World Saves<span style="margin-left:auto" class="copychip" id="openWorlds" title="Open the worlds save folder">OPEN</span></div>
+              <div style="display:flex;align-items:baseline;gap:14px">
+                <div><div class="bigval" id="saveCountdown">04:12</div><div class="subval">until next save</div></div>
+                <div style="margin-left:auto;text-align:right"><div class="subval" id="lastSaveLbl">last rune-check</div><div class="subval" style="color:var(--bone)" id="lastSave">22:05 · 8.4 MB</div><div class="subval" id="saveAvg">avg -</div></div>
+              </div>
+              <div class="savebars">
+                <i style="height:40%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:62%"></i>
+                <i style="height:52%"></i><i style="height:70%"></i><i style="height:58%"></i><i style="height:66%"></i>
+                <i style="height:74%"></i><i style="height:60%"></i><i style="height:82%"></i><i class="hot" style="height:100%"></i>
+              </div>
+            </div>
+
+            <!-- NETWORK -->
+            <div class="card hov b-net" id="netCard" title="Click for network details">
+              <div class="microlabel"><span class="r">ᚾ</span>Network</div>
+              <div class="netline"><span id="netAddr">203.0.113.42:2456</span><span class="copychip" id="copyIp">COPY</span></div>
+              <div class="netline"><span id="netLan">LAN 192.168.1.34:2456</span><span class="copychip" id="copyLan">COPY</span></div>
+              <div class="netline"><span id="netLoc">127.0.0.1:2456</span><span class="copychip" id="copyLoc">COPY</span></div>
+              <div class="netline" id="netInviteLine" style="display:none"><span id="netInvite">invite -</span><span class="copychip" id="copyInv">COPY</span></div>
+              <div class="netline" id="netRconLine"><span id="netRcon">RCON 127.0.0.1:25575</span></div>
+              <div style="margin-top:8px"><span class="pill green" id="netPill">rcon bound</span></div>
+            </div>
+
+            <!-- MODS -->
+            <div class="card hov b-mods" data-goto="mods">
+              <div class="microlabel"><span class="r">ᚱ</span>Mods</div>
+              <div class="bigval" id="modCount">63</div>
+              <div class="subval">loaded via BepInEx</div>
+              <div style="margin-top:9px" id="modUpdWrap"><span class="pill amber">2 updates</span></div>
+            </div>
+
+            <!-- FORGE LOAD -->
+            <div class="card hov b-forge">
+              <div class="microlabel"><span class="r">ᚲ</span>Forge Load</div>
+              <div class="sparkrow">
+                <span class="k">CPU</span>
+                <svg viewBox="0 0 200 30" preserveAspectRatio="none"><polyline class="sl" id="cpuLine" stroke="#FF7A1A" points=""/></svg>
+                <span class="v" id="cpuVal">23%</span>
+              </div>
+              <div class="sparkrow">
+                <span class="k">RAM</span>
+                <svg viewBox="0 0 200 30" preserveAspectRatio="none"><polyline class="sl" id="ramLine" stroke="#5B7A8C" points=""/></svg>
+                <span class="v blue" id="ramVal">6.2 GB</span>
+              </div>
+            </div>
+
+            <!-- UPKEEP (app self-update + start with Windows) -->
+            <div class="card b-upkeep" id="upkeepCard">
+              <div class="microlabel upkeep-head" id="upkeepHead"><span class="r">ᛟ</span>Upkeep<span style="margin-left:auto" class="subval" id="blVersion">v-</span></div>
+              <div class="upkeep-body" id="upkeepBody">
+                <div class="togglerow"><span class="tl">Auto-update BakaLoader</span><span class="toggle" id="tAutoUpdApp" data-t></span></div>
+                <div class="subval" id="upkeepMsg" style="margin:2px 0 4px">Fetches new releases at launch and on restarts.</div>
+                <div class="togglerow"><span class="tl">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
+                <div class="togglerow"><span class="tl">Share anonymous usage stats</span><span class="toggle" id="tShareStats" data-t></span></div>
+                <div class="togglerow"><span class="tl">Plain terminology</span><span class="toggle" id="tPlainTerms" data-t></span></div>
+                <div class="subval" style="margin:2px 0 0">Swaps the Norse names for plain English.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: VIKINGS ============ -->
+        <section class="page" id="page-vikings">
+          <div class="pagehead">
+            <h1><span class="r">ᛗ</span>VIKINGS</h1>
+            <span class="sub" id="vikSub">2 of 10 raiding · right-click a viking for deeds</span>
+          </div>
+          <!-- missing required-mods banner (native only; hidden when all mods present) -->
+          <div class="capsbanner" id="capsBanner" style="display:none">
+            <div class="capshead"><span class="r">ᚦ</span>Some deeds are sleeping - the server is missing required mods</div>
+            <div class="capslist" id="capsList"></div>
+            <div class="capsact">
+              <button class="btn btn-ember btn-sm" id="capsInstallBtn">ᚠ&nbsp; Install missing mods</button>
+              <span class="capsnote">fetched from Thunderstore · loads on the next server start</span>
+            </div>
+          </div>
+          <div class="card ctxwrap" style="padding:0">
+            <div style="height:14px"></div>
+            <table>
+              <thead><tr><th style="width:34%">Viking</th><th>Status</th><th>Joined</th><th>Position</th><th style="width:44px"></th></tr></thead>
+              <tbody id="vikTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: MODS ============ -->
+        <section class="page" id="page-mods">
+          <div class="pagehead">
+            <h1><span class="r">ᚱ</span>MODS</h1>
+            <span class="sub" id="modsSub">63 loaded · Thunderstore index · last scan 21:38</span>
+            <div class="grow"></div>
+            <button class="btn btn-ghost btn-sm" id="scanBtn">ᛋ&nbsp; Scan Thunderstore</button>
+            <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
+          </div>
+          <div class="card" style="padding:0"><div style="height:14px"></div>
+            <table>
+              <thead><tr>
+                <th style="width:36%" class="sortable" data-sort="name" title="Sort by name">Name<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="installed" title="Sort by installed version">Installed<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="latest" title="Sort by latest version">Latest<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="status" title="Sort by update status">Status<span class="sortmark"></span></th>
+              </tr></thead>
+              <tbody id="modTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: WORLD ============ -->
+        <section class="page" id="page-world">
+          <div class="pagehead">
+            <h1><span class="r">ᛃ</span>WORLD</h1>
+            <span class="sub">server &amp; realm configuration</span>
+            <div class="grow"></div>
+            <button class="btn btn-ember btn-sm" id="saveCfgBtn">ᛉ&nbsp; Save Config</button>
+          </div>
+          <div class="card">
+            <div class="microlabel"><span class="r glowr">ᛃ</span>Server</div>
+            <div class="formgrid">
+              <div class="field"><label>Server Name</label><input type="text" id="fName" value="Baka Gaijin"></div>
+              <div class="field"><label>World</label><select id="fWorld"></select></div>
+              <div class="field"><label>Password</label>
+                <div class="pathrow"><input type="password" id="fPassword" value=""><span class="copychip" id="eyePw" title="Show / hide password">SHOW</span></div>
+              </div>
+              <div class="field"><label>Port</label><input type="text" id="fPort" value="2456"></div>
+              <div class="field"><label>Visibility</label>
+                <div class="togglerow"><span class="tl">Public - listed in community browser</span><span class="toggle on" id="tPublic" data-t></span></div>
+              </div>
+              <div class="field"><label>Crossplay</label>
+                <div class="togglerow"><span class="tl">Enable crossplay backend</span><span class="toggle" id="tCrossplay" data-t></span></div>
+              </div>
+              <div class="field"><label>Save Interval (s)</label><input type="text" id="fSaveInterval" value="600"></div>
+              <div class="field"><label>Backups Kept</label><input type="text" id="fBackups" value="50"></div>
+              <div class="field"><label>Backup Interval - Short (s)</label><input type="text" id="fBackShort" value="600"></div>
+              <div class="field"><label>Backup Interval - Long (s)</label><input type="text" id="fBackLong" value="43200"></div>
+            </div>
+
+            <div class="formsec collapsible" id="secRites" title="Click to expand / collapse"><span class="r">ᚨ</span> ADVANCED RITES</div>
+            <div class="formsec-body">
+            <div class="formgrid">
+              <div class="field"><label>Empty-Server Restart</label>
+                <div class="togglerow"><span class="tl" id="tEmptyLbl">Restart when empty for 5 min</span><span class="toggle on" id="tEmpty" data-t></span></div>
+              </div>
+              <div class="field"><label>Empty Delay (min)</label><input type="text" id="fEmptyDelay" value="5"></div>
+              <div class="field"><label>Scheduled Restart</label>
+                <div class="togglerow"><span class="tl" id="tSchedLbl">Every 6 h with in-game countdown</span><span class="toggle on" id="tSched" data-t></span></div>
+              </div>
+              <div class="field"><label>Restart Interval (h)</label><input type="text" id="fSchedHours" value="6"></div>
+              <div class="field"><label>Restart on Crash</label>
+                <div class="togglerow"><span class="tl" id="tCrashLbl">Relaunch after a crash</span><span class="toggle" id="tCrash" data-t></span></div>
+              </div>
+              <div class="field"><label>Crash Delay (s)</label><input type="text" id="fCrashDelay" value="10"></div>
+              <div class="field"><label>Server Logs</label>
+                <div class="togglerow"><span class="tl">Write server logs to file</span><span class="toggle" id="tLogs" data-t></span></div>
+              </div>
+              <div class="field"><label>Autostart</label>
+                <div class="togglerow"><span class="tl">Autostart this profile on launch</span><span class="toggle" id="tAutoStart" data-t></span></div>
+              </div>
+              <div class="field"><label>RCON</label>
+                <div class="togglerow"><span class="tl" id="tRconLbl">Bound on port 25575</span><span class="toggle on" id="tRcon" data-t></span></div>
+              </div>
+              <div class="field"><label>RCON Port</label><input type="text" id="fRconPort" value="25575"></div>
+              <div class="field"><label>RCON Password</label>
+                <div class="pathrow"><input type="password" id="fRconPw" value=""><span class="copychip" id="eyeRcon" title="Show / hide password">SHOW</span></div>
+              </div>
+              <div class="field"><label>Process Priority</label>
+                <select id="prioSel"><option>AboveNormal</option><option>Normal</option><option>High</option></select>
+              </div>
+            </div>
+            </div>
+
+            <div class="formsec collapsible" id="secDirs" title="Click to expand / collapse"><span class="r">ᛞ</span> DIRECTORIES</div>
+            <div class="formsec-body">
+            <div class="formgrid">
+              <div class="field" style="grid-column:1/-1"><label>Server Executable</label>
+                <div class="pathrow"><input type="text" id="fServerExe" value=""><button class="btn btn-ghost btn-sm" id="btnOpenSrv" title="Open the server folder in Explorer">Open</button></div>
+              </div>
+              <div class="field" style="grid-column:1/-1"><label>Save Data Folder</label>
+                <div class="pathrow"><input type="text" id="fSaveDir" value="" placeholder="default - %USERPROFILE%\AppData\LocalLow\IronGate\Valheim"><button class="btn btn-ghost btn-sm" id="btnOpenSave" title="Open the save data folder in Explorer">Open</button></div>
+              </div>
+              <div class="field" style="grid-column:1/-1"><label>Additional Launch Args</label><input type="text" id="fArgs" value=""></div>
+            </div>
+            </div>
+
+            <div class="setupreset">
+              <button class="btn btn-blood btn-sm" id="btnSetupReset" title="Clear the saved setup answers and run the guided first-time setup again">ᚦ Run first-time setup again</button>
+              <span class="setupreset-note">resets setup answers only · server files and worlds are never touched</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: RUNES (BepInEx config editor) ============ -->
+        <section class="page" id="page-runes">
+          <div class="runes" style="height:100%">
+            <div class="pagehead">
+              <h1><span class="r">ᚲ</span>RUNES</h1>
+              <span class="sub" id="runesSub">BepInEx config scrolls</span>
+              <div class="grow"></div>
+              <button class="btn btn-ghost btn-sm" id="cfgOpenBtn">ᛃ&nbsp; Open folder</button>
+              <button class="btn btn-ghost btn-sm" id="cfgReloadBtn" style="margin-left:8px">ᛋ&nbsp; Reload</button>
+              <button class="btn btn-ember btn-sm" id="cfgSaveBtn" style="margin-left:8px" disabled>ᛉ&nbsp; Save</button>
+            </div>
+            <div class="runes-grid">
+              <div class="card cfg-listcard">
+                <div class="microlabel"><span class="r">ᚲ</span>Scrolls</div>
+                <div class="cfg-list" id="cfgList"></div>
+              </div>
+              <div class="card cfg-edcard">
+                <textarea class="cfg-editor" id="cfgEditor" spellcheck="false" placeholder="choose a rune-scroll from the left…"></textarea>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: SAGA ============ -->
+        <section class="page" id="page-saga" style="display:none">
+          <div class="saga" style="height:100%">
+            <div class="pagehead">
+              <h1><span class="r">ᛋ</span>SAGA</h1>
+              <span class="sub">live chronicle of the realm</span>
+              <div class="grow"></div>
+              <button class="btn btn-ghost btn-sm" id="openLogs">ᛃ&nbsp; Logs folder</button>
+            </div>
+            <div class="termwrap">
+              <div class="termhead">
+                <span class="fpill active" data-f="all">All</span>
+                <span class="fpill" data-f="info">Info</span>
+                <span class="fpill" data-f="warn">Warn</span>
+                <span class="fpill" data-f="err">Error</span>
+                <span class="fpill" data-f="net">Net</span>
+                <span style="margin-left:auto" class="pill green">streaming</span>
+              </div>
+              <div class="term" id="term"></div>
+              <div class="termin">
+                <span class="prompt">ᛒ›</span>
+                <input id="termIn" placeholder="devcommand… (Enter to send)" spellcheck="false" autocomplete="off">
+                <span class="caret" id="termCaret"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- STATUSBAR -->
+      <div class="statusbar">
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v0.9.11</span></span>
+        <span class="seg" id="sbWorld">Final Sunset</span>
+        <span class="seg" id="sbMods">63 mods</span>
+        <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>
+        <span class="seg">tick <span class="em" id="tickVal">60/60</span></span>
+        <span class="seg" style="margin-left:auto" id="clockSeg">22:15:04 JST</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMMAND PALETTE -->
+  <div class="palette-bg" id="paletteBg">
+    <div class="palette">
+      <div class="pin"><span class="r">ᛒ</span><input id="palInput" placeholder="Summon a command…"></div>
+      <div class="plist" id="palList">
+        <div class="pitem sel" data-cmd="Restart server"><span class="r">ᚱ</span>Restart server<span class="k">rite</span></div>
+        <div class="pitem" data-cmd="Start server"><span class="r">ᚠ</span>Start server<span class="k">hearth</span></div>
+        <div class="pitem" data-cmd="Stop server"><span class="r">ᛪ</span>Stop server<span class="k">hearth</span></div>
+        <div class="pitem" data-cmd="Save world now"><span class="r">ᛉ</span>Save world now<span class="k">rite</span></div>
+        <div class="pitem" data-cmd="Kill all monsters"><span class="r">ᚦ</span>Kill all monsters<span class="k">rite</span></div>
+        <div class="pitem" data-cmd="Broadcast message…"><span class="r">ᛒ</span>Broadcast message…<span class="k">saga</span></div>
+        <div class="pitem" data-cmd="Send console command…"><span class="r">ᛊ</span>Send console command…<span class="k">rcon</span></div>
+        <div class="pitem" data-cmd="Kick player…"><span class="r">ᚲ</span>Kick player…<span class="k">viking</span></div>
+        <div class="pitem" data-cmd="Update all mods"><span class="r">ᛟ</span>Update all mods<span class="k">forge</span></div>
+        <div class="pitem" data-cmd="Copy join address"><span class="r">ᛜ</span>Copy join address<span class="k">net</span></div>
+        <div class="pitem" data-cmd="Open world folder"><span class="r">ᛃ</span>Open world folder<span class="k">path</span></div>
+        <div class="pitem" data-cmd="Open config folder"><span class="r">ᛃ</span>Open config folder<span class="k">path</span></div>
+        <div class="pitem" data-cmd="Open plugins folder"><span class="r">ᛃ</span>Open plugins folder<span class="k">path</span></div>
+        <div class="pitem" data-cmd="Open server logs"><span class="r">ᛃ</span>Open server logs<span class="k">path</span></div>
+        <div class="pitem pconsole hidden" id="palConsole" data-cmd=""><span class="r">ᛊ</span><span id="palConsoleLbl">Send to server console</span><span class="k">rcon</span></div>
+      </div>
+      <div class="pfoot"><span><kbd>↑↓</kbd> navigate</span><span><kbd>Enter</kbd> invoke</span><span>no match? <kbd>Enter</kbd> sends it to the console</span><span><kbd>Esc</kbd> dismiss</span></div>
+    </div>
+  </div>
+
+  <!-- CONTEXT MENU (positioned + filled by JS) -->
+  <div class="ctxmenu ctxfixed" id="ctxMenu"></div>
+
+  <!-- MODAL LAYER (teleport / spawn / confirm dialogs) -->
+  <div class="modal-bg" id="modalBg"></div>
+
+  <!-- TOASTS -->
+  <div class="toasts" id="toasts"></div>
+
+  <!-- RESIZE GRIPS (invisible) -->
+  <div class="grip" data-edge="top"></div>
+  <div class="grip" data-edge="bottom"></div>
+  <div class="grip" data-edge="left"></div>
+  <div class="grip" data-edge="right"></div>
+  <div class="grip" data-edge="topleft"></div>
+  <div class="grip" data-edge="topright"></div>
+  <div class="grip" data-edge="bottomleft"></div>
+  <div class="grip" data-edge="bottomright"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

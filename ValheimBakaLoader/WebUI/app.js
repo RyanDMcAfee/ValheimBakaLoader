@@ -1,0 +1,1884 @@
+"use strict";
+
+/* ============ NATIVE BRIDGE (WebView2 host seam) ============ */
+const Native = (() => {
+  const wv = window.chrome?.webview;
+  let seq = 0; const pending = new Map(); const listeners = new Map();
+  if (wv) wv.addEventListener('message', e => {
+    const m = e.data;
+    if (m && m.id != null && pending.has(m.id)) { const {res, rej} = pending.get(m.id); pending.delete(m.id); m.ok ? res(m.result) : rej(new Error(m.error)); }
+    else if (m && m.event) (listeners.get(m.event) || []).forEach(fn => fn(m.data));
+  });
+  return {
+    available: !!wv,
+    post(method, params) { if (wv) wv.postMessage({ method, params: params ?? {} }); },
+    call(method, params) {
+      if (!wv) return Promise.reject(new Error('no native host'));
+      const id = ++seq;
+      return new Promise((res, rej) => { pending.set(id, {res, rej}); wv.postMessage({ id, method, params: params ?? {} }); });
+    },
+    on(event, fn) { const a = listeners.get(event) || []; a.push(fn); listeners.set(event, a); }
+  };
+})();
+
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pad=n=>String(n).padStart(2,"0");
+function fmtT(d){const t=new Date(d);return isNaN(t)?"-":pad(t.getHours())+":"+pad(t.getMinutes());}
+
+/* RPC wrapper: every call catches + toasts; returns FAIL sentinel instead of rejecting
+   so no rejected promise is ever unhandled. */
+const FAIL=Symbol("rpc-failed");
+function rpc(method,params){
+  return Native.call(method,params).catch(err=>{
+    toast("ᚦ "+method+" failed · "+(err?.message||"unknown error"));
+    return FAIL;
+  });
+}
+
+/* ---------- LIVE STATE (native) ---------- */
+const S={
+  version:"", profileName:null, prefs:null,          // current profile (full ServerPreferences, PascalCase)
+  state:null, upSince:null,                          // server state DTO + uptime anchor
+  saveSec:null, saveInterval:600,
+  players:[], caps:{rcon:false,devcommands:false},
+  mods:null, modsScanned:false, modsScanning:false, modsUpdating:false, lastScan:null,
+  modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
+  extIp:null, intIp:null,
+  invite:null,            // crossplay invite code (shown while known; cleared on stop)
+  saveDur:[],             // last 10 world-save durations (ms) for the rolling average
+  lastSaveAt:null,        // Date of the last observed world save
+  net:{conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]}, // parsed "Connections N ZDOS:… sent:… recv:…" server stats
+};
+
+const fmtBytes=n=>{
+  n=Number(n); if(!isFinite(n)) return "-";
+  if(n<1024) return n+" B";
+  if(n<1048576) return (n/1024).toFixed(1)+" KB";
+  if(n<1073741824) return (n/1048576).toFixed(1)+" MB";
+  return (n/1073741824).toFixed(2)+" GB";
+};
+
+/* The dedicated server prints "Connections 1 ZDOS:1428161  sent:3970 recv:1004"
+   every ~10 minutes - the only net telemetry it emits. Parsed off the Saga tail. */
+const NET_RE=/Connections\s+(\d+)\s+ZDOS:(\d+)\s+sent:(\d+)\s+recv:(\d+)/;
+function parseNetLine(line){
+  const m=NET_RE.exec(line); if(!m) return;
+  S.net.conns=+m[1]; S.net.zdos=+m[2]; S.net.sent=+m[3]; S.net.recv=+m[4]; S.net.at=Date.now();
+  S.net.hist.push({t:Date.now(),conns:+m[1],zdos:+m[2],sent:+m[3],recv:+m[4]});
+  if(S.net.hist.length>72) S.net.hist.shift(); // ~12h at the 10-min cadence
+}
+
+/* ---------- WINDOW CONTROLS ---------- */
+$$(".winbtn[data-win]").forEach(b=>b.addEventListener("click",()=>{
+  if(!Native.available) return;
+  Native.post("win."+b.dataset.win);
+}));
+
+/* draggable region: titlebar, minus interactive elements */
+$("#titlebar").addEventListener("mousedown",e=>{
+  if(e.button!==0||!Native.available) return;
+  if(e.target.closest(".cmdchip,.winbtns,.winbtn")) return;
+  Native.post("win.dragStart");
+});
+
+/* resize grips */
+$$(".grip").forEach(g=>g.addEventListener("mousedown",e=>{
+  if(e.button!==0||!Native.available) return;
+  e.preventDefault();
+  Native.post("win.resizeStart",{edge:g.dataset.edge});
+}));
+
+/* ---------- TERMINOLOGY (plain-English toggle, Upkeep card) ----------
+   PLAIN swaps the Norse-lore wording for plain English. Ordered pairs:
+   longest / most specific phrases first so generic word swaps never
+   pre-empt them. Server log lines are NEVER plainified (raw data). */
+let PLAIN=false;
+const TERM_PAIRS=[
+  ["No vikings have set sail for this realm yet.","No players have connected yet."],
+  ["Some deeds are sleeping","Some features are unavailable"],
+  ["right-click a viking for deeds","right-click a player for actions"],
+  ["Hearth stoked · vikings warned","Restart scheduled · players warned"],
+  ["Hearth stoked · no vikings online","Restarting · no players online"],
+  ["Hearth stoked · server restarting","Server restarting"],
+  ["Hearth stoked","Restart scheduled"],
+  ["Hearth doused · server stopping","Server stopping"],
+  ["Hearth doused · server stopped","Server stopped"],
+  ["Hearth kindled · server starting","Server starting"],
+  ["STOPPED · embers doused","STOPPED"],
+  ["dousing the embers","shutting down"],
+  ["embers doused","server stopped"],
+  ["consult the saga","check the console log"],
+  ["Saga log","console log"],
+  ["Join prompt copied · sailing forth","Join prompt copied"],
+  ["sailing forth","connecting"],
+  ["Sail Forth","Copy Join Info"],
+  ["sail forth","connect"],
+  ["BepInEx config scrolls","BepInEx config files"],
+  ["no .cfg scrolls found","no .cfg files found"],
+  ["Scrolls reloaded","Configs reloaded"],
+  ["in the config vault","in the config folder"],
+  ["rune-scrolls","config files"],
+  ["rune-scroll","config file"],
+  ["last rune-check","last save"],
+  ["unsaved rune-work","unsaved changes"],
+  ["live chronicle of the realm","live server log"],
+  ["ADVANCED RITES","ADVANCED SETTINGS"],
+  ["Hearth Status","Server Status"],
+  ["Forge Load","System Load"],
+  ["Summon a command…","Type a command…"],
+  ["KINDLING…","STARTING…"],
+  ["FADING…","STOPPING…"],
+  ["BURNING","RUNNING"],
+  ["COLD","STOPPED"],
+  ["Kindle","Start"],
+  ["Douse","Stop"],
+  ["Stoke","Restart"],
+  ["HEARTH","DASHBOARD"],
+  ["Hearth","Dashboard"],
+  ["hearth","server"],
+  ["VIKINGS","PLAYERS"],
+  ["Vikings","Players"],
+  ["vikings","players"],
+  ["Viking","Player"],
+  ["viking","player"],
+  ["raiding","online"],
+  ["deeds","actions"],
+  ["RUNES","CONFIGS"],
+  ["Runes","Configs"],
+  ["SAGA","CONSOLE"],
+  ["Saga","Console"],
+  ["saga","log"],
+  ["rites","settings"],
+  ["rite","action"],
+  ["forge","mods"],
+  ["realm","world"],
+];
+const TERM_RES=TERM_PAIRS.map(([f,t])=>[
+  new RegExp((/^\w/.test(f)?"\\b":"")+f.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+(/\w$/.test(f)?"\\b":""),"g"),
+  t
+]);
+function plainify(s){
+  if(!PLAIN||typeof s!=="string") return s;
+  for(const [re,t] of TERM_RES) s=s.replace(re,t);
+  return s;
+}
+const TT=plainify;
+/* Static lore-bearing elements: text nodes only (rune glyphs + pills untouched).
+   Dynamic surfaces (#vikSub, #runesSub, hState/hPid, toasts…) route through TT()
+   at render time instead - caching their originals would restore stale values. */
+const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,.capshead,#page-vikings th,#secRites,#page-saga .sub,#page-world .sub,.pitem .k";
+const TERM_ORIG=new Map();
+function applyTerms(){
+  $$(TERM_STATIC_SEL).forEach(el=>[...el.childNodes].forEach(n=>{
+    if(n.nodeType!==3||!n.nodeValue.trim()) return;
+    if(!TERM_ORIG.has(n)) TERM_ORIG.set(n,n.nodeValue);
+    const o=TERM_ORIG.get(n);
+    n.nodeValue=PLAIN?plainify(o):o;
+  }));
+  [$("#palInput"),$("#cfgEditor")].forEach(el=>{
+    if(!el) return;
+    if(!TERM_ORIG.has(el)) TERM_ORIG.set(el,el.placeholder);
+    const o=TERM_ORIG.get(el);
+    el.placeholder=PLAIN?plainify(o):o;
+  });
+  /* refresh the lore-bearing dynamic surfaces so the swap is immediate */
+  try{renderHearth();}catch{}
+  try{renderCaps();}catch{}
+  try{renderPlayers();}catch{}
+  try{if(CFG.files&&CFG.files.length)renderCfgList();}catch{}
+}
+
+/* ---------- NAV ---------- */
+let currentPage="hearth";
+function goPage(name){
+  $$(".navitem").forEach(n=>n.classList.toggle("active",n.dataset.page===name));
+  $$(".page").forEach(p=>{
+    const on=p.id==="page-"+name;
+    p.classList.toggle("active",on);
+    p.style.display=on?"block":"none";
+  });
+  currentPage=name;
+  if(Native.available){
+    if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods();
+    if(name==="vikings") refreshPlayers();
+    if(name==="runes") refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
+  }
+}
+$$(".navitem").forEach(n=>n.addEventListener("click",()=>goPage(n.dataset.page)));
+$$("[data-goto]").forEach(c=>c.addEventListener("click",()=>goPage(c.dataset.goto)));
+goPage("hearth");
+
+/* ---------- HEARTH: uptime + douse ---------- */
+let running=true, upMin=272; // 4h 32m (mock only)
+const hCard=$("#hearthCard"), hState=$("#hState"), hPid=$("#hPid"),
+      douseBtn=$("#douseBtn"), stokeBtn=$("#stokeBtn"), sailBtn=$("#sailBtn");
+function renderHearth(){
+  if(Native.available){renderHearthNative();return;}
+  if(running){
+    hCard.classList.remove("cold");
+    hState.innerHTML=`BURNING · ${Math.floor(upMin/60)}h ${String(upMin%60).padStart(2,"0")}m`;
+    hPid.textContent="RUNNING · PID 150428 · valheim_server.x86_64";
+    douseBtn.textContent="Douse";
+  }else{
+    hCard.classList.add("cold");
+    hState.textContent="COLD";
+    hPid.textContent="STOPPED · embers doused · world saved";
+    douseBtn.textContent="Kindle";
+  }
+  stokeBtn.disabled=!running;
+}
+function renderHearthNative(){
+  const st=S.state||{status:"Stopped",canStart:false,canStop:false};
+  hCard.classList.toggle("cold",st.status!=="Running");
+  if(st.status==="Running"){
+    const up=S.upSince?Date.now()-S.upSince:0;
+    hState.textContent=TT(`BURNING · ${Math.floor(up/3600000)}h ${pad(Math.floor(up/60000)%60)}m`);
+    hPid.textContent="RUNNING · "+(S.prefs?.WorldName||"world")+" · valheim_server"+(st.adopted?" · adopted":"");
+  }else if(st.status==="Starting"){
+    hState.textContent=TT("KINDLING…");
+    hPid.textContent=TT("STARTING · raising the server");
+  }else if(st.status==="Stopping"){
+    hState.textContent=TT("FADING…");
+    hPid.textContent=TT("STOPPING · dousing the embers");
+  }else{
+    hState.textContent=TT("COLD");
+    hPid.textContent=TT("STOPPED · embers doused");
+  }
+  douseBtn.textContent=TT(st.canStop?"Douse":"Kindle");
+  douseBtn.disabled=!(st.canStart||st.canStop);
+  stokeBtn.textContent=st.countdownActive?"Restart NOW":TT("Stoke");
+  stokeBtn.title=TT(st.countdownActive?"Skip the countdown and restart immediately":"Restart the server · warns players in-game first if any are online");
+  stokeBtn.disabled=!(st.canStop||st.countdownActive);
+  stokeBtn.classList.toggle("btn-ember",!!st.countdownActive);
+  stokeBtn.classList.toggle("btn-ghost",!st.countdownActive);
+}
+function applyState(st){
+  if(!st) return;
+  const prev=S.state?.status;
+  S.state=st;
+  if(st.status==="Running"&&prev!=="Running"){
+    S.upSince=Date.now();
+    if(S.saveSec==null) S.saveSec=S.saveInterval;
+  }
+  if(st.status==="Stopped"){
+    S.upSince=null; S.saveSec=null;
+    $("#saveCountdown").textContent="-:-";
+    if(S.invite){S.invite=null;renderNet();} // invite dies with the server
+  }
+  renderHearthNative();
+}
+douseBtn.addEventListener("click",async e=>{
+  e.stopPropagation();
+  if(Native.available){
+    const st=S.state||{};
+    if(st.canStop){
+      const r=await rpc("server.stop");
+      if(r!==FAIL){applyState(r);toast("ᛪ Hearth doused · server stopping");logLine("warn","[BakaLoader] stop requested - dousing the embers");}
+    }else if(st.canStart){
+      if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
+      const r=await rpc("server.start",{prefs:S.prefs});
+      if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
+    }
+    return;
+  }
+  running=!running; if(running) upMin=0;
+  renderHearth();
+  toast(running?"ᚠ Hearth kindled · server starting":"ᛪ Hearth doused · server stopped");
+  logLine(running?"ok":"warn",running?"[BakaLoader] server process launched (PID 150428)":"[BakaLoader] graceful shutdown - world saved, embers doused");
+});
+function smartRestart(){
+  return rpc("server.restart").then(r=>{
+    if(r===FAIL) return;
+    applyState(r.state);
+    if(r.restart==="countdown"){
+      // countdown task spins up async - flip the button to "Restart NOW" right away
+      if(S.state) S.state.countdownActive=true;
+      renderHearthNative();
+      toast("ᚱ Hearth stoked · vikings warned · restart in 1 min");
+      logLine("warn","[BakaLoader] restart requested - players online, 1-minute warning broadcast");
+    }else if(r.restart==="bypassed"){
+      toast("ᚱ Restarting NOW · countdown skipped");
+      logLine("warn","[BakaLoader] restart countdown bypassed - restarting now");
+    }else if(r.restart==="now"){
+      toast("ᚱ Hearth stoked · no vikings online · restarting now");
+      logLine("warn","[BakaLoader] restart requested - server empty, restarting immediately");
+    }else{
+      toast("ᚦ Restart unavailable · server not running");
+    }
+  });
+}
+stokeBtn.addEventListener("click",e=>{
+  e.stopPropagation();
+  if(Native.available){smartRestart();return;}
+  toast("ᚱ Hearth stoked · server restarting");
+  logLine("warn","[BakaLoader] restart requested - stoking the hearth");
+});
+/* Sail Forth copies a full join prompt - everything a friend needs to connect:
+   server name / world / public ip:port / password (+ crossplay code when known). */
+function buildJoinPrompt(){
+  const p=S.prefs||{};
+  const addr=(S.extIp||"…")+":"+(p.Port??2456);
+  const lines=[p.Name||"Valheim server", p.WorldName||"-", addr];
+  if(p.Password) lines.push(p.Password);
+  if(p.Crossplay&&S.invite) lines.push("crossplay code "+S.invite);
+  return {text:lines.join("\n"), addr};
+}
+sailBtn.addEventListener("click",()=>{
+  if(Native.available){
+    const jp=buildJoinPrompt();
+    navigator.clipboard?.writeText(jp.text).catch(()=>{});
+    toast("ᛟ Join prompt copied · "+jp.addr);
+    return;
+  }
+  if(!running){running=true;upMin=0;renderHearth();}
+  const jp=buildJoinPrompt();
+  navigator.clipboard?.writeText(jp.text).catch(()=>{});
+  toast("ᛟ Join prompt copied · sailing forth");
+});
+renderHearth();
+
+/* ---------- SPARKLINES (shared drawing; mock driver below) ---------- */
+const N=40, cpu=[], ram=[];
+function drawLine(el,data,min,max){
+  const pts=data.map((v,i)=>{
+    const x=(i/(N-1))*200, y=28-((v-min)/(max-min))*26;
+    return x.toFixed(1)+","+Math.max(2,Math.min(28,y)).toFixed(1);
+  }).join(" ");
+  el.setAttribute("points",pts);
+}
+
+/* ---------- STATUS CLOCK ---------- */
+function clock(){const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");}
+setInterval(()=>{
+  const d=new Date();
+  $("#clockSeg").textContent=[d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,"0")).join(":")+" JST";
+  if(!Native.available) $("#tickVal").textContent=running?(58+Math.floor(Math.random()*3))+"/60":"-";
+},1000);
+
+/* ---------- COPY CHIP ---------- */
+$("#copyIp").addEventListener("click",e=>{
+  e.stopPropagation();
+  if(Native.available){
+    const addr=(S.extIp||"…")+":"+(S.prefs?.Port??2456);
+    navigator.clipboard?.writeText(addr).catch(()=>{});
+    e.target.textContent="COPIED";
+    toast("ᚾ Address copied · "+addr);
+    setTimeout(()=>e.target.textContent="COPY",1400);
+    return;
+  }
+  e.target.textContent="COPIED";
+  toast("ᚾ Address copied · 203.0.113.42:2456");
+  setTimeout(()=>e.target.textContent="COPY",1400);
+});
+function renderNet(){
+  if(!Native.available) return;
+  const port=S.prefs?.Port??2456;
+  $("#netAddr").textContent=(S.extIp||"…")+":"+port;
+  $("#netLan").textContent="LAN "+(S.intIp||"…")+":"+port;
+  $("#netLoc").textContent="127.0.0.1:"+port;
+  const il=$("#netInviteLine");
+  il.style.display=S.invite?"":"none";
+  if(S.invite) $("#netInvite").textContent="invite "+S.invite;
+  const rl=$("#netRconLine"), on=!!S.prefs?.RconEnabled;
+  rl.style.display=on?"":"none";
+  if(on) $("#netRcon").textContent="RCON 127.0.0.1:"+(S.prefs.RconPort??25575);
+  $("#netPill").textContent=on?"rcon bound":"rcon off";
+  $("#netPill").className="pill "+(on?"green":"blue");
+}
+/* LAN / local / invite copy chips - copy exactly what's displayed (works in mock + native) */
+[["#copyLan","#netLan"],["#copyLoc","#netLoc"],["#copyInv","#netInvite"]].forEach(([chip,src])=>{
+  $(chip).addEventListener("click",e=>{
+    e.stopPropagation();
+    const txt=$(src).textContent.replace(/^(LAN|invite)\s+/,"");
+    navigator.clipboard?.writeText(txt).catch(()=>{});
+    e.target.textContent="COPIED";
+    toast("ᚾ Copied · "+txt);
+    setTimeout(()=>e.target.textContent="COPY",1400);
+  });
+});
+/* open-folder affordances (shell.open - native only) */
+$("#openWorlds").addEventListener("click",e=>{
+  e.stopPropagation();
+  if(Native.available) rpc("shell.open",{target:"saveData"});
+  else toast("ᛃ Worlds folder · preview only");
+});
+$("#openLogs").addEventListener("click",()=>{
+  if(Native.available) rpc("shell.open",{target:"logs"});
+  else toast("ᛃ Logs folder · preview only");
+});
+
+/* horn-of-mead - wrap every letter in its own span so each ember glows on its own
+   clock (randomized duration + phase; ~1 in 3 letters runs the redder keyframe set) */
+(function emberizeMead(){
+  const link=$("#meadLink");
+  const rnd=(lo,hi)=>lo+Math.random()*(hi-lo);
+  [...link.childNodes].forEach(node=>{
+    if(node.nodeType!==Node.TEXT_NODE) return;   // keep the <br> intact
+    const frag=document.createDocumentFragment();
+    for(const ch of node.textContent){
+      if(ch===" "||ch==="\u00A0"){ frag.append(ch); continue; }
+      const s=document.createElement("span");
+      s.className="mc"+(Math.random()<.34?" mc-r":"");
+      s.textContent=ch;
+      s.style.setProperty("--dur",rnd(3.4,6.6).toFixed(2)+"s");
+      s.style.setProperty("--del",(-rnd(0,6.6)).toFixed(2)+"s"); // negative = start mid-cycle
+      frag.append(s);
+    }
+    node.replaceWith(frag);
+  });
+})();
+
+/* horn-of-mead - opens the donate page in the default browser (native only) */
+$("#meadLink").addEventListener("click",e=>{
+  e.preventDefault();
+  if(Native.available){ rpc("shell.openUrl",{target:"donate"}); toast("ᛥ Skål! Opening the mead hall…"); }
+  else toast("ᛥ A horn of mead · preview only");
+});
+
+/* ---------- MODS: scan / update-all / render / sort / remove ---------- */
+/* numeric-aware version compare (1.2.10 > 1.2.9); missing/dash versions sort lowest */
+function verCmp(a,b){
+  const pa=String(a||"").split("."), pb=String(b||"").split(".");
+  for(let i=0;i<Math.max(pa.length,pb.length);i++){
+    const x=parseInt(pa[i],10), y=parseInt(pb[i],10);
+    const nx=isNaN(x)?-1:x, ny=isNaN(y)?-1:y;
+    if(nx!==ny) return nx-ny;
+  }
+  return 0;
+}
+/* returns a sorted copy per S.modSort; dir 0 = the default scan order untouched.
+   First click: name A→Z, versions hi→lo, status updates-first. Second click reverses. */
+function sortedMods(mods){
+  const {col,dir}=S.modSort;
+  if(!col||!dir) return mods;
+  const ver=col==="installed"||col==="latest";
+  const m=(dir===1)!==ver?1:-1, s=[...mods];
+  if(col==="name") s.sort((a,b)=>m*String(a.ModName||"").localeCompare(String(b.ModName||""),undefined,{sensitivity:"base"}));
+  else if(col==="installed") s.sort((a,b)=>m*verCmp(a.InstalledVersion,b.InstalledVersion));
+  else if(col==="latest") s.sort((a,b)=>m*verCmp(a.LatestVersion,b.LatestVersion));
+  else if(col==="status") s.sort((a,b)=>m*((b.UpdateAvailable?1:0)-(a.UpdateAvailable?1:0)));
+  return s;
+}
+function renderModSortMarks(){
+  document.querySelectorAll("#page-mods th.sortable").forEach(th=>{
+    const on=S.modSort.col===th.dataset.sort&&S.modSort.dir;
+    th.classList.toggle("sorted",!!on);
+    const ver=th.dataset.sort==="installed"||th.dataset.sort==="latest";
+    const up=(S.modSort.dir===1)!==ver;   // versions show hi→lo (▼) on first click
+    th.querySelector(".sortmark").textContent=on?(up?"▲":"▼"):"";
+  });
+}
+document.querySelectorAll("#page-mods th.sortable").forEach(th=>th.addEventListener("click",()=>{
+  const c=th.dataset.sort;
+  if(S.modSort.col===c) S.modSort.dir=(S.modSort.dir+1)%3;
+  else S.modSort={col:c,dir:1};
+  if(!S.modSort.dir) S.modSort.col=null;
+  renderMods();
+}));
+function renderMods(){
+  const busy=S.modsScanning||S.modsUpdating;
+  $("#scanBtn").disabled=busy;
+  const scanned=S.mods!==null;
+  const mods=sortedMods(S.mods||[]);
+  const upd=mods.filter(m=>m.UpdateAvailable);
+  $("#updAllBtn").innerHTML="ᚱ&nbsp; Update all ("+(scanned?upd.length:"-")+")";
+  $("#updAllBtn").disabled=busy||!upd.length;
+  $("#modCount").textContent=scanned?mods.length:"-";
+  $("#sbMods").textContent=(scanned?mods.length:"-")+" mods";
+  renderModSortMarks();
+  if(!scanned){
+    $("#modTable").innerHTML=`<tr><td colspan="4" class="mono" style="color:var(--bone-dim)">${S.modsScanning?"Scanning Thunderstore…":"Not yet scanned - press Scan Thunderstore."}</td></tr>`;
+    $("#modTable")._list=[];
+    $("#modUpdWrap").innerHTML="";
+    $("#modsSub").textContent="Thunderstore index · "+(S.modsScanning?"scanning…":"not yet scanned");
+    return;
+  }
+  $("#modTable").innerHTML=mods.map((m,i)=>{
+    const has=!!m.UpdateAvailable;
+    const pill=m.Bundled?`<span class="pill ember">Bundled</span>`
+      :`<span class="pill ${has?"amber":"green"}">${has?"Update":"Current"}</span>`;
+    return `<tr data-i="${i}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span></td>`+
+      `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
+      `<td class="mono"${has?' style="color:var(--amber)"':""}>${esc(m.LatestVersion||"-")}</td>`+
+      `<td>${pill}</td></tr>`;
+  }).join("")||`<tr><td colspan="4" class="mono" style="color:var(--bone-dim)">No mods found - check the server exe path.</td></tr>`;
+  $("#modTable")._list=mods;
+  $("#modUpdWrap").innerHTML=upd.length
+    ?`<span class="pill amber">${upd.length} update${upd.length===1?"":"s"}</span>`
+    :`<span class="pill green">up to date</span>`;
+  $("#modsSub").textContent=mods.length+" loaded · Thunderstore index"+(S.lastScan?" · last scan "+S.lastScan:"");
+}
+async function scanMods(){
+  if(!Native.available||S.modsScanning||S.modsUpdating) return;
+  S.modsScanning=true; renderMods();
+  toast("ᛋ Thunderstore scan begun · v1 community index");
+  logLine("info","[Thunderstore] fetching valheim community index (cached 15m)…");
+  const r=await rpc("mods.scan");
+  S.modsScanning=false;
+  if(r===FAIL||!Array.isArray(r)){renderMods();return;}
+  S.mods=r; S.modsScanned=true; S.lastScan=clock();
+  renderMods();
+  const u=r.filter(m=>m.UpdateAvailable).length;
+  toast("ᛋ Scan complete · "+r.length+" mods · "+u+" update"+(u===1?"":"s"));
+}
+async function doUpdateAll(){
+  if(S.modsUpdating||S.modsScanning) return;
+  S.modsUpdating=true; renderMods();
+  toast("ᚱ Updating mods · fetching from Thunderstore…");
+  const r=await rpc("mods.updateAll");
+  S.modsUpdating=false;
+  if(r===FAIL||!Array.isArray(r)){renderMods();return;}
+  const okN=r.filter(x=>x.Updated).length, errN=r.filter(x=>x.Error).length;
+  r.forEach(x=>logLine(x.Updated?"ok":"warn","[Thunderstore] "+x.mod+" "+(x.Updated?(x.FromVersion+" → "+x.ToVersion):("failed: "+(x.Error||"unknown")))));
+  toast(errN?("ᚦ Updated "+okN+" mods · "+errN+" failed"):("ᚱ Updated "+okN+" mod"+(okN===1?"":"s")));
+  await scanMods(); // re-render from a fresh scan
+}
+$("#updAllBtn").addEventListener("click",()=>{
+  if(Native.available){
+    const upd=(S.mods||[]).filter(m=>m.UpdateAvailable);
+    if(!upd.length) return;
+    /* NOTE: mods.updateAll in the bridge does NOT stop/restart the server - reflect that. */
+    const runWarn=(S.state?.status==="Running")
+      ?`<div class="mwarn">⚠ The server is RUNNING. Updating does NOT stop or restart it - new versions only load after a restart, and locked files may fail to update. Stopping the server first is recommended.</div>`:"";
+    confirmModal("Update "+upd.length+" mod"+(upd.length===1?"":"s"),
+      `<div class="mono-list">${upd.map(m=>esc(m.FullName)+"  "+esc(m.InstalledVersion)+" → "+esc(m.LatestVersion)).join("<br>")}</div>`+runWarn,
+      "Update all",()=>doUpdateAll());
+    return;
+  }
+  toast("ᚱ Updating 2 mods · WorldEditCommands, ExtraSlots");
+  logLine("info","[Thunderstore] downloading WorldEditCommands 1.66.0 …");
+});
+$("#scanBtn").addEventListener("click",()=>{
+  if(Native.available){scanMods();return;}
+  toast("ᛋ Thunderstore scan begun · v1 community index");
+  logLine("info","[Thunderstore] fetching valheim community index (cached 15m)…");
+});
+/* right-click a mod row → remove */
+$("#modTable").addEventListener("contextmenu",e=>{
+  if(!Native.available) return;
+  const tr=e.target.closest("tr[data-i]"); if(!tr) return;
+  e.preventDefault();
+  const mod=($("#modTable")._list||[])[+tr.dataset.i]; if(!mod) return;
+  ctxOpen(e.clientX,e.clientY,mod.FullName,[
+    {r:"ᛪ",label:"Remove mod…",danger:true,fn:()=>removeModFlow(mod)},
+  ]);
+});
+async function removeModFlow(mod){
+  const files=await rpc("mods.findConfigs",{fullName:mod.FullName});
+  if(files===FAIL) return;
+  const cfgs=Array.isArray(files)?files:[];
+  const body=
+    `<div class="mbody-note">The plugin folder is backed up to BepInEx\\.bakaloader-removed, then removed.</div>`+
+    (cfgs.length
+      ?`<label class="mchk"><input type="checkbox" id="mIncCfg" checked> Also delete ${cfgs.length} config file${cfgs.length===1?"":"s"}:</label><div class="mono-list">${cfgs.map(f=>esc(String(f).split(/[\\/]/).pop())).join("<br>")}</div>`
+      :`<div class="mbody-note">No config files found for this mod.</div>`)+
+    ((S.state?.status==="Running")
+      ?`<div class="mwarn">⚠ The server is RUNNING - removal does not stop it; locked files may fail. Stopping first is recommended.</div>`:"");
+  confirmModal("Remove "+mod.FullName+"?",body,"Remove",m=>{
+    const includeConfig=!!m.querySelector("#mIncCfg")?.checked;
+    doRemoveMod(mod,includeConfig);
+  });
+}
+async function doRemoveMod(mod,includeConfig){
+  toast("ᛪ Removing "+mod.FullName+"…");
+  const r=await rpc("mods.remove",{fullName:mod.FullName,includeConfig});
+  if(r===FAIL) return;
+  if(r.Removed){
+    toast("ᛪ Removed "+r.mod+" · backup kept");
+    logLine("warn","[BakaLoader] removed mod "+r.mod+(r.BackupDirectory?" (backup: "+r.BackupDirectory+")":""));
+  }else{
+    toast("ᚦ Remove failed · "+(r.Error||"unknown"));
+  }
+  scanMods();
+}
+
+/* ---------- COMMAND PALETTE ---------- */
+const palBg=$("#paletteBg"), palIn=$("#palInput");
+let palOpen=false;
+function openPal(){palOpen=true;palBg.classList.add("open");palIn.value="";updatePalGating();filterPal("");setTimeout(()=>palIn.focus(),30);}
+function closePal(){palOpen=false;palBg.classList.remove("open");}
+/* Grey out rites that have nothing to act on: RCON commands need a RUNNING server,
+   start/stop follow canStart/canStop. Browser preview keeps everything clickable. */
+const PAL_NEEDS_RUNNING={"Save world now":1,"Kill all monsters":1,"Broadcast message…":1,"Send console command…":1};
+function updatePalGating(){
+  if(!Native.available) return;
+  const st=S.state||{}, running=st.status==="Running";
+  $$(".pitem").forEach(it=>{
+    const cmd=it.dataset.cmd; let dis=false, why="";
+    if(it.id==="palConsole"||PAL_NEEDS_RUNNING[cmd]){dis=!running;why="Server not running - nothing to send the command to";}
+    else if(cmd==="Restart server"){dis=!(st.canStop||st.countdownActive);why="Server not running";}
+    else if(cmd==="Stop server"){dis=!st.canStop;why="Server not running";}
+    else if(cmd==="Start server"){dis=!st.canStart;why="Server already running";}
+    it.classList.toggle("disabled",dis);
+    it.title=dis?why:"";
+  });
+}
+/* Free-form console command over RCON. Echoes "> cmd" to the Saga log, then the
+   reply (many Valheim commands answer to stdout, which the log already tails). */
+async function sendConsole(cmd,okToast){
+  cmd=(cmd||"").trim(); if(!cmd) return;
+  logLine("cmd","> "+cmd);
+  const r=await rpc("server.command",{command:cmd});
+  if(r===FAIL) return;
+  if(!r.ok){
+    toast("ᚦ Command not delivered · server running & RCON bound?");
+    logLine("warn","[RCON] command failed - is the server running with RCON enabled?");
+    return;
+  }
+  if(okToast) toast(okToast);
+  const resp=(r.response||"").trim();
+  if(resp) resp.split(/\r?\n/).forEach(l=>logLine("ok",l));
+  else logLine("ok","[RCON] "+cmd+" · dispatched - replies land here in the Saga log");
+}
+function filterPal(q){
+  const raw=q.trim(); q=raw.toLowerCase(); let first=true;
+  $$(".pitem:not(.pconsole)").forEach(it=>{
+    const hit=it.dataset.cmd.toLowerCase().includes(q);
+    const pick=hit&&!it.classList.contains("disabled");
+    it.classList.toggle("hidden",!hit);
+    it.classList.toggle("sel",pick&&first); if(pick) first=false;
+  });
+  // Free-typed helper: anything typed can be sent straight to the server console.
+  // Shown at the bottom while typing; becomes the selection when nothing matches.
+  const con=$("#palConsole");
+  if(con){
+    const show=Native.available&&raw.length>0;
+    con.classList.toggle("hidden",!show);
+    con.classList.toggle("sel",show&&first&&!con.classList.contains("disabled"));
+    if(show){
+      con.dataset.raw=raw;
+      $("#palConsoleLbl").textContent="Send \""+raw+"\" to server console";
+    }
+  }
+}
+function invokePal(){
+  const sel=$(".pitem.sel:not(.hidden)")||$(".pitem:not(.hidden)");
+  if(!sel) return;
+  if(sel.classList.contains("disabled")){toast("ᚦ "+(sel.title||"Unavailable right now"));return;}
+  closePal();
+  if(Native.available){
+    const cmd=sel.dataset.cmd;
+    if(sel.id==="palConsole"){
+      sendConsole(sel.dataset.raw||"");
+    }else if(cmd==="Restart server"){
+      smartRestart();
+    }else if(cmd==="Start server"){
+      const st=S.state||{};
+      if(!st.canStart){toast("ᚦ Start unavailable · already running?");}
+      else if(!S.prefs){toast("ᚦ no profile loaded · cannot start");}
+      else rpc("server.start",{prefs:S.prefs}).then(r=>{
+        if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
+      });
+    }else if(cmd==="Stop server"){
+      if(!(S.state||{}).canStop){toast("ᚦ Stop unavailable · server not running");}
+      else rpc("server.stop").then(r=>{
+        if(r!==FAIL){applyState(r);toast("ᛪ Hearth doused · server stopping");logLine("warn","[BakaLoader] stop requested - dousing the embers");}
+      });
+    }else if(cmd==="Save world now"){
+      sendConsole("save","ᛉ World save requested");
+    }else if(cmd==="Kill all monsters"){
+      sendConsole("baka_killall","ᚦ KillAll unleashed · players, pets & allies spared");
+    }else if(cmd==="Broadcast message…"){
+      promptModal(TT("Broadcast to all vikings"),"message shown in-game to everyone online",m=>{
+        rpc("server.broadcast",{message:m}).then(r=>{
+          if(r===FAIL) return;
+          toast(r?"ᛒ Broadcast delivered":"ᚦ Broadcast failed · RCON bound?");
+          logLine(r?"ok":"warn",r?"[RCON] broadcast delivered":"[RCON] broadcast failed - is RCON enabled and bound?");
+        });
+      });
+    }else if(cmd==="Send console command…"){
+      consoleModal();
+    }else if(cmd==="Update all mods"){
+      goPage("mods");
+      $("#updAllBtn").click();
+    }else if(cmd==="Kick player…"){
+      goPage("vikings");
+      toast("ᚲ Right-click a viking to kick");
+    }else if(cmd==="Copy join address"){
+      const addr=(S.extIp||"…")+":"+(S.prefs?.Port??2456);
+      navigator.clipboard?.writeText(addr).catch(()=>{});
+      toast("ᛟ Join address copied · "+addr);
+    }else if(cmd==="Open world folder"){
+      rpc("shell.open",{target:"saveData"});
+    }else if(cmd==="Open config folder"){
+      rpc("shell.open",{target:"config"});
+    }else if(cmd==="Open plugins folder"){
+      rpc("shell.open",{target:"plugins"});
+    }else if(cmd==="Open server logs"){
+      rpc("shell.open",{target:"logs"});
+    }
+    return;
+  }
+  toast("ᛒ "+sel.dataset.cmd+" · invoked");
+  logLine("cmd","> "+sel.dataset.cmd.toLowerCase().replace(/…/,""));
+}
+$("#cmdchip").addEventListener("click",openPal);
+palIn.addEventListener("input",()=>filterPal(palIn.value));
+palBg.addEventListener("click",e=>{if(e.target===palBg)closePal();});
+$$(".pitem").forEach(it=>it.addEventListener("click",()=>{
+  if(it.classList.contains("disabled")){toast("ᚦ "+(it.title||"Unavailable right now"));return;}
+  $$(".pitem").forEach(x=>x.classList.remove("sel")); it.classList.add("sel"); invokePal();
+}));
+document.addEventListener("keydown",e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();palOpen?closePal():openPal();return;}
+  if(!palOpen) return;
+  const vis=$$(".pitem:not(.hidden):not(.disabled)");
+  const idx=vis.findIndex(v=>v.classList.contains("sel"));
+  if(e.key==="Escape"){closePal();}
+  else if(e.key==="ArrowDown"){e.preventDefault();vis.forEach(v=>v.classList.remove("sel"));(vis[Math.min(idx+1,vis.length-1)]||vis[0])?.classList.add("sel");}
+  else if(e.key==="ArrowUp"){e.preventDefault();vis.forEach(v=>v.classList.remove("sel"));(vis[Math.max(idx-1,0)]||vis[0])?.classList.add("sel");}
+  else if(e.key==="Enter"){e.preventDefault();invokePal();}
+});
+
+/* ---------- TOASTS ---------- */
+function toast(msg){
+  msg=TT(msg); // plain-terminology swap (rune glyph token is never matched)
+  const t=document.createElement("div");
+  t.className="toast";
+  const parts=msg.split(" ");
+  t.innerHTML=`<span class="r">${parts[0]}</span><span>${esc(parts.slice(1).join(" "))}</span><span class="tt">${clock()}</span>`;
+  $("#toasts").appendChild(t);
+  setTimeout(()=>{t.classList.add("out");setTimeout(()=>t.remove(),320);},4200);
+}
+
+/* ---------- SAGA TERMINAL ---------- */
+const term=$("#term"); let filter="all";
+function logLine(kind,text){
+  const d=document.createElement("div");
+  d.className="ln "+kind; d.dataset.k=kind;
+  d.innerHTML=`<span class="t">${clock()}:${String(new Date().getSeconds()).padStart(2,"0")}</span>  <span class="${kind}">${esc(text)}</span>`;
+  d.style.display=(filter==="all"||filter===kind||(filter==="info"&&kind==="ok"))?"":"none";
+  term.appendChild(d);
+  while(term.children.length>160) term.firstChild.remove();
+  term.scrollTop=term.scrollHeight;
+}
+function classifyLog(line){
+  const l=(line||"").toLowerCase();
+  if(l.includes("error")||l.includes("exception")) return "err";
+  if(l.includes("warn")) return "warn";
+  return "info";
+}
+
+/* filter pills */
+$$(".fpill").forEach(p=>p.addEventListener("click",()=>{
+  $$(".fpill").forEach(x=>x.classList.remove("active")); p.classList.add("active");
+  filter=p.dataset.f;
+  $$("#term .ln").forEach(l=>{
+    const k=l.dataset.k;
+    l.style.display=(filter==="all"||filter===k||(filter==="info"&&k==="ok"))?"":"none";
+  });
+  term.scrollTop=term.scrollHeight;
+}));
+
+/* command input */
+const tIn=$("#termIn"), tCaret=$("#termCaret");
+tIn.addEventListener("input",()=>tCaret.style.display=tIn.value?"none":"");
+tIn.addEventListener("keydown",e=>{
+  if(e.key!=="Enter"||!tIn.value.trim())return;
+  const c=tIn.value.trim(); tIn.value=""; tCaret.style.display="";
+  if(Native.available){
+    // Real console command over RCON (sendConsole echoes "> cmd" + the reply itself)
+    sendConsole(c);
+    return;
+  }
+  logLine("cmd","> "+c);
+  setTimeout(()=>{
+    const r={save:"World saved ( Final_Sunset.db )  8.44 MB  in 205 ms",
+             players:"2 vikings online: Smithix, Van Hoenhiem",
+             help:"available rites: save · players · restart · spawn <item> · kick <viking>"}[c.split(" ")[0]]
+           ||"[RCON] command dispatched · ok";
+    logLine("ok",r);
+  },420);
+});
+
+/* ---------- CAPABILITY GATING (missing required mods) ----------
+   Native only: advertise which Thunderstore mods unlock the sleeping deeds
+   (banner on the VIKINGS page) and grey out the saga broadcast input. */
+function renderCaps(){
+  const missing=(Native.available&&Array.isArray(S.caps?.missing))?S.caps.missing:[];
+  const banner=$("#capsBanner");
+  if(banner){
+    if(missing.length){
+      $("#capsList").innerHTML=missing.map(m=>
+        `<div>ᛜ <b>${esc((m.Author?m.Author+"/":"")+(m.ModName||""))}</b> - ${esc(m.RequiredFor||m.Description||"")}</div>`
+      ).join("");
+      banner.style.display="";
+    }else banner.style.display="none";
+  }
+  const gated=Native.available&&!S.caps?.devcommands;
+  tIn.disabled=gated;
+  tIn.placeholder=gated
+    ?TT("broadcast sleeps - install the RCON + devcommands mods (see VIKINGS page)")
+    :"devcommand… (Enter to send)";
+}
+let capsInstallBusy=false;
+$("#capsInstallBtn")?.addEventListener("click",async()=>{
+  if(capsInstallBusy||!Native.available) return;
+  capsInstallBusy=true;
+  const btn=$("#capsInstallBtn");
+  btn.disabled=true; btn.textContent="ᚠ  Fetching from Thunderstore…";
+  const r=await rpc("caps.install");
+  if(r!==FAIL){
+    const ok=(r.results||[]).filter(x=>x.installed).length;
+    const still=(r.stillMissing||[]).length;
+    toast(still
+      ?"ᚦ installed "+ok+" · "+still+" still missing - check the Saga log"
+      :"ᚠ "+ok+" mod"+(ok===1?"":"s")+" installed · loads on the next server start");
+    const caps=await rpc("caps.get");
+    if(caps!==FAIL&&caps) S.caps=caps;
+  }
+  btn.disabled=false; btn.textContent="ᚠ\u00a0 Install missing mods";
+  capsInstallBusy=false;
+  renderCaps();
+});
+
+/* ---------- TOGGLES ---------- */
+$$("[data-t]").forEach(t=>t.addEventListener("click",()=>{t.classList.toggle("on");syncAdvGates();}));
+
+/* ---------- UPKEEP (app self-update + start with Windows) ---------- */
+$("#upkeepHead").addEventListener("click",()=>$("#upkeepCard").classList.toggle("open"));
+
+/* WORLD hall: Advanced Rites + Directories fold like the Upkeep card */
+["secRites","secDirs"].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener("click",()=>el.classList.toggle("open"));
+});
+async function initUpkeep(){
+  const up=await rpc("userprefs.get");
+  if(up!==FAIL&&up){
+    setT("tAutoUpdApp",up.AutoUpdateBakaLoader);
+    setT("tStartWin",up.StartWithWindows);
+    setT("tShareStats",up.ShareAnonymousStats);
+    setT("tPlainTerms",up.PlainTerminology);
+    PLAIN=!!up.PlainTerminology;
+    if(PLAIN) applyTerms();
+    if(up.AppVersion) $("#blVersion").textContent="v"+up.AppVersion;
+  }
+  /* the generic [data-t] handler already flipped .on before these fire, so just persist */
+  const save=()=>rpc("userprefs.save",{prefs:{AutoUpdateBakaLoader:T("tAutoUpdApp"),StartWithWindows:T("tStartWin"),ShareAnonymousStats:T("tShareStats"),PlainTerminology:T("tPlainTerms")}});
+  $("#tAutoUpdApp").addEventListener("click",save);
+  $("#tStartWin").addEventListener("click",save);
+  $("#tShareStats").addEventListener("click",save);
+  $("#tPlainTerms").addEventListener("click",()=>{PLAIN=T("tPlainTerms");save();applyTerms();});
+}
+
+/* ---------- CONTEXT MENU (live, JS-positioned) ---------- */
+const ctxEl=$("#ctxMenu");
+function ctxClose(){ctxEl.classList.remove("open");ctxEl.style.display="none";ctxEl._items=null;}
+function ctxOpen(x,y,head,items){
+  ctxEl.innerHTML=`<div class="ctxhead">${esc(head)}</div>`+items.map((it,i)=>it==="hr"?"<hr>":
+    `<div class="ci${it.danger?" danger":""}${it.disabled?" disabled":""}" data-i="${i}"${it.disabled&&it.tip?` title="${esc(it.tip)}"`:""}><span class="r">${it.r}</span><span class="cilbl">${esc(it.label)}</span></div>`
+  ).join("");
+  ctxEl._items=items;
+  ctxEl.style.left="0px"; ctxEl.style.top="0px";
+  ctxEl.style.display="block"; ctxEl.classList.add("open");
+  const r=ctxEl.getBoundingClientRect();
+  ctxEl.style.left=Math.max(4,Math.min(x,innerWidth-r.width-8))+"px";
+  ctxEl.style.top=Math.max(4,Math.min(y,innerHeight-r.height-8))+"px";
+}
+ctxEl.addEventListener("click",e=>{
+  const ci=e.target.closest(".ci"); if(!ci) return;
+  e.stopPropagation();
+  const it=(ctxEl._items||[])[+ci.dataset.i];
+  if(!it||it.disabled) return;
+  if(it.confirm&&!ci.classList.contains("confirm")){
+    ci.classList.add("confirm");
+    ci.querySelector(".cilbl").textContent="Confirm "+it.label.replace(/…$/,"")+"?";
+    return;
+  }
+  ctxClose(); it.fn();
+});
+document.addEventListener("click",e=>{if(!e.target.closest("#ctxMenu"))ctxClose();});
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape") return;
+  ctxClose();
+  if($("#modalBg").classList.contains("open")) modalClose();
+});
+window.addEventListener("blur",ctxClose);
+
+/* ---------- MODALS ---------- */
+const modalBg=$("#modalBg");
+function modalClose(){modalBg.classList.remove("open");modalBg.innerHTML="";}
+modalBg.addEventListener("mousedown",e=>{if(e.target===modalBg)modalClose();});
+function modalOpen(html){
+  modalBg.innerHTML=`<div class="modal">${html}</div>`;
+  modalBg.classList.add("open");
+  return modalBg.firstElementChild;
+}
+function promptModal(title,placeholder,onOk){
+  const m=modalOpen(
+    `<div class="mtitle">${esc(title)}</div>`+
+    `<input type="text" id="mIn" placeholder="${esc(placeholder)}" spellcheck="false" autocomplete="off">`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Cancel</button><button class="btn btn-ember btn-sm" id="mOk">Confirm</button></div>`);
+  const inp=m.querySelector("#mIn");
+  const ok=()=>{const v=inp.value.trim(); if(!v)return; modalClose(); onOk(v);};
+  m.querySelector("#mOk").addEventListener("click",ok);
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  inp.addEventListener("keydown",e=>{if(e.key==="Enter")ok();});
+  setTimeout(()=>inp.focus(),30);
+}
+function confirmModal(title,bodyHtml,okLabel,onOk){
+  const m=modalOpen(
+    `<div class="mtitle">${esc(title)}</div>`+
+    `<div class="mbody">${bodyHtml}</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Cancel</button><button class="btn btn-ember btn-sm" id="mOk">${esc(okLabel)}</button></div>`);
+  m.querySelector("#mOk").addEventListener("click",()=>{try{onOk(m);}finally{modalClose();}});
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+}
+/* Server-console picker: curated commands the modded server understands
+   (BakaLoaderCommander natives + devcommands staples). Clicking a complete
+   command sends it; commands that take arguments prefill the input instead. */
+const CONSOLE_CMDS=[
+  ["save","","write the world to disk"],
+  ["playerlist","","online vikings + their positions"],
+  ["baka_killall","","slay hostile mobs only · players, pets & allies spared"],
+  ["broadcast center ","<message>","banner message shown to everyone online"],
+  ["dmg ","<player> <amount>","damage a player · negative amount heals"],
+  ["tp ","<player> <x,z,y | player>","teleport a player to coords or another player"],
+  ["kick ","<player | hostId>","remove a viking from the server"],
+  ["baka_spawn ","<prefab> <x,z,y> [amount] [level]","spawn an object into the world"],
+  ["skiptime ","<seconds>","advance world time (devcommands)"],
+  ["sleep","","skip to morning (devcommands)"],
+];
+function consoleModal(){
+  const rows=CONSOLE_CMDS.map(([c,a,d])=>
+    `<div class="crow" data-cmd="${esc(c)}" data-complete="${a?"":"1"}">`+
+    `<span class="cc">${esc(c.trim())}${a?` <span class="ca">${esc(a)}</span>`:""}</span>`+
+    `<span class="cd">${esc(TT(d))}</span></div>`).join("");
+  const m=modalOpen(
+    `<div class="mtitle">Server console</div>`+
+    `<input type="text" id="mIn" placeholder="type a command, or pick one below…" spellcheck="false" autocomplete="off">`+
+    `<div class="clist">${rows}</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Cancel</button><button class="btn btn-ember btn-sm" id="mOk">Send</button></div>`);
+  const inp=m.querySelector("#mIn");
+  const ok=()=>{const v=inp.value.trim(); if(!v)return; modalClose(); sendConsole(v);};
+  m.querySelector("#mOk").addEventListener("click",ok);
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  inp.addEventListener("keydown",e=>{if(e.key==="Enter")ok();});
+  inp.addEventListener("input",()=>{
+    const q=inp.value.trim().toLowerCase();
+    m.querySelectorAll(".crow").forEach(r=>{
+      r.style.display=(!q||r.dataset.cmd.trim().toLowerCase().startsWith(q.split(" ")[0])||r.textContent.toLowerCase().includes(q))?"":"none";
+    });
+  });
+  m.querySelectorAll(".crow").forEach(r=>r.addEventListener("click",()=>{
+    if(r.dataset.complete){modalClose();sendConsole(r.dataset.cmd);return;}
+    inp.value=r.dataset.cmd;
+    inp.dispatchEvent(new Event("input"));
+    inp.focus();
+  }));
+  setTimeout(()=>inp.focus(),30);
+}
+
+/* ---------- NETWORK DRILL-DOWN (Network card click) ---------- */
+function netModal(){
+  const port=S.prefs?.Port??2456;
+  const addrRow=(label,val,copyable)=>
+    `<div class="drow"><span class="dk">${esc(label)}</span><span class="dv mono">${esc(val)}</span>`+
+    (copyable&&val&&!String(val).startsWith("-")?`<span class="copychip" data-copy="${esc(val)}">COPY</span>`:"")+`</div>`;
+  const n=S.net;
+  const asOf=n.at?new Date(n.at):null;
+  const stat=(k,v)=>`<div class="dstat"><div class="bigval" style="font-size:20px">${v}</div><div class="subval">${k}</div></div>`;
+  const online=S.players.filter(p=>p.status==="Online"||p.status==="Joining");
+  const sess=online.length
+    ?online.map(p=>`<div class="drow"><span class="dk">${esc(p.displayName)}</span><span class="dv mono">${esc(p.Platform||"?")} · ${esc(p.PlayerId||"")}</span><span class="dv" style="flex:0 0 auto">joined ${fmtT(p.lastStatusChange)}</span></div>`).join("")
+    :`<div class="subval" style="padding:4px 2px">${TT("no vikings connected")}</div>`;
+  const m=modalOpen(
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᚾ</span>Network</div>`+
+    `<div class="dsec">Addresses</div>`+
+    addrRow("Public",(S.extIp||"-")+":"+port,true)+
+    addrRow("LAN",(S.intIp||"-")+":"+port,true)+
+    addrRow("Local","127.0.0.1:"+port,true)+
+    (S.invite?addrRow("Crossplay invite",S.invite,true):"")+
+    addrRow("RCON",S.prefs?.RconEnabled?"127.0.0.1:"+(S.prefs.RconPort??25575):"off",false)+
+    addrRow("Steam query port",String(port+1),false)+
+    `<div class="dsec">Traffic <span class="subval" style="text-transform:none;letter-spacing:0">· reported by the server every ~10 min${asOf?" · as of "+pad(asOf.getHours())+":"+pad(asOf.getMinutes()):""}</span></div>`+
+    `<div class="dstats">`+
+      stat("connections",n.conns??"-")+
+      stat("sent /s",n.sent!=null?fmtBytes(n.sent):"-")+
+      stat("recv /s",n.recv!=null?fmtBytes(n.recv):"-")+
+      stat("world objects (ZDOs)",n.zdos!=null?n.zdos.toLocaleString():"-")+
+    `</div>`+
+    (n.at?"":`<div class="subval" style="margin:2px 0 6px">no report yet - appears in the first ~10 min after the server starts</div>`)+
+    `<div class="dsec">Sessions</div>`+sess+
+    `<div class="subval" style="margin-top:8px">per-player ping isn't reported by the dedicated server - players can check theirs in-game with F2</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  m.querySelectorAll("[data-copy]").forEach(c=>c.addEventListener("click",()=>{
+    navigator.clipboard?.writeText(c.dataset.copy);
+    toast("ᛜ Copied · "+c.dataset.copy);
+  }));
+}
+
+/* ---------- SAVES DRILL-DOWN (World Saves card click) ---------- */
+async function savesModal(){
+  const world=S.prefs?.WorldName||"";
+  let info=null;
+  if(Native.available&&world){
+    const r=await rpc("world.info",{world});
+    if(r!==FAIL) info=r;
+  }
+  const frow=f=>`<div class="drow"><span class="dk mono">${esc(f.name)}</span><span class="dv mono">${fmtBytes(f.sizeBytes)}</span><span class="dv" style="flex:0 0 auto">${fmtT(f.modifiedUtc)}</span></div>`;
+  const files=info?.files?.length?info.files.map(frow).join(""):`<div class="subval" style="padding:4px 2px">world files not found yet - created on first save</div>`;
+  const bk=info?.backups||[];
+  const bkRows=bk.length
+    ?bk.slice(-5).reverse().map(frow).join("")+(bk.length>5?`<div class="subval" style="padding:2px 2px">…and ${bk.length-5} older</div>`:"")
+    :`<div class="subval" style="padding:4px 2px">no backups found</div>`;
+  const avg=S.saveDur.length?Math.round(S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length):null;
+  const m=modalOpen(
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛉ</span>World Saves · ${esc(world||"-")}</div>`+
+    `<div class="dsec">Rhythm</div>`+
+    `<div class="dstats">`+
+      `<div class="dstat"><div class="bigval" style="font-size:20px">${$("#saveCountdown").textContent}</div><div class="subval">until next save</div></div>`+
+      `<div class="dstat"><div class="bigval" style="font-size:20px">${Math.round((S.saveInterval??600)/60)} min</div><div class="subval">save interval</div></div>`+
+      `<div class="dstat"><div class="bigval" style="font-size:20px">${S.lastSaveAt?pad(S.lastSaveAt.getHours())+":"+pad(S.lastSaveAt.getMinutes()):"-"}</div><div class="subval">last save</div></div>`+
+      `<div class="dstat"><div class="bigval" style="font-size:20px">${avg!=null?avg+" ms":"-"}</div><div class="subval">avg write (last ${S.saveDur.length||"-"})</div></div>`+
+    `</div>`+
+    `<div class="dsec">World files</div>`+files+
+    `<div class="dsec">Backups <span class="subval" style="text-transform:none;letter-spacing:0">· ${bk.length} on disk</span></div>`+bkRows+
+    (info?.folder?`<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(info.folder)}</div>`:"")+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mOpenWorlds">Open folder</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  m.querySelector("#mOpenWorlds").addEventListener("click",()=>{
+    if(!Native.available){toast("ᛃ Preview · folder opens in the app");return;}
+    rpc("shell.open",{target:"saveData"});
+  });
+}
+
+/* card click wiring (chips inside the cards must not trigger the drill-down) */
+$("#netCard")?.addEventListener("click",e=>{if(!e.target.closest(".copychip"))netModal();});
+$("#savesCard")?.addEventListener("click",e=>{if(!e.target.closest(".copychip"))savesModal();});
+
+/* ---------- VIKINGS (players) ---------- */
+/* RCON target mirrors MainWindow.GetRconTargetName: LastStatusCharacter || PlayerName.
+   The DTO embeds the character as "Name (Char)" in displayName. */
+function playerTarget(p){
+  const m=/\(([^)]+)\)\s*$/.exec(p.displayName||"");
+  return (m&&m[1])||p.PlayerName||p.PlayerId;
+}
+function renderPlayers(){
+  if(!Native.available) return;
+  const rank=s=>({Online:0,Joining:1,Leaving:1}[s]??2);
+  const list=[...S.players].sort((a,b)=>rank(a.status)-rank(b.status)||(a.displayName||"").localeCompare(b.displayName||""));
+  const online=list.filter(p=>p.status==="Online").length;
+  $("#vikSub").textContent=TT(online+" of "+list.length+" raiding · right-click a viking for deeds");
+  $("#homeVikPill").textContent=online+" online";
+  $("#homeVik").innerHTML=list.slice(0,3).map(p=>{
+    const on=p.status==="Online";
+    return `<div class="vrow"${on?"":' style="opacity:.4"'}><span class="vdot ${on?"on":"off"}"></span><span class="vname">${esc(p.displayName)}</span><span class="vsub">${on?"joined":"seen"} ${fmtT(p.lastStatusChange)}</span></div>`;
+  }).join("")||`<div class="vrow" style="opacity:.5"><span class="vdot off"></span><span class="vname">${TT("No vikings yet")}</span><span class="vsub">awaiting arrivals</span></div>`;
+  const tb=$("#vikTable");
+  tb.innerHTML=list.map((p,i)=>{
+    const pill=p.status==="Online"?"green":(p.status==="Offline"?"blue":"amber");
+    return `<tr data-i="${i}"${p.status==="Offline"?' class="dim"':""}>`+
+      `<td><span class="vdot ${p.status==="Online"?"on":"off"}" style="display:inline-block;margin-right:9px"></span><strong>${esc(p.displayName)}</strong></td>`+
+      `<td><span class="pill ${pill}">${esc(p.status)}</span></td>`+
+      `<td class="mono">${fmtT(p.lastStatusChange)}</td>`+
+      `<td class="mono">-</td>`+
+      `<td class="mono" style="color:var(--ember)">⋯</td></tr>`;
+  }).join("")||`<tr><td colspan="5" class="mono" style="color:var(--bone-dim)">${TT("No vikings have set sail for this realm yet.")}</td></tr>`;
+  tb._list=list;
+}
+async function refreshPlayers(){
+  const r=await rpc("players.list");
+  if(r===FAIL||!Array.isArray(r)) return;
+  S.players=r;
+  renderPlayers();
+}
+$("#vikTable").addEventListener("contextmenu",e=>{
+  if(!Native.available) return;
+  const tr=e.target.closest("tr[data-i]"); if(!tr) return;
+  e.preventDefault();
+  const p=($("#vikTable")._list||[])[+tr.dataset.i]; if(!p) return;
+  openPlayerMenu(e.clientX,e.clientY,p);
+});
+async function openPlayerMenu(x,y,p){
+  const id=p.PlayerId, tgt=playerTarget(p);
+  const [isAdmin,isPerm,isBan]=await Promise.all([
+    rpc("players.isListed",{list:"Admin",id}),
+    rpc("players.isListed",{list:"Permitted",id}),
+    rpc("players.isListed",{list:"Banned",id}),
+  ]);
+  const rcon=!!S.caps.rcon, dev=!!S.caps.devcommands;
+  const noR="requires the RCON mod", noD="requires the devcommands mods";
+  const items=[
+    {r:"ᛏ",label:"Heal",disabled:!rcon,tip:noR,fn:()=>doPlayerAct("players.heal",{target:tgt},"Healed "+tgt)},
+    {r:"ᚦ",label:"Smite",danger:true,confirm:true,disabled:!rcon,tip:noR,fn:()=>doPlayerAct("players.smite",{target:tgt},"Smote "+tgt)},
+    {r:"ᛒ",label:"Teleport…",disabled:!rcon,tip:noR,
+      fn:()=>promptModal("Teleport "+tgt,"destination - player name, or x,z,y coords (spaces fine)",
+        v=>doPlayerAct("players.teleport",{target:tgt,destination:v},"Teleported "+tgt+" → "+v))},
+    {r:"ᛟ",label:"Spawn item at…",disabled:!dev,tip:noD,fn:()=>openSpawnModal(p)},
+    "hr",
+    {r:"ᚨ",label:isAdmin===true?"Demote from admin":"Promote to admin",fn:()=>setPlayerList(p,"Admin",isAdmin!==true)},
+    {r:"ᚹ",label:isPerm===true?"Remove from whitelist":"Permit (whitelist)",fn:()=>setPlayerList(p,"Permitted",isPerm!==true)},
+    "hr",
+    {r:"ᚲ",label:"Kick",danger:true,confirm:true,disabled:!rcon,tip:noR,fn:()=>doPlayerAct("players.kick",{target:tgt},"Kicked "+tgt)},
+    {r:"ᛉ",label:isBan===true?"Unban":"Ban",danger:isBan!==true,confirm:isBan!==true,fn:()=>doBan(p,isBan===true,tgt)},
+    "hr",
+    {r:"ᛁ",label:"Copy ID",fn:()=>{navigator.clipboard?.writeText(id||"").catch(()=>{});toast("ᛁ ID copied · "+id);}},
+  ];
+  if(p.status==="Offline"){
+    items.push({r:"ᛪ",label:"Remove offline player",danger:true,confirm:true,
+      fn:async()=>{const r=await rpc("players.remove",{key:p.key}); if(r===FAIL)return; toast("ᛪ Removed "+(p.displayName||id)); refreshPlayers();}});
+  }
+  ctxOpen(x,y,p.displayName||id||"Viking",items);
+}
+async function doPlayerAct(method,params,okMsg){
+  const r=await rpc(method,params);
+  if(r===FAIL) return;
+  if(r===false){toast("ᚦ command not delivered · server running & RCON bound?");return;}
+  toast("ᛒ "+okMsg);
+  logLine("cmd","> "+method.replace("players.","")+" "+(params.target||params.playerName||""));
+}
+async function setPlayerList(p,list,on){
+  const r=await rpc("players.setList",{list,id:p.PlayerId,on});
+  if(r===FAIL) return;
+  toast("ᚨ "+(on?"Added to":"Removed from")+" "+list.toLowerCase()+" list · "+(p.displayName||p.PlayerId));
+  logLine("info","[BakaLoader] "+list.toLowerCase()+" list "+(on?"+ ":"- ")+(p.displayName||p.PlayerId));
+}
+async function doBan(p,unban,tgt){
+  const r=await rpc("players.setList",{list:"Banned",id:p.PlayerId,on:!unban});
+  if(r===FAIL) return;
+  toast(unban?("ᛉ Unbanned "+tgt):("ᛉ Banned "+tgt));
+  logLine(unban?"info":"warn","[BakaLoader] "+(unban?"unbanned ":"banned ")+(p.displayName||p.PlayerId));
+  if(!unban&&S.caps.rcon&&p.status==="Online"){
+    const k=await rpc("players.kick",{target:tgt});
+    if(k!==FAIL&&k) logLine("warn","[BakaLoader] kicked "+tgt+" to enforce ban");
+  }
+}
+/* spawn-item picker (items.search) */
+function openSpawnModal(p){
+  const tgt=playerTarget(p);
+  const m=modalOpen(
+    `<div class="mtitle">Spawn item at ${esc(tgt)}</div>`+
+    `<input type="text" id="spQ" placeholder="search items &amp; creatures…" spellcheck="false" autocomplete="off">`+
+    `<div class="pick-list" id="spList"></div>`+
+    `<div class="mrow"><label>Amount</label><input type="number" id="spAmt" value="1" min="1" max="9999">`+
+    `<label id="spLqLbl">Level</label><input type="number" id="spLq" value="0" min="0" max="5" disabled></div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Cancel</button><button class="btn btn-ember btn-sm" id="mOk" disabled>Spawn</button></div>`);
+  const list=m.querySelector("#spList"), q=m.querySelector("#spQ"),
+        amt=m.querySelector("#spAmt"), lq=m.querySelector("#spLq"),
+        lqLbl=m.querySelector("#spLqLbl"), okB=m.querySelector("#mOk");
+  let sel=null, searchSeq=0;
+  async function search(){
+    const my=++searchSeq;
+    const r=await rpc("items.search",{query:q.value.trim(),limit:100});
+    if(r===FAIL||my!==searchSeq) return;
+    const res=r.results||[];
+    list.innerHTML=res.map((it,i)=>
+      `<div class="pick-item" data-i="${i}"><span>${esc(it.Label)}</span><span class="pk">${esc(it.category||"")}</span><span class="pm">${esc(it.PrefabName)}</span></div>`
+    ).join("")||`<div class="pick-item" style="opacity:.5;cursor:default">no matches</div>`;
+    list._res=res;
+    sel=null; okB.disabled=true;
+  }
+  q.addEventListener("input",()=>{clearTimeout(q._t);q._t=setTimeout(search,150);});
+  list.addEventListener("click",e=>{
+    const el=e.target.closest(".pick-item[data-i]"); if(!el) return;
+    list.querySelectorAll(".pick-item").forEach(x=>x.classList.remove("sel"));
+    el.classList.add("sel");
+    sel=list._res[+el.dataset.i];
+    okB.disabled=false;
+    const hasLq=!!(sel.HasLevel||sel.HasQuality);
+    lq.disabled=!hasLq;
+    lqLbl.textContent=sel.HasLevel?"Level":"Quality";
+    lq.max=sel.HasLevel?"2":"5";
+    if(!hasLq) lq.value=0;
+    else if(+lq.value>+lq.max) lq.value=lq.max;
+  });
+  okB.addEventListener("click",async()=>{
+    if(!sel) return;
+    const amount=Math.min(9999,Math.max(1,parseInt(amt.value,10)||1));
+    const levelOrQuality=lq.disabled?0:Math.max(0,parseInt(lq.value,10)||0);
+    const item=sel;
+    modalClose();
+    const r=await rpc("players.spawn",{playerName:tgt,prefab:item.PrefabName,amount,levelOrQuality});
+    if(r===FAIL) return;
+    if(r===false){toast("ᚦ spawn failed · server running & player online?");return;}
+    toast("ᛟ Spawned "+amount+"× "+item.Label+" at "+tgt);
+    logLine("cmd","> spawn "+item.PrefabName+" ×"+amount+" @ "+tgt);
+  });
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  setTimeout(()=>q.focus(),30);
+  search();
+}
+
+/* ---------- WORLD (profile config) ---------- */
+const T=id=>$("#"+id).classList.contains("on");
+const setT=(id,on)=>$("#"+id).classList.toggle("on",!!on);
+/* toggle → parameter-field gating (mirrors the WinForms enable/disable behavior) */
+function syncAdvGates(){
+  const gate=(inputId,on)=>{
+    const el=$("#"+inputId); if(!el) return;
+    el.disabled=!on;
+    el.closest(".field")?.classList.toggle("gated",!on);
+  };
+  gate("fEmptyDelay",T("tEmpty"));
+  gate("fSchedHours",T("tSched"));
+  gate("fCrashDelay",T("tCrash"));
+  gate("fRconPort",T("tRcon"));
+  gate("fRconPw",T("tRcon"));
+  updAdvLabels();
+}
+function updAdvLabels(){
+  $("#tEmptyLbl").textContent="Restart when empty for "+($("#fEmptyDelay").value.trim()||"5")+" min";
+  $("#tSchedLbl").textContent="Every "+($("#fSchedHours").value.trim()||"6")+" h with in-game countdown";
+  $("#tRconLbl").textContent=T("tRcon")?("Bound on port "+($("#fRconPort").value.trim()||"25575")):"Not bound";
+}
+["fEmptyDelay","fSchedHours","fRconPort"].forEach(id=>$("#"+id).addEventListener("input",updAdvLabels));
+/* show/hide password chips */
+function wireEye(chipId,inputId){
+  $("#"+chipId).addEventListener("click",()=>{
+    const i=$("#"+inputId), show=i.type==="password";
+    i.type=show?"text":"password";
+    $("#"+chipId).textContent=show?"HIDE":"SHOW";
+  });
+}
+wireEye("eyePw","fPassword"); wireEye("eyeRcon","fRconPw");
+/* directory Open buttons (shell.open - native only) */
+$("#btnOpenSrv").addEventListener("click",()=>{
+  if(Native.available) rpc("shell.open",{target:"serverDir"});
+  else toast("ᛃ Server folder · preview only");
+});
+$("#btnOpenSave").addEventListener("click",()=>{
+  if(Native.available) rpc("shell.open",{target:"saveData"});
+  else toast("ᛃ Save data folder · preview only");
+});
+syncAdvGates(); // initial gate state from the static markup (both modes)
+function renderWorldForm(){
+  const p=S.prefs; if(!p) return;
+  $("#fName").value=p.Name??"";
+  $("#fPassword").value=p.Password??"";
+  $("#fPort").value=p.Port??2456;
+  $("#fSaveInterval").value=p.SaveInterval??600;
+  $("#fBackups").value=p.BackupCount??4;
+  $("#fBackShort").value=p.BackupIntervalShort??600;
+  $("#fBackLong").value=p.BackupIntervalLong??43200;
+  $("#fEmptyDelay").value=p.EmptyServerRestartDelayMinutes??5;
+  $("#fSchedHours").value=p.ScheduledRestartHours??6;
+  $("#fCrashDelay").value=p.AutoRestartDelay??10;
+  $("#fRconPort").value=p.RconPort??25575;
+  $("#fRconPw").value=p.RconPassword??"";
+  $("#fServerExe").value=p.ServerExePath??"";
+  $("#fSaveDir").value=p.SaveDataFolderPath??"";
+  $("#fArgs").value=p.AdditionalArgs??"";
+  setT("tPublic",p.Public); setT("tCrossplay",p.Crossplay);
+  setT("tEmpty",p.EmptyServerRestart); setT("tSched",p.ScheduledRestart); setT("tRcon",p.RconEnabled);
+  setT("tLogs",p.WriteServerLogsToFile); setT("tAutoStart",p.AutoStart); setT("tCrash",p.AutoRestart);
+  syncAdvGates();
+  renderWorldSelect();
+}
+async function renderWorldSelect(){
+  const cur=S.prefs?.WorldName??"";
+  const r=await rpc("worlds.list");
+  const names=[...new Set([...(Array.isArray(r)&&r!==FAIL?r:[]),...(cur?[cur]:[])])];
+  $("#fWorld").innerHTML=names.map(n=>`<option${n===cur?" selected":""}>${esc(n)}</option>`).join("");
+}
+$("#saveCfgBtn").addEventListener("click",async()=>{
+  if(!Native.available){toast("ᛉ Config saved · runes etched");return;}
+  const name=S.profileName||S.prefs?.ProfileName||"Default";
+  // fetch fresh, mutate only form-controlled fields, send the WHOLE object back
+  const cur=await rpc("profiles.get",{name});
+  if(cur===FAIL) return;
+  // int fields: parse, fall back to the freshly-fetched previous value on NaN
+  const num=(id,prev)=>{const v=parseInt($("#"+id).value,10);return Number.isNaN(v)?prev:v;};
+  const prefs={...cur,
+    Name:$("#fName").value.trim(),
+    WorldName:$("#fWorld").value,
+    Password:$("#fPassword").value,
+    Port:num("fPort",cur.Port??2456),
+    Public:T("tPublic"), Crossplay:T("tCrossplay"),
+    SaveInterval:num("fSaveInterval",cur.SaveInterval??600),
+    BackupCount:num("fBackups",cur.BackupCount??4),
+    BackupIntervalShort:num("fBackShort",cur.BackupIntervalShort??600),
+    BackupIntervalLong:num("fBackLong",cur.BackupIntervalLong??43200),
+    WriteServerLogsToFile:T("tLogs"), AutoStart:T("tAutoStart"),
+    AutoRestart:T("tCrash"), AutoRestartDelay:num("fCrashDelay",cur.AutoRestartDelay??10),
+    EmptyServerRestart:T("tEmpty"), EmptyServerRestartDelayMinutes:num("fEmptyDelay",cur.EmptyServerRestartDelayMinutes??5),
+    ScheduledRestart:T("tSched"), ScheduledRestartHours:num("fSchedHours",cur.ScheduledRestartHours??6),
+    RconEnabled:T("tRcon"), RconPort:num("fRconPort",cur.RconPort??25575),
+    RconPassword:$("#fRconPw").value,
+    ServerExePath:$("#fServerExe").value.trim(),
+    SaveDataFolderPath:$("#fSaveDir").value.trim(),
+    AdditionalArgs:$("#fArgs").value,
+  };
+  const r=await rpc("profiles.save",{name,prefs});
+  if(r===FAIL) return;
+  S.prefs=r; S.profileName=r.ProfileName; S.saveInterval=r.SaveInterval??600;
+  renderAllFromPrefs();
+  toast("ᛉ Config saved · profile "+r.ProfileName);
+  logLine("ok","[BakaLoader] profile '"+r.ProfileName+"' saved");
+});
+function renderAllFromPrefs(){
+  if(!S.prefs) return;
+  $("#hearthSub").textContent=(S.prefs.WorldName||"-")+" · dedicated server ops";
+  if(S.prefs.Name) $("#tbSrv").textContent=S.prefs.Name.toUpperCase();
+  $("#sbWorld").textContent=S.prefs.WorldName||"-";
+  $("#sbRcon").textContent=S.prefs.RconEnabled?String(S.prefs.RconPort??25575):"off";
+  $("#sbRconSeg").classList.toggle("dim",!S.prefs.RconEnabled);
+  renderWorldForm();
+  renderNet();
+  renderHearthNative();
+}
+
+/* ---------- FIRST-LAUNCH SETUP WIZARD ---------- */
+const WIZ={step:0,exe:"",save:"",exeValid:false,status:{}};
+
+function wizardOpen(status){
+  Object.assign(WIZ,{step:0,exe:"",save:"",exeValid:false,status:status||{}});
+  wizardRender();
+}
+
+async function wizValidate(kind,path){
+  const v=(path||"").trim();
+  if(!v) return kind==="dir"; /* blank save dir = keep the default; blank exe = invalid */
+  if(!Native.available) return kind==="exe"?/valheim_server\.exe$/i.test(v):true;
+  const r=await rpc("setup.validate",{kind,path:v});
+  return r!==FAIL&&!!r?.valid;
+}
+
+async function wizFinish(skip){
+  modalClose();
+  if(!Native.available){toast(skip?"ᛉ preview · setup skipped":"ᛉ preview · setup complete");return;}
+  const r=await rpc("setup.complete",skip?{}:{serverExePath:WIZ.exe.trim(),saveDataFolderPath:WIZ.save.trim()});
+  if(r===FAIL) return;
+  toast(skip?"ᛉ Setup skipped · set paths any time in the WORLD hall"
+            :"ᛉ Setup complete · may the voyage be bold");
+  logLine("ok","[BakaLoader] first-time setup "+(skip?"skipped":"completed"));
+}
+
+function wizardRender(){
+  const names=["WELCOME","SERVER","SAVES","DONE"];
+  const steps=`<div class="wiz-steps">`+names.map((n,i)=>
+    `<span class="ws${i===WIZ.step?" on":i<WIZ.step?" done":""}"><b>${i+1}</b>${n}</span>`).join("")+`</div>`;
+  const dflt=WIZ.status.defaultSavePath||"%USERPROFILE%\\AppData\\LocalLow\\IronGate\\Valheim";
+  let body="",nav="";
+
+  if(WIZ.step===0){
+    body=
+      `<div class="mtitle">Welcome to BakaLoader</div>`+
+      `<div class="wiz-help">Before the first voyage, BakaLoader needs to know where two things live on this machine. This takes under a minute.</div>`+
+      `<div class="wiz-paths">`+
+      `<div><span class="r">ᛞ</span><strong>Server executable</strong> · <code>valheim_server.exe</code>, installed by the free <em>Valheim Dedicated Server</em> tool in your Steam library.</div>`+
+      `<div><span class="r">ᛃ</span><strong>Save data folder</strong> · where worlds are kept. Most people keep Valheim's default.</div>`+
+      `</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wSkip">Skip for now</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wNext">Begin</button>`;
+  }else if(WIZ.step===1){
+    body=
+      `<div class="mtitle">Find the server executable</div>`+
+      `<div class="wiz-help">Usually inside a Steam library at<br><code>...\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe</code><br>Paste the full path below, or let BakaLoader search your drives.</div>`+
+      `<div class="field"><label>Path to valheim_server.exe</label><input type="text" id="wizExe" spellcheck="false" autocomplete="off" placeholder="D:\\SteamLibrary\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe"></div>`+
+      `<div class="wiz-stat dim" id="wizExeStat">paste a path, or press Detect</div>`+
+      `<div id="wizFound"></div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button>`+
+        `<button class="btn btn-ghost btn-sm" id="wDetect">ᚱ Detect</button><span class="grow"></span>`+
+        `<button class="btn btn-ghost btn-sm" id="wSkip">Skip for now</button>`+
+        `<button class="btn btn-ember btn-sm" id="wNext" disabled>Next</button>`;
+  }else if(WIZ.step===2){
+    body=
+      `<div class="mtitle">Save data folder</div>`+
+      `<div class="wiz-help">Where Valheim keeps worlds and player data. <strong>Leave blank to use Valheim's default</strong> (recommended):<br><code>${esc(dflt)}</code></div>`+
+      `<div class="field"><label>Save data folder</label><input type="text" id="wizSave" spellcheck="false" autocomplete="off" placeholder="blank = Valheim default"></div>`+
+      `<div class="wiz-stat ok" id="wizSaveStat">using the Valheim default</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wNext">Next</button>`;
+  }else{
+    const exe=WIZ.exe.trim(),save=WIZ.save.trim();
+    body=
+      `<div class="mtitle">All set</div>`+
+      `<div class="wiz-sum">`+
+      `<div class="row"><span class="k">Server executable</span><span class="v">${esc(exe||"(not set · configure later in the WORLD hall)")}</span></div>`+
+      `<div class="row"><span class="k">Save data folder</span><span class="v">${esc(save||"Valheim default")}</span></div>`+
+      `</div>`+
+      `<div class="wiz-help">`+TT("Both can be changed any time in the <strong>WORLD</strong> hall under <strong>DIRECTORIES</strong>. Name your server, pick a world, and sail forth.")+`</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wNext">Finish</button>`;
+  }
+
+  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`);
+  m.classList.add("wiz");
+
+  const on=(sel,fn)=>{const el=m.querySelector(sel);if(el)el.addEventListener("click",fn);};
+  on("#wBack",()=>{WIZ.step--;wizardRender();});
+  on("#wSkip",()=>wizFinish(true));
+  on("#wNext",async()=>{
+    if(WIZ.step===3){wizFinish(false);return;}
+    if(WIZ.step===2){
+      const ok=await wizValidate("dir",WIZ.save);
+      if(!ok){
+        const s=m.querySelector("#wizSaveStat");
+        s.className="wiz-stat bad";s.textContent="ᚦ folder not found · clear the field to use the default";
+        return;
+      }
+    }
+    WIZ.step++;wizardRender();
+  });
+
+  if(WIZ.step===1){
+    const inp=m.querySelector("#wizExe"),stat=m.querySelector("#wizExeStat"),next=m.querySelector("#wNext");
+    inp.value=WIZ.exe;
+    let t=null;
+    const check=()=>{
+      WIZ.exe=inp.value;
+      clearTimeout(t);
+      if(!inp.value.trim()){
+        WIZ.exeValid=false;next.disabled=true;
+        stat.className="wiz-stat dim";stat.textContent="paste a path, or press Detect";
+        return;
+      }
+      stat.className="wiz-stat dim";stat.textContent="checking…";
+      t=setTimeout(async()=>{
+        const ok=await wizValidate("exe",inp.value);
+        WIZ.exeValid=ok;next.disabled=!ok;
+        stat.className="wiz-stat "+(ok?"ok":"bad");
+        stat.textContent=ok?"ᛉ found · that's the one"
+                           :"ᚦ not found · the path must point at an existing valheim_server.exe";
+      },250);
+    };
+    inp.addEventListener("input",check);
+    if(WIZ.exe) check();
+    setTimeout(()=>inp.focus(),30);
+    on("#wDetect",async()=>{
+      stat.className="wiz-stat dim";stat.textContent="searching your drives…";
+      const r=Native.available?await rpc("setup.detect")
+        :["C:\\Program Files (x86)\\Steam\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe",
+          "D:\\SteamLibrary\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe"];
+      const list=r!==FAIL&&Array.isArray(r)?r:[];
+      const box=m.querySelector("#wizFound");
+      if(!list.length){
+        stat.className="wiz-stat bad";
+        stat.textContent="ᚦ no install found · install the Valheim Dedicated Server tool on Steam, or paste the path by hand";
+        box.innerHTML="";return;
+      }
+      stat.className="wiz-stat ok";
+      stat.textContent="ᛉ found "+list.length+(list.length===1?" install · click to use it":" installs · click one to use it");
+      box.innerHTML=`<div class="wiz-found">`+list.map(pth=>`<button class="wf" data-p="${esc(pth)}">${esc(pth)}</button>`).join("")+`</div>`;
+      box.querySelectorAll(".wf").forEach(b=>b.addEventListener("click",()=>{inp.value=b.dataset.p;check();}));
+    });
+  }
+  if(WIZ.step===2){
+    const inp=m.querySelector("#wizSave"),stat=m.querySelector("#wizSaveStat");
+    inp.value=WIZ.save;
+    let t=null;
+    inp.addEventListener("input",()=>{
+      WIZ.save=inp.value;
+      clearTimeout(t);
+      if(!inp.value.trim()){stat.className="wiz-stat ok";stat.textContent="using the Valheim default";return;}
+      stat.className="wiz-stat dim";stat.textContent="checking…";
+      t=setTimeout(async()=>{
+        const ok=await wizValidate("dir",inp.value);
+        stat.className="wiz-stat "+(ok?"ok":"bad");
+        stat.textContent=ok?"ᛉ folder found":"ᚦ folder not found · clear the field to use the default";
+      },250);
+    });
+    setTimeout(()=>inp.focus(),30);
+  }
+}
+
+/* World hall: red "run first-time setup again" button (double confirm) */
+$("#btnSetupReset").addEventListener("click",()=>{
+  confirmModal("Run first-time setup again?",
+    `<p>This clears the saved setup answers (server executable and save folder) and reopens the guided setup.</p>`+
+    `<p><strong>No server files or worlds on disk are touched.</strong></p>`,
+    "Continue",()=>{
+    /* confirmModal closes itself after onOk - defer the second confirm past that close */
+    setTimeout(()=>{
+      confirmModal("Are you certain?",
+        `<p>Setup answers reset to their defaults, including any per-profile directory overrides. Your server install and worlds stay exactly where they are.</p>`,
+        "Reset setup",async()=>{
+        if(!Native.available){toast("ᛉ preview · setup reset");setTimeout(()=>wizardOpen({}),60);return;}
+        const st=await rpc("setup.reset");
+        if(st===FAIL) return;
+        toast("ᛉ Setup reset · paths restored to defaults");
+        logLine("warn","[BakaLoader] first-time setup was reset");
+        const cur=await rpc("profiles.get",{name:S.profileName||S.prefs?.ProfileName||"Default"});
+        if(cur!==FAIL&&cur){S.prefs=cur;renderAllFromPrefs();}
+        setTimeout(()=>wizardOpen(st),60);
+      });
+    },40);
+  });
+});
+
+/* ---------- RUNES (BepInEx .cfg editor) ---------- */
+const CFG={files:[],file:null,dirty:false,mock:null};
+async function cfgListFiles(){
+  if(!Native.available) return Object.keys(CFG.mock||{});
+  const r=await rpc("config.list");
+  return (r===FAIL||!Array.isArray(r))?null:r;
+}
+async function cfgRead(file){
+  if(!Native.available) return CFG.mock?.[file]??"";
+  const r=await rpc("config.read",{file});
+  return r===FAIL?null:String(r??"");
+}
+async function cfgWrite(file,text){
+  // NOTE: Bridge.cs config.write reads p.Value<string>("text") - param is `text`, not `content`
+  if(!Native.available){if(CFG.mock)CFG.mock[file]=text;return true;}
+  const r=await rpc("config.write",{file,text});
+  return r!==FAIL;
+}
+function renderCfgList(){
+  $("#runesSub").textContent=TT(CFG.files.length+" rune-scroll"+(CFG.files.length===1?"":"s")+" in the config vault");
+  $("#cfgList").innerHTML=CFG.files.map(f=>
+    `<div class="cfg-item${f===CFG.file?" sel":""}" data-f="${esc(f)}"><span class="cfgname">${esc(f)}</span>${(f===CFG.file&&CFG.dirty)?'<span class="dot"></span>':""}</div>`
+  ).join("")||`<div class="cfg-item" style="opacity:.5;cursor:default"><span class="cfgname">${TT("no .cfg scrolls found")}</span></div>`;
+}
+function setCfgDirty(d){
+  if(CFG.dirty===d) return;
+  CFG.dirty=d;
+  $("#cfgSaveBtn").disabled=!d||!CFG.file;
+  renderCfgList();
+}
+async function loadCfg(f,force){
+  if(!f||(f===CFG.file&&!force)) return;
+  if(CFG.dirty&&!force){
+    confirmModal("Discard changes?",
+      `<b>${esc(CFG.file)}</b> ${TT("has unsaved rune-work.")} Abandon it and open <b>${esc(f)}</b>?`,
+      "Discard",()=>loadCfg(f,true));
+    return;
+  }
+  const text=await cfgRead(f);
+  if(text===null) return;
+  CFG.file=f; CFG.dirty=false;
+  $("#cfgEditor").value=text;
+  $("#cfgSaveBtn").disabled=true;
+  resetCfgSaveBtn();
+  renderCfgList();
+}
+async function refreshCfgList(reRead){
+  const files=await cfgListFiles();
+  if(files===null) return;
+  CFG.files=files;
+  if(CFG.file&&!files.includes(CFG.file)){
+    // current file vanished from disk
+    CFG.file=null; CFG.dirty=false;
+    $("#cfgEditor").value=""; $("#cfgSaveBtn").disabled=true;
+  }else if(reRead&&CFG.file&&!CFG.dirty){
+    const text=await cfgRead(CFG.file);
+    if(text!==null) $("#cfgEditor").value=text;
+  }
+  renderCfgList();
+}
+let cfgConfirmT=null;
+function resetCfgSaveBtn(){
+  clearTimeout(cfgConfirmT); cfgConfirmT=null;
+  const b=$("#cfgSaveBtn");
+  b.classList.remove("confirming");
+  b.innerHTML="ᛉ&nbsp; Save";
+}
+$("#cfgList").addEventListener("click",e=>{
+  const it=e.target.closest(".cfg-item[data-f]");
+  if(it) loadCfg(it.dataset.f,false);
+});
+$("#cfgEditor").addEventListener("input",()=>{if(CFG.file)setCfgDirty(true);});
+$("#cfgReloadBtn").addEventListener("click",()=>{
+  const go=async()=>{
+    CFG.dirty=false;
+    await refreshCfgList(true);
+    if(CFG.file){const t=await cfgRead(CFG.file);if(t!==null)$("#cfgEditor").value=t;}
+    $("#cfgSaveBtn").disabled=true; resetCfgSaveBtn(); renderCfgList();
+    toast("ᛋ Scrolls reloaded");
+  };
+  if(CFG.dirty){
+    confirmModal("Discard changes?",
+      `<b>${esc(CFG.file)}</b> ${TT("has unsaved rune-work.")} Reload from disk anyway?`,
+      "Discard & reload",go);
+  }else go();
+});
+$("#cfgSaveBtn").addEventListener("click",async()=>{
+  if(!CFG.file||!CFG.dirty) return;
+  const b=$("#cfgSaveBtn");
+  if(!b.classList.contains("confirming")){
+    b.classList.add("confirming");
+    b.innerHTML="ᛉ&nbsp; Confirm save?";
+    cfgConfirmT=setTimeout(resetCfgSaveBtn,3000);
+    return;
+  }
+  resetCfgSaveBtn();
+  const ok=await cfgWrite(CFG.file,$("#cfgEditor").value);
+  if(!ok) return;
+  setCfgDirty(false);
+  $("#cfgSaveBtn").disabled=true;
+  toast("ᛉ Rune etched · "+CFG.file+" saved");
+  logLine("ok","[BakaLoader] config '"+CFG.file+"' written");
+});
+$("#cfgOpenBtn").addEventListener("click",()=>{
+  if(!Native.available){toast("ᛃ Preview · config folder opens in the app");return;}
+  rpc("shell.open",{target:"config"});
+});
+
+/* ============ NATIVE WIRING (WebView2 host drives real data) ============ */
+if(Native.available){
+
+  /* --- event subscriptions (registered before boot so nothing is missed) --- */
+  Native.on("server.status",d=>applyState(d));
+  Native.on("server.worldSaved",d=>{
+    const ms=Math.round(Number(d?.seconds)||0); // bridge param is named 'seconds' but carries milliseconds
+    toast("ᛉ World saved · "+ms+"ms");
+    $("#lastSave").textContent=clock()+" · "+ms+"ms";
+    S.lastSaveAt=new Date();
+    S.saveDur.push(ms); if(S.saveDur.length>10)S.saveDur.shift();
+    const avg=S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length;
+    $("#saveAvg").textContent="avg "+Math.round(avg)+"ms";
+    S.saveSec=S.saveInterval;
+  });
+  Native.on("server.inviteCode",d=>{
+    if(!d?.code) return;
+    S.invite=d.code; renderNet();
+    toast("ᛟ Crossplay invite · "+d.code);
+    logLine("info","[BakaLoader] crossplay invite code: "+d.code);
+  });
+  Native.on("server.crashed",()=>{
+    toast("ᚦ Server crashed · consult the saga");
+    logLine("err","[BakaLoader] server process crashed");
+  });
+  Native.on("server.countdown",d=>{if(d?.message)toast("ᚨ "+d.message);});
+  Native.on("player.updated",p=>{
+    if(!p) return;
+    const i=S.players.findIndex(x=>x.key===p.key);
+    if(i>=0) S.players[i]=p; else S.players.push(p);
+    renderPlayers();
+  });
+  Native.on("ip.external",d=>{S.extIp=d?.ip??null;renderNet();});
+  Native.on("ip.internal",d=>{S.intIp=d?.ip??null;renderNet();});
+  Native.on("profiles.changed",()=>{/* profile list not shown in this wave */});
+  Native.on("log.app",d=>{if(d?.line!=null)logLine(classifyLog(d.line),d.line);});
+  Native.on("log.server",d=>{
+    if(d?.line==null) return;
+    logLine(classifyLog(d.line),d.line);
+    parseNetLine(d.line); // net telemetry rides the server log
+  });
+
+  /* --- boot sequence --- */
+  (async function bootNative(){
+    /* placeholders until real data lands */
+    $("#lastSave").textContent="-";
+    $("#saveCountdown").textContent="-:-";
+    $("#tickVal").textContent="-";
+    $("#sbMods").textContent="- mods";
+    tIn.placeholder="console command… (Enter to send)";
+    /* no metrics RPC yet - flat sparklines, em-dash values */
+    for(let i=0;i<N;i++){cpu.push(0);ram.push(0);}
+    drawLine($("#cpuLine"),cpu,0,60); drawLine($("#ramLine"),ram,0,100);
+    $("#cpuVal").textContent="-"; $("#ramVal").textContent="-";
+    /* process priority is not pref-backed: always AboveNormal in C# */
+    const prio=$("#prioSel");
+    prio.value="AboveNormal"; prio.disabled=true;
+    prio.title="BakaLoader always boosts the server process to AboveNormal";
+    prio.insertAdjacentHTML("afterend",`<div class="fieldnote">always AboveNormal - boosted by BakaLoader</div>`);
+
+    const info=await rpc("app.info");
+    if(info!==FAIL&&info){
+      S.version=info.version||"";
+      $("#sbVersion").textContent="v"+S.version;
+      $("#sideVer").textContent="v"+S.version;
+    }
+    const profs=await rpc("profiles.list");
+    let profName="Default";
+    if(profs!==FAIL&&Array.isArray(profs)&&profs.length){
+      /* prefer the splash-assigned startup profile (app.info), else Default, else first */
+      const startProf=info!==FAIL&&info&&info.profile
+        ?profs.find(p=>p.ProfileName===info.profile):null;
+      profName=(startProf||profs.find(p=>p.ProfileName==="Default")||profs[0]).ProfileName;
+    }
+    const prefs=await rpc("profiles.get",{name:profName});
+    if(prefs!==FAIL&&prefs){
+      S.prefs=prefs; S.profileName=prefs.ProfileName;
+      S.saveInterval=prefs.SaveInterval??600;
+    }
+    const st=await rpc("server.state");
+    if(st!==FAIL) applyState(st);
+    const caps=await rpc("caps.get");
+    if(caps!==FAIL&&caps) S.caps=caps;
+    renderCaps();
+    const ips=await rpc("ip.get");
+    if(ips!==FAIL&&ips){S.extIp=ips.external;S.intIp=ips.internal;}
+    rpc("ip.refresh").then(r=>{
+      if(r!==FAIL&&r){S.extIp=r.external;S.intIp=r.internal;renderNet();}
+    });
+    const buf=await rpc("logs.appBuffer");
+    if(buf!==FAIL&&Array.isArray(buf)) buf.forEach(l=>logLine(classifyLog(l),l));
+    await refreshPlayers();
+    renderAllFromPrefs();
+    renderMods();
+    renderHearthNative();
+    await initUpkeep();
+
+    /* first-launch guided setup: only when never completed AND the exe isn't already valid */
+    const setup=await rpc("setup.status");
+    if(setup!==FAIL&&setup&&!setup.setupCompleted&&!setup.exeValid) wizardOpen(setup);
+
+    /* 1s heartbeat: uptime + save countdown (ticks only while Running) */
+    setInterval(()=>{
+      if(S.state?.status!=="Running") return;
+      renderHearthNative();
+      if(S.saveSec!=null){
+        S.saveSec=Math.max(0,S.saveSec-1);
+        $("#saveCountdown").textContent=pad(Math.floor(S.saveSec/60))+":"+pad(S.saveSec%60);
+      }
+    },1000);
+    /* 500ms player poll - only while the vikings page is active */
+    setInterval(()=>{if(currentPage==="vikings")refreshPlayers();},500);
+  })();
+}
+
+/* ============ MOCK DRIVERS (browser preview only - native host drives real data via events) ============ */
+if(!Native.available){
+
+  /* upkeep card preview values (native fills these from userprefs.get) */
+  $("#blVersion").textContent="v0.9.17";
+
+  /* first-launch wizard preview: open index.html#wizard to walk the panes */
+  if(location.hash==="#wizard"){
+    setTimeout(()=>wizardOpen({
+      setupCompleted:false,exeValid:false,saveValid:true,
+      defaultExePath:"%ProgramFiles(x86)%\\Steam\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe",
+      defaultSavePath:"%USERPROFILE%\\AppData\\LocalLow\\IronGate\\Valheim",
+    }),150);
+  }
+
+  /* mock DOM seeding (tables ship empty in index.html; native fills them from RPCs) */
+  $("#homeVik").innerHTML=
+    `<div class="vrow"><span class="vdot on"></span><span class="vname">Smithix</span><span class="vsub">joined 22:12</span></div>`+
+    `<div class="vrow"><span class="vdot on"></span><span class="vname">Van Hoenhiem</span><span class="vsub">joined 22:14</span></div>`+
+    `<div class="vrow" style="opacity:.4"><span class="vdot off"></span><span class="vname">Ragnhild</span><span class="vsub">last seen 19:40</span></div>`;
+  $("#vikTable").innerHTML=
+    `<tr>
+      <td><span class="vdot on" style="display:inline-block;margin-right:9px"></span><strong>Smithix</strong></td>
+      <td><span class="pill green">Online</span></td>
+      <td class="mono">22:12</td>
+      <td class="mono">3959, −1361, 35</td>
+      <td class="mono" style="color:var(--ember)">⋯</td>
+    </tr>
+    <tr style="background:var(--ember-dim)">
+      <td><span class="vdot on" style="display:inline-block;margin-right:9px"></span><strong>Van Hoenhiem</strong></td>
+      <td><span class="pill green">Online</span></td>
+      <td class="mono">22:14</td>
+      <td class="mono">−212, 887, 41</td>
+      <td class="mono" style="color:var(--ember)">⋯</td>
+    </tr>
+    <tr class="dim">
+      <td><span class="vdot off" style="display:inline-block;margin-right:9px"></span>Ragnhild</td>
+      <td><span class="pill blue">Offline</span></td>
+      <td class="mono">-</td>
+      <td class="mono">last seen 19:40</td><td></td>
+    </tr>
+    <tr class="dim">
+      <td><span class="vdot off" style="display:inline-block;margin-right:9px"></span>Bjornulf</td>
+      <td><span class="pill blue">Offline</span></td>
+      <td class="mono">-</td>
+      <td class="mono">last seen Tue</td><td></td>
+    </tr>`;
+  S.mods=[
+    {ModName:"WorldEditCommands",Author:"JereKuusela",FullName:"JereKuusela-WorldEditCommands",InstalledVersion:"1.65.0",LatestVersion:"1.66.0",UpdateAvailable:true},
+    {ModName:"ExtraSlots",Author:"shudnal",FullName:"shudnal-ExtraSlots",InstalledVersion:"1.0.20",LatestVersion:"1.0.22",UpdateAvailable:true},
+    {ModName:"EpicLoot",Author:"RandyKnapp",FullName:"RandyKnapp-EpicLoot",InstalledVersion:"0.11.3",LatestVersion:"0.11.3"},
+    {ModName:"ComfyMods-Gizmo",Author:"ComfyMods",FullName:"ComfyMods-Gizmo",InstalledVersion:"1.15.0",LatestVersion:"1.15.0"},
+    {ModName:"PlantEverything",Author:"Advize",FullName:"Advize-PlantEverything",InstalledVersion:"1.18.2",LatestVersion:"1.18.2"},
+    {ModName:"SearsCatalog",Author:"ComfyMods",FullName:"ComfyMods-SearsCatalog",InstalledVersion:"1.4.0",LatestVersion:"1.4.0"},
+    {ModName:"PlanBuild",Author:"MathiasDecrock",FullName:"MathiasDecrock-PlanBuild",InstalledVersion:"0.16.4",LatestVersion:"0.16.4"},
+    {ModName:"BakaLoaderSpawnHelper",Author:"BakaLoader",FullName:"BakaLoader-BakaLoaderSpawnHelper",InstalledVersion:"1.1.0",LatestVersion:"-",Bundled:true},
+    {ModName:"Rcon_Commands",Author:"JereKuusela",FullName:"JereKuusela-Rcon_Commands",InstalledVersion:"1.12.0",LatestVersion:"1.12.0"},
+    {ModName:"ValheimOptimizer",Author:"Dreous",FullName:"Dreous-ValheimOptimizer",InstalledVersion:"1.2.1",LatestVersion:"1.2.1"},
+  ];
+  S.modsScanned=true; S.lastScan="21:38";
+  renderMods();
+  $("#fWorld").innerHTML=`<option>Final Sunset</option>`;
+
+  /* mock config vault (RUNES page preview) */
+  CFG.mock={
+    "BepInEx.cfg":
+`[Logging.Console]
+## Enables showing a console for log output.
+Enabled = true
+
+[Logging.Disk]
+WriteUnityLog = false
+AppendLog = false
+LogLevels = Fatal, Error, Warning, Message, Info
+
+[Preloader.Entrypoint]
+Assembly = UnityEngine.CoreModule.dll
+Type = MonoBehaviour
+Method = .cctor`,
+    "shudnal.ExtraSlots.cfg":
+`[General]
+## Extra utility slots for equipped items
+Extra utility slots = 2
+Quick slots = 3
+
+[Slots]
+Equipment slots enabled = true
+Food slots amount = 3
+Misc slots amount = 2`,
+    "nl.avii.plugins.rcon.cfg":
+`[RCON]
+## Enable the RCON listener
+enabled = true
+port = 25575
+password = ******
+
+[Advanced]
+maxPacketSize = 4096`,
+  };
+  refreshCfgList(false);
+
+  /* uptime tick */
+  setInterval(()=>{ if(running){upMin++;renderHearth();} },60000);
+
+  /* save countdown */
+  let saveSec=252; // 04:12
+  setInterval(()=>{
+    if(!running) return;
+    saveSec--;
+    if(saveSec<0){
+      saveSec=600;
+      toast("ᛉ World saved · "+clock());
+      logLine("ok","World saved ( Final_Sunset.db )  8.42 MB  in 214 ms");
+    }
+    $("#saveCountdown").textContent=
+      String(Math.floor(saveSec/60)).padStart(2,"0")+":"+String(saveSec%60).padStart(2,"0");
+  },1000);
+
+  /* sparklines */
+  for(let i=0;i<N;i++){cpu.push(20+Math.random()*10);ram.push(60+Math.random()*4);}
+  function tickSpark(){
+    cpu.shift(); ram.shift();
+    const base=running?23:2, rbase=running?62:8;
+    cpu.push(Math.max(1,base+(Math.random()*14-6)+(Math.random()<.06?22:0)));
+    ram.push(Math.max(2,rbase+(Math.random()*3-1.5)));
+    drawLine($("#cpuLine"),cpu,0,60); drawLine($("#ramLine"),ram,0,100);
+    $("#cpuVal").textContent=Math.round(cpu[N-1])+"%";
+    $("#ramVal").textContent=(ram[N-1]/10).toFixed(1)+" GB";
+  }
+  setInterval(tickSpark,900); tickSpark();
+
+  /* periodic mock toasts */
+  setInterval(()=>{ if(running) toast("ᛉ World saved · "+clock()); },12000);
+  setTimeout(()=>toast("ᚱ 2 mod updates available · WorldEditCommands, ExtraSlots"),2500);
+
+  /* saga seed + chatter */
+  const seed=[
+   ["info","[BepInEx] 63 plugins loaded in 4.21 s"],
+   ["ok","World loaded ( Final_Sunset )  ZDOs: 412,882"],
+   ["net","[Steam] game server connected, public IP 203.0.113.42"],
+   ["ok","RCON bound on 127.0.0.1:25575"],
+   ["info","Smithix has arrived - spawned at 3959, -1361, 35"],
+   ["info","Van Hoenhiem has arrived - spawned at -212, 887, 41"],
+   ["warn","[ValheimOptimizer] frame budget exceeded 18.4 ms (single spike)"],
+   ["ok","World saved ( Final_Sunset.db )  8.39 MB  in 198 ms"],
+  ];
+  seed.forEach(([k,t])=>logLine(k,t));
+  const chatter=[
+   ["info",()=>"ZDO sync: "+ (412000+Math.floor(Math.random()*2000)).toLocaleString() +" active, "+Math.floor(Math.random()*40+8)+" dirty"],
+   ["net",()=>"[Steam] socket recv "+(Math.random()*42+6).toFixed(1)+" KB/s · send "+(Math.random()*18+3).toFixed(1)+" KB/s"],
+   ["ok",()=>"World saved ( Final_Sunset.db )  8.4"+Math.floor(Math.random()*9)+" MB  in "+(180+Math.floor(Math.random()*90))+" ms"],
+   ["info",()=>["Smithix hauled 30 iron across the swamp","Van Hoenhiem tamed a lox","Wind shifted - sailing weather fair","Smithix has arrived","Raven event rolled: none"][Math.floor(Math.random()*5)]],
+   ["warn",()=>"[ExtraSlots] config reloaded from memory snapshot"],
+   ["net",()=>"[RCON] keepalive ok · 127.0.0.1:25575"],
+  ];
+  setInterval(()=>{ if(!running) return;
+    const [k,f]=chatter[Math.floor(Math.random()*chatter.length)]; logLine(k,f());
+  },2000);
+}

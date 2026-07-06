@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Valheim BakaLoader - Concept 4: BLEND (Longhouse × Mission Control)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ============ RESET / TOKENS ============ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --iron:#1A1D21; --iron-deep:#14161A; --iron-deeper:#0F1114;
+  --ember:#FF7A1A; --ember-hi:#FFB35C; --ember-dim:rgba(255,122,26,.14);
+  --bronze:rgba(140,109,63,.4); --bronze-hi:rgba(140,109,63,.75);
+  --bone:#E8E2D5; --bone-dim:#9A927F; --bone-faint:#5E594E;
+  --cold:#5B7A8C; --cold-hi:#8FB4C9;
+  --amber:#E8A93C; --blood:#D5453C; --moss:#6FA05C;
+  --serif:'Cinzel',Georgia,'Times New Roman',serif;
+  --mono:'JetBrains Mono',Consolas,'Cascadia Mono',monospace;
+  --sans:'Inter',system-ui,'Segoe UI',sans-serif;
+  --r:10px; --ease:cubic-bezier(.4,0,.2,1);
+}
+html,body{height:100%}
+body{
+  background:#0A0B0D;
+  background-image:radial-gradient(1200px 700px at 50% 38%,#131519 0%,#0A0B0D 70%),
+    repeating-linear-gradient(45deg,rgba(255,255,255,.006) 0 2px,transparent 2px 6px);
+  font-family:var(--sans); color:var(--bone);
+  display:flex; align-items:center; justify-content:center;
+  min-height:100vh; overflow:hidden; user-select:none;
+}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:var(--iron-deeper)}
+::-webkit-scrollbar-thumb{background:#2C3036;border-radius:5px;border:2px solid var(--iron-deeper)}
+::-webkit-scrollbar-thumb:hover{background:#3D4249}
+
+/* ============ APP WINDOW ============ */
+.app{
+  width:1180px;height:760px; position:relative;
+  background:var(--iron-deep);
+  border:1px solid var(--bronze); border-radius:14px;
+  box-shadow:0 0 0 1px rgba(0,0,0,.6),0 40px 90px rgba(0,0,0,.75),0 8px 28px rgba(0,0,0,.6),
+    0 0 120px rgba(255,122,26,.05);
+  display:flex; flex-direction:column; overflow:hidden;
+}
+
+/* ============ TITLEBAR ============ */
+.titlebar{
+  height:44px; flex:none; display:flex; align-items:center; gap:12px;
+  padding:0 10px 0 16px; background:linear-gradient(180deg,#1E2126,#181B1F);
+  border-bottom:1px solid var(--bronze); position:relative; z-index:40;
+}
+.titlebar::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,122,26,.35) 30%,rgba(255,122,26,.35) 70%,transparent)}
+.wordmark{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-weight:700;
+  font-size:13px;letter-spacing:3px;color:var(--bone)}
+.wordmark .rune{color:var(--ember);font-size:17px;text-shadow:0 0 10px rgba(255,122,26,.7)}
+.wordmark .srv{color:var(--bone-dim);font-weight:500;letter-spacing:2px}
+.wordmark .dot{color:var(--bronze-hi)}
+.tb-spacer{flex:1}
+.cmdchip{
+  display:flex;align-items:center;gap:8px;height:26px;padding:0 12px;
+  background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:6px;
+  color:var(--bone-dim);font-size:11px;cursor:pointer;transition:all .18s var(--ease);
+}
+.cmdchip:hover{border-color:var(--ember);color:var(--bone);box-shadow:0 0 14px rgba(255,122,26,.25)}
+.cmdchip kbd{font-family:var(--mono);font-size:10px;background:#23272D;border:1px solid #33383F;
+  border-radius:4px;padding:1px 6px;color:var(--bone-dim)}
+.winbtns{display:flex;gap:2px;margin-left:8px}
+.winbtn{width:38px;height:30px;display:flex;align-items:center;justify-content:center;
+  border-radius:6px;color:var(--bone-dim);cursor:pointer;transition:all .15s var(--ease)}
+.winbtn svg{width:11px;height:11px}
+.winbtn:hover{background:#262A30;color:var(--bone)}
+.winbtn.close:hover{background:var(--blood);color:#fff}
+
+/* ============ BODY LAYOUT ============ */
+.body{flex:1;display:flex;min-height:0}
+
+/* ============ SIDEBAR ============ */
+.side{
+  width:84px;flex:none;display:flex;flex-direction:column;align-items:center;
+  padding:14px 0 12px;gap:4px;position:relative;
+  background:
+    repeating-linear-gradient(2deg,rgba(0,0,0,.14) 0 3px,transparent 3px 9px),
+    repeating-linear-gradient(88deg,rgba(255,255,255,.012) 0 1px,transparent 1px 7px),
+    linear-gradient(180deg,#1B1A17,#15140F);
+  border-right:1px solid var(--bronze);
+}
+.navitem{
+  width:64px;height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:5px;border-radius:9px;cursor:pointer;position:relative;color:var(--bone-dim);
+  transition:all .2s var(--ease);
+}
+.navitem .rune{font-size:19px;line-height:1;transition:all .2s var(--ease)}
+.navitem .lbl{font-size:8.5px;letter-spacing:1.8px;text-transform:uppercase;font-weight:600}
+.navitem:hover{color:var(--bone);background:rgba(255,255,255,.035)}
+.navitem::before{content:"";position:absolute;left:-10px;top:12px;bottom:12px;width:3px;
+  border-radius:0 3px 3px 0;background:transparent;transition:all .2s var(--ease)}
+.navitem.active{color:var(--ember-hi);background:var(--ember-dim)}
+.navitem.active .rune{text-shadow:0 0 12px rgba(255,122,26,.9);transform:scale(1.08)}
+.navitem.active::before{background:var(--ember);box-shadow:0 0 12px rgba(255,122,26,.8)}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:6px;
+  color:var(--bone-faint);font-family:var(--mono);font-size:9.5px;letter-spacing:1px}
+.side-foot .moon{font-size:15px;color:var(--cold);text-shadow:0 0 8px rgba(91,122,140,.5)}
+
+/* ============ MAIN ============ */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--iron)}
+.pages{flex:1;min-height:0;position:relative}
+.page{position:absolute;inset:0;padding:20px 22px;overflow-y:auto;display:none;
+  animation:pageIn .28s var(--ease)}
+.page.active{display:block}
+@keyframes pageIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.pagehead{display:flex;align-items:baseline;gap:14px;margin-bottom:16px}
+.pagehead h1{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:4px;color:var(--bone)}
+.pagehead h1 .r{color:var(--ember);margin-right:8px;text-shadow:0 0 10px rgba(255,122,26,.6)}
+.pagehead .sub{font-size:11px;color:var(--bone-dim);letter-spacing:.5px}
+.pagehead .grow{flex:1}
+
+/* ============ CARDS ============ */
+.card{
+  background:linear-gradient(180deg,#1E2126,#191C20);
+  border:1px solid var(--bronze);border-radius:var(--r);
+  padding:16px;position:relative;overflow:hidden;
+  box-shadow:0 4px 14px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.03);
+  transition:border-color .22s var(--ease),box-shadow .22s var(--ease),transform .22s var(--ease);
+}
+.card::before{ /* rune-etched top strip */
+  content:"ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ ᚷ ᚹ ᚺ ᚾ ᛁ ᛃ ᛇ ᛈ ᛉ ᛊ ᛏ ᛒ ᛖ ᛗ ᛚ ᛜ ᛞ ᛟ ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ";
+  position:absolute;top:0;left:0;right:0;height:14px;overflow:hidden;
+  font-size:9px;letter-spacing:7px;text-align:center;line-height:14px;
+  color:rgba(140,109,63,.28);white-space:nowrap;pointer-events:none;
+  border-bottom:1px solid rgba(140,109,63,.14);
+  background:linear-gradient(180deg,rgba(0,0,0,.22),transparent);
+}
+.card.hov:hover{border-color:rgba(255,122,26,.55);transform:translateY(-2px);
+  box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 22px rgba(255,122,26,.15),inset 0 1px 0 rgba(255,255,255,.04)}
+.microlabel{font-size:9.5px;letter-spacing:2.6px;text-transform:uppercase;font-weight:600;
+  color:var(--bone-dim);margin:6px 0 10px;display:flex;align-items:center;gap:8px}
+.microlabel .r{color:var(--bronze-hi);font-size:11px}
+.bigval{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:22px;font-weight:700;color:var(--bone)}
+.subval{font-family:var(--mono);font-size:11px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+
+/* ============ HEARTH BENTO ============ */
+.bento{display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:150px;gap:12px}
+.b-hearth{grid-column:span 2;grid-row:span 2}
+.b-vikings{grid-column:span 2}
+.b-saves{grid-column:span 2}
+.b-forge{grid-column:span 2}
+.b-mods{grid-column:span 1}
+.b-net{grid-column:span 1}
+
+/* Hearth flame */
+.hearth-card{display:flex;flex-direction:column}
+.flamebox{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:0}
+.flame{position:relative;width:120px;height:150px;display:flex;align-items:flex-end;justify-content:center}
+.flame .glow{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
+  width:130px;height:80px;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(255,122,26,.5),rgba(255,122,26,.12) 55%,transparent);
+  filter:blur(14px);animation:glowPulse 2.6s ease-in-out infinite}
+@keyframes glowPulse{0%,100%{opacity:.85;transform:translateX(-50%) scale(1)}50%{opacity:1;transform:translateX(-50%) scale(1.12)}}
+.tongue{position:absolute;bottom:14px;border-radius:50% 50% 42% 42%/62% 62% 34% 34%;transform-origin:50% 100%}
+.t1{width:56px;height:88px;background:linear-gradient(180deg,#FF9A3C,#E8560F 70%,#96300A);
+  filter:blur(1px);animation:flick 1.05s ease-in-out infinite alternate}
+.t2{width:36px;height:62px;background:linear-gradient(180deg,#FFCE7A,#FF7A1A 75%);
+  filter:blur(.6px);animation:flick .8s .15s ease-in-out infinite alternate}
+.t3{width:17px;height:34px;background:linear-gradient(180deg,#FFF3D6,#FFB35C);
+  animation:flick .62s .3s ease-in-out infinite alternate}
+@keyframes flick{
+  0%{transform:scaleY(1) scaleX(1) rotate(-1.6deg)}
+  45%{transform:scaleY(1.1) scaleX(.93) rotate(1.4deg)}
+  100%{transform:scaleY(.94) scaleX(1.05) rotate(-.8deg)}
+}
+.logs-svg{position:absolute;bottom:0;left:50%;transform:translateX(-50%)}
+.spark{position:absolute;bottom:40px;width:3px;height:3px;border-radius:50%;
+  background:var(--ember-hi);box-shadow:0 0 6px var(--ember);opacity:0;
+  animation:sparkUp 2.4s linear infinite}
+@keyframes sparkUp{
+  0%{opacity:0;transform:translate(0,0) scale(1)}
+  12%{opacity:1}
+  100%{opacity:0;transform:translate(var(--dx,8px),-96px) scale(.3)}
+}
+.hearth-card.cold .glow{background:radial-gradient(closest-side,rgba(91,122,140,.35),rgba(91,122,140,.08) 55%,transparent);animation:none;opacity:.7}
+.hearth-card.cold .t1{background:linear-gradient(180deg,#3A5361,#22323B 70%,#161F25);animation-duration:3.4s;height:40px}
+.hearth-card.cold .t2{background:linear-gradient(180deg,#5B7A8C,#2C4450);animation-duration:2.8s;height:26px}
+.hearth-card.cold .t3{background:linear-gradient(180deg,#8FB4C9,#4A6675);animation-duration:2.4s;height:12px}
+.hearth-card.cold .spark{display:none}
+.hearth-meta{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
+.hstatus{display:flex;flex-direction:column;gap:3px}
+.hstate{font-family:var(--serif);font-size:17px;font-weight:700;letter-spacing:3px;color:var(--ember-hi);
+  text-shadow:0 0 14px rgba(255,122,26,.5)}
+.hearth-card.cold .hstate{color:var(--cold-hi);text-shadow:0 0 12px rgba(91,122,140,.5)}
+.hpid{font-family:var(--mono);font-size:10.5px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 16px;border-radius:7px;
+  font-family:var(--sans);font-size:11px;font-weight:600;letter-spacing:1.6px;text-transform:uppercase;
+  border:1px solid transparent;cursor:pointer;transition:all .18s var(--ease);white-space:nowrap}
+.btn-ember{background:linear-gradient(180deg,#FF9234,#E8560F);color:#1A0E04;
+  box-shadow:0 0 18px rgba(255,122,26,.35),0 2px 8px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.35)}
+.btn-ember:hover{filter:brightness(1.12);box-shadow:0 0 26px rgba(255,122,26,.55),0 3px 10px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.4)}
+.btn-cold{background:#1C2830;color:var(--cold-hi);border-color:rgba(91,122,140,.5)}
+.btn-cold:hover{background:#233440;box-shadow:0 0 14px rgba(91,122,140,.3)}
+.btn-ghost{background:transparent;color:var(--bone-dim);border-color:var(--bronze)}
+.btn-ghost:hover{color:var(--bone);border-color:var(--bronze-hi);background:rgba(255,255,255,.03)}
+.btn-sm{height:26px;padding:0 11px;font-size:10px}
+
+/* Vikings mini card */
+.vrow{display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12px}
+.vdot{width:7px;height:7px;border-radius:50%;flex:none}
+.vdot.on{background:var(--moss);box-shadow:0 0 8px rgba(111,160,92,.8)}
+.vdot.off{background:var(--cold);opacity:.5}
+.vname{font-weight:600;color:var(--bone)}
+.vsub{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+
+/* Saves */
+.savebars{display:flex;align-items:flex-end;gap:3px;height:26px;margin-top:8px}
+.savebars i{flex:1;background:linear-gradient(180deg,var(--bronze-hi),rgba(140,109,63,.25));border-radius:2px 2px 0 0}
+.savebars i.hot{background:linear-gradient(180deg,var(--ember-hi),var(--ember));box-shadow:0 0 8px rgba(255,122,26,.4)}
+
+/* Forge sparklines */
+.sparkrow{display:flex;align-items:center;gap:10px;margin-top:4px}
+.sparkrow .k{font-size:9.5px;letter-spacing:2px;color:var(--bone-dim);width:32px;font-weight:600}
+.sparkrow svg{flex:1;height:30px}
+.sparkrow .v{font-family:var(--mono);font-size:12.5px;font-weight:700;width:48px;text-align:right;
+  font-variant-numeric:tabular-nums;color:var(--ember-hi)}
+.sparkrow .v.blue{color:var(--cold-hi)}
+polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
+
+/* Net card */
+.netline{display:flex;align-items:center;gap:7px;margin-top:7px;font-family:var(--mono);
+  font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+.copychip{margin-left:auto;font-size:9px;padding:2px 7px;border:1px solid var(--bronze);border-radius:4px;
+  cursor:pointer;color:var(--bone-dim);transition:all .15s var(--ease);letter-spacing:1px}
+.copychip:hover{color:var(--ember-hi);border-color:var(--ember)}
+.pill{font-size:8.5px;letter-spacing:1.2px;font-weight:700;padding:2px 7px;border-radius:20px;text-transform:uppercase}
+.pill.green{background:rgba(111,160,92,.15);color:var(--moss);border:1px solid rgba(111,160,92,.4)}
+.pill.amber{background:rgba(232,169,60,.13);color:var(--amber);border:1px solid rgba(232,169,60,.4)}
+.pill.blue{background:rgba(91,122,140,.15);color:var(--cold-hi);border:1px solid rgba(91,122,140,.4)}
+.pill.ember{background:var(--ember-dim);color:var(--ember-hi);border:1px solid rgba(255,122,26,.45)}
+
+/* ============ TABLES (Vikings / Mods) ============ */
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{font-size:9.5px;letter-spacing:2.2px;text-transform:uppercase;color:var(--bone-dim);
+  text-align:left;padding:9px 12px;border-bottom:1px solid var(--bronze);font-weight:600}
+tbody td{padding:10px 12px;border-bottom:1px solid rgba(140,109,63,.16);font-variant-numeric:tabular-nums}
+tbody tr{transition:background .15s var(--ease)}
+tbody tr:hover{background:rgba(255,122,26,.045)}
+tbody tr.dim{opacity:.42}
+td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
+
+/* context menu mock */
+.ctxwrap{position:relative}
+.ctxmenu{
+  position:absolute;top:52px;right:36px;width:212px;z-index:20;
+  background:linear-gradient(180deg,#22262C,#1B1E23);
+  border:1px solid var(--bronze-hi);border-radius:9px;padding:6px;
+  box-shadow:0 14px 40px rgba(0,0,0,.7),0 0 24px rgba(255,122,26,.08);
+  animation:pageIn .2s var(--ease);
+}
+.ctxmenu .ci{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;
+  font-size:11.5px;cursor:pointer;color:var(--bone);transition:all .13s var(--ease)}
+.ctxmenu .ci .r{color:var(--bronze-hi);font-size:12px;width:14px;text-align:center}
+.ctxmenu .ci:hover{background:var(--ember-dim);color:var(--ember-hi)}
+.ctxmenu .ci:hover .r{color:var(--ember)}
+.ctxmenu .ci.danger:hover{background:rgba(213,69,60,.12);color:#F08078}
+.ctxmenu hr{border:0;border-top:1px solid rgba(140,109,63,.25);margin:5px 6px}
+.ctxhead{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint);padding:5px 10px 4px}
+
+/* ============ WORLD FORM ============ */
+.formgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+.field label{display:block;font-size:9.5px;letter-spacing:2.2px;text-transform:uppercase;
+  color:var(--bone-dim);font-weight:600;margin-bottom:6px}
+.field input[type=text],.field input[type=password],.field select{
+  width:100%;height:34px;padding:0 12px;background:var(--iron-deeper);
+  border:1px solid var(--bronze);border-radius:7px;color:var(--bone);
+  font-family:var(--mono);font-size:12px;outline:none;transition:all .18s var(--ease);
+}
+.field input:focus,.field select:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(255,122,26,.12),0 0 14px rgba(255,122,26,.15)}
+.field select{appearance:none;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--bone-dim) 50%),linear-gradient(135deg,var(--bone-dim) 50%,transparent 50%);
+  background-position:calc(100% - 16px) 15px,calc(100% - 11px) 15px;background-size:5px 5px;background-repeat:no-repeat}
+.togglerow{display:flex;align-items:center;justify-content:space-between;height:34px;
+  padding:0 12px;background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:7px}
+.togglerow .tl{font-size:11.5px;color:var(--bone)}
+.toggle{width:38px;height:20px;border-radius:20px;background:#2A2E34;border:1px solid #3A3F46;
+  position:relative;cursor:pointer;transition:all .2s var(--ease);flex:none}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+  background:var(--bone-dim);transition:all .2s var(--ease)}
+.toggle.on{background:linear-gradient(180deg,#E8560F,#B4430C);border-color:var(--ember)}
+.toggle.on::after{left:20px;background:#FFE9CF;box-shadow:0 0 8px rgba(255,122,26,.8)}
+.formsec{font-family:var(--serif);font-size:12px;letter-spacing:3px;color:var(--bone-dim);
+  margin:20px 0 10px;display:flex;align-items:center;gap:10px}
+.formsec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--bronze),transparent)}
+.formsec .r{color:var(--bronze-hi)}
+
+/* ============ SAGA TERMINAL ============ */
+.saga{display:flex;flex-direction:column;height:100%}
+.termwrap{flex:1;display:flex;flex-direction:column;min-height:0;
+  background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:var(--r);overflow:hidden;
+  box-shadow:inset 0 2px 12px rgba(0,0,0,.5)}
+.termhead{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;
+  border-bottom:1px solid rgba(140,109,63,.25);background:rgba(0,0,0,.25)}
+.fpill{font-size:9.5px;letter-spacing:1.6px;text-transform:uppercase;font-weight:600;
+  padding:3px 10px;border-radius:20px;border:1px solid var(--bronze);color:var(--bone-dim);
+  cursor:pointer;transition:all .15s var(--ease)}
+.fpill:hover{color:var(--bone);border-color:var(--bronze-hi)}
+.fpill.active{background:var(--ember-dim);border-color:var(--ember);color:var(--ember-hi)}
+.term{flex:1;overflow-y:auto;padding:10px 14px;font-family:var(--mono);font-size:11px;
+  line-height:1.75;font-variant-numeric:tabular-nums}
+.term .ln{white-space:pre-wrap;animation:lnIn .22s var(--ease)}
+@keyframes lnIn{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+.term .t{color:var(--bone-faint)}
+.term .info{color:var(--bone-dim)}
+.term .ok{color:var(--moss)}
+.term .warn{color:var(--amber)}
+.term .err{color:#F08078}
+.term .net{color:var(--cold-hi)}
+.term .cmd{color:var(--ember-hi);font-weight:700}
+.termin{flex:none;display:flex;align-items:center;gap:8px;padding:8px 14px;
+  border-top:1px solid rgba(140,109,63,.25);background:rgba(0,0,0,.3)}
+.termin .prompt{font-family:var(--mono);color:var(--ember);font-weight:700;font-size:12px;
+  text-shadow:0 0 8px rgba(255,122,26,.5)}
+.termin input{flex:1;background:transparent;border:0;outline:none;color:var(--bone);
+  font-family:var(--mono);font-size:12px;caret-color:transparent}
+.caret{width:7px;height:14px;background:var(--ember);animation:blink 1.05s steps(1) infinite;
+  margin-left:-4px;box-shadow:0 0 8px rgba(255,122,26,.6)}
+@keyframes blink{50%{opacity:0}}
+
+/* ============ STATUSBAR ============ */
+.statusbar{
+  height:28px;flex:none;display:flex;align-items:center;gap:0;padding:0 14px;
+  background:linear-gradient(180deg,#16181C,#121417);border-top:1px solid var(--bronze);
+  font-family:var(--mono);font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums;
+}
+.statusbar .seg{display:flex;align-items:center;gap:6px;padding:0 12px;position:relative}
+.statusbar .seg+.seg::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:1px;background:rgba(140,109,63,.3)}
+.statusbar .ledot{width:6px;height:6px;border-radius:50%;background:var(--moss);box-shadow:0 0 6px rgba(111,160,92,.8)}
+.statusbar .em{color:var(--ember-hi)}
+
+/* ============ COMMAND PALETTE ============ */
+.palette-bg{position:absolute;inset:0;z-index:80;background:rgba(8,9,11,.6);backdrop-filter:blur(3px);
+  display:none;align-items:flex-start;justify-content:center;padding-top:110px;animation:fadeIn .16s var(--ease)}
+.palette-bg.open{display:flex}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.palette{width:520px;background:linear-gradient(180deg,#23272D,#1A1D21);
+  border:1px solid var(--bronze-hi);border-radius:12px;overflow:hidden;
+  box-shadow:0 30px 80px rgba(0,0,0,.8),0 0 40px rgba(255,122,26,.12);
+  animation:palIn .2s var(--ease)}
+@keyframes palIn{from{opacity:0;transform:translateY(-10px) scale(.98)}to{opacity:1;transform:none}}
+.palette .pin{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid rgba(140,109,63,.3)}
+.palette .pin .r{color:var(--ember);font-size:15px;text-shadow:0 0 8px rgba(255,122,26,.6)}
+.palette .pin input{flex:1;background:transparent;border:0;outline:none;color:var(--bone);
+  font-size:13.5px;font-family:var(--sans)}
+.palette .pin input::placeholder{color:var(--bone-faint)}
+.palette .plist{max-height:280px;overflow-y:auto;padding:6px}
+.pitem{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:7px;cursor:pointer;
+  font-size:12.5px;color:var(--bone);transition:all .12s var(--ease)}
+.pitem .r{color:var(--bronze-hi);width:16px;text-align:center;font-size:13px}
+.pitem .k{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);
+  border:1px solid #33383F;border-radius:4px;padding:1px 6px}
+.pitem:hover,.pitem.sel{background:var(--ember-dim);color:var(--ember-hi)}
+.pitem:hover .r,.pitem.sel .r{color:var(--ember)}
+.pitem.hidden{display:none}
+.palette .pfoot{padding:7px 16px;border-top:1px solid rgba(140,109,63,.25);font-size:10px;
+  color:var(--bone-faint);display:flex;gap:14px}
+.palette .pfoot kbd{font-family:var(--mono);font-size:9px;border:1px solid #33383F;border-radius:3px;padding:0 4px}
+
+/* ============ TOASTS ============ */
+.toasts{position:absolute;right:16px;bottom:42px;z-index:70;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.toast{display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:240px;
+  background:linear-gradient(180deg,#23272D,#1B1E23);border:1px solid var(--bronze-hi);border-radius:9px;
+  box-shadow:0 12px 32px rgba(0,0,0,.6),0 0 18px rgba(255,122,26,.08);
+  font-size:11.5px;color:var(--bone);animation:toastIn .3s var(--ease);position:relative;overflow:hidden}
+.toast::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ember);
+  box-shadow:0 0 10px rgba(255,122,26,.7)}
+.toast .r{color:var(--ember);font-size:14px;text-shadow:0 0 8px rgba(255,122,26,.5)}
+.toast .tt{font-family:var(--mono);font-size:10px;color:var(--bone-dim);margin-left:auto;font-variant-numeric:tabular-nums}
+.toast.out{animation:toastOut .3s var(--ease) forwards}
+@keyframes toastIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+@keyframes toastOut{to{opacity:0;transform:translateX(30px)}}
+
+/* ============ CAPTION (outside window) ============ */
+.caption{position:fixed;right:22px;bottom:16px;text-align:right;z-index:5;font-size:11px;color:#6E6857}
+.caption .c1{letter-spacing:2px;text-transform:uppercase;font-weight:600;font-size:10px;margin-bottom:5px}
+.caption a{color:#8C6D3F;text-decoration:none;font-family:var(--mono);font-size:10px;transition:color .15s}
+.caption a:hover{color:var(--ember)}
+.caption .sep{color:#3D3A32;margin:0 5px}
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- TITLEBAR -->
+  <div class="titlebar">
+    <div class="wordmark"><span class="rune">ᛒ</span>BAKALOADER <span class="dot">·</span> <span class="srv">BAKA GAIJIN</span></div>
+    <div class="tb-spacer"></div>
+    <div class="cmdchip" id="cmdchip"><span>Command</span><kbd>Ctrl+K</kbd></div>
+    <div class="winbtns">
+      <div class="winbtn"><svg viewBox="0 0 11 11"><line x1="1" y1="8.5" x2="10" y2="8.5" stroke="currentColor" stroke-width="1.4"/></svg></div>
+      <div class="winbtn"><svg viewBox="0 0 11 11"><rect x="1.7" y="1.7" width="7.6" height="7.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg></div>
+      <div class="winbtn close"><svg viewBox="0 0 11 11"><path d="M1.5 1.5 L9.5 9.5 M9.5 1.5 L1.5 9.5" stroke="currentColor" stroke-width="1.4"/></svg></div>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- SIDEBAR -->
+    <nav class="side">
+      <div class="navitem active" data-page="hearth"><span class="rune">ᚠ</span><span class="lbl">Hearth</span></div>
+      <div class="navitem" data-page="vikings"><span class="rune">ᛗ</span><span class="lbl">Vikings</span></div>
+      <div class="navitem" data-page="mods"><span class="rune">ᚱ</span><span class="lbl">Mods</span></div>
+      <div class="navitem" data-page="world"><span class="rune">ᛃ</span><span class="lbl">World</span></div>
+      <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl">Saga</span></div>
+      <div class="side-foot"><span class="moon">☾</span><span>v0.9.11</span></div>
+    </nav>
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="pages">
+
+        <!-- ============ PAGE: HEARTH ============ -->
+        <section class="page active" id="page-hearth">
+          <div class="pagehead">
+            <h1><span class="r">ᚠ</span>HEARTH</h1>
+            <span class="sub">Final Sunset · dedicated longhouse ops</span>
+            <div class="grow"></div>
+            <button class="btn btn-ember btn-sm" id="sailBtn">ᛟ&nbsp; Sail Forth</button>
+          </div>
+
+          <div class="bento">
+            <!-- HEARTH FLAME -->
+            <div class="card hov b-hearth hearth-card" id="hearthCard">
+              <div class="microlabel"><span class="r">ᚠ</span>Hearth Status</div>
+              <div class="flamebox">
+                <div class="flame">
+                  <div class="glow"></div>
+                  <div class="tongue t1"></div>
+                  <div class="tongue t2"></div>
+                  <div class="tongue t3"></div>
+                  <span class="spark" style="left:44%;--dx:-14px;animation-delay:0s"></span>
+                  <span class="spark" style="left:52%;--dx:10px;animation-delay:.7s"></span>
+                  <span class="spark" style="left:48%;--dx:-6px;animation-delay:1.3s"></span>
+                  <span class="spark" style="left:56%;--dx:16px;animation-delay:1.9s"></span>
+                  <svg class="logs-svg" width="110" height="22" viewBox="0 0 110 22">
+                    <rect x="8" y="10" width="94" height="8" rx="4" fill="#3A2A18" stroke="#57402280" stroke-width="1" transform="rotate(-4 55 14)"/>
+                    <rect x="14" y="6" width="82" height="8" rx="4" fill="#4A3620" stroke="#6B4E2A80" stroke-width="1" transform="rotate(5 55 10)"/>
+                  </svg>
+                </div>
+              </div>
+              <div class="hearth-meta">
+                <div class="hstatus">
+                  <span class="hstate" id="hState">BURNING · <span id="upTime">4h 32m</span></span>
+                  <span class="hpid" id="hPid">RUNNING · PID 150428 · valheim_server.x86_64</span>
+                </div>
+                <button class="btn btn-cold btn-sm" id="douseBtn">Douse</button>
+              </div>
+            </div>
+
+            <!-- VIKINGS -->
+            <div class="card hov b-vikings" data-goto="vikings">
+              <div class="microlabel"><span class="r">ᛗ</span>Vikings <span style="margin-left:auto" class="pill green">2 / 10 online</span></div>
+              <div class="vrow"><span class="vdot on"></span><span class="vname">Smithix</span><span class="vsub">joined 22:12</span></div>
+              <div class="vrow"><span class="vdot on"></span><span class="vname">Van Hoenhiem</span><span class="vsub">joined 22:14</span></div>
+              <div class="vrow" style="opacity:.4"><span class="vdot off"></span><span class="vname">Ragnhild</span><span class="vsub">last seen 19:40</span></div>
+            </div>
+
+            <!-- SAVES -->
+            <div class="card hov b-saves">
+              <div class="microlabel"><span class="r">ᛉ</span>World Saves</div>
+              <div style="display:flex;align-items:baseline;gap:14px">
+                <div><div class="bigval" id="saveCountdown">04:12</div><div class="subval">until next save</div></div>
+                <div style="margin-left:auto;text-align:right"><div class="subval">last rune-check</div><div class="subval" style="color:var(--bone)">22:05 · 8.4 MB</div></div>
+              </div>
+              <div class="savebars">
+                <i style="height:40%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:62%"></i>
+                <i style="height:52%"></i><i style="height:70%"></i><i style="height:58%"></i><i style="height:66%"></i>
+                <i style="height:74%"></i><i style="height:60%"></i><i style="height:82%"></i><i class="hot" style="height:100%"></i>
+              </div>
+            </div>
+
+            <!-- FORGE LOAD -->
+            <div class="card hov b-forge">
+              <div class="microlabel"><span class="r">ᚲ</span>Forge Load</div>
+              <div class="sparkrow">
+                <span class="k">CPU</span>
+                <svg viewBox="0 0 200 30" preserveAspectRatio="none"><polyline class="sl" id="cpuLine" stroke="#FF7A1A" points=""/></svg>
+                <span class="v" id="cpuVal">23%</span>
+              </div>
+              <div class="sparkrow">
+                <span class="k">RAM</span>
+                <svg viewBox="0 0 200 30" preserveAspectRatio="none"><polyline class="sl" id="ramLine" stroke="#5B7A8C" points=""/></svg>
+                <span class="v blue" id="ramVal">6.2 GB</span>
+              </div>
+            </div>
+
+            <!-- MODS -->
+            <div class="card hov b-mods" data-goto="mods">
+              <div class="microlabel"><span class="r">ᚱ</span>Mods</div>
+              <div class="bigval">63</div>
+              <div class="subval">loaded via BepInEx</div>
+              <div style="margin-top:9px"><span class="pill amber">2 updates</span></div>
+            </div>
+
+            <!-- NETWORK -->
+            <div class="card hov b-net">
+              <div class="microlabel"><span class="r">ᚾ</span>Network</div>
+              <div class="netline"><span>203.0.113.42:2456</span><span class="copychip" id="copyIp">COPY</span></div>
+              <div class="netline"><span>RCON 127.0.0.1:25575</span></div>
+              <div style="margin-top:8px"><span class="pill green">rcon bound</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: VIKINGS ============ -->
+        <section class="page" id="page-vikings">
+          <div class="pagehead">
+            <h1><span class="r">ᛗ</span>VIKINGS</h1>
+            <span class="sub">2 of 10 raiding · right-click a viking for deeds</span>
+          </div>
+          <div class="card ctxwrap" style="padding:0">
+            <div style="height:14px"></div>
+            <table>
+              <thead><tr><th style="width:34%">Viking</th><th>Status</th><th>Joined</th><th>Position</th><th style="width:44px"></th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><span class="vdot on" style="display:inline-block;margin-right:9px"></span><strong>Smithix</strong></td>
+                  <td><span class="pill green">Online</span></td>
+                  <td class="mono">22:12</td>
+                  <td class="mono">3959, −1361, 35</td>
+                  <td class="mono" style="color:var(--ember)">⋯</td>
+                </tr>
+                <tr style="background:var(--ember-dim)">
+                  <td><span class="vdot on" style="display:inline-block;margin-right:9px"></span><strong>Van Hoenhiem</strong></td>
+                  <td><span class="pill green">Online</span></td>
+                  <td class="mono">22:14</td>
+                  <td class="mono">−212, 887, 41</td>
+                  <td class="mono" style="color:var(--ember)">⋯</td>
+                </tr>
+                <tr class="dim">
+                  <td><span class="vdot off" style="display:inline-block;margin-right:9px"></span>Ragnhild</td>
+                  <td><span class="pill blue">Offline</span></td>
+                  <td class="mono">-</td>
+                  <td class="mono">last seen 19:40</td><td></td>
+                </tr>
+                <tr class="dim">
+                  <td><span class="vdot off" style="display:inline-block;margin-right:9px"></span>Bjornulf</td>
+                  <td><span class="pill blue">Offline</span></td>
+                  <td class="mono">-</td>
+                  <td class="mono">last seen Tue</td><td></td>
+                </tr>
+              </tbody>
+            </table>
+            <!-- open context-menu mock pinned to Van Hoenhiem's row -->
+            <div class="ctxmenu">
+              <div class="ctxhead">Van Hoenhiem</div>
+              <div class="ci"><span class="r">ᛏ</span>Heal</div>
+              <div class="ci"><span class="r">ᚦ</span>Smite</div>
+              <div class="ci"><span class="r">ᛒ</span>Teleport to viking</div>
+              <hr>
+              <div class="ci"><span class="r">ᛟ</span>Spawn item at…</div>
+              <div class="ci"><span class="r">ᚨ</span>Promote Admin</div>
+              <hr>
+              <div class="ci danger"><span class="r">ᚲ</span>Kick</div>
+              <div class="ci danger"><span class="r">ᛉ</span>Ban</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: MODS ============ -->
+        <section class="page" id="page-mods">
+          <div class="pagehead">
+            <h1><span class="r">ᚱ</span>MODS</h1>
+            <span class="sub">63 loaded · Thunderstore index · last scan 21:38</span>
+            <div class="grow"></div>
+            <button class="btn btn-ghost btn-sm" id="scanBtn">ᛋ&nbsp; Scan Thunderstore</button>
+            <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
+          </div>
+          <div class="card" style="padding:0"><div style="height:14px"></div>
+            <table>
+              <thead><tr><th style="width:36%">Name</th><th>Installed</th><th>Latest</th><th>Status</th></tr></thead>
+              <tbody id="modTable">
+                <tr><td><strong>WorldEditCommands</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">JereKuusela</span></td><td class="mono">1.65.0</td><td class="mono" style="color:var(--amber)">1.66.0</td><td><span class="pill amber">Update</span></td></tr>
+                <tr><td><strong>ExtraSlots</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">shudnal</span></td><td class="mono">1.0.20</td><td class="mono" style="color:var(--amber)">1.0.22</td><td><span class="pill amber">Update</span></td></tr>
+                <tr><td><strong>EpicLoot</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">RandyKnapp</span></td><td class="mono">0.11.3</td><td class="mono">0.11.3</td><td><span class="pill green">Current</span></td></tr>
+                <tr><td><strong>ComfyMods-Gizmo</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">ComfyMods</span></td><td class="mono">1.15.0</td><td class="mono">1.15.0</td><td><span class="pill green">Current</span></td></tr>
+                <tr><td><strong>PlantEverything</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">Advize</span></td><td class="mono">1.18.2</td><td class="mono">1.18.2</td><td><span class="pill green">Current</span></td></tr>
+                <tr><td><strong>SearsCatalog</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">ComfyMods</span></td><td class="mono">1.4.0</td><td class="mono">1.4.0</td><td><span class="pill green">Current</span></td></tr>
+                <tr><td><strong>PlanBuild</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">MathiasDecrock</span></td><td class="mono">0.16.4</td><td class="mono">0.16.4</td><td><span class="pill green">Current</span></td></tr>
+                <tr><td><strong>BakaLoaderSpawnHelper</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">BakaLoader</span></td><td class="mono">1.1.0</td><td class="mono">-</td><td><span class="pill ember">Bundled</span></td></tr>
+                <tr><td><strong>Rcon_Commands</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">JereKuusela</span></td><td class="mono">1.12.0</td><td class="mono">1.12.0</td><td><span class="pill green">Current</span></td></tr>
+                <tr><td><strong>ValheimOptimizer</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">Dreous</span></td><td class="mono">1.2.1</td><td class="mono">1.2.1</td><td><span class="pill green">Current</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: WORLD ============ -->
+        <section class="page" id="page-world">
+          <div class="pagehead">
+            <h1><span class="r">ᛃ</span>WORLD</h1>
+            <span class="sub">server &amp; realm configuration</span>
+            <div class="grow"></div>
+            <button class="btn btn-ember btn-sm">ᛉ&nbsp; Save Config</button>
+          </div>
+          <div class="card">
+            <div class="microlabel"><span class="r">ᛃ</span>Longhouse</div>
+            <div class="formgrid">
+              <div class="field"><label>Server Name</label><input type="text" value="Baka Gaijin"></div>
+              <div class="field"><label>World</label><input type="text" value="Final Sunset"></div>
+              <div class="field"><label>Password</label><input type="password" value="••••••••••"></div>
+              <div class="field"><label>Port</label><input type="text" value="2456"></div>
+              <div class="field"><label>Visibility</label>
+                <div class="togglerow"><span class="tl">Public - listed in community browser</span><span class="toggle on" data-t></span></div>
+              </div>
+              <div class="field"><label>Crossplay</label>
+                <div class="togglerow"><span class="tl">Enable crossplay backend</span><span class="toggle" data-t></span></div>
+              </div>
+              <div class="field"><label>Save Interval</label><input type="text" value="600 s"></div>
+              <div class="field"><label>Backups Kept</label><input type="text" value="50"></div>
+            </div>
+
+            <div class="formsec"><span class="r">ᚨ</span> ADVANCED RITES</div>
+            <div class="formgrid">
+              <div class="field"><label>Empty-Server Restart</label>
+                <div class="togglerow"><span class="tl">Restart when empty for 5 min</span><span class="toggle on" data-t></span></div>
+              </div>
+              <div class="field"><label>Scheduled Restart</label>
+                <div class="togglerow"><span class="tl">Every 6 h with in-game countdown</span><span class="toggle on" data-t></span></div>
+              </div>
+              <div class="field"><label>RCON</label>
+                <div class="togglerow"><span class="tl">Bound on port 25575</span><span class="toggle on" data-t></span></div>
+              </div>
+              <div class="field"><label>Process Priority</label>
+                <select><option>AboveNormal</option><option>Normal</option><option>High</option></select>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: SAGA ============ -->
+        <section class="page" id="page-saga" style="display:none">
+          <div class="saga" style="height:100%">
+            <div class="pagehead">
+              <h1><span class="r">ᛋ</span>SAGA</h1>
+              <span class="sub">live chronicle of the realm</span>
+            </div>
+            <div class="termwrap">
+              <div class="termhead">
+                <span class="fpill active" data-f="all">All</span>
+                <span class="fpill" data-f="info">Info</span>
+                <span class="fpill" data-f="warn">Warn</span>
+                <span class="fpill" data-f="err">Error</span>
+                <span class="fpill" data-f="net">Net</span>
+                <span style="margin-left:auto" class="pill green">streaming</span>
+              </div>
+              <div class="term" id="term"></div>
+              <div class="termin">
+                <span class="prompt">ᛒ›</span>
+                <input id="termIn" placeholder="devcommand… (Enter to send)" spellcheck="false" autocomplete="off">
+                <span class="caret" id="termCaret"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- STATUSBAR -->
+      <div class="statusbar">
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em">v0.9.11</span></span>
+        <span class="seg">Final Sunset</span>
+        <span class="seg">63 mods</span>
+        <span class="seg">RCON <span class="em">bound</span></span>
+        <span class="seg">tick <span class="em" id="tickVal">60/60</span></span>
+        <span class="seg" style="margin-left:auto" id="clockSeg">22:15:04 JST</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMMAND PALETTE -->
+  <div class="palette-bg" id="paletteBg">
+    <div class="palette">
+      <div class="pin"><span class="r">ᛒ</span><input id="palInput" placeholder="Summon a command…"></div>
+      <div class="plist" id="palList">
+        <div class="pitem sel" data-cmd="Restart server"><span class="r">ᚱ</span>Restart server<span class="k">rite</span></div>
+        <div class="pitem" data-cmd="Kick player…"><span class="r">ᚲ</span>Kick player…<span class="k">viking</span></div>
+        <div class="pitem" data-cmd="Update all mods"><span class="r">ᛟ</span>Update all mods<span class="k">forge</span></div>
+        <div class="pitem" data-cmd="Save world now"><span class="r">ᛉ</span>Save world now<span class="k">rune</span></div>
+        <div class="pitem" data-cmd="Open world folder"><span class="r">ᛃ</span>Open world folder<span class="k">path</span></div>
+      </div>
+      <div class="pfoot"><span><kbd>↑↓</kbd> navigate</span><span><kbd>Enter</kbd> invoke</span><span><kbd>Esc</kbd> dismiss</span></div>
+    </div>
+  </div>
+
+  <!-- TOASTS -->
+  <div class="toasts" id="toasts"></div>
+</div>
+
+<!-- CAPTION -->
+<div class="caption">
+  <div class="c1">Concept 4/4 - BLEND: Longhouse × Mission Control</div>
+  <div>
+    <a href="longhouse.html">longhouse.html</a><span class="sep">·</span>
+    <a href="mission-control.html">mission-control.html</a><span class="sep">·</span>
+    <a href="launcher.html">launcher.html</a><span class="sep">·</span>
+    <a href="blend.html">blend.html</a>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+
+/* ---------- NAV ---------- */
+function goPage(name){
+  $$(".navitem").forEach(n=>n.classList.toggle("active",n.dataset.page===name));
+  $$(".page").forEach(p=>{
+    const on=p.id==="page-"+name;
+    p.classList.toggle("active",on);
+    p.style.display=on?"block":"none";
+  });
+}
+$$(".navitem").forEach(n=>n.addEventListener("click",()=>goPage(n.dataset.page)));
+$$("[data-goto]").forEach(c=>c.addEventListener("click",()=>goPage(c.dataset.goto)));
+goPage("hearth");
+
+/* ---------- HEARTH: uptime + douse ---------- */
+let running=true, upMin=272; // 4h 32m
+const hCard=$("#hearthCard"), hState=$("#hState"), hPid=$("#hPid"),
+      douseBtn=$("#douseBtn"), sailBtn=$("#sailBtn");
+function renderHearth(){
+  if(running){
+    hCard.classList.remove("cold");
+    hState.innerHTML=`BURNING · ${Math.floor(upMin/60)}h ${String(upMin%60).padStart(2,"0")}m`;
+    hPid.textContent="RUNNING · PID 150428 · valheim_server.x86_64";
+    douseBtn.textContent="Douse";
+  }else{
+    hCard.classList.add("cold");
+    hState.textContent="COLD";
+    hPid.textContent="STOPPED · embers doused · world saved";
+    douseBtn.textContent="Kindle";
+  }
+}
+douseBtn.addEventListener("click",e=>{
+  e.stopPropagation();
+  running=!running; if(running) upMin=0;
+  renderHearth();
+  toast(running?"ᚠ Hearth kindled · server starting":"ᛪ Hearth doused · server stopped");
+  logLine(running?"ok":"warn",running?"[BakaLoader] server process launched (PID 150428)":"[BakaLoader] graceful shutdown - world saved, embers doused");
+});
+sailBtn.addEventListener("click",()=>{
+  if(!running){running=true;upMin=0;renderHearth();}
+  toast("ᛟ Sailing forth · connecting steam://203.0.113.42:2456");
+});
+setInterval(()=>{ if(running){upMin++;renderHearth();} },60000);
+renderHearth();
+
+/* ---------- SAVE COUNTDOWN ---------- */
+let saveSec=252; // 04:12
+setInterval(()=>{
+  if(!running) return;
+  saveSec--;
+  if(saveSec<0){
+    saveSec=600;
+    toast("ᛉ World saved · "+clock());
+    logLine("ok","World saved ( Final_Sunset.db )  8.42 MB  in 214 ms");
+  }
+  $("#saveCountdown").textContent=
+    String(Math.floor(saveSec/60)).padStart(2,"0")+":"+String(saveSec%60).padStart(2,"0");
+},1000);
+
+/* ---------- SPARKLINES ---------- */
+const N=40, cpu=[], ram=[];
+for(let i=0;i<N;i++){cpu.push(20+Math.random()*10);ram.push(60+Math.random()*4);}
+function drawLine(el,data,min,max){
+  const pts=data.map((v,i)=>{
+    const x=(i/(N-1))*200, y=28-((v-min)/(max-min))*26;
+    return x.toFixed(1)+","+Math.max(2,Math.min(28,y)).toFixed(1);
+  }).join(" ");
+  el.setAttribute("points",pts);
+}
+function tickSpark(){
+  cpu.shift(); ram.shift();
+  const base=running?23:2, rbase=running?62:8;
+  cpu.push(Math.max(1,base+(Math.random()*14-6)+(Math.random()<.06?22:0)));
+  ram.push(Math.max(2,rbase+(Math.random()*3-1.5)));
+  drawLine($("#cpuLine"),cpu,0,60); drawLine($("#ramLine"),ram,0,100);
+  $("#cpuVal").textContent=Math.round(cpu[N-1])+"%";
+  $("#ramVal").textContent=(ram[N-1]/10).toFixed(1)+" GB";
+}
+setInterval(tickSpark,900); tickSpark();
+
+/* ---------- STATUS CLOCK + TICK ---------- */
+function clock(){const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");}
+setInterval(()=>{
+  const d=new Date();
+  $("#clockSeg").textContent=[d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,"0")).join(":")+" JST";
+  $("#tickVal").textContent=running?(58+Math.floor(Math.random()*3))+"/60":"-";
+},1000);
+
+/* ---------- COPY CHIP ---------- */
+$("#copyIp").addEventListener("click",e=>{
+  e.stopPropagation();
+  e.target.textContent="COPIED";
+  toast("ᚾ Address copied · 203.0.113.42:2456");
+  setTimeout(()=>e.target.textContent="COPY",1400);
+});
+
+/* ---------- MODS buttons ---------- */
+$("#updAllBtn").addEventListener("click",()=>{
+  toast("ᚱ Updating 2 mods · WorldEditCommands, ExtraSlots");
+  logLine("info","[Thunderstore] downloading WorldEditCommands 1.66.0 …");
+});
+$("#scanBtn").addEventListener("click",()=>{
+  toast("ᛋ Thunderstore scan begun · v1 community index");
+  logLine("info","[Thunderstore] fetching valheim community index (cached 15m)…");
+});
+
+/* ---------- COMMAND PALETTE ---------- */
+const palBg=$("#paletteBg"), palIn=$("#palInput");
+let palOpen=false;
+function openPal(){palOpen=true;palBg.classList.add("open");palIn.value="";filterPal("");setTimeout(()=>palIn.focus(),30);}
+function closePal(){palOpen=false;palBg.classList.remove("open");}
+function filterPal(q){
+  q=q.toLowerCase(); let first=true;
+  $$(".pitem").forEach(it=>{
+    const hit=it.dataset.cmd.toLowerCase().includes(q);
+    it.classList.toggle("hidden",!hit);
+    it.classList.toggle("sel",hit&&first); if(hit) first=false;
+  });
+}
+function invokePal(){
+  const sel=$(".pitem.sel:not(.hidden)")||$(".pitem:not(.hidden)");
+  if(!sel) return;
+  closePal();
+  toast("ᛒ "+sel.dataset.cmd+" · invoked");
+  logLine("cmd","> "+sel.dataset.cmd.toLowerCase().replace(/…/,""));
+}
+$("#cmdchip").addEventListener("click",openPal);
+palIn.addEventListener("input",()=>filterPal(palIn.value));
+palBg.addEventListener("click",e=>{if(e.target===palBg)closePal();});
+$$(".pitem").forEach(it=>it.addEventListener("click",()=>{ $$(".pitem").forEach(x=>x.classList.remove("sel")); it.classList.add("sel"); invokePal(); }));
+document.addEventListener("keydown",e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();palOpen?closePal():openPal();return;}
+  if(!palOpen) return;
+  const vis=$$(".pitem:not(.hidden)");
+  const idx=vis.findIndex(v=>v.classList.contains("sel"));
+  if(e.key==="Escape"){closePal();}
+  else if(e.key==="ArrowDown"){e.preventDefault();vis.forEach(v=>v.classList.remove("sel"));(vis[Math.min(idx+1,vis.length-1)]||vis[0])?.classList.add("sel");}
+  else if(e.key==="ArrowUp"){e.preventDefault();vis.forEach(v=>v.classList.remove("sel"));(vis[Math.max(idx-1,0)]||vis[0])?.classList.add("sel");}
+  else if(e.key==="Enter"){e.preventDefault();invokePal();}
+});
+
+/* ---------- TOASTS ---------- */
+function toast(msg){
+  const t=document.createElement("div");
+  t.className="toast";
+  const parts=msg.split(" ");
+  t.innerHTML=`<span class="r">${parts[0]}</span><span>${parts.slice(1).join(" ")}</span><span class="tt">${clock()}</span>`;
+  $("#toasts").appendChild(t);
+  setTimeout(()=>{t.classList.add("out");setTimeout(()=>t.remove(),320);},4200);
+}
+setInterval(()=>{ if(running) toast("ᛉ World saved · "+clock()); },12000);
+setTimeout(()=>toast("ᚱ 2 mod updates available · WorldEditCommands, ExtraSlots"),2500);
+
+/* ---------- SAGA TERMINAL ---------- */
+const term=$("#term"); let filter="all";
+const seed=[
+ ["info","[BepInEx] 63 plugins loaded in 4.21 s"],
+ ["ok","World loaded ( Final_Sunset )  ZDOs: 412,882"],
+ ["net","[Steam] game server connected, public IP 203.0.113.42"],
+ ["ok","RCON bound on 127.0.0.1:25575"],
+ ["info","Smithix has arrived - spawned at 3959, -1361, 35"],
+ ["info","Van Hoenhiem has arrived - spawned at -212, 887, 41"],
+ ["warn","[ValheimOptimizer] frame budget exceeded 18.4 ms (single spike)"],
+ ["ok","World saved ( Final_Sunset.db )  8.39 MB  in 198 ms"],
+];
+function logLine(kind,text){
+  const d=document.createElement("div");
+  d.className="ln "+kind; d.dataset.k=kind;
+  d.innerHTML=`<span class="t">${clock()}:${String(new Date().getSeconds()).padStart(2,"0")}</span>  <span class="${kind}">${text}</span>`;
+  d.style.display=(filter==="all"||filter===kind||(filter==="info"&&kind==="ok"))?"":"none";
+  term.appendChild(d);
+  while(term.children.length>160) term.firstChild.remove();
+  term.scrollTop=term.scrollHeight;
+}
+seed.forEach(([k,t])=>logLine(k,t));
+const chatter=[
+ ["info",()=>"ZDO sync: "+ (412000+Math.floor(Math.random()*2000)).toLocaleString() +" active, "+Math.floor(Math.random()*40+8)+" dirty"],
+ ["net",()=>"[Steam] socket recv "+(Math.random()*42+6).toFixed(1)+" KB/s · send "+(Math.random()*18+3).toFixed(1)+" KB/s"],
+ ["ok",()=>"World saved ( Final_Sunset.db )  8.4"+Math.floor(Math.random()*9)+" MB  in "+(180+Math.floor(Math.random()*90))+" ms"],
+ ["info",()=>["Smithix hauled 30 iron across the swamp","Van Hoenhiem tamed a lox","Wind shifted - sailing weather fair","Smithix has arrived","Raven event rolled: none"][Math.floor(Math.random()*5)]],
+ ["warn",()=>"[ExtraSlots] config reloaded from memory snapshot"],
+ ["net",()=>"[RCON] keepalive ok · 127.0.0.1:25575"],
+];
+setInterval(()=>{ if(!running) return;
+  const [k,f]=chatter[Math.floor(Math.random()*chatter.length)]; logLine(k,f());
+},2000);
+
+/* filter pills */
+$$(".fpill").forEach(p=>p.addEventListener("click",()=>{
+  $$(".fpill").forEach(x=>x.classList.remove("active")); p.classList.add("active");
+  filter=p.dataset.f;
+  $$("#term .ln").forEach(l=>{
+    const k=l.dataset.k;
+    l.style.display=(filter==="all"||filter===k||(filter==="info"&&k==="ok"))?"":"none";
+  });
+  term.scrollTop=term.scrollHeight;
+}));
+
+/* command input */
+const tIn=$("#termIn"), tCaret=$("#termCaret");
+tIn.addEventListener("input",()=>tCaret.style.display=tIn.value?"none":"");
+tIn.addEventListener("keydown",e=>{
+  if(e.key!=="Enter"||!tIn.value.trim())return;
+  const c=tIn.value.trim(); tIn.value=""; tCaret.style.display="";
+  logLine("cmd","> "+c);
+  setTimeout(()=>{
+    const r={save:"World saved ( Final_Sunset.db )  8.44 MB  in 205 ms",
+             players:"2 vikings online: Smithix, Van Hoenhiem",
+             help:"available rites: save · players · restart · spawn <item> · kick <viking>"}[c.split(" ")[0]]
+           ||"[RCON] command dispatched · ok";
+    logLine("ok",r);
+  },420);
+});
+
+/* ---------- TOGGLES ---------- */
+$$("[data-t]").forEach(t=>t.addEventListener("click",()=>t.classList.toggle("on")));
+</script>
+</body>
+</html>

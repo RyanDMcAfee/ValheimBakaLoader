@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    BakaLoaderItemIndexer - companion BepInEx plugin for Valheim BakaLoader.
+
+    On server start it dumps the live, mod-aware ObjectDB (every item + creature, with
+    localized names/descriptions and spawn flags) to <BepInEx>/items.json, which BakaLoader's
+    "Spawn X at" picker reads.
+
+    This project is INTENTIONALLY NOT part of ValheimBakaLoader.sln, because it must reference
+    the game's own assemblies (assembly_valheim.dll, UnityEngine.*) and BepInEx, which only
+    exist on a machine with Valheim Dedicated Server + BepInEx installed. Build it separately
+    with build-plugin.bat (which sets VALHEIM_INSTALL). Until the resulting DLL is copied into
+    the main app's Resources/ItemIndexer/ folder, BakaLoader falls back to the bundled
+    vanilla catalog and everything still works.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>BakaLoaderItemIndexer</AssemblyName>
+    <Description>Dumps the live Valheim ObjectDB to items.json for Valheim BakaLoader.</Description>
+    <Version>1.0.0</Version>
+    <LangVersion>latest</LangVersion>
+    <!-- Plugins load via Mono; don't let the SDK append a runtime to the output path. -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- Path to the Valheim Dedicated Server install. Override on the command line or env var:
+         dotnet build -p:VALHEIM_INSTALL="D:\SteamLibrary\steamapps\common\Valheim dedicated server" -->
+    <VALHEIM_INSTALL Condition="'$(VALHEIM_INSTALL)' == ''">$(VALHEIM_INSTALL)</VALHEIM_INSTALL>
+    <ManagedDir>$(VALHEIM_INSTALL)\valheim_server_Data\Managed</ManagedDir>
+    <BepInExCoreDir>$(VALHEIM_INSTALL)\BepInEx\core</BepInExCoreDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- BepInEx + Harmony -->
+    <Reference Include="BepInEx" Condition="Exists('$(BepInExCoreDir)\BepInEx.dll')">
+      <HintPath>$(BepInExCoreDir)\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony" Condition="Exists('$(BepInExCoreDir)\0Harmony.dll')">
+      <HintPath>$(BepInExCoreDir)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Game + Unity assemblies -->
+    <Reference Include="assembly_valheim" Condition="Exists('$(ManagedDir)\assembly_valheim.dll')">
+      <HintPath>$(ManagedDir)\assembly_valheim.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="assembly_utils" Condition="Exists('$(ManagedDir)\assembly_utils.dll')">
+      <HintPath>$(ManagedDir)\assembly_utils.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine" Condition="Exists('$(ManagedDir)\UnityEngine.dll')">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule" Condition="Exists('$(ManagedDir)\UnityEngine.CoreModule.dll')">
+      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

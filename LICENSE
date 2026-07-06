@@ -1,0 +1,150 @@
+BakaLoader Source-Available License
+Version 1.0, 6 July 2026
+
+Copyright (c) 2026 Ryan McAfee ("the Licensor"). All rights reserved.
+
+This license governs the use of Valheim BakaLoader (the "Software"),
+including its source code, compiled binaries, bundled companion plugins,
+documentation, and assets, in any form obtained from the Licensor's
+official distribution channels.
+
+1. DEFINITIONS
+
+   "Software" means Valheim BakaLoader and all of its constituent parts,
+   in source or binary form, including the BakaLoader companion BepInEx
+   plugins, web interface assets, documentation, and artwork.
+
+   "Official Channels" means the Licensor's GitHub repository at
+   https://github.com/RyanDMcAfee/ValheimBakaLoader and its Releases
+   page, or any successor location designated by the Licensor.
+
+   "You" means any individual or entity exercising rights under this
+   license.
+
+2. LICENSE GRANT
+
+   Subject to the terms of this license, the Licensor grants You a
+   worldwide, royalty-free, non-exclusive, non-transferable,
+   non-sublicensable license to:
+
+   a. download and install the Software from Official Channels;
+
+   b. run the Software for the purpose of hosting, managing, and
+      administering Valheim dedicated servers, whether for personal use
+      or for a gaming community, including communities supported by
+      voluntary donations;
+
+   c. view and study the source code for the purposes of transparency,
+      security review, and interoperability (for example, developing
+      independent Valheim mods or tools that interact with a server
+      managed by the Software); and
+
+   d. make copies of the Software as reasonably necessary for backup and
+      installation on machines You control.
+
+3. RESTRICTIONS
+
+   Except as expressly permitted in Section 2 or by applicable law that
+   cannot be contractually waived, You may NOT:
+
+   a. redistribute, publish, mirror, or otherwise make the Software or
+      any substantial portion of it available to third parties, in
+      source or binary form, outside of Official Channels;
+
+   b. modify, adapt, translate, or create derivative works of the
+      Software, or distribute any such modified version;
+
+   c. sell, rent, lease, sublicense, or otherwise commercialize the
+      Software itself, or charge others for access to the Software
+      (charging for or accepting donations toward the game servers You
+      operate with it is permitted);
+
+   d. incorporate the Software's source code, in whole or in substantial
+      part, into other software;
+
+   e. remove, alter, or obscure any copyright, license, or attribution
+      notices contained in the Software; or
+
+   f. use the names "BakaLoader", "Valheim BakaLoader", or the
+      Licensor's name, logos, or branding to endorse or promote
+      derivative or competing products without prior written permission.
+
+4. GITHUB PLATFORM RIGHTS
+
+   While the Software is hosted on GitHub, nothing in this license
+   restricts the rights GitHub's Terms of Service grant to other GitHub
+   users with respect to public repositories (such as viewing and
+   forking within the GitHub platform). Those platform rights do not
+   include any right to use, distribute, or create derivative works of
+   the Software beyond what Section 2 of this license or applicable law
+   allows.
+
+5. CONTRIBUTIONS
+
+   The project does not accept code contributions. If You nevertheless
+   submit any material to the project (including pull requests, patches,
+   or suggestions embodied in code), You grant the Licensor a perpetual,
+   worldwide, irrevocable, royalty-free license to use, modify,
+   relicense, and distribute that material without restriction or
+   obligation of attribution.
+
+6. THIRD-PARTY COMPONENTS
+
+   The Software depends on third-party packages (obtained separately via
+   NuGet at build time) that are licensed under their own terms,
+   including but not limited to Newtonsoft.Json, Serilog, Humanizer,
+   Semver, DeviceId, Microsoft.Web.WebView2, and
+   Microsoft.Extensions.DependencyInjection. Nothing in this license
+   alters Your rights or obligations under those licenses. This license
+   applies only to the Software itself.
+
+7. NO AFFILIATION
+
+   Valheim is a trademark of Iron Gate AB. The Software is an
+   independent, unofficial tool and is not affiliated with, endorsed by,
+   or sponsored by Iron Gate AB, Coffee Stain Publishing, or Valve
+   Corporation.
+
+8. UPDATES AND TELEMETRY
+
+   The Software may check Official Channels for updates and, if the
+   corresponding setting is enabled, transmit anonymous usage statistics
+   as described in the project README. Both behaviors can be disabled in
+   the Software's settings.
+
+9. TERMINATION
+
+   This license terminates automatically and immediately if You breach
+   any of its terms. Upon termination You must cease all use of the
+   Software and destroy all copies in Your possession. Sections 6, 7,
+   10, 11, and 12 survive termination. The Licensor may offer to
+   reinstate the license at the Licensor's sole discretion.
+
+10. DISCLAIMER OF WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+   NON-INFRINGEMENT. YOU ASSUME ALL RISK ARISING FROM YOUR USE OF THE
+   SOFTWARE, INCLUDING WITHOUT LIMITATION ANY DAMAGE TO OR LOSS OF GAME
+   WORLDS, SAVE DATA, CONFIGURATIONS, OR SYSTEMS.
+
+11. LIMITATION OF LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL
+   THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+   WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+   OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER
+   DEALINGS IN THE SOFTWARE.
+
+12. RESERVATION OF RIGHTS; MISCELLANY
+
+   All rights not expressly granted to You in this license are reserved
+   by the Licensor. This license is the entire agreement between You and
+   the Licensor concerning the Software. If any provision of this
+   license is held unenforceable, the remaining provisions remain in
+   full force, and the unenforceable provision shall be reformed to the
+   minimum extent necessary to make it enforceable. Failure to enforce
+   any provision is not a waiver. The Licensor may publish revised
+   versions of this license; each version of the Software is governed by
+   the license text distributed with it.
