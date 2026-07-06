@@ -399,6 +399,47 @@ namespace ValheimBakaLoader.Forms
                 });
             });
 
+            RegisterRpc("worldgen.get", p =>
+            {
+                // Saved world-generation dials for one world (empty defaults when unset).
+                var world = p.Value<string>("world");
+                if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+
+                var prefs = WorldPrefsProvider.LoadPreferences(world);
+                return Task.FromResult<object>(new
+                {
+                    world,
+                    preset = prefs?.Preset ?? "",
+                    modifiers = prefs?.Modifiers ?? new Dictionary<string, string>(),
+                });
+            });
+
+            RegisterRpc("worldgen.save", p =>
+            {
+                var world = p.Value<string>("world");
+                if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+
+                // Every dial is validated against the game's own vocabulary; a missing,
+                // empty, or "normal" value means "game default" and drops the key so no
+                // -modifier arg is emitted for it.
+                var modifiers = new Dictionary<string, string>();
+                foreach (var prop in (p["modifiers"] as JObject) ?? new JObject())
+                {
+                    var value = prop.Value?.Value<string>();
+                    if (string.IsNullOrWhiteSpace(value) || value == "normal") continue;
+                    if (!WorldGen.Modifiers.TryGetValue(prop.Key, out var allowed) || !allowed.Contains(value))
+                        throw new ArgumentException($"'{value}' is not a valid {prop.Key} setting");
+                    modifiers[prop.Key] = value;
+                }
+
+                var prefs = WorldPrefsProvider.LoadPreferences(world) ?? new WorldPreferences { WorldName = world };
+                prefs.Preset = null; // individual dials replace any preset (mutually exclusive)
+                prefs.Modifiers = modifiers;
+                WorldPrefsProvider.SavePreferences(prefs);
+
+                return Task.FromResult<object>(new { world, preset = "", modifiers });
+            });
+
             // --- Server lifecycle ---
             RegisterRpc("server.state", p => Task.FromResult<object>(BuildServerState()));
 

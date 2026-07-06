@@ -839,8 +839,8 @@ $$("[data-t]").forEach(t=>t.addEventListener("click",()=>{t.classList.toggle("on
 /* ---------- UPKEEP (app self-update + start with Windows) ---------- */
 $("#upkeepHead").addEventListener("click",()=>$("#upkeepCard").classList.toggle("open"));
 
-/* WORLD hall: Advanced Rites + Directories fold like the Upkeep card */
-["secRites","secDirs"].forEach(id=>{
+/* WORLD hall: World Modifiers + Advanced Rites + Directories fold like the Upkeep card */
+["secWorldMods","secRites","secDirs"].forEach(id=>{
   const el=document.getElementById(id);
   el.addEventListener("click",()=>el.classList.toggle("open"));
 });
@@ -1273,7 +1273,40 @@ async function renderWorldSelect(){
   const r=await rpc("worlds.list");
   const names=[...new Set([...(Array.isArray(r)&&r!==FAIL?r:[]),...(cur?[cur]:[])])];
   $("#fWorld").innerHTML=names.map(n=>`<option${n===cur?" selected":""}>${esc(n)}</option>`).join("");
+  renderWorldMods();
 }
+/* World-generation dials. value "" = Normal = game default (no -modifier arg emitted).
+   Every non-empty value must match Game/WorldGen.cs exactly - the C# save validates. */
+const WORLDGEN={
+  combat:{sel:"fModCombat",label:"Combat",opts:[
+    ["veryeasy","Very easy"],["easy","Easy"],["","Normal"],["hard","Hard"],["veryhard","Very hard"]]},
+  deathpenalty:{sel:"fModDeath",label:"Death penalty",opts:[
+    ["casual","Casual - no skill or item loss"],["veryeasy","Very easy - keep equipped items"],
+    ["easy","Easy"],["","Normal"],["hard","Hard"],["hardcore","Hardcore - permadeath"]]},
+  resources:{sel:"fModResources",label:"Resources",opts:[
+    ["muchless","Much less"],["less","Less"],["","Normal"],
+    ["more","More - double resources"],["muchmore","Much more"],["most","Most"]]},
+  raids:{sel:"fModRaids",label:"Raids",opts:[
+    ["none","None"],["muchless","Much less"],["less","Less"],["","Normal"],
+    ["more","More"],["muchmore","Much more"]]},
+  portals:{sel:"fModPortals",label:"Portals",opts:[
+    ["casual","Casual - anything through portals"],["","Normal - ore restricted"],
+    ["hard","Hard - nothing teleports"],["veryhard","Very hard - portals unusable"]]},
+};
+const wgOptions=(key,val)=>WORLDGEN[key].opts.map(([v,l])=>
+  `<option value="${v}"${v===val?" selected":""}>${esc(l)}</option>`).join("");
+async function renderWorldMods(){
+  const world=$("#fWorld").value||S.prefs?.WorldName||"";
+  let cur={};
+  if(Native.available&&world){
+    const r=await rpc("worldgen.get",{world});
+    if(r!==FAIL&&r?.modifiers) cur=r.modifiers;
+  }
+  for(const [key,def] of Object.entries(WORLDGEN))
+    $("#"+def.sel).innerHTML=wgOptions(key,cur[key]||"");
+}
+$("#fWorld").addEventListener("change",renderWorldMods);
+renderWorldMods(); // seed the dials with Normal defaults (both modes)
 $("#saveCfgBtn").addEventListener("click",async()=>{
   if(!Native.available){toast("ᛉ Config saved · runes etched");return;}
   const name=S.profileName||S.prefs?.ProfileName||"Default";
@@ -1304,6 +1337,12 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   };
   const r=await rpc("profiles.save",{name,prefs});
   if(r===FAIL) return;
+  // world dials ride along with Save Config, keyed to the selected world
+  if(prefs.WorldName){
+    const modifiers={};
+    for(const [key,def] of Object.entries(WORLDGEN)){const v=$("#"+def.sel).value;if(v)modifiers[key]=v;}
+    await rpc("worldgen.save",{world:prefs.WorldName,modifiers});
+  }
   S.prefs=r; S.profileName=r.ProfileName; S.saveInterval=r.SaveInterval??600;
   renderAllFromPrefs();
   toast("ᛉ Config saved · profile "+r.ProfileName);
@@ -1322,10 +1361,10 @@ function renderAllFromPrefs(){
 }
 
 /* ---------- FIRST-LAUNCH SETUP WIZARD ---------- */
-const WIZ={step:0,exe:"",save:"",exeValid:false,status:{}};
+const WIZ={step:0,exe:"",save:"",exeValid:false,status:{},mods:{}};
 
 function wizardOpen(status){
-  Object.assign(WIZ,{step:0,exe:"",save:"",exeValid:false,status:status||{}});
+  Object.assign(WIZ,{step:0,exe:"",save:"",exeValid:false,status:status||{},mods:{}});
   wizardRender();
 }
 
@@ -1342,13 +1381,17 @@ async function wizFinish(skip){
   if(!Native.available){toast(skip?"ᛉ preview · setup skipped":"ᛉ preview · setup complete");return;}
   const r=await rpc("setup.complete",skip?{}:{serverExePath:WIZ.exe.trim(),saveDataFolderPath:WIZ.save.trim()});
   if(r===FAIL) return;
+  // world rules picked in the wizard apply to the active profile's world
+  const world=S.prefs?.WorldName;
+  if(!skip&&world&&Object.values(WIZ.mods).some(v=>v))
+    await rpc("worldgen.save",{world,modifiers:WIZ.mods});
   toast(skip?"ᛉ Setup skipped · set paths any time in the WORLD hall"
             :"ᛉ Setup complete · may the voyage be bold");
   logLine("ok","[BakaLoader] first-time setup "+(skip?"skipped":"completed"));
 }
 
 function wizardRender(){
-  const names=["WELCOME","SERVER","SAVES","DONE"];
+  const names=["WELCOME","SERVER","SAVES","WORLD","DONE"];
   const steps=`<div class="wiz-steps">`+names.map((n,i)=>
     `<span class="ws${i===WIZ.step?" on":i<WIZ.step?" done":""}"><b>${i+1}</b>${n}</span>`).join("")+`</div>`;
   const dflt=WIZ.status.defaultSavePath||"%USERPROFILE%\\AppData\\LocalLow\\IronGate\\Valheim";
@@ -1383,15 +1426,29 @@ function wizardRender(){
       `<div class="wiz-stat ok" id="wizSaveStat">using the Valheim default</div>`;
     nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="wNext">Next</button>`;
+  }else if(WIZ.step===3){
+    body=
+      `<div class="mtitle">World rules</div>`+
+      `<div class="wiz-help">Valheim's world modifiers - all <strong>Normal</strong> is the classic experience. Change any of them later in the <strong>WORLD</strong> hall under <strong>WORLD MODIFIERS</strong>.</div>`+
+      `<div class="formgrid">`+
+      Object.entries(WORLDGEN).map(([key,def])=>
+        `<div class="field"><label>${esc(def.label)}</label><select id="wizMod_${key}" data-wgkey="${key}">${wgOptions(key,WIZ.mods[key]||"")}</select></div>`).join("")+
+      `</div>`+
+      `<div class="wiz-help">Max players is <strong>10</strong> - Valheim's built-in cap. Performance tops out around 10-15 players regardless of server specs.</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wNext">Next</button>`;
   }else{
     const exe=WIZ.exe.trim(),save=WIZ.save.trim();
+    const modsPicked=Object.entries(WIZ.mods).filter(([,v])=>v)
+      .map(([k,v])=>`${WORLDGEN[k].label.toLowerCase()} ${v}`).join(" · ");
     body=
       `<div class="mtitle">All set</div>`+
       `<div class="wiz-sum">`+
       `<div class="row"><span class="k">Server executable</span><span class="v">${esc(exe||"(not set · configure later in the WORLD hall)")}</span></div>`+
       `<div class="row"><span class="k">Save data folder</span><span class="v">${esc(save||"Valheim default")}</span></div>`+
+      `<div class="row"><span class="k">World rules</span><span class="v">${esc(modsPicked||"all Normal · the classic experience")}</span></div>`+
       `</div>`+
-      `<div class="wiz-help">`+TT("Both can be changed any time in the <strong>WORLD</strong> hall under <strong>DIRECTORIES</strong>. Name your server, pick a world, and sail forth.")+`</div>`;
+      `<div class="wiz-help">`+TT("Everything can be changed any time in the <strong>WORLD</strong> hall. Name your server, pick a world, and sail forth.")+`</div>`;
     nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="wNext">Finish</button>`;
   }
@@ -1403,7 +1460,7 @@ function wizardRender(){
   on("#wBack",()=>{WIZ.step--;wizardRender();});
   on("#wSkip",()=>wizFinish(true));
   on("#wNext",async()=>{
-    if(WIZ.step===3){wizFinish(false);return;}
+    if(WIZ.step===4){wizFinish(false);return;}
     if(WIZ.step===2){
       const ok=await wizValidate("dir",WIZ.save);
       if(!ok){
@@ -1473,6 +1530,10 @@ function wizardRender(){
       },250);
     });
     setTimeout(()=>inp.focus(),30);
+  }
+  if(WIZ.step===3){
+    m.querySelectorAll("[data-wgkey]").forEach(sel=>
+      sel.addEventListener("change",()=>{WIZ.mods[sel.dataset.wgkey]=sel.value;}));
   }
 }
 
