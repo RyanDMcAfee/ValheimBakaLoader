@@ -143,7 +143,19 @@ namespace ValheimBakaLoader.Forms
                 // This instance must bow out - adopting the server here would put it in
                 // BOTH instances' kill-on-close job objects, so closing EITHER window
                 // would kill it. Exiting the new instance is the only safe move.
-                BeginInvoke(new Action(Close));
+                // The form may already be tearing down (e.g. the WebView failed to
+                // initialize and its error path called Close first), and BeginInvoke on
+                // a disposed / handle-less form throws - guard it (live-crash 2026-07-07).
+                try
+                {
+                    if (IsDisposed || Disposing) return;
+                    if (IsHandleCreated) BeginInvoke(new Action(Close));
+                    else Close();
+                }
+                catch (InvalidOperationException)
+                {
+                    // Form tore down between the check and the call - already exiting.
+                }
                 return;
             }
 
