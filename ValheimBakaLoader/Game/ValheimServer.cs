@@ -413,6 +413,18 @@ namespace ValheimBakaLoader.Game
         }
 
         /// <summary>
+        /// The live tracked server process (spawned or adopted), or null when no server
+        /// is running. Used by the UI for CPU/RAM metrics; callers must tolerate the
+        /// process exiting between the fetch and any member access.
+        /// </summary>
+        public Process GetTrackedProcess()
+        {
+            var key = ProcessKey;
+            if (key == null) return null;
+            try { return ProcessProvider.GetProcess(key); } catch { return null; }
+        }
+
+        /// <summary>
         /// Launches valheim_server.exe as a tracked background process using the given
         /// profile: prepares companion plugins, wires up log capture and exit/crash
         /// detection, boosts process priority, and moves the status to Starting.

@@ -43,6 +43,28 @@ namespace ValheimBakaLoader.Forms
         private bool _modScanInProgress;
         private bool _modUpdateInProgress;
         private bool _requiredModInstallInProgress;
+        private bool _maxPlayersSaveInProgress;
+
+        // Last metrics.get sample, for CPU% computed as a processor-time delta over wall-clock.
+        private int _metricsPid;
+        private DateTime _metricsSampleTime;
+        private TimeSpan _metricsCpuTime;
+
+        /// <summary>
+        /// Azumatt's server-side mod that raises Valheim's hard 10-player cap. Installed
+        /// on demand when the user sets Max Players above 10; its BepInEx cfg is the
+        /// single source of truth for the configured count (no pref duplication).
+        /// </summary>
+        private static readonly RequiredMod MaxPlayerCountMod = new()
+        {
+            Author = "Azumatt",
+            ModName = "MaxPlayerCount",
+            Description = "Server-side mod that raises Valheim's built-in 10-player cap.",
+            ThunderstoreUrl = "https://thunderstore.io/c/valheim/p/Azumatt/MaxPlayerCount/",
+            RequiredFor = "Max Players above 10 in the World hall",
+        };
+
+        private const string MaxPlayerCountCfgFile = "Azumatt.MaxPlayerCount.cfg";
 
         private void InitializeBridge(
             IUserPreferencesProvider userPrefsProvider,
@@ -438,6 +460,89 @@ namespace ValheimBakaLoader.Forms
                 WorldPrefsProvider.SavePreferences(prefs);
 
                 return Task.FromResult<object>(new { world, preset = "", modifiers });
+            });
+
+            // --- Max players (MaxPlayerCount mod cfg) ---
+            RegisterRpc("maxplayers.get", p => Task.FromResult<object>(ReadMaxPlayers()));
+
+            RegisterRpc("maxplayers.save", async p =>
+            {
+                if (_maxPlayersSaveInProgress)
+                    throw new InvalidOperationException("A max-players change is already in progress.");
+                _maxPlayersSaveInProgress = true;
+                try
+                {
+                    // 1-127: the mod patches an Ldc_I4_S (sbyte) operand, so 127 is the true ceiling.
+                    var count = Math.Clamp(p.Value<int?>("count") ?? 10, 1, 127);
+                    var pluginsDir = GetPluginsDirectory();
+                    var installed = IsMaxPlayerModInstalled(pluginsDir);
+
+                    if (!installed)
+                    {
+                        // Vanilla cap requested and no mod present - nothing to do.
+                        if (count <= 10) return new { count = 10, modInstalled = false };
+
+                        if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
+                            throw new DirectoryNotFoundException(
+                                "BepInEx plugins folder not found - set a valid server .exe path first.");
+
+                        var ok = await RequiredModChecker.InstallModAsync(MaxPlayerCountMod, pluginsDir);
+                        if (!ok)
+                            throw new InvalidOperationException(
+                                "Couldn't install the MaxPlayerCount mod from Thunderstore.");
+                    }
+
+                    WriteMaxPlayersCfg(count);
+                    return new { count, modInstalled = true, note = "Applies on the next server start." };
+                }
+                finally
+                {
+                    _maxPlayersSaveInProgress = false;
+                }
+            });
+
+            // --- Hearth metrics (Forge Load card) ---
+            RegisterRpc("metrics.get", p =>
+            {
+                try
+                {
+                    var proc = Server.GetTrackedProcess();
+                    if (proc == null || proc.HasExited)
+                    {
+                        _metricsPid = 0;
+                        return Task.FromResult<object>(new { running = false });
+                    }
+
+                    proc.Refresh();
+                    var now = DateTime.UtcNow;
+                    var cpuTime = proc.TotalProcessorTime;
+
+                    // First sample (or a new PID after restart) has no delta - report 0%.
+                    double cpu = 0;
+                    if (_metricsPid == proc.Id && _metricsSampleTime != default)
+                    {
+                        var wallMs = (now - _metricsSampleTime).TotalMilliseconds;
+                        if (wallMs > 0)
+                            cpu = (cpuTime - _metricsCpuTime).TotalMilliseconds
+                                  / wallMs / Environment.ProcessorCount * 100.0;
+                    }
+                    _metricsPid = proc.Id;
+                    _metricsSampleTime = now;
+                    _metricsCpuTime = cpuTime;
+
+                    return Task.FromResult<object>(new
+                    {
+                        running = true,
+                        cpu = Math.Clamp(Math.Round(cpu, 1), 0, 100),
+                        ramBytes = proc.WorkingSet64,
+                    });
+                }
+                catch
+                {
+                    // Process died between the null-check and the sample - stopped, not an error.
+                    _metricsPid = 0;
+                    return Task.FromResult<object>(new { running = false });
+                }
             });
 
             // --- Server lifecycle ---
@@ -1249,6 +1354,64 @@ namespace ValheimBakaLoader.Forms
             var dir = GetConfigDirectory()
                 ?? throw new InvalidOperationException("Server exe path is not configured");
             return Path.Combine(dir, fileName);
+        }
+
+        private bool IsMaxPlayerModInstalled(string pluginsDir) =>
+            !string.IsNullOrWhiteSpace(pluginsDir)
+            && Directory.Exists(Path.Combine(pluginsDir, MaxPlayerCountMod.FolderName));
+
+        private object ReadMaxPlayers()
+        {
+            if (!IsMaxPlayerModInstalled(GetPluginsDirectory()))
+                return new { count = 10, modInstalled = false };
+
+            // Mod present: its cfg is the source of truth. Missing cfg or key means the
+            // mod hasn't written one yet - it would apply its OWN default of 20 (not 10).
+            var count = 20;
+            var dir = GetConfigDirectory();
+            var path = dir == null ? null : Path.Combine(dir, MaxPlayerCountCfgFile);
+            if (path != null && File.Exists(path))
+            {
+                foreach (var line in File.ReadAllLines(path))
+                {
+                    var t = line.Trim();
+                    if (!t.StartsWith("MaxPlayerCount", StringComparison.OrdinalIgnoreCase)) continue;
+                    var eq = t.IndexOf('=');
+                    if (eq > 0 && int.TryParse(t[(eq + 1)..].Trim(), out var v)) { count = v; break; }
+                }
+            }
+            return new { count, modInstalled = true };
+        }
+
+        private void WriteMaxPlayersCfg(int count)
+        {
+            var dir = GetConfigDirectory()
+                ?? throw new InvalidOperationException("Server exe path is not configured");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, MaxPlayerCountCfgFile);
+
+            if (File.Exists(path))
+            {
+                // Rewrite only the key line, preserving everything else BepInEx wrote.
+                var lines = File.ReadAllLines(path).ToList();
+                var idx = lines.FindIndex(l =>
+                    l.TrimStart().StartsWith("MaxPlayerCount", StringComparison.OrdinalIgnoreCase)
+                    && l.Contains('='));
+                if (idx >= 0) lines[idx] = $"MaxPlayerCount = {count}";
+                else lines.Add($"MaxPlayerCount = {count}");
+                File.WriteAllLines(path, lines);
+            }
+            else
+            {
+                // Freshly-installed mod hasn't run yet - seed a minimal cfg so the FIRST
+                // start uses the chosen value instead of the mod's surprise default of 20.
+                File.WriteAllText(path,
+                    "[1 - General]\n\n" +
+                    "## Override the player count that valheim checks for. Default is the vanilla max of 10.\n" +
+                    "# Setting type: Int32\n" +
+                    "# Default value: 20\n" +
+                    $"MaxPlayerCount = {count}\n");
+            }
         }
 
         private void EnsureItemCatalogLoaded()

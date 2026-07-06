@@ -1307,6 +1307,14 @@ async function renderWorldMods(){
 }
 $("#fWorld").addEventListener("change",renderWorldMods);
 renderWorldMods(); // seed the dials with Normal defaults (both modes)
+/* Max players: server-wide, not per-world. 10 = vanilla cap (no mod); above 10 the
+   MaxPlayerCount server mod's cfg is the source of truth. */
+async function renderMaxPlayers(){
+  if(!Native.available) return;
+  const r=await rpc("maxplayers.get",{});
+  if(r!==FAIL&&r?.count!=null) $("#fMaxPlayers").value=r.count;
+}
+renderMaxPlayers();
 $("#saveCfgBtn").addEventListener("click",async()=>{
   if(!Native.available){toast("ᛉ Config saved · runes etched");return;}
   const name=S.profileName||S.prefs?.ProfileName||"Default";
@@ -1342,6 +1350,16 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
     const modifiers={};
     for(const [key,def] of Object.entries(WORLDGEN)){const v=$("#"+def.sel).value;if(v)modifiers[key]=v;}
     await rpc("worldgen.save",{world:prefs.WorldName,modifiers});
+  }
+  // max players rides along too - >10 auto-installs the MaxPlayerCount server mod
+  const mp=parseInt($("#fMaxPlayers").value,10);
+  if(!Number.isNaN(mp)){
+    const mr=await rpc("maxplayers.save",{count:mp});
+    if(mr!==FAIL&&mr?.count!=null){
+      $("#fMaxPlayers").value=mr.count;
+      if(mr.modInstalled&&mp>10)
+        logLine("ok","[BakaLoader] max players set to "+mr.count+" (MaxPlayerCount mod · next start)");
+    }
   }
   S.prefs=r; S.profileName=r.ProfileName; S.saveInterval=r.SaveInterval??600;
   renderAllFromPrefs();
@@ -1434,7 +1452,7 @@ function wizardRender(){
       Object.entries(WORLDGEN).map(([key,def])=>
         `<div class="field"><label>${esc(def.label)}</label><select id="wizMod_${key}" data-wgkey="${key}">${wgOptions(key,WIZ.mods[key]||"")}</select></div>`).join("")+
       `</div>`+
-      `<div class="wiz-help">Max players is <strong>10</strong> - Valheim's built-in cap. Performance tops out around 10-15 players regardless of server specs.</div>`;
+      `<div class="wiz-help">Max players defaults to <strong>10</strong> - Valheim's built-in cap. Raise it later in the <strong>WORLD</strong> hall under <strong>WORLD MODIFIERS</strong> (installs the MaxPlayerCount server mod).</div>`;
     nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="wNext">Next</button>`;
   }else{
@@ -1719,10 +1737,28 @@ if(Native.available){
     $("#tickVal").textContent="-";
     $("#sbMods").textContent="- mods";
     tIn.placeholder="console command… (Enter to send)";
-    /* no metrics RPC yet - flat sparklines, em-dash values */
+    /* Forge Load: real CPU/RAM sampled from the tracked server process every 3s.
+       Quiet Native.call (no rpc() wrapper) so a hiccup never toast-spams the poll. */
     for(let i=0;i<N;i++){cpu.push(0);ram.push(0);}
     drawLine($("#cpuLine"),cpu,0,60); drawLine($("#ramLine"),ram,0,100);
     $("#cpuVal").textContent="-"; $("#ramVal").textContent="-";
+    async function pollMetrics(){
+      const m=await Native.call("metrics.get",{}).catch(()=>null);
+      cpu.shift(); ram.shift();
+      if(m&&m.running){
+        cpu.push(Math.min(100,Math.max(0,m.cpu||0)));
+        ram.push((m.ramBytes||0)/1024/1024/1024*10); /* GB x10 - same scale as the value line */
+        $("#cpuVal").textContent=Math.round(cpu[N-1])+"%";
+        $("#ramVal").textContent=(ram[N-1]/10).toFixed(1)+" GB";
+      }else{
+        cpu.push(0); ram.push(0);
+        $("#cpuVal").textContent="-"; $("#ramVal").textContent="-";
+      }
+      /* headroom scales up when a heavy modpack pushes past the base range */
+      drawLine($("#cpuLine"),cpu,0,Math.max(60,...cpu));
+      drawLine($("#ramLine"),ram,0,Math.max(100,...ram));
+    }
+    pollMetrics(); setInterval(pollMetrics,3000);
     /* process priority is not pref-backed: always AboveNormal in C# */
     const prio=$("#prioSel");
     prio.value="AboveNormal"; prio.disabled=true;
