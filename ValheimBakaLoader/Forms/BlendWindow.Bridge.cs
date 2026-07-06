@@ -427,8 +427,11 @@ namespace ValheimBakaLoader.Forms
 
                 // An update is staged; close the app so the watchdog can take over. Marshal to
                 // the UI thread and defer the close so this hook returns first and the restart
-                // is cleanly abandoned.
-                BeginInvoke(new Action(() => Close()));
+                // is cleanly abandoned. Go through the graceful shutdown path: it saves the
+                // world and stops the server before closing (a bare Close() would be cancelled
+                // by the close guard - unattended dialog - and the old behavior let the job
+                // object hard-kill the server with no final save).
+                BeginInvoke(new Action(ShutDownServerThenClose));
                 return true;
             };
         }
