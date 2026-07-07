@@ -26,6 +26,12 @@ namespace ValheimBakaLoader.Game
         /// <summary>Every character this player has been seen using.</summary>
         [JsonProperty("characters")] public List<CharacterInfo> Characters { get; set; }
 
+        /// <summary>
+        /// The server profile this player was last seen on. Null on records
+        /// written before multi-server support; treated as matching any server.
+        /// </summary>
+        [JsonProperty("serverKey")] public string ServerKey { get; set; }
+
         // -- Runtime-only session state, never persisted --
 
         [JsonIgnore] public PlayerStatus PlayerStatus { get; set; }

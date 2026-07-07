@@ -643,3 +643,25 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   font-family:var(--mono);font-size:11.5px;line-height:1.65;color:var(--bone);
   padding:2px 4px;caret-color:var(--ember)}
 .cfg-editor::placeholder{color:var(--bone-faint)}
+
+/* ---------- MULTI-SERVER CHIP STRIP (sidebar top) ---------- */
+.srvstrip{display:flex;flex-direction:column;align-items:center;gap:7px;width:100%;
+  max-height:220px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+.srvstrip::-webkit-scrollbar{display:none}
+.srvchip{width:40px;height:40px;border-radius:14px;position:relative;cursor:pointer;flex:none;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.04);border:1px solid rgba(140,109,63,.28);
+  color:var(--bone-dim);transition:all .18s var(--ease)}
+.srvchip:hover{border-radius:11px;color:var(--bone);background:rgba(255,255,255,.07)}
+.srvchip.active{border-color:var(--ember);color:var(--ember-hi);background:var(--ember-dim);
+  box-shadow:0 0 10px rgba(255,122,26,.25)}
+.srvchip .srvinit{font-size:15px;font-weight:700}
+.srvchip .srvdot{position:absolute;left:-3px;top:50%;transform:translateY(-50%);
+  width:6px;height:6px;border-radius:50%;background:#4A4640}
+.srvchip .srvdot.on{background:var(--moss);box-shadow:0 0 6px rgba(111,160,92,.8)}
+.srvchip .srvbadge{position:absolute;right:-5px;bottom:-5px;min-width:15px;height:15px;padding:0 3px;
+  border-radius:8px;background:var(--ember);color:#1A1108;font-size:9px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
+.srvchip.add{border-style:dashed;color:var(--bone-faint)}
+.srvchip.add:hover{color:var(--ember-hi);border-color:var(--ember)}
+.srvsep{width:44px;height:1px;background:rgba(140,109,63,.25);margin:2px 0 4px;flex:none}

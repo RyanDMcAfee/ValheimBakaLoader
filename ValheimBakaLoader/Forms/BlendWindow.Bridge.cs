@@ -21,11 +21,11 @@ namespace ValheimBakaLoader.Forms
     /// </summary>
     public partial class BlendWindow
     {
+        private IServiceProvider ServiceProvider;
         private IUserPreferencesProvider UserPrefsProvider;
         private IServerPreferencesProvider ServerPrefsProvider;
         private IWorldPreferencesProvider WorldPrefsProvider;
         private IPlayerDataRepository PlayerDataProvider;
-        private ValheimServer Server;
         private IIpAddressProvider IpAddressProvider;
         private IModScanner ModScanner;
         private IThunderstoreClient ThunderstoreClient;
@@ -41,15 +41,34 @@ namespace ValheimBakaLoader.Forms
         /// <summary>The profile whose preferences were last loaded/saved through the bridge.</summary>
         private string CurrentProfile;
 
+        // Multi-server registry: one live ValheimServer per profile name, all sharing the
+        // singleton services (player repo, mod tooling). Creation is lock-guarded rather
+        // than GetOrAdd-with-factory: a double-invoked factory would leak a stray
+        // ValheimServer whose ctor subscribes to the shared player repository.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ServerSession> Sessions =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly object SessionsLock = new();
+
+        /// <summary>The profile the UI is currently showing (never null).</summary>
+        private string ActiveProfileName =>
+            !string.IsNullOrWhiteSpace(CurrentProfile) ? CurrentProfile
+            : !string.IsNullOrWhiteSpace(StartProfile) ? StartProfile
+            : Resources.DefaultServerProfileName;
+
+        /// <summary>The session for the profile currently shown in the UI (created on demand).</summary>
+        private ServerSession ActiveSession => GetOrCreateSession(ActiveProfileName);
+
+        /// <summary>
+        /// The active session's server. Keeps the existing RPC bodies single-server-shaped:
+        /// every lifecycle/RCON call routes to whichever server the UI is looking at, while
+        /// other sessions keep running in the background.
+        /// </summary>
+        private ValheimServer Server => ActiveSession.Server;
+
         private bool _modScanInProgress;
         private bool _modUpdateInProgress;
         private bool _requiredModInstallInProgress;
         private bool _maxPlayersSaveInProgress;
-
-        // Last metrics.get sample, for CPU% computed as a processor-time delta over wall-clock.
-        private int _metricsPid;
-        private DateTime _metricsSampleTime;
-        private TimeSpan _metricsCpuTime;
 
         /// <summary>
         /// Azumatt's server-side mod that raises Valheim's hard 10-player cap. Installed
@@ -68,11 +87,11 @@ namespace ValheimBakaLoader.Forms
         private const string MaxPlayerCountCfgFile = "Azumatt.MaxPlayerCount.cfg";
 
         private void InitializeBridge(
+            IServiceProvider serviceProvider,
             IUserPreferencesProvider userPrefsProvider,
             IServerPreferencesProvider serverPrefsProvider,
             IWorldPreferencesProvider worldPrefsProvider,
             IPlayerDataRepository playerDataProvider,
-            ValheimServer server,
             IIpAddressProvider ipAddressProvider,
             IModScanner modScanner,
             IThunderstoreClient thunderstoreClient,
@@ -85,11 +104,11 @@ namespace ValheimBakaLoader.Forms
             IHeartbeatService heartbeatService,
             IApplicationLogger appLogger)
         {
+            ServiceProvider = serviceProvider;
             UserPrefsProvider = userPrefsProvider;
             ServerPrefsProvider = serverPrefsProvider;
             WorldPrefsProvider = worldPrefsProvider;
             PlayerDataProvider = playerDataProvider;
-            Server = server;
             IpAddressProvider = ipAddressProvider;
             ModScanner = modScanner;
             ThunderstoreClient = thunderstoreClient;
@@ -103,13 +122,119 @@ namespace ValheimBakaLoader.Forms
             AppLogger = appLogger;
 
             // Anonymous usage heartbeat (gated on the ShareAnonymousStats pref).
-            Heartbeat.ServerRunningProvider = () => Server.Status == ServerStatus.Running;
+            Heartbeat.ServerRunningProvider = () =>
+                Sessions.Values.Any(s => s.Server.Status == ServerStatus.Running);
             Heartbeat.Start();
 
-            WireAppSelfUpdate();
             RegisterServiceEvents();
             RegisterRpcHandlers();
         }
+
+        #region Multi-server session registry
+
+        /// <summary>
+        /// Returns the live session for a profile, creating (and fully wiring) it on first
+        /// use. Each session owns its own transient ValheimServer; the ServerKey stamp is
+        /// what keeps concurrent servers from cross-attributing players in the shared repo.
+        /// </summary>
+        private ServerSession GetOrCreateSession(string profileName)
+        {
+            if (string.IsNullOrWhiteSpace(profileName)) profileName = Resources.DefaultServerProfileName;
+            if (Sessions.TryGetValue(profileName, out var existing)) return existing;
+
+            lock (SessionsLock)
+            {
+                if (Sessions.TryGetValue(profileName, out existing)) return existing;
+
+                var server = (ValheimServer)ServiceProvider.GetService(typeof(ValheimServer))
+                    ?? throw new InvalidOperationException("ValheimServer is not registered");
+                server.ServerKey = profileName;
+
+                var session = new ServerSession(profileName, server);
+                WireSessionEvents(session);
+                WireAppSelfUpdate(session);
+                WireModUpdateHooks(session);
+
+                Sessions[profileName] = session;
+                return session;
+            }
+        }
+
+        /// <summary>
+        /// Forwards one session's server events to JS, tagged with the profile name so the
+        /// UI can tell "the server I'm looking at" apart from a background server's chip.
+        /// </summary>
+        private void WireSessionEvents(ServerSession session)
+        {
+            var profile = session.ProfileName;
+            var server = session.Server;
+
+            server.StatusChanged += (s, status) =>
+            {
+                PostEvent("server.status", BuildServerState(session));
+                PostEvent("servers.changed", BuildServersList());
+            };
+            server.WorldSaved += (s, seconds) => PostEvent("server.worldSaved", new { seconds, profile });
+            server.InviteCodeReady += (s, code) => PostEvent("server.inviteCode", new { code, profile });
+            server.ServerCrashed += (s, e) => PostEvent("server.crashed", new { profile });
+            server.CountdownTick += (s, message) => PostEvent("server.countdown", new { message, profile });
+        }
+
+        /// <summary>
+        /// Preflight for starting a session while others run: Valheim binds the game port
+        /// AND port+1, RCON ports must be unique, two servers can't share one exe install
+        /// (BepInEx config/plugins would collide), and one world can't be loaded twice.
+        /// </summary>
+        private void EnsureNoServerCollisions(ServerSession starting, IValheimServerOptions options)
+        {
+            foreach (var other in Sessions.Values)
+            {
+                if (ReferenceEquals(other, starting)) continue;
+
+                var live = other.Server;
+                if (live.Status == ServerStatus.Stopped) continue;
+
+                var theirs = live.Options;
+                if (theirs == null) continue;
+
+                if (Math.Abs(options.Port - theirs.Port) <= 1)
+                    throw new InvalidOperationException(
+                        $"Port clash with running server '{other.ProfileName}': Valheim uses ports " +
+                        $"{theirs.Port}-{theirs.Port + 1}. Give this profile a different port (2+ apart).");
+
+                if (options.RconEnabled && theirs.RconEnabled && options.RconPort == theirs.RconPort)
+                    throw new InvalidOperationException(
+                        $"RCON port {options.RconPort} is already in use by running server '{other.ProfileName}'.");
+
+                if (SamePath(options.ServerExePath, theirs.ServerExePath))
+                    throw new InvalidOperationException(
+                        $"Server install clash with running server '{other.ProfileName}': two servers can't " +
+                        "share one valheim_server.exe (their BepInEx mods and configs would collide). " +
+                        "Give each profile its own copy of the server folder - a renamed exe works.");
+
+                if (!string.IsNullOrWhiteSpace(options.WorldName)
+                    && string.Equals(options.WorldName, theirs.WorldName, StringComparison.OrdinalIgnoreCase)
+                    && SamePath(options.SaveDataFolderPath ?? "", theirs.SaveDataFolderPath ?? ""))
+                    throw new InvalidOperationException(
+                        $"World clash: '{options.WorldName}' is already loaded by running server '{other.ProfileName}'.");
+            }
+        }
+
+        private static bool SamePath(string a, string b)
+        {
+            if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
+                return string.IsNullOrWhiteSpace(a) && string.IsNullOrWhiteSpace(b);
+            try
+            {
+                return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        #endregion
 
         #region Splash startup (profile handoff, orphan adoption, auto-start)
 
@@ -333,11 +458,12 @@ namespace ValheimBakaLoader.Forms
         private void OnCloseRequested(object sender, FormClosingEventArgs e)
         {
             if (_closeGuardPassed) return;
-            if (Server.Status == ServerStatus.Stopped) return;
+            if (Sessions.Values.All(s => s.Server.Status == ServerStatus.Stopped)) return;
 
             e.Cancel = true;
             if (_closeShutdownInProgress) return; // already saving + shutting down
 
+            // Vikings on ANY running server count - closing the app shuts them all down.
             var online = PlayerDataProvider.Data
                 .Count(pl => pl.PlayerStatus == PlayerStatus.Online || pl.PlayerStatus == PlayerStatus.Joining);
 
@@ -346,12 +472,17 @@ namespace ValheimBakaLoader.Forms
                 ? $"{online} viking{(online == 1 ? " is" : "s are")} still online and will be disconnected.{nl}{nl}"
                 : "";
 
+            var runningCount = Sessions.Values.Count(s => s.Server.Status != ServerStatus.Stopped);
+
             var page = new TaskDialogPage
             {
                 Caption = Resources.ApplicationTitle,
-                Heading = online > 0 ? "Vikings are still online" : "The server is still running",
-                Text = playersLine +
-                    "The world will be saved and the server shut down gracefully before BakaLoader closes.",
+                Heading = online > 0
+                    ? "Vikings are still online"
+                    : runningCount > 1 ? "Servers are still running" : "The server is still running",
+                Text = playersLine + (runningCount > 1
+                    ? $"All {runningCount} running servers will save their worlds and shut down gracefully before BakaLoader closes."
+                    : "The world will be saved and the server shut down gracefully before BakaLoader closes."),
                 Icon = online > 0 ? TaskDialogIcon.Warning : TaskDialogIcon.Information,
                 AllowCancel = true,
             };
@@ -362,24 +493,28 @@ namespace ValheimBakaLoader.Forms
 
             if (TaskDialog.ShowDialog(this, page) != shutdown) return;
 
-            ShutDownServerThenClose();
+            ShutDownAllServersThenClose();
         }
 
-        private async void ShutDownServerThenClose()
+        private async void ShutDownAllServersThenClose()
         {
             _closeShutdownInProgress = true;
             try
             {
-                Logger.Information("Close requested while the server is running - saving world and shutting down first");
+                Logger.Information("Close requested while server(s) are running - saving worlds and shutting down first");
 
                 // Bounded wait so a wedged server can never trap the user in a window
                 // that refuses to close. Stop() is a graceful close request, so Valheim
                 // saves the world on the way down; it no-ops until CanStop (e.g. while
                 // the server is still Starting), hence the retry inside the loop.
                 var deadline = DateTime.UtcNow.AddSeconds(60);
-                while (Server.Status != ServerStatus.Stopped && DateTime.UtcNow < deadline)
+                while (Sessions.Values.Any(s => s.Server.Status != ServerStatus.Stopped)
+                    && DateTime.UtcNow < deadline)
                 {
-                    if (Server.CanStop) Server.Stop();
+                    foreach (var session in Sessions.Values)
+                    {
+                        if (session.Server.CanStop) session.Server.Stop();
+                    }
                     await Task.Delay(250);
                 }
             }
@@ -415,12 +550,18 @@ namespace ValheimBakaLoader.Forms
         /// one is staged, the app closes so the headless watchdog can swap the files and relaunch
         /// the updated app (which re-auto-starts the server from the profile's AutoStart pref).
         /// </summary>
-        private void WireAppSelfUpdate()
+        private void WireAppSelfUpdate(ServerSession session)
         {
-            Server.CheckForAppUpdateOnRestart = async () =>
+            session.Server.CheckForAppUpdateOnRestart = async () =>
             {
                 var prefs = UserPrefsProvider.LoadPreferences();
                 if (!prefs.AutoUpdateBakaLoader) return false;
+
+                // Never self-update while ANOTHER server is still running: swapping the app
+                // files closes every session, not just the one that happens to be restarting.
+                var othersLive = Sessions.Values.Any(s =>
+                    !ReferenceEquals(s, session) && s.Server.Status != ServerStatus.Stopped);
+                if (othersLive) return false;
 
                 var staged = await AppUpdateService.CheckAndStageUpdateAsync();
                 if (!staged) return false;
@@ -431,9 +572,65 @@ namespace ValheimBakaLoader.Forms
                 // world and stops the server before closing (a bare Close() would be cancelled
                 // by the close guard - unattended dialog - and the old behavior let the job
                 // object hard-kill the server with no final save).
-                BeginInvoke(new Action(ShutDownServerThenClose));
+                BeginInvoke(new Action(ShutDownAllServersThenClose));
                 return true;
             };
+        }
+
+        /// <summary>
+        /// Wires the empty-server auto mod-update machinery (pending-count probe + apply).
+        /// Gated on the AutoUpdateMods pref; scans this session's OWN plugins folder so
+        /// per-server mod installs update independently.
+        /// </summary>
+        private void WireModUpdateHooks(ServerSession session)
+        {
+            var profile = session.ProfileName;
+
+            session.Server.GetPendingModUpdateCount = async () =>
+            {
+                if (!UserPrefsProvider.LoadPreferences().AutoUpdateMods) return 0;
+
+                var mods = await ScanModsWithLatestAsync(profile);
+                return mods?.Count(m => m.UpdateAvailable) ?? 0;
+            };
+
+            session.Server.ApplyModUpdates = async () =>
+            {
+                if (!UserPrefsProvider.LoadPreferences().AutoUpdateMods) return;
+
+                var mods = await ScanModsWithLatestAsync(profile);
+                var updatable = mods?.Where(m => m.UpdateAvailable).ToList();
+                if (updatable == null || updatable.Count == 0) return;
+
+                var results = await ModUpdateService.UpdateModsAsync(updatable);
+                Logger.Information("Auto-updated {count} mod(s) for profile {profile}",
+                    results.Count(r => r.Updated), profile);
+            };
+        }
+
+        /// <summary>
+        /// Scans a profile's plugins folder and resolves each mod's latest Thunderstore
+        /// version. Null when the profile has no usable plugins folder.
+        /// </summary>
+        private async Task<List<Tools.Models.InstalledMod>> ScanModsWithLatestAsync(string profileName)
+        {
+            var pluginsDir = GetPluginsDirectoryFor(profileName);
+            if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir)) return null;
+
+            var mods = ModScanner.ScanPlugins(pluginsDir);
+            await Task.WhenAll(mods.Select(async mod =>
+            {
+                try
+                {
+                    var package = await ThunderstoreClient.GetLatestAsync(mod.Author, mod.ModName);
+                    mod.LatestVersion = package?.LatestVersion;
+                }
+                catch
+                {
+                    // Leave LatestVersion null - unknown means "no update".
+                }
+            }));
+            return mods;
         }
 
         #endregion
@@ -442,13 +639,13 @@ namespace ValheimBakaLoader.Forms
 
         private void RegisterServiceEvents()
         {
-            Server.StatusChanged += (s, status) => PostEvent("server.status", BuildServerState());
-            Server.WorldSaved += (s, seconds) => PostEvent("server.worldSaved", new { seconds });
-            Server.InviteCodeReady += (s, code) => PostEvent("server.inviteCode", new { code });
-            Server.ServerCrashed += (s, e) => PostEvent("server.crashed", null);
-            Server.CountdownTick += (s, message) => PostEvent("server.countdown", new { message });
-
+            // Per-server events (status/save/invite/crash/countdown) are wired per session
+            // in WireSessionEvents, tagged with the profile name.
             PlayerDataProvider.EntityUpdated += (s, player) => PostEvent("player.updated", BuildPlayerDto(player));
+
+            // Status transitions drive the server chips' player-count badges.
+            PlayerDataProvider.PlayerStatusChanged += (s, player) =>
+                PostEvent("servers.changed", BuildServersList());
 
             IpAddressProvider.ExternalIpChanged += (s, ip) => PostEvent("ip.external", new { ip });
             IpAddressProvider.InternalIpChanged += (s, ip) => PostEvent("ip.internal", new { ip });
@@ -486,6 +683,8 @@ namespace ValheimBakaLoader.Forms
                 var prefs = ServerPrefsProvider.LoadPreferences(name)
                     ?? throw new ArgumentException($"No profile named '{name}'");
                 CurrentProfile = prefs.ProfileName;
+                // Loading a profile IS the server switch - refresh the chips' active marker.
+                PostEvent("servers.changed", BuildServersList());
                 return Task.FromResult<object>(prefs);
             });
 
@@ -495,16 +694,28 @@ namespace ValheimBakaLoader.Forms
                     .ToObject<ServerPreferences>();
                 ServerPrefsProvider.SavePreferences(prefs);
                 CurrentProfile = prefs.ProfileName;
+                PostEvent("servers.changed", BuildServersList());
                 return Task.FromResult<object>(prefs);
             });
 
             RegisterRpc("profiles.remove", p =>
             {
                 var name = p.Value<string>("name");
+                if (Sessions.TryGetValue(name, out var session) && session.Server.Status != ServerStatus.Stopped)
+                    throw new InvalidOperationException($"Stop the server '{name}' before removing its profile.");
+
                 ServerPrefsProvider.RemovePreferences(name);
                 if (CurrentProfile == name) CurrentProfile = null;
+
+                // Drop the dead session so its server unsubscribes from the player repo.
+                if (Sessions.TryRemove(name, out var removed)) removed.Server.Dispose();
+
+                PostEvent("servers.changed", BuildServersList());
                 return Task.FromResult<object>(true);
             });
+
+            // --- Multi-server registry ---
+            RegisterRpc("servers.list", p => Task.FromResult<object>(BuildServersList()));
 
             // --- User preferences ---
             RegisterRpc("userprefs.get", p => Task.FromResult<object>(BuildUserPrefsDto()));
@@ -689,12 +900,13 @@ namespace ValheimBakaLoader.Forms
             // --- Hearth metrics (Forge Load card) ---
             RegisterRpc("metrics.get", p =>
             {
+                var session = ActiveSession;
                 try
                 {
-                    var proc = Server.GetTrackedProcess();
+                    var proc = session.Server.GetTrackedProcess();
                     if (proc == null || proc.HasExited)
                     {
-                        _metricsPid = 0;
+                        session.MetricsPid = 0;
                         return Task.FromResult<object>(new { running = false });
                     }
 
@@ -704,16 +916,16 @@ namespace ValheimBakaLoader.Forms
 
                     // First sample (or a new PID after restart) has no delta - report 0%.
                     double cpu = 0;
-                    if (_metricsPid == proc.Id && _metricsSampleTime != default)
+                    if (session.MetricsPid == proc.Id && session.MetricsSampleTime != default)
                     {
-                        var wallMs = (now - _metricsSampleTime).TotalMilliseconds;
+                        var wallMs = (now - session.MetricsSampleTime).TotalMilliseconds;
                         if (wallMs > 0)
-                            cpu = (cpuTime - _metricsCpuTime).TotalMilliseconds
+                            cpu = (cpuTime - session.MetricsCpuTime).TotalMilliseconds
                                   / wallMs / Environment.ProcessorCount * 100.0;
                     }
-                    _metricsPid = proc.Id;
-                    _metricsSampleTime = now;
-                    _metricsCpuTime = cpuTime;
+                    session.MetricsPid = proc.Id;
+                    session.MetricsSampleTime = now;
+                    session.MetricsCpuTime = cpuTime;
 
                     return Task.FromResult<object>(new
                     {
@@ -725,7 +937,7 @@ namespace ValheimBakaLoader.Forms
                 catch
                 {
                     // Process died between the null-check and the sample - stopped, not an error.
-                    _metricsPid = 0;
+                    session.MetricsPid = 0;
                     return Task.FromResult<object>(new { running = false });
                 }
             });
@@ -737,9 +949,12 @@ namespace ValheimBakaLoader.Forms
             {
                 var prefs = (p["prefs"] ?? throw new ArgumentException("prefs is required"))
                     .ToObject<ServerPreferences>();
+                var session = GetOrCreateSession(
+                    string.IsNullOrWhiteSpace(prefs.ProfileName) ? CurrentProfile : prefs.ProfileName);
                 var options = BuildServerOptions(prefs);
-                Server.Start(options);
-                return Task.FromResult<object>(BuildServerState());
+                EnsureNoServerCollisions(session, options);
+                session.Server.Start(options);
+                return Task.FromResult<object>(BuildServerState(session));
             });
 
             RegisterRpc("server.stop", p =>
@@ -777,7 +992,10 @@ namespace ValheimBakaLoader.Forms
 
             // --- Players ---
             RegisterRpc("players.list", p => Task.FromResult<object>(
-                PlayerDataProvider.Data.Select(BuildPlayerDto).ToList()));
+                PlayerDataProvider.Data
+                    .Where(pl => pl.ServerKey == null
+                        || string.Equals(pl.ServerKey, ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                    .Select(BuildPlayerDto).ToList()));
 
             RegisterRpc("players.remove", p =>
             {
@@ -1253,17 +1471,53 @@ namespace ValheimBakaLoader.Forms
 
         #region DTO builders & helpers
 
-        private object BuildServerState()
+        private object BuildServerState() => BuildServerState(ActiveSession);
+
+        private object BuildServerState(ServerSession session)
         {
+            var server = session.Server;
             return new
             {
-                status = Server.Status.ToString(),
-                canStart = Server.CanStart,
-                canStop = Server.CanStop,
-                canRestart = Server.CanRestart,
-                countdownActive = Server.IsCountdownActive,
-                adopted = Server.IsAdopted,
+                profile = session.ProfileName,
+                status = server.Status.ToString(),
+                canStart = server.CanStart,
+                canStop = server.CanStop,
+                canRestart = server.CanRestart,
+                countdownActive = server.IsCountdownActive,
+                adopted = server.IsAdopted,
             };
+        }
+
+        /// <summary>
+        /// One entry per known server profile (saved profiles plus any live sessions),
+        /// with live status and this-server player counts for the sidebar chip strip.
+        /// </summary>
+        private object BuildServersList()
+        {
+            var names = ServerPrefsProvider.LoadPreferences()
+                .Select(pref => pref.ProfileName)
+                .Concat(Sessions.Keys)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var active = ActiveProfileName;
+            return names.Select(name =>
+            {
+                Sessions.TryGetValue(name, out var session);
+                var status = session?.Server.Status ?? ServerStatus.Stopped;
+                var playersOnline = PlayerDataProvider.Data.Count(pl =>
+                    (pl.PlayerStatus == PlayerStatus.Online || pl.PlayerStatus == PlayerStatus.Joining)
+                    && string.Equals(pl.ServerKey, name, StringComparison.OrdinalIgnoreCase));
+                return new
+                {
+                    name,
+                    status = status.ToString(),
+                    running = status != ServerStatus.Stopped,
+                    playersOnline,
+                    active = string.Equals(name, active, StringComparison.OrdinalIgnoreCase),
+                };
+            }).ToList();
         }
 
         private object BuildPlayerDto(PlayerInfo player)
@@ -1285,6 +1539,7 @@ namespace ValheimBakaLoader.Forms
                 status = player.PlayerStatus.ToString(),
                 lastStatusChange = player.LastStatusChange,
                 characters = player.Characters?.Select(c => c.CharacterName).ToList(),
+                serverKey = player.ServerKey,
             };
         }
 
@@ -1430,6 +1685,12 @@ namespace ValheimBakaLoader.Forms
         {
             var userPrefs = UserPrefsProvider.LoadPreferences();
 
+            // Captured for the log handler closure so log lines carry their server's
+            // profile even after the active profile switches.
+            var logProfile = string.IsNullOrWhiteSpace(serverPrefs.ProfileName)
+                ? ActiveProfileName
+                : serverPrefs.ProfileName;
+
             var options = new ValheimServerOptions
             {
                 Name = serverPrefs.Name,
@@ -1460,7 +1721,7 @@ namespace ValheimBakaLoader.Forms
                 RconEnabled = serverPrefs.RconEnabled,
                 RconPort = serverPrefs.RconPort,
                 RconPassword = serverPrefs.RconPassword,
-                LogMessageHandler = line => PostEvent("log.server", new { line }),
+                LogMessageHandler = line => PostEvent("log.server", new { line, profile = logProfile }),
             };
 
             var worldName = serverPrefs.WorldName;
@@ -1537,17 +1798,21 @@ namespace ValheimBakaLoader.Forms
             return UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
         }
 
-        private string GetServerExePath()
+        private string GetServerExePath() => GetServerExePathFor(CurrentProfile);
+
+        private string GetServerExePathFor(string profileName)
         {
-            var profilePrefs = CurrentProfile != null ? ServerPrefsProvider.LoadPreferences(CurrentProfile) : null;
+            var profilePrefs = profileName != null ? ServerPrefsProvider.LoadPreferences(profileName) : null;
             if (!string.IsNullOrWhiteSpace(profilePrefs?.ServerExePath)) return profilePrefs.ServerExePath;
 
             return UserPrefsProvider.LoadPreferences().ServerExePath;
         }
 
-        private string GetPluginsDirectory()
+        private string GetPluginsDirectory() => GetPluginsDirectoryFor(CurrentProfile);
+
+        private string GetPluginsDirectoryFor(string profileName)
         {
-            var exePath = GetServerExePath();
+            var exePath = GetServerExePathFor(profileName);
             if (string.IsNullOrWhiteSpace(exePath)) return null;
 
             try

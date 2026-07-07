@@ -75,11 +75,11 @@ namespace ValheimBakaLoader.Forms
 
         public BlendWindow(
             ILogger logger,
+            IServiceProvider serviceProvider,
             IUserPreferencesProvider userPrefsProvider,
             IServerPreferencesProvider serverPrefsProvider,
             IWorldPreferencesProvider worldPrefsProvider,
             IPlayerDataRepository playerDataProvider,
-            Game.ValheimServer server,
             IIpAddressProvider ipAddressProvider,
             IModScanner modScanner,
             IThunderstoreClient thunderstoreClient,
@@ -96,11 +96,11 @@ namespace ValheimBakaLoader.Forms
 
             InitializeShell();
             InitializeBridge(
+                serviceProvider,
                 userPrefsProvider,
                 serverPrefsProvider,
                 worldPrefsProvider,
                 playerDataProvider,
-                server,
                 ipAddressProvider,
                 modScanner,
                 thunderstoreClient,

@@ -57,13 +57,13 @@ namespace ValheimBakaLoader.Game
 
         IEnumerable<PlayerInfo> FindPlayersByQuery(PlayerDataQuery query);
 
-        PlayerInfo SetPlayerJoining(PlayerDataQuery query);
+        PlayerInfo SetPlayerJoining(PlayerDataQuery query, string serverKey = null);
 
-        PlayerInfo SetPlayerOnline(string characterName, string zdoId);
+        PlayerInfo SetPlayerOnline(string characterName, string zdoId, string serverKey = null);
 
-        void SetPlayerLeaving(PlayerDataQuery query);
+        void SetPlayerLeaving(PlayerDataQuery query, string serverKey = null);
 
-        void SetPlayerOffline(PlayerDataQuery query);
+        void SetPlayerOffline(PlayerDataQuery query, string serverKey = null);
 
         Task LoadAsync();
     }
@@ -109,12 +109,13 @@ namespace ValheimBakaLoader.Game
                 .DistinctBy(p => p.Key);
         }
 
-        public PlayerInfo SetPlayerJoining(PlayerDataQuery query)
+        public PlayerInfo SetPlayerJoining(PlayerDataQuery query, string serverKey = null)
         {
             if (!query.HasParameters()) return null;
 
             // Prefer the matching identity that most recently disconnected.
-            var offline = FindPlayersByQuery(query).Where(p => p.PlayerStatus == PlayerStatus.Offline);
+            var offline = FindPlayersByQuery(query)
+                .Where(p => p.PlayerStatus == PlayerStatus.Offline && SameServer(p, serverKey));
             var player = offline.MaxBy(p => p.LastStatusChange);
 
             if (player == null)
@@ -130,6 +131,7 @@ namespace ValheimBakaLoader.Game
             player.PlayerStatus = PlayerStatus.Joining;
             player.LastStatusChange = DateTime.UtcNow;
             player.LastStatusCharacter = string.IsNullOrWhiteSpace(query.CharacterName) ? null : query.CharacterName;
+            if (!string.IsNullOrWhiteSpace(serverKey)) player.ServerKey = serverKey;
             Upsert(player);
 
             if (string.IsNullOrWhiteSpace(player.PlayerName))
@@ -141,16 +143,17 @@ namespace ValheimBakaLoader.Game
             return player;
         }
 
-        public PlayerInfo SetPlayerOnline(string characterName, string zdoId)
+        public PlayerInfo SetPlayerOnline(string characterName, string zdoId, string serverKey = null)
         {
             var byName = string.IsNullOrWhiteSpace(characterName)
                 ? new List<PlayerInfo>()
                 : FindPlayersByQuery(new() { CharacterName = characterName })
                     .Where(p => p.PlayerStatus is PlayerStatus.Joining or PlayerStatus.Offline)
+                    .Where(p => SameServer(p, serverKey))
                     .ToList();
 
             var joining = Data
-                .Where(p => p.PlayerStatus == PlayerStatus.Joining)
+                .Where(p => p.PlayerStatus == PlayerStatus.Joining && SameServer(p, serverKey))
                 .ToList();
 
             var (player, confident) = ResolveIdentity(characterName, byName, joining);
@@ -161,23 +164,24 @@ namespace ValheimBakaLoader.Game
             player.LastStatusCharacter = characterName;
             player.ZdoId = zdoId;
             player.AddCharacter(characterName, confident);
+            if (!string.IsNullOrWhiteSpace(serverKey)) player.ServerKey = serverKey;
             Upsert(player);
 
             return player;
         }
 
-        public void SetPlayerLeaving(PlayerDataQuery query)
+        public void SetPlayerLeaving(PlayerDataQuery query, string serverKey = null)
         {
             TransitionAll(query,
                 p => p.PlayerStatus is PlayerStatus.Joining or PlayerStatus.Online,
-                PlayerStatus.Leaving, "leaving");
+                PlayerStatus.Leaving, "leaving", serverKey);
         }
 
-        public void SetPlayerOffline(PlayerDataQuery query)
+        public void SetPlayerOffline(PlayerDataQuery query, string serverKey = null)
         {
             TransitionAll(query,
                 p => p.PlayerStatus != PlayerStatus.Offline,
-                PlayerStatus.Offline, "offline");
+                PlayerStatus.Offline, "offline", serverKey);
         }
 
         public override async Task LoadAsync()
@@ -201,6 +205,17 @@ namespace ValheimBakaLoader.Game
                 && (Wild(q.PlayerName) || p.PlayerName == q.PlayerName)
                 && (Wild(q.ZdoId) || p.ZdoId == q.ZdoId)
                 && (Wild(q.CharacterName) || p.Characters?.Any(c => c.CharacterName == q.CharacterName) == true);
+        }
+
+        /// <summary>
+        /// True when the record belongs to the given server. A null on either
+        /// side matches anything, so pre-multi-server records keep working.
+        /// </summary>
+        private static bool SameServer(PlayerInfo p, string serverKey)
+        {
+            return string.IsNullOrWhiteSpace(serverKey)
+                || string.IsNullOrWhiteSpace(p.ServerKey)
+                || string.Equals(p.ServerKey, serverKey, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -253,9 +268,11 @@ namespace ValheimBakaLoader.Game
             return (null, false);
         }
 
-        private void TransitionAll(PlayerDataQuery query, Func<PlayerInfo, bool> eligible, PlayerStatus status, string verb)
+        private void TransitionAll(PlayerDataQuery query, Func<PlayerInfo, bool> eligible, PlayerStatus status, string verb, string serverKey = null)
         {
-            var players = FindPlayersByQuery(query).Where(eligible).ToList();
+            var players = FindPlayersByQuery(query)
+                .Where(p => eligible(p) && SameServer(p, serverKey))
+                .ToList();
             if (players.Count == 0) return;
 
             var now = DateTime.UtcNow;

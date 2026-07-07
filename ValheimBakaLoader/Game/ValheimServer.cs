@@ -28,6 +28,13 @@ namespace ValheimBakaLoader.Game
         /// <summary>The profile the current (or last-started) server was launched with.</summary>
         public IValheimServerOptions Options { get; private set; } = new ValheimServerOptions();
 
+        /// <summary>
+        /// The server-profile name this instance manages. Stamped onto player records so
+        /// concurrent servers never cross-attribute joins/spawns to each other's players.
+        /// Null on legacy single-server paths; matches anything in the repository.
+        /// </summary>
+        public string ServerKey { get; set; }
+
         /// <summary>The per-session server log pipeline. Exposed for testing.</summary>
         public IValheimServerLogger Logger => ServerLogger;
 
@@ -1027,15 +1034,33 @@ namespace ValheimBakaLoader.Game
 
         #region Automatic restart
 
-        private static int CountActivePlayers(IEnumerable<PlayerInfo> players)
+        private int CountActivePlayers(IEnumerable<PlayerInfo> players)
         {
             // "Active" = currently online or mid-connect. Leaving/Offline players don't count,
-            // so the empty-server timer starts as soon as the last real player drops.
-            return players.Count(p => p.PlayerStatus == PlayerStatus.Online || p.PlayerStatus == PlayerStatus.Joining);
+            // so the empty-server timer starts as soon as the last real player drops. Only
+            // players on THIS server count; other concurrent servers keep their own tallies.
+            return players.Count(p =>
+                (p.PlayerStatus == PlayerStatus.Online || p.PlayerStatus == PlayerStatus.Joining)
+                && IsOwnPlayer(p));
+        }
+
+        /// <summary>
+        /// True when the player record belongs to this server instance. Null server keys
+        /// (legacy records or single-server mode) match anything.
+        /// </summary>
+        private bool IsOwnPlayer(PlayerInfo player)
+        {
+            return ServerKey == null
+                || player.ServerKey == null
+                || string.Equals(player.ServerKey, ServerKey, StringComparison.OrdinalIgnoreCase);
         }
 
         private void OnPlayerStatusChanged(object sender, PlayerInfo player)
         {
+            // Another concurrent server's player flipping status must not disturb this
+            // server's empty-restart / empty-update machinery.
+            if (!IsOwnPlayer(player)) return;
+
             var activeCount = CountActivePlayers(PlayerDataRepository.Data);
 
             if (activeCount > 0)
@@ -1283,7 +1308,7 @@ namespace ValheimBakaLoader.Game
             {
                 Platform = PlayerPlatforms.Steam,
                 PlayerId = steamId,
-            });
+            }, ServerKey);
         }
 
         private void HandleCrossplayConnecting(Match match)
@@ -1297,7 +1322,7 @@ namespace ValheimBakaLoader.Game
             {
                 Platform = platform,
                 PlayerId = playerId,
-            });
+            }, ServerKey);
         }
 
         private void HandleCharacterSpawned(Match match)
@@ -1306,7 +1331,7 @@ namespace ValheimBakaLoader.Game
             if (string.IsNullOrWhiteSpace(characterName)) return;
 
             // Group 2 is the session-scoped ZDOID; group 3 trails it and has no known use.
-            PlayerDataRepository.SetPlayerOnline(characterName, match.Groups[2].Value);
+            PlayerDataRepository.SetPlayerOnline(characterName, match.Groups[2].Value, ServerKey);
         }
 
         private void HandleWrongPassword(Match match)
@@ -1314,7 +1339,7 @@ namespace ValheimBakaLoader.Game
             var id = match.Groups[1].Value;
             if (string.IsNullOrWhiteSpace(id)) return;
 
-            PlayerDataRepository.SetPlayerLeaving(IdOrZdoQuery(id));
+            PlayerDataRepository.SetPlayerLeaving(IdOrZdoQuery(id), ServerKey);
         }
 
         private void HandleSocketClosed(Match match)
@@ -1322,7 +1347,7 @@ namespace ValheimBakaLoader.Game
             var id = match.Groups[1].Value;
             if (string.IsNullOrWhiteSpace(id)) return;
 
-            PlayerDataRepository.SetPlayerOffline(IdOrZdoQuery(id));
+            PlayerDataRepository.SetPlayerOffline(IdOrZdoQuery(id), ServerKey);
         }
 
         private void HandleCrossplayDisconnect(Match match)
@@ -1336,7 +1361,7 @@ namespace ValheimBakaLoader.Game
             {
                 Platform = platform,
                 PlayerId = playerId,
-            });
+            }, ServerKey);
         }
 
         private void HandleWorldSaved(Match match)

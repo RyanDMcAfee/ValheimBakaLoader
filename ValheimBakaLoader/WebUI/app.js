@@ -49,7 +49,12 @@ const S={
   saveDur:[],             // last 10 world-save durations (ms) for the rolling average
   lastSaveAt:null,        // Date of the last observed world save
   net:{conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]}, // parsed "Connections N ZDOS:… sent:… recv:…" server stats
+  servers:[],             // multi-server chip strip: [{name,status,running,playersOnline,active}]
 };
+
+/* True when an event's profile tag belongs to the profile shown in the UI.
+   Untagged events (null/undefined) always pass - single-server compatibility. */
+const isActiveProfile=p=>p==null||!S.profileName||String(p).toLowerCase()===String(S.profileName).toLowerCase();
 
 const fmtBytes=n=>{
   n=Number(n); if(!isFinite(n)) return "-";
@@ -208,6 +213,69 @@ function goPage(name){
 $$(".navitem").forEach(n=>n.addEventListener("click",()=>goPage(n.dataset.page)));
 $$("[data-goto]").forEach(c=>c.addEventListener("click",()=>goPage(c.dataset.goto)));
 goPage("hearth");
+
+/* ---------- MULTI-SERVER CHIP STRIP ----------
+   One chip per server profile (saved or live). The active chip is the profile
+   every hall renders; other servers keep burning in the background. */
+async function refreshServers(){
+  if(!Native.available) return;
+  const r=await Native.call("servers.list",{}).catch(()=>null);
+  if(Array.isArray(r)){S.servers=r;renderServerChips();}
+}
+function renderServerChips(){
+  const el=$("#srvStrip"); if(!el) return;
+  const list=S.servers||[];
+  el.innerHTML=list.map(s=>{
+    const cls="srvchip"+(s.active?" active":"")+(s.running?" running":"");
+    const initial=(s.name||"?").trim().charAt(0).toUpperCase();
+    const badge=s.playersOnline>0?`<span class="srvbadge">${s.playersOnline}</span>`:"";
+    return `<div class="${cls}" data-srv="${esc(s.name)}" title="${esc(s.name)}${s.running?" · "+esc(s.status):""}"><span class="srvdot${s.running?" on":""}"></span><span class="srvinit">${esc(initial)}</span>${badge}</div>`;
+  }).join("")+`<div class="srvchip add" id="srvAdd" title="Add a server profile"><span class="srvinit">+</span></div>`;
+  const sep=$("#srvSep"); if(sep) sep.style.display=list.length?"":"none";
+}
+async function switchServer(name){
+  if(!name||name===S.profileName) return;
+  const prefs=await rpc("profiles.get",{name});
+  if(prefs===FAIL||!prefs) return;
+  S.prefs=prefs; S.profileName=prefs.ProfileName; S.saveInterval=prefs.SaveInterval??600;
+  S.players=[]; S.invite=null; S.net={conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]};
+  S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
+  S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
+  const st=await rpc("server.state");
+  if(st!==FAIL){S.state=null;applyState(st);}
+  renderAllFromPrefs();
+  await refreshPlayers();
+  renderMods();
+  const caps=await rpc("caps.get");
+  if(caps!==FAIL&&caps){S.caps=caps;renderCaps();}
+  try{renderWorldMods();}catch{}
+  try{renderMaxPlayers();}catch{}
+  refreshServers();
+  logLine("info","[BakaLoader] switched to profile '"+name+"'");
+  toast(TT("ᛒ Helm turned · ")+prefs.ProfileName);
+  if(currentPage==="mods") scanMods();
+  if(currentPage==="runes") refreshCfgList(true);
+}
+function addServerProfile(){
+  promptModal(TT("Name the new realm"),"e.g. Midgard Two",async name=>{
+    name=(name||"").trim();
+    if(!name) return;
+    const existing=(S.servers||[]).find(s=>String(s.name).toLowerCase()===name.toLowerCase());
+    if(existing){switchServer(existing.name);return;}
+    const prefs={...(S.prefs||{}),ProfileName:name,Name:name,AutoStart:false,
+      Port:((S.prefs?.Port??2456)+2)};
+    const r=await rpc("profiles.save",{name,prefs});
+    if(r===FAIL) return;
+    await switchServer(name);
+    goPage("world"); // land on World so ports/paths get configured before kindling
+  });
+}
+$("#srvStrip").addEventListener("click",e=>{
+  const add=e.target.closest("#srvAdd");
+  if(add){addServerProfile();return;}
+  const chip=e.target.closest(".srvchip[data-srv]");
+  if(chip)switchServer(chip.dataset.srv);
+});
 
 /* ---------- HEARTH: uptime + douse ---------- */
 let running=true, upMin=272; // 4h 32m (mock only)
@@ -1740,8 +1808,9 @@ $("#cfgOpenBtn").addEventListener("click",()=>{
 if(Native.available){
 
   /* --- event subscriptions (registered before boot so nothing is missed) --- */
-  Native.on("server.status",d=>applyState(d));
+  Native.on("server.status",d=>{if(isActiveProfile(d?.profile))applyState(d);});
   Native.on("server.worldSaved",d=>{
+    if(!isActiveProfile(d?.profile)) return;
     const ms=Math.round(Number(d?.seconds)||0); // bridge param is named 'seconds' but carries milliseconds
     toast("ᛉ World saved · "+ms+"ms");
     $("#lastSave").textContent=clock()+" · "+ms+"ms";
@@ -1752,28 +1821,32 @@ if(Native.available){
     S.saveSec=S.saveInterval;
   });
   Native.on("server.inviteCode",d=>{
-    if(!d?.code) return;
+    if(!d?.code||!isActiveProfile(d?.profile)) return;
     S.invite=d.code; renderNet();
     toast("ᛟ Crossplay invite · "+d.code);
     logLine("info","[BakaLoader] crossplay invite code: "+d.code);
   });
-  Native.on("server.crashed",()=>{
-    toast("ᚦ Server crashed · consult the saga");
-    logLine("err","[BakaLoader] server process crashed");
+  Native.on("server.crashed",d=>{
+    // Crashes always toast, even for background servers - name the culprit.
+    const who=d?.profile&&!isActiveProfile(d.profile)?" · "+d.profile:"";
+    toast(TT("ᚦ Server crashed · consult the saga")+who);
+    if(isActiveProfile(d?.profile)) logLine("err","[BakaLoader] server process crashed");
   });
-  Native.on("server.countdown",d=>{if(d?.message)toast("ᚨ "+d.message);});
+  Native.on("server.countdown",d=>{if(d?.message&&isActiveProfile(d?.profile))toast("ᚨ "+d.message);});
   Native.on("player.updated",p=>{
     if(!p) return;
+    if(!isActiveProfile(p.serverKey)) return; // another server's viking
     const i=S.players.findIndex(x=>x.key===p.key);
     if(i>=0) S.players[i]=p; else S.players.push(p);
     renderPlayers();
   });
   Native.on("ip.external",d=>{S.extIp=d?.ip??null;renderNet();});
   Native.on("ip.internal",d=>{S.intIp=d?.ip??null;renderNet();});
-  Native.on("profiles.changed",()=>{/* profile list not shown in this wave */});
+  Native.on("profiles.changed",()=>{refreshServers();});
+  Native.on("servers.changed",d=>{if(Array.isArray(d)){S.servers=d;renderServerChips();}});
   Native.on("log.app",d=>{if(d?.line!=null)logLine(classifyLog(d.line),d.line);});
   Native.on("log.server",d=>{
-    if(d?.line==null) return;
+    if(d?.line==null||!isActiveProfile(d?.profile)) return;
     logLine(classifyLog(d.line),d.line);
     parseNetLine(d.line); // net telemetry rides the server log
   });
@@ -1835,6 +1908,7 @@ if(Native.available){
     }
     const st=await rpc("server.state");
     if(st!==FAIL) applyState(st);
+    refreshServers(); // populate the multi-server chip strip
     const caps=await rpc("caps.get");
     if(caps!==FAIL&&caps) S.caps=caps;
     renderCaps();
@@ -1874,6 +1948,13 @@ if(!Native.available){
 
   /* upkeep card preview values (native fills these from userprefs.get) */
   $("#blVersion").textContent="v0.9.17";
+
+  /* multi-server chip strip preview */
+  S.servers=[
+    {name:"Final Sunset",status:"Running",running:true,playersOnline:2,active:true},
+    {name:"Midgard Test",status:"Stopped",running:false,playersOnline:0,active:false},
+  ];
+  renderServerChips();
 
   /* first-launch wizard preview: open index.html#wizard to walk the panes */
   if(location.hash==="#wizard"){
