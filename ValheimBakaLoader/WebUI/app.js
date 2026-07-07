@@ -479,6 +479,7 @@ document.querySelectorAll("#page-mods th.sortable").forEach(th=>th.addEventListe
 function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
+  $("#addModBtn").disabled=busy;
   const scanned=S.mods!==null;
   const mods=sortedMods(S.mods||[]);
   const upd=mods.filter(m=>m.UpdateAvailable);
@@ -592,6 +593,50 @@ async function doRemoveMod(mod,includeConfig){
   }
   scanMods();
 }
+/* ---- Add a mod from any pasted Thunderstore link ---- */
+function addModFlow(){
+  if(S.modsUpdating||S.modsScanning) return;
+  const runWarn=(S.state?.status==="Running")
+    ?`<div class="mwarn">⚠ The server is RUNNING - new mods only load after a restart. Replacing an existing mod may fail on locked files.</div>`:"";
+  confirmModal("Add mod from Thunderstore",
+    `<div class="mbody-note">Paste any Thunderstore link - the mod's page, its versions page, a direct download link, or a ror2mm:// mod-manager link. If the link has no version, the latest release is installed.</div>`+
+    `<input type="text" id="mModUrl" placeholder="https://thunderstore.io/c/valheim/p/Author/ModName/" spellcheck="false" autocomplete="off" style="margin-top:10px">`+
+    runWarn,
+    "Install",m=>{
+      const url=(m.querySelector("#mModUrl")?.value||"").trim();
+      if(!url){toast("ᚦ No link pasted");return;}
+      doAddMod(url);
+    });
+  const inp=document.querySelector("#mModUrl");
+  if(inp){
+    setTimeout(()=>inp.focus(),40);
+    inp.addEventListener("keydown",e=>{if(e.key==="Enter")document.querySelector("#mOk")?.click();});
+  }
+}
+async function doAddMod(url){
+  if(S.modsUpdating||S.modsScanning) return;
+  S.modsUpdating=true; renderMods();
+  toast("ᚨ Fetching from Thunderstore…");
+  logLine("info","[Thunderstore] resolving pasted link: "+url);
+  const r=await rpc("mods.addFromUrl",{url});
+  S.modsUpdating=false;
+  if(r===FAIL){renderMods();return;}
+  if(r.Installed){
+    const full=r.Owner+"-"+r.Name;
+    toast("ᚨ Installed "+full+" "+(r.Version||"")+(r.Replaced?" · replaced previous install":""));
+    logLine("ok","[Thunderstore] installed "+full+" v"+(r.Version||"?")+(r.Replaced?" (previous copy backed up)":""));
+    if(S.state?.status==="Running") logLine("warn","[Thunderstore] server is running - "+full+" loads on the next restart");
+    await scanMods();
+  }else{
+    toast("ᚦ Install failed · "+(r.Error||"unknown"));
+    logLine("warn","[Thunderstore] install failed: "+(r.Error||"unknown"));
+    renderMods();
+  }
+}
+$("#addModBtn").addEventListener("click",()=>{
+  if(Native.available){addModFlow();return;}
+  toast("ᚨ Add from Thunderstore · native app only");
+});
 
 /* ---------- COMMAND PALETTE ---------- */
 const palBg=$("#paletteBg"), palIn=$("#palInput");

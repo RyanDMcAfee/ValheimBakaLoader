@@ -1,3 +1,4 @@
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -30,6 +31,21 @@ namespace ValheimBakaLoader.Tools
             new() { Mod = mod, Updated = false, FromVersion = mod?.InstalledVersion, Error = error };
     }
 
+    /// <summary>
+    /// Result of installing a mod from a pasted Thunderstore link.
+    /// </summary>
+    public class ModInstallResult
+    {
+        public string Owner { get; init; }
+        public string Name { get; init; }
+        public string Version { get; init; }
+        public string Folder { get; init; }
+        public bool Installed { get; init; }
+        /// <summary>True when an existing install was backed up and replaced.</summary>
+        public bool Replaced { get; init; }
+        public string Error { get; init; }
+    }
+
     public interface IModUpdateService
     {
         /// <summary>
@@ -44,6 +60,15 @@ namespace ValheimBakaLoader.Tools
         /// Updates every supplied mod that has a newer version available on Thunderstore.
         /// </summary>
         Task<List<ModUpdateResult>> UpdateModsAsync(IEnumerable<InstalledMod> mods);
+
+        /// <summary>
+        /// Installs a mod from a parsed Thunderstore reference into the given
+        /// BepInEx plugins directory. A null version installs the latest release
+        /// (resolved via the Valheim community index, with the experimental
+        /// per-package API as a fallback for packages outside that community).
+        /// An existing install is backed up and replaced.
+        /// </summary>
+        Task<ModInstallResult> InstallFromThunderstoreAsync(ThunderstoreModReference reference, string pluginsDir);
     }
 
     /// <summary>
@@ -188,6 +213,178 @@ namespace ValheimBakaLoader.Tools
             {
                 TryDelete(tempZip);
                 TryDeleteDirectory(tempExtract);
+            }
+        }
+
+        public async Task<ModInstallResult> InstallFromThunderstoreAsync(ThunderstoreModReference reference, string pluginsDir)
+        {
+            ModInstallResult Fail(string error) => new()
+            {
+                Owner = reference?.Owner,
+                Name = reference?.Name,
+                Version = reference?.Version,
+                Installed = false,
+                Error = error,
+            };
+
+            if (reference == null) return Fail("No mod reference supplied.");
+            if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
+                return Fail("BepInEx plugins folder not found - set a valid server .exe path first.");
+
+            // --- Resolve the download URL + concrete version ---
+            string downloadUrl;
+            var version = reference.Version;
+
+            if (!string.IsNullOrWhiteSpace(version))
+            {
+                // A pinned version's download URL is always constructable directly.
+                downloadUrl = $"https://thunderstore.io/package/download/{reference.Owner}/{reference.Name}/{version}/";
+            }
+            else
+            {
+                // Latest: try the cached Valheim community index first.
+                ThunderstorePackage package = null;
+                try { package = await Thunderstore.GetLatestAsync(reference.Owner, reference.Name); }
+                catch (Exception e) { Logger.Debug("Community-index lookup failed for {0}: {1}", reference.FolderName, e.Message); }
+
+                if (!string.IsNullOrWhiteSpace(package?.DownloadUrl))
+                {
+                    downloadUrl = package.DownloadUrl;
+                    version = package.LatestVersion;
+                }
+                else
+                {
+                    // Not in the Valheim index (e.g. a package from another community's
+                    // page like old.thunderstore.io/package/bbepis/BepInExPack/) -
+                    // fall back to the per-package experimental endpoint.
+                    var (fallbackVersion, fallbackUrl, fallbackError) =
+                        await FetchLatestViaExperimentalApiAsync(reference.Owner, reference.Name);
+                    if (string.IsNullOrWhiteSpace(fallbackUrl))
+                        return Fail(fallbackError ?? $"Could not find {reference.Owner}/{reference.Name} on Thunderstore.");
+
+                    downloadUrl = fallbackUrl;
+                    version = fallbackVersion;
+                }
+            }
+
+            // --- Download + extract + install ---
+            var targetDir = Path.Combine(pluginsDir, reference.FolderName);
+            var replacing = Directory.Exists(targetDir) && HasAnyEntries(targetDir);
+
+            var tempZip = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}.zip");
+            var tempExtract = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}");
+            string backupDir = null;
+
+            try
+            {
+                Logger.Information("Installing {0} v{1} from Thunderstore ({2}).",
+                    reference.FolderName, version ?? "?", downloadUrl);
+
+                await DownloadFileAsync(downloadUrl, tempZip);
+
+                Directory.CreateDirectory(tempExtract);
+                // ZipFile.ExtractToDirectory rejects entries that resolve outside
+                // the destination (zip-slip) on .NET Core/5+.
+                ZipFile.ExtractToDirectory(tempZip, tempExtract, overwriteFiles: true);
+
+                if (!HasAnyEntries(tempExtract))
+                    return Fail("Downloaded package was empty.");
+
+                if (replacing)
+                {
+                    backupDir = BackupModFolder(targetDir);
+                    ClearDirectory(targetDir);
+                }
+
+                CopyDirectory(tempExtract, targetDir);
+
+                Logger.Information("Installed {0} v{1} to {2}{3}.",
+                    reference.FolderName, version ?? "?", targetDir,
+                    backupDir != null ? $" (previous copy backed up to {backupDir})" : "");
+
+                return new ModInstallResult
+                {
+                    Owner = reference.Owner,
+                    Name = reference.Name,
+                    Version = version,
+                    Folder = targetDir,
+                    Installed = true,
+                    Replaced = replacing,
+                };
+            }
+            catch (Exception e)
+            {
+                Logger.Error(e, "Failed to install {0} from Thunderstore.", reference.FolderName);
+
+                // Roll back a partially-replaced existing install.
+                if (backupDir != null && Directory.Exists(backupDir))
+                {
+                    try
+                    {
+                        ClearDirectory(targetDir);
+                        CopyDirectory(backupDir, targetDir);
+                        Logger.Information("Restored previous copy of {0}.", reference.FolderName);
+                    }
+                    catch (Exception restoreError)
+                    {
+                        Logger.Error(restoreError,
+                            "Could not restore {0}. The previous files are preserved at {1}.",
+                            reference.FolderName, backupDir);
+                        return Fail($"Install failed AND automatic restore failed. Previous files are at: {backupDir}");
+                    }
+                }
+                else if (!replacing)
+                {
+                    // Don't leave a half-written brand-new folder for BepInEx to trip on.
+                    TryDeleteDirectory(targetDir);
+                }
+
+                var hint = !string.IsNullOrWhiteSpace(reference.Version)
+                    ? " (check that this version exists on the mod's Versions page)"
+                    : "";
+                return Fail(e.Message + hint);
+            }
+            finally
+            {
+                TryDelete(tempZip);
+                TryDeleteDirectory(tempExtract);
+            }
+        }
+
+        /// <summary>
+        /// Resolves a package's latest version + download URL via Thunderstore's
+        /// experimental per-package API. Used only as a fallback for packages that
+        /// aren't in the cached Valheim community index.
+        /// </summary>
+        private async Task<(string Version, string Url, string Error)> FetchLatestViaExperimentalApiAsync(
+            string owner, string name)
+        {
+            try
+            {
+                using var client = HttpClientProvider.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(30);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("ValheimBakaLoader");
+
+                var url = $"https://thunderstore.io/api/experimental/package/{owner}/{name}/";
+                using var response = await client.GetAsync(url);
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    return (null, null, $"Thunderstore has no package named {owner}/{name}.");
+                if (!response.IsSuccessStatusCode)
+                    return (null, null, $"Thunderstore lookup failed (HTTP {(int)response.StatusCode}).");
+
+                var json = JObject.Parse(await response.Content.ReadAsStringAsync());
+                var latest = json["latest"];
+                var version = latest?.Value<string>("version_number");
+                var download = latest?.Value<string>("download_url");
+
+                if (string.IsNullOrWhiteSpace(download))
+                    return (null, null, $"Thunderstore returned no download URL for {owner}/{name}.");
+
+                return (version, download, null);
+            }
+            catch (Exception e)
+            {
+                return (null, null, $"Thunderstore lookup failed: {e.Message}");
             }
         }
 

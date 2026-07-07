@@ -946,6 +946,52 @@ namespace ValheimBakaLoader.Forms
                 });
             });
 
+            // Installs a mod from any pasted Thunderstore link (page URL, versions page,
+            // direct download URL, or ror2mm:// mod-manager link). No version in the
+            // link = latest. Structured errors come back in the result's Error field
+            // so the UI can show them without a generic RPC-failure toast.
+            RegisterRpc("mods.addFromUrl", async p =>
+            {
+                object FailDto(string error) => new
+                {
+                    Installed = false,
+                    Replaced = false,
+                    Owner = (string)null,
+                    Name = (string)null,
+                    Version = (string)null,
+                    Error = error,
+                };
+
+                if (_modUpdateInProgress)
+                    return FailDto("A mod update is already in progress - try again in a moment.");
+
+                if (!ThunderstoreUrlParser.TryParse(p.Value<string>("url"), out var reference, out var parseError))
+                    return FailDto(parseError);
+
+                var pluginsDir = GetPluginsDirectory();
+                if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
+                    return FailDto("BepInEx plugins folder not found - set a valid server .exe path first.");
+
+                _modUpdateInProgress = true;
+                try
+                {
+                    var result = await ModUpdateService.InstallFromThunderstoreAsync(reference, pluginsDir);
+                    return new
+                    {
+                        result.Installed,
+                        result.Replaced,
+                        result.Owner,
+                        result.Name,
+                        result.Version,
+                        result.Error,
+                    };
+                }
+                finally
+                {
+                    _modUpdateInProgress = false;
+                }
+            });
+
             // --- Capabilities (required-mod gating) ---
             RegisterRpc("caps.get", p =>
             {
