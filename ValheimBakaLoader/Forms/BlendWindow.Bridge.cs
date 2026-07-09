@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -36,6 +37,7 @@ namespace ValheimBakaLoader.Forms
         private PlayerListService PlayerListService;
         private IAppUpdateService AppUpdateService;
         private IHeartbeatService Heartbeat;
+        private IInstallIsolationService InstallIsolation;
         private IApplicationLogger AppLogger;
 
         /// <summary>The profile whose preferences were last loaded/saved through the bridge.</summary>
@@ -119,6 +121,7 @@ namespace ValheimBakaLoader.Forms
             PlayerListService = playerListService;
             AppUpdateService = appUpdateService;
             Heartbeat = heartbeatService;
+            InstallIsolation = serviceProvider.GetRequiredService<IInstallIsolationService>();
             AppLogger = appLogger;
 
             // Anonymous usage heartbeat (gated on the ShareAnonymousStats pref).
@@ -714,8 +717,383 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(true);
             });
 
+            // Renames a profile in place (settings only; the isolated install folder keeps
+            // its original on-disk name, which is harmless). Guards a running server and a
+            // name collision.
+            RegisterRpc("profiles.rename", p =>
+            {
+                var name = p.Value<string>("name");
+                var newName = (p.Value<string>("newName") ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(newName))
+                    throw new ArgumentException("A new name is required.");
+                if (string.Equals(name, newName, StringComparison.Ordinal))
+                    return Task.FromResult<object>(true);
+
+                var prefs = ServerPrefsProvider.LoadPreferences(name)
+                    ?? throw new ArgumentException($"No profile named '{name}'");
+                if (Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped)
+                    throw new InvalidOperationException($"Stop the server '{name}' before renaming it.");
+                if (ServerPrefsProvider.LoadPreferences()
+                        .Any(x => string.Equals(x.ProfileName, newName, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException($"A server named '{newName}' already exists.");
+
+                prefs.ProfileName = newName;
+                ServerPrefsProvider.SavePreferences(prefs);
+                ServerPrefsProvider.RemovePreferences(name);
+
+                // Retire any (stopped) session under the old key so the registry stays consistent.
+                if (Sessions.TryRemove(name, out var removed)) removed.Server.Dispose();
+                if (string.Equals(CurrentProfile, name, StringComparison.OrdinalIgnoreCase))
+                    CurrentProfile = newName;
+
+                PostEvent("servers.changed", BuildServersList());
+                return Task.FromResult<object>(true);
+            });
+
+            // Soft-delete: hide from the chip strip but keep everything on disk, so the
+            // realm can be restored later. Touches no files. Switches the UI away if active.
+            RegisterRpc("profiles.archive", p =>
+            {
+                var name = p.Value<string>("name");
+                var prefs = ServerPrefsProvider.LoadPreferences(name)
+                    ?? throw new ArgumentException($"No profile named '{name}'");
+                if (Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped)
+                    throw new InvalidOperationException($"Stop the server '{name}' before archiving it.");
+
+                prefs.Archived = true;
+                ServerPrefsProvider.SavePreferences(prefs);
+                if (string.Equals(CurrentProfile, name, StringComparison.OrdinalIgnoreCase))
+                    CurrentProfile = FirstActiveProfileExcept(name);
+
+                PostEvent("servers.changed", BuildServersList());
+                return Task.FromResult<object>(true);
+            });
+
+            RegisterRpc("profiles.unarchive", p =>
+            {
+                var name = p.Value<string>("name");
+                var prefs = ServerPrefsProvider.LoadPreferences(name)
+                    ?? throw new ArgumentException($"No profile named '{name}'");
+                prefs.Archived = false;
+                ServerPrefsProvider.SavePreferences(prefs);
+                PostEvent("servers.changed", BuildServersList());
+                return Task.FromResult<object>(true);
+            });
+
+            // Pre-delete summary so the danger dialog can tell the user exactly what a
+            // "delete files too" will reclaim (isolated worlds/backups + isolated install).
+            RegisterRpc("profiles.deleteInfo", p =>
+            {
+                var name = p.Value<string>("name");
+                var prefs = ServerPrefsProvider.LoadPreferences(name)
+                    ?? throw new ArgumentException($"No profile named '{name}'");
+
+                var running = Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped;
+                var installDir = GetManagedInstallDir(prefs);
+                var saveFolder = GetIsolatedSaveFolder(prefs);
+                var (fileCount, sizeBytes) = MeasureDeletableFiles(installDir, saveFolder);
+
+                return Task.FromResult<object>(new
+                {
+                    name,
+                    running,
+                    isLast = CountNonArchivedProfiles() <= 1,
+                    hasIsolatedInstall = installDir != null,
+                    installDir,
+                    saveFolder,
+                    fileCount,
+                    sizeBytes,
+                });
+            });
+
+            // Hard-delete a profile. deleteFiles=false removes only the saved settings
+            // (files stay, realm can be re-adopted); deleteFiles=true also reclaims the
+            // isolated install (junction-safe) and this server's isolated worlds/backups.
+            RegisterRpc("profiles.delete", async p =>
+            {
+                var name = p.Value<string>("name");
+                var deleteFiles = p.Value<bool?>("deleteFiles") ?? false;
+
+                var prefs = ServerPrefsProvider.LoadPreferences(name)
+                    ?? throw new ArgumentException($"No profile named '{name}'");
+                if (Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped)
+                    throw new InvalidOperationException($"Stop the server '{name}' before deleting it.");
+                if (CountNonArchivedProfiles() <= 1 && !prefs.Archived)
+                    throw new InvalidOperationException("This is your only active server - archive it instead of deleting the last one.");
+
+                if (deleteFiles)
+                {
+                    var installDir = GetManagedInstallDir(prefs);
+                    var saveFolder = GetIsolatedSaveFolder(prefs);
+
+                    // Slow file work off the UI thread; junction-safe delete never touches shared game data.
+                    await Task.Run(() =>
+                    {
+                        if (installDir != null)
+                        {
+                            try { InstallIsolation.DeleteInstall(installDir); }
+                            catch (Exception e) { AppLogger.Error(e, $"Failed to reclaim isolated install for '{name}'."); }
+                        }
+                        if (saveFolder != null && Directory.Exists(saveFolder))
+                        {
+                            try { Directory.Delete(saveFolder, recursive: true); }
+                            catch (Exception e) { AppLogger.Error(e, $"Failed to delete isolated save folder for '{name}'."); }
+                        }
+                    });
+                }
+
+                ServerPrefsProvider.RemovePreferences(name);
+                if (Sessions.TryRemove(name, out var removed)) removed.Server.Dispose();
+                if (string.Equals(CurrentProfile, name, StringComparison.OrdinalIgnoreCase))
+                    CurrentProfile = FirstActiveProfileExcept(name);
+
+                PostEvent("servers.changed", BuildServersList());
+                return true;
+            });
+
             // --- Multi-server registry ---
             RegisterRpc("servers.list", p => Task.FromResult<object>(BuildServersList()));
+
+            // Suggests a free game port (+ its silent port+1 twin) and a free RCON port that
+            // don't clash with any existing profile, so the New-Server wizard can show the
+            // ports it will assign before the user commits.
+            RegisterRpc("servers.suggestPort", p =>
+            {
+                var (gamePort, rconPort) = SuggestFreePorts();
+                return Task.FromResult<object>(new { gamePort, rconPort });
+            });
+
+            // Creates a new server profile with guaranteed-distinct identity (name, world,
+            // ports) so a second server is genuinely separate, not a shadow of the first.
+            // When isolateInstall is set, provisions a junction-based isolated install (its
+            // own BepInEx/plugins) off the base install so its mod set is independent. The
+            // slow provisioning (copying the base mod set) runs off the UI thread.
+            RegisterRpc("servers.create", async p =>
+            {
+                var name = (p.Value<string>("name") ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(name))
+                    throw new ArgumentException("A server name is required.");
+
+                if (ServerPrefsProvider.LoadPreferences()
+                        .Any(x => string.Equals(x.ProfileName, name, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException($"A server named '{name}' already exists. Pick a different name.");
+
+                var isolateInstall = p.Value<bool?>("isolateInstall") ?? true;
+                var seedMods = p.Value<bool?>("seedMods") ?? true;
+                var isolateSaveFolder = p.Value<bool?>("isolateSaveFolder") ?? true;
+
+                // Distinct world: explicit value, else a safe token derived from the name.
+                var world = (p.Value<string>("world") ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(world)) world = InstallIsolationService.MakeSafeName(name);
+
+                // Ports: explicit values (validated free) else auto-suggested.
+                var (suggestedGame, suggestedRcon) = SuggestFreePorts();
+                var gamePort = p.Value<int?>("port") ?? suggestedGame;
+                var rconPort = p.Value<int?>("rconPort") ?? suggestedRcon;
+
+                // Seed the new profile from the active one so it inherits sane backup/save-interval
+                // defaults, then stamp on its own distinct identity.
+                var basePrefs = ServerPrefsProvider.LoadPreferences(ActiveProfileName) ?? new ServerPreferences();
+                var prefs = basePrefs.ToFile();
+                var created = ServerPreferences.FromFile(prefs);
+
+                created.ProfileName = name;
+                created.Name = string.IsNullOrWhiteSpace(created.Name) ? name : created.Name;
+                created.WorldName = world;
+                created.Port = gamePort;
+                created.RconPort = rconPort;
+                created.AutoStart = false;        // never surprise-launch a brand-new server
+                created.Archived = false;
+                created.LastSaved = DateTime.UtcNow;
+
+                // Save folder: give the new server its own so worlds/backups never mingle.
+                if (isolateSaveFolder)
+                    created.SaveDataFolderPath = MakeIsolatedSaveFolder(name);
+
+                if (isolateInstall)
+                {
+                    var baseExe = GetServerExePathFor(ActiveProfileName);
+                    var result = await Task.Run(() =>
+                        InstallIsolation.ProvisionInstall(baseExe, name, seedMods));
+                    created.ServerExePath = result.ServerExePath;
+                    created.IsolatedInstall = true;
+                    Logger.Information("Created isolated server '{0}': install={1}, world={2}, port={3}.",
+                        name, result.InstallDirectory, world, gamePort);
+                }
+                else
+                {
+                    created.IsolatedInstall = false;
+                }
+
+                ServerPrefsProvider.SavePreferences(created);
+                CurrentProfile = created.ProfileName;   // switch the UI to the new server
+                PostEvent("servers.changed", BuildServersList());
+                return created;
+            });
+
+            // Worlds sitting on disk that no profile currently owns, so a past realm can be
+            // pulled back in on demand. Pull-based (this is only queried when the user opens the
+            // restore panel - it never nags on startup). Newest-first; the same world name found
+            // in several save folders folds to one entry (newest kept) with an olderCount hint.
+            RegisterRpc("worlds.listOrphans", p =>
+            {
+                var owned = new HashSet<string>(
+                    ServerPrefsProvider.LoadPreferences()
+                        .Select(pr => pr.WorldName)
+                        .Where(w => !string.IsNullOrWhiteSpace(w)),
+                    StringComparer.OrdinalIgnoreCase);
+
+                var found = new List<(string World, string Folder, string Sub, long SizeBytes, DateTime ModifiedUtc)>();
+                foreach (var saveFolder in KnownSaveFolders())
+                {
+                    foreach (var sub in new[] { "worlds_local", "worlds" })
+                    {
+                        var dir = Path.Combine(saveFolder, sub);
+                        if (!Directory.Exists(dir)) continue;
+
+                        foreach (var fwl in Directory.GetFiles(dir, "*.fwl"))
+                        {
+                            var world = Path.GetFileNameWithoutExtension(fwl);
+                            if (string.IsNullOrWhiteSpace(world) || owned.Contains(world)) continue;
+
+                            var db = Path.Combine(dir, world + ".db");
+                            long size = 0;
+                            try { size += new FileInfo(fwl).Length; } catch { /* ignore */ }
+                            try { if (File.Exists(db)) size += new FileInfo(db).Length; } catch { /* ignore */ }
+                            DateTime modified;
+                            try { modified = File.GetLastWriteTimeUtc(File.Exists(db) ? db : fwl); }
+                            catch { modified = DateTime.MinValue; }
+
+                            found.Add((world, saveFolder, sub, size, modified));
+                        }
+                    }
+                }
+
+                var folded = found
+                    .GroupBy(o => o.World, StringComparer.OrdinalIgnoreCase)
+                    .Select(g =>
+                    {
+                        var newest = g.OrderByDescending(o => o.ModifiedUtc).First();
+                        return new
+                        {
+                            world = newest.World,
+                            folder = newest.Folder,
+                            sub = newest.Sub,
+                            sizeBytes = newest.SizeBytes,
+                            modifiedUtc = newest.ModifiedUtc,
+                            olderCount = g.Count() - 1,
+                        };
+                    })
+                    .OrderByDescending(o => o.modifiedUtc)
+                    .ToList();
+
+                return Task.FromResult<object>(folded);
+            });
+
+            // Pulls an orphan world back in as its own isolated server: creates a distinct profile,
+            // COPIES the world files into a fresh isolated save folder (the original files are left
+            // untouched, so the same world can be adopted again or recovered), and provisions an
+            // isolated install so this realm's mods stay distinct and can never contaminate another
+            // server. Mods are seeded from the active server when seedMods is set, else vanilla.
+            RegisterRpc("servers.adoptWorld", async p =>
+            {
+                var world = (p.Value<string>("world") ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(world))
+                    throw new ArgumentException("A world is required.");
+
+                var sourceFolder = p.Value<string>("folder");
+                var sub = p.Value<string>("sub");
+                if (string.IsNullOrWhiteSpace(sub)) sub = "worlds_local";
+
+                var name = (p.Value<string>("name") ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(name)) name = world;
+
+                if (ServerPrefsProvider.LoadPreferences()
+                        .Any(x => string.Equals(x.ProfileName, name, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException($"A server named '{name}' already exists. Pick a different name.");
+
+                var seedMods = p.Value<bool?>("seedMods") ?? true;
+                var (suggestedGame, suggestedRcon) = SuggestFreePorts();
+                var gamePort = p.Value<int?>("port") ?? suggestedGame;
+                var rconPort = p.Value<int?>("rconPort") ?? suggestedRcon;
+
+                // Seed from the active profile for sane defaults, then stamp a distinct identity.
+                var basePrefs = ServerPrefsProvider.LoadPreferences(ActiveProfileName) ?? new ServerPreferences();
+                var created = ServerPreferences.FromFile(basePrefs.ToFile());
+                created.ProfileName = name;
+                created.Name = string.IsNullOrWhiteSpace(created.Name) ? name : created.Name;
+                created.WorldName = world;
+                created.Port = gamePort;
+                created.RconPort = rconPort;
+                created.AutoStart = false;
+                created.Archived = false;
+                created.LastSaved = DateTime.UtcNow;
+
+                // Own save folder; copy the world files into it (leaving the source in place).
+                var saveFolder = MakeIsolatedSaveFolder(name);
+                created.SaveDataFolderPath = saveFolder;
+
+                var baseExe = GetServerExePathFor(ActiveProfileName);
+                await Task.Run(() =>
+                {
+                    CopyWorldFiles(sourceFolder, sub, world, saveFolder);
+                    var result = InstallIsolation.ProvisionInstall(baseExe, name, seedMods);
+                    created.ServerExePath = result.ServerExePath;
+                });
+                created.IsolatedInstall = true;
+
+                ServerPrefsProvider.SavePreferences(created);
+                CurrentProfile = created.ProfileName;
+                Logger.Information("Adopted orphan world '{0}' as server '{1}' (port {2}).", world, name, gamePort);
+                PostEvent("servers.changed", BuildServersList());
+                return created;
+            });
+
+            // Non-throwing collision check that powers the live warnings in the World/Network
+            // halls: given this realm's current (possibly-unsaved) world/ports/install/save
+            // settings, reports every overlap with ANOTHER profile so a conflict is visible
+            // while editing - long before it would hard-fail at launch (EnsureNoServerCollisions).
+            RegisterRpc("servers.checkCollision", p =>
+            {
+                var self = (p.Value<string>("profile") ?? CurrentProfile ?? "").Trim();
+                var selfPrefs = string.IsNullOrWhiteSpace(self) ? null : ServerPrefsProvider.LoadPreferences(self);
+                var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
+                string EffectiveSave(ServerPreferences pr) =>
+                    !string.IsNullOrWhiteSpace(pr?.SaveDataFolderPath) ? pr.SaveDataFolderPath : userSave;
+
+                var port = p.Value<int?>("port") ?? selfPrefs?.Port ?? 0;
+                var rconEnabled = p.Value<bool?>("rconEnabled") ?? selfPrefs?.RconEnabled ?? false;
+                var rconPort = p.Value<int?>("rconPort") ?? selfPrefs?.RconPort ?? 0;
+                var world = (p.Value<string>("world") ?? selfPrefs?.WorldName ?? "").Trim();
+                var exe = p.Value<string>("exePath") ?? GetServerExePathFor(self);
+                var save = p.Value<string>("saveFolder") ?? EffectiveSave(selfPrefs);
+
+                var warnings = new List<object>();
+                foreach (var other in ServerPrefsProvider.LoadPreferences())
+                {
+                    if (string.Equals(other.ProfileName, self, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (other.Archived) continue;
+
+                    if (port > 0 && Math.Abs(port - other.Port) <= 1)
+                        warnings.Add(new { kind = "port", other = other.ProfileName,
+                            message = $"Game port {port} overlaps '{other.ProfileName}' (uses {other.Port}-{other.Port + 1}). Space game ports at least 2 apart." });
+
+                    if (rconEnabled && other.RconEnabled && rconPort > 0 && rconPort == other.RconPort)
+                        warnings.Add(new { kind = "rcon", other = other.ProfileName,
+                            message = $"RCON port {rconPort} is also used by '{other.ProfileName}'." });
+
+                    if (SamePath(exe, other.ServerExePath))
+                        warnings.Add(new { kind = "install", other = other.ProfileName,
+                            message = $"Shares its install (valheim_server.exe) with '{other.ProfileName}' - their mods and configs would collide. Give this realm its own install." });
+
+                    if (!string.IsNullOrWhiteSpace(world)
+                        && string.Equals(world, other.WorldName, StringComparison.OrdinalIgnoreCase)
+                        && SamePath(save ?? "", EffectiveSave(other) ?? ""))
+                        warnings.Add(new { kind = "world", other = other.ProfileName,
+                            message = $"World '{world}' sits in the same save folder as '{other.ProfileName}' - both can't load it at once." });
+                }
+                return Task.FromResult<object>(warnings);
+            });
 
             // --- User preferences ---
             RegisterRpc("userprefs.get", p => Task.FromResult<object>(BuildUserPrefsDto()));
@@ -1096,6 +1474,10 @@ namespace ValheimBakaLoader.Forms
                             // Leave LatestVersion null - the UI shows "-" for unknown.
                         }
                     }));
+
+                    // Remember this realm's mod set so it's tracked per-profile and reconstructable
+                    // on restore/export (kept distinct so servers never cross-contaminate).
+                    RecordModManifest(CurrentProfile, mods);
 
                     return mods.Select(BuildModDto).ToList();
                 }
@@ -1494,8 +1876,14 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private object BuildServersList()
         {
-            var names = ServerPrefsProvider.LoadPreferences()
-                .Select(pref => pref.ProfileName)
+            // Map each saved profile to its Archived flag so the strip can hide archived
+            // realms while a collapsible "archived" section can still surface them.
+            var archivedByName = ServerPrefsProvider.LoadPreferences()
+                .Where(pref => !string.IsNullOrWhiteSpace(pref.ProfileName))
+                .GroupBy(pref => pref.ProfileName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Archived, StringComparer.OrdinalIgnoreCase); // value: bool
+
+            var names = archivedByName.Keys
                 .Concat(Sessions.Keys)
                 .Where(n => !string.IsNullOrWhiteSpace(n))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1516,8 +1904,203 @@ namespace ValheimBakaLoader.Forms
                     running = status != ServerStatus.Stopped,
                     playersOnline,
                     active = string.Equals(name, active, StringComparison.OrdinalIgnoreCase),
+                    archived = archivedByName.TryGetValue(name, out var a) && a,
                 };
             }).ToList();
+        }
+
+        /// <summary>First non-archived profile name that isn't <paramref name="excludeName"/> (null if none).</summary>
+        private string FirstActiveProfileExcept(string excludeName)
+        {
+            return ServerPrefsProvider.LoadPreferences()
+                .Where(pref => !pref.Archived
+                    && !string.Equals(pref.ProfileName, excludeName, StringComparison.OrdinalIgnoreCase))
+                .Select(pref => pref.ProfileName)
+                .FirstOrDefault();
+        }
+
+        /// <summary>Count of profiles still visible on the strip (not archived).</summary>
+        private int CountNonArchivedProfiles() =>
+            ServerPrefsProvider.LoadPreferences().Count(pref => !pref.Archived);
+
+        /// <summary>
+        /// The profile's isolated install directory IF it is a BakaLoader-managed install
+        /// (safe to reclaim); null for shared/base installs so delete never touches them.
+        /// </summary>
+        private string GetManagedInstallDir(ServerPreferences prefs)
+        {
+            if (!(prefs.IsolatedInstall) || string.IsNullOrWhiteSpace(prefs.ServerExePath)) return null;
+            try
+            {
+                var dir = Path.GetDirectoryName(prefs.ServerExePath);
+                return InstallIsolation.IsManagedInstall(dir) ? dir : null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// The profile's isolated save folder IF it is one we provisioned (lives under a
+        /// ".../servers/&lt;name&gt;" path and differs from the base save folder); null otherwise,
+        /// so a shared/base save folder is never deleted.
+        /// </summary>
+        private string GetIsolatedSaveFolder(ServerPreferences prefs)
+        {
+            var path = prefs.SaveDataFolderPath;
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            try
+            {
+                var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+                // Guard: only a folder whose parent directory is literally "servers" is one we made.
+                var parent = Directory.GetParent(full)?.Name;
+                if (!string.Equals(parent, "servers", StringComparison.OrdinalIgnoreCase)) return null;
+
+                // Never treat the base/user save folder as deletable even if it somehow matches.
+                if (SamePath(full, ResolveSaveDataFolder(null))) return null;
+                return full;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Counts files and total bytes under the isolated install + save folder (best effort).</summary>
+        private (int fileCount, long sizeBytes) MeasureDeletableFiles(string installDir, string saveFolder)
+        {
+            int count = 0; long bytes = 0;
+
+            void Measure(string root)
+            {
+                if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return;
+                var di = new DirectoryInfo(root);
+                // Skip reparse points (junctions) so shared game data isn't counted or implied deleted.
+                foreach (var f in EnumerateRealFiles(di))
+                {
+                    count++;
+                    try { bytes += f.Length; } catch { /* ignore */ }
+                }
+            }
+
+            Measure(installDir);
+            Measure(saveFolder);
+            return (count, bytes);
+        }
+
+        /// <summary>Enumerates files under a directory tree WITHOUT descending into junctions/symlinks.</summary>
+        private static IEnumerable<FileInfo> EnumerateRealFiles(DirectoryInfo dir)
+        {
+            if (dir.Attributes.HasFlag(FileAttributes.ReparsePoint)) yield break;
+            foreach (var f in dir.GetFiles()) yield return f;
+            foreach (var sub in dir.GetDirectories())
+            {
+                if (sub.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                foreach (var f in EnumerateRealFiles(sub)) yield return f;
+            }
+        }
+
+        /// <summary>
+        /// Picks a game port (and its silent port+1 twin) plus an RCON port that collide with
+        /// no existing profile. Valheim binds port AND port+1, so game ports are spaced 2 apart.
+        /// </summary>
+        private (int gamePort, int rconPort) SuggestFreePorts()
+        {
+            var profiles = ServerPrefsProvider.LoadPreferences().ToList();
+
+            // Every port Valheim would occupy for existing profiles: p and p+1 for each.
+            var usedGame = new HashSet<int>();
+            foreach (var pr in profiles) { usedGame.Add(pr.Port); usedGame.Add(pr.Port + 1); }
+            var usedRcon = new HashSet<int>(profiles.Where(pr => pr.RconEnabled).Select(pr => pr.RconPort));
+
+            var defaultGame = int.TryParse(Resources.DefaultServerPort, out var dg) ? dg : 2456;
+            var gamePort = defaultGame;
+            // Advance by 2 (skipping the port+1 twin) until neither this port nor its twin is taken.
+            while (usedGame.Contains(gamePort) || usedGame.Contains(gamePort + 1))
+                gamePort += 2;
+
+            var rconPort = 25575;
+            while (usedRcon.Contains(rconPort) || rconPort == gamePort || rconPort == gamePort + 1)
+                rconPort++;
+
+            return (gamePort, rconPort);
+        }
+
+        /// <summary>
+        /// Every save-data folder BakaLoader might find worlds in: the base/user save folder,
+        /// the Valheim LocalLow default, and each profile's own isolated save folder.
+        /// De-duplicated by full path; only folders that actually exist are returned.
+        /// </summary>
+        private List<string> KnownSaveFolders()
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var list = new List<string>();
+
+            void Consider(string path)
+            {
+                if (string.IsNullOrWhiteSpace(path)) return;
+                try
+                {
+                    var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+                    if (Directory.Exists(full) && seen.Add(full)) list.Add(full);
+                }
+                catch { /* ignore unreadable paths */ }
+            }
+
+            Consider(ResolveSaveDataFolder(null));
+            Consider(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "AppData", "LocalLow", "IronGate", "Valheim"));
+            foreach (var pr in ServerPrefsProvider.LoadPreferences())
+                Consider(pr.SaveDataFolderPath);
+
+            return list;
+        }
+
+        /// <summary>
+        /// Copies a world's on-disk files (db/fwl and their .old siblings) from a source save
+        /// folder into a destination save folder's worlds_local subdir, so an adopted world is a
+        /// real independent copy and the original is never moved, altered, or deleted.
+        /// </summary>
+        private static void CopyWorldFiles(string sourceFolder, string sub, string world, string destSaveFolder)
+        {
+            if (string.IsNullOrWhiteSpace(sourceFolder) || string.IsNullOrWhiteSpace(world)) return;
+
+            var srcDir = Path.Combine(sourceFolder, string.IsNullOrWhiteSpace(sub) ? "worlds_local" : sub);
+            if (!Directory.Exists(srcDir)) return;
+
+            // A dedicated server reads its worlds from worlds_local, so land the copy there.
+            var destDir = Path.Combine(destSaveFolder, "worlds_local");
+            Directory.CreateDirectory(destDir);
+
+            foreach (var ext in new[] { ".db", ".fwl", ".db.old", ".fwl.old" })
+            {
+                var src = Path.Combine(srcDir, world + ext);
+                if (!File.Exists(src)) continue;
+                File.Copy(src, Path.Combine(destDir, world + ext), overwrite: true);
+            }
+        }
+
+        /// <summary>
+        /// Builds a per-server save-data folder path under the base save location so each
+        /// server's worlds and backups stay in their own directory (no cross-server mingling).
+        /// </summary>
+        private string MakeIsolatedSaveFolder(string profileName)
+        {
+            var baseSave = ResolveSaveDataFolder(null);
+            if (string.IsNullOrWhiteSpace(baseSave))
+            {
+                // No configured save folder yet: fall back to the Valheim LocalLow default.
+                var localLow = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "AppData", "LocalLow", "IronGate", "Valheim");
+                baseSave = localLow;
+            }
+
+            var parent = Path.Combine(baseSave, "servers");
+            var safe = InstallIsolationService.MakeSafeName(profileName);
+            var candidate = Path.Combine(parent, safe);
+            var n = 2;
+            while (Directory.Exists(candidate) && Directory.EnumerateFileSystemEntries(candidate).Any())
+                candidate = Path.Combine(parent, $"{safe}-{n++}");
+
+            Directory.CreateDirectory(candidate);
+            return candidate;
         }
 
         private object BuildPlayerDto(PlayerInfo player)
@@ -1541,6 +2124,37 @@ namespace ValheimBakaLoader.Forms
                 characters = player.Characters?.Select(c => c.CharacterName).ToList(),
                 serverKey = player.ServerKey,
             };
+        }
+
+        /// <summary>
+        /// Persists a profile's current installed-mod set into its ModManifest so each server's
+        /// mod list is tracked distinctly (used on restore/export). Best-effort: a persistence
+        /// failure never breaks a scan.
+        /// </summary>
+        private void RecordModManifest(string profileName, IEnumerable<Tools.Models.InstalledMod> mods)
+        {
+            if (string.IsNullOrWhiteSpace(profileName) || mods == null) return;
+            try
+            {
+                var prefs = ServerPrefsProvider.LoadPreferences(profileName);
+                if (prefs == null) return;
+
+                prefs.ModManifest = mods
+                    .Where(m => !string.IsNullOrWhiteSpace(m.ModName))
+                    .Select(m => new ModManifestEntry
+                    {
+                        Owner = m.Author,
+                        Name = m.ModName,
+                        Version = m.InstalledVersion,
+                    })
+                    .ToList();
+
+                ServerPrefsProvider.SavePreferences(prefs);
+            }
+            catch (Exception e)
+            {
+                AppLogger.Error(e, "Failed to record the mod manifest for profile '{0}'.", profileName);
+            }
         }
 
         private object BuildModDto(Tools.Models.InstalledMod mod)

@@ -1,8 +1,21 @@
 using System;
+using System.Collections.Generic;
 using ValheimBakaLoader.Properties;
 
 namespace ValheimBakaLoader.Game
 {
+    /// <summary>
+    /// One mod recorded in a profile's manifest, so a server's mod set is tracked
+    /// and reconstructable on restore/export. Owner+Name+Version identify a
+    /// Thunderstore package the same way the mod scanner resolves installed mods.
+    /// </summary>
+    public class ModManifestEntry
+    {
+        [Newtonsoft.Json.JsonProperty("owner")] public string Owner { get; set; }
+        [Newtonsoft.Json.JsonProperty("name")] public string Name { get; set; }
+        [Newtonsoft.Json.JsonProperty("version")] public string Version { get; set; }
+    }
+
     /// <summary>
     /// One saved server profile with all defaults applied. Round-trips to
     /// disk through <see cref="ServerPreferencesFile"/>.
@@ -63,6 +76,20 @@ namespace ValheimBakaLoader.Game
 
         public string RconPassword { get; set; }
 
+        // -- Multi-server isolation --
+
+        /// <summary>Soft-deleted: hidden from the chip strip, kept for restore. Touches nothing on disk.</summary>
+        public bool Archived { get; set; }
+
+        /// <summary>
+        /// This profile owns a BakaLoader-provisioned install directory (junctioned game
+        /// files + its own BepInEx/plugins). Marks the install as safe to reclaim on delete.
+        /// </summary>
+        public bool IsolatedInstall { get; set; }
+
+        /// <summary>The mods this server was last seen running, for restore/export.</summary>
+        public List<ModManifestEntry> ModManifest { get; set; }
+
         public static ServerPreferences FromFile(ServerPreferencesFile file)
         {
             var defaults = new ServerPreferences();
@@ -96,6 +123,9 @@ namespace ValheimBakaLoader.Game
                 RconEnabled = file.RconEnabled ?? defaults.RconEnabled,
                 RconPort = file.RconPort ?? defaults.RconPort,
                 RconPassword = file.RconPassword ?? defaults.RconPassword,
+                Archived = file.Archived ?? defaults.Archived,
+                IsolatedInstall = file.IsolatedInstall ?? defaults.IsolatedInstall,
+                ModManifest = file.ModManifest ?? defaults.ModManifest,
             };
         }
 
@@ -127,6 +157,9 @@ namespace ValheimBakaLoader.Game
             RconEnabled = RconEnabled,
             RconPort = RconPort,
             RconPassword = RconPassword,
+            Archived = Archived,
+            IsolatedInstall = IsolatedInstall,
+            ModManifest = ModManifest,
         };
     }
 }

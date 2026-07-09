@@ -204,6 +204,7 @@ function goPage(name){
     p.style.display=on?"block":"none";
   });
   currentPage=name;
+  try{renderEditBar();}catch(_){}
   if(Native.available){
     if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods();
     if(name==="vikings") refreshPlayers();
@@ -224,14 +225,176 @@ async function refreshServers(){
 }
 function renderServerChips(){
   const el=$("#srvStrip"); if(!el) return;
-  const list=S.servers||[];
-  el.innerHTML=list.map(s=>{
+  const all=S.servers||[];
+  const list=all.filter(s=>!s.archived);       // strip shows only live realms
+  const archived=all.filter(s=>s.archived);
+  let html=list.map(s=>{
     const cls="srvchip"+(s.active?" active":"")+(s.running?" running":"");
     const initial=(s.name||"?").trim().charAt(0).toUpperCase();
     const badge=s.playersOnline>0?`<span class="srvbadge">${s.playersOnline}</span>`:"";
-    return `<div class="${cls}" data-srv="${esc(s.name)}" title="${esc(s.name)}${s.running?" · "+esc(s.status):""}"><span class="srvdot${s.running?" on":""}"></span><span class="srvinit">${esc(initial)}</span>${badge}</div>`;
-  }).join("")+`<div class="srvchip add" id="srvAdd" title="Add a server profile"><span class="srvinit">+</span></div>`;
+    return `<div class="${cls}" data-srv="${esc(s.name)}" title="${esc(s.name)}${s.running?" · "+esc(s.status):""} · right-click for options"><span class="srvdot${s.running?" on":""}"></span><span class="srvinit">${esc(initial)}</span>${badge}</div>`;
+  }).join("");
+  html+=`<div class="srvchip add" id="srvAdd" title="Found a new realm"><span class="srvinit">+</span></div>`;
+  const archBadge=archived.length?`<span class="srvbadge">${archived.length}</span>`:"";
+  const restoreTip=archived.length
+    ?`Restore a realm · ${archived.length} archived, or bring back a past world`
+    :`Restore a past realm from its world files`;
+  html+=`<div class="srvchip arch" id="srvRestore" title="${restoreTip}"><span class="srvinit">↺</span>${archBadge}</div>`;
+  el.innerHTML=html;
   const sep=$("#srvSep"); if(sep) sep.style.display=list.length?"":"none";
+}
+/* Right-click a chip → per-realm actions. */
+function serverChipMenu(name,x,y){
+  const s=(S.servers||[]).find(v=>String(v.name)===String(name)); if(!s) return;
+  const items=[
+    {r:"ᛒ",label:"Turn helm here",fn:()=>switchServer(name),disabled:s.active,tip:"Already the active realm"},
+    {r:"ᚱ",label:"Rename…",fn:()=>renameServer(name),disabled:s.running,tip:"Stop the server first"},
+    {r:"ᛞ",label:"Duplicate…",fn:()=>duplicateServer(name)},
+    "hr",
+    {r:"⌂",label:"Archive",fn:()=>archiveServer(name),disabled:s.running,tip:"Stop the server first"},
+    {r:"ᛟ",label:"Delete…",fn:()=>deleteServerFlow(name),danger:true,disabled:s.running,tip:"Stop the server first"},
+  ];
+  ctxOpen(x,y,name,items);
+}
+async function renameServer(name){
+  promptModal(TT("Rename realm"),name,async v=>{
+    v=(v||"").trim(); if(!v||v===name) return;
+    const r=await rpc("profiles.rename",{name,newName:v});
+    if(r===FAIL) return;
+    if(S.profileName===name){S.profileName=v;if(S.prefs)S.prefs.ProfileName=v;}
+    await refreshServers(); toast(TT("ᚱ Realm renamed · ")+v);
+  });
+}
+async function duplicateServer(name){
+  // Seed a new realm from this one: switch to it so the wizard clones its mod set.
+  if(!(S.servers||[]).find(v=>String(v.name)===String(name)&&v.active)) await switchServer(name);
+  addServerProfile();
+}
+async function archiveServer(name){
+  const r=await rpc("profiles.archive",{name});
+  if(r===FAIL) return;
+  if(S.profileName===name) S.profileName=null;
+  await refreshServers(); toast(TT("⌂ Realm archived · kept for restore"));
+}
+/* Delete flow: default removes settings only; a danger toggle also reclaims the
+   isolated install + this realm's worlds/backups (with an exact file count/size). */
+async function deleteServerFlow(name){
+  const info=await rpc("profiles.deleteInfo",{name});
+  if(info===FAIL||!info){toast(TT("Could not read that realm."));return;}
+  if(info.running){toast(TT("Stop the server before deleting it."));return;}
+  const mb=(info.sizeBytes||0)/1048576;
+  const sizeStr=mb>=1024?(mb/1024).toFixed(1)+" GB":Math.max(0,mb).toFixed(mb<10?1:0)+" MB";
+  const hasFiles=(info.hasIsolatedInstall||info.saveFolder)&&info.fileCount>0;
+  const dangerLine=hasFiles
+    ?`<label class="togglerow" style="cursor:pointer"><span class="tl" style="color:var(--danger,#E8560F)">${esc(TT("Also delete this realm's isolated worlds, backups & install"))}<br><span style="font-size:9.5px;opacity:.7">${info.fileCount} ${esc(TT("files · "))}${esc(sizeStr)}${esc(TT(" · cannot be undone"))}</span></span><div class="toggle" id="delFiles"></div></label>`
+    :`<div class="fieldnote">${esc(TT("This realm shares its install/worlds — no isolated files to remove."))}</div>`;
+  const m=modalOpen(
+    `<div class="mtitle">${esc(TT("Delete realm"))} · ${esc(name)}</div>`+
+    `<div class="mbody"><p>${esc(TT("By default this removes only the saved settings — the realm can be re-adopted later from its world files."))}</p>`+
+      dangerLine+
+      `<div class="mbody-note" id="delStatus"></div></div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="delCancel">Cancel</button>`+
+      `<button class="btn btn-ember btn-sm" id="delOk">${esc(TT("Delete"))}</button></div>`);
+  const delFiles=m.querySelector("#delFiles");
+  if(delFiles) delFiles.addEventListener("click",()=>delFiles.classList.toggle("on"));
+  m.querySelector("#delCancel").addEventListener("click",modalClose);
+  m.querySelector("#delOk").addEventListener("click",async()=>{
+    const df=delFiles?delFiles.classList.contains("on"):false;
+    const ok=m.querySelector("#delOk"); ok.disabled=true; ok.textContent=TT("Deleting…");
+    const r=await rpc("profiles.delete",{name,deleteFiles:df});
+    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Delete");const st=m.querySelector("#delStatus");if(st)st.textContent=TT("Delete failed — see the saga log.");return;}
+    modalClose();
+    if(S.profileName===name) S.profileName=null;
+    await refreshServers();
+    // If we deleted the active realm, switch the UI to whatever remains.
+    const next=(S.servers||[]).find(s=>!s.archived);
+    if(next) await switchServer(next.name);
+    toast(TT("ᛟ Realm deleted"));
+  });
+}
+/* Restore surface: (1) archived realms — unarchive or delete for good; (2) past worlds
+   still on disk that no realm owns — adopt each back as its own isolated server. Pull-based:
+   orphan worlds are only queried here, never on startup, so many old worlds never nag. */
+async function restoreModal(){
+  const archived=(S.servers||[]).filter(s=>s.archived);
+  const orphans=await rpc("worlds.listOrphans",{});
+  const orphanList=Array.isArray(orphans)?orphans:[];
+  if(!archived.length&&!orphanList.length){toast(TT("Nothing to restore — no archived realms or past worlds found."));return;}
+
+  const archRows=archived.map(s=>
+    `<div class="arow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line,#2A2E34)">`+
+    `<span class="cilbl">${esc(s.name)}</span>`+
+    `<span style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm arst" data-name="${esc(s.name)}">${esc(TT("Restore"))}</button>`+
+    `<button class="btn btn-ghost btn-sm ardel" data-name="${esc(s.name)}" style="color:var(--danger,#E8560F)">${esc(TT("Delete"))}</button></span></div>`).join("");
+
+  const orphanRows=orphanList.map((o,i)=>{
+    const mb=(o.sizeBytes||0)/1048576;
+    const sizeStr=mb>=1024?(mb/1024).toFixed(1)+" GB":Math.max(0,mb).toFixed(mb<10?1:0)+" MB";
+    let when="";
+    try{const d=new Date(o.modifiedUtc);if(!isNaN(d))when=d.toLocaleDateString();}catch{}
+    const older=o.olderCount>0?` · +${o.olderCount} older`:"";
+    return `<div class="arow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line,#2A2E34)">`+
+      `<span class="cilbl">${esc(o.world)}<br><span style="font-size:9.5px;opacity:.6">${esc(sizeStr)}${when?" · "+esc(when):""}${esc(older)}</span></span>`+
+      `<button class="btn btn-ghost btn-sm oadopt" data-i="${i}">${esc(TT("Bring back"))}</button></div>`;
+  }).join("");
+
+  const archSection=archived.length
+    ?`<div class="mtitle" style="font-size:12px;opacity:.85">${esc(TT("Archived realms"))}</div><div class="mbody">${archRows}</div>`:"";
+  const orphanSection=orphanList.length
+    ?`<div class="mtitle" style="font-size:12px;opacity:.85${archived.length?";margin-top:10px":""}">${esc(TT("Past worlds on disk"))}</div>`+
+     `<div class="fieldnote" style="margin:2px 0 4px">${esc(TT("Worlds no realm currently owns. Bringing one back makes a fresh isolated server — the original files are left untouched."))}</div>`+
+     `<div class="mbody">${orphanRows}</div>`:"";
+
+  const m=modalOpen(
+    `<div class="mtitle">${esc(TT("Restore a realm"))}</div>`+
+    archSection+orphanSection+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="arClose">Close</button></div>`);
+  m.querySelector("#arClose").addEventListener("click",modalClose);
+  m.querySelectorAll(".arst").forEach(b=>b.addEventListener("click",async()=>{
+    const r=await rpc("profiles.unarchive",{name:b.dataset.name});
+    if(r===FAIL) return;
+    modalClose(); await refreshServers(); toast(TT("⌂ Realm restored · ")+b.dataset.name);
+  }));
+  m.querySelectorAll(".ardel").forEach(b=>b.addEventListener("click",async()=>{
+    modalClose(); deleteServerFlow(b.dataset.name);
+  }));
+  m.querySelectorAll(".oadopt").forEach(b=>b.addEventListener("click",()=>{
+    const o=orphanList[+b.dataset.i]; if(!o) return;
+    modalClose(); adoptWorldFlow(o);
+  }));
+}
+/* Adopt an orphan world as its own isolated server (own save + install; mods optionally
+   seeded from the active realm, else vanilla — kept distinct to avoid cross-contamination). */
+async function adoptWorldFlow(o){
+  const taken=new Set((S.servers||[]).map(s=>String(s.name).toLowerCase()));
+  const m=modalOpen(
+    `<div class="mtitle">${esc(TT("Bring back world"))} · ${esc(o.world)}</div>`+
+    `<div class="mbody">`+
+      `<div class="field"><label>${esc(TT("New realm name"))}</label>`+
+        `<input type="text" id="awName" value="${esc(o.world)}" spellcheck="false" autocomplete="off"></div>`+
+      `<label class="togglerow" style="cursor:pointer"><span class="tl">${esc(TT("Copy the active realm's mods into it"))}`+
+        `<br><span style="font-size:9.5px;opacity:.7">${esc(TT("Off = start this realm vanilla"))}</span></span>`+
+        `<div class="toggle on" id="awSeed"></div></label>`+
+      `<div class="fieldnote" id="awStatus">${esc(TT("The world files are copied — the original is left untouched."))}</div>`+
+    `</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="awCancel">Cancel</button>`+
+      `<button class="btn btn-ember btn-sm" id="awOk">${esc(TT("Bring back"))}</button></div>`);
+  const seed=m.querySelector("#awSeed");
+  seed.addEventListener("click",()=>seed.classList.toggle("on"));
+  m.querySelector("#awCancel").addEventListener("click",modalClose);
+  m.querySelector("#awOk").addEventListener("click",async()=>{
+    const name=(m.querySelector("#awName").value||"").trim();
+    const st=m.querySelector("#awStatus");
+    if(!name){st.textContent=TT("A realm name is required.");return;}
+    if(taken.has(name.toLowerCase())){st.textContent=TT("A realm by that name already exists.");return;}
+    const ok=m.querySelector("#awOk"); ok.disabled=true; ok.textContent=TT("Bringing back…");
+    const r=await rpc("servers.adoptWorld",{world:o.world,folder:o.folder,sub:o.sub,name,seedMods:seed.classList.contains("on")});
+    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Bring back");st.textContent=TT("Could not bring that world back — see the saga log.");return;}
+    modalClose();
+    await refreshServers();
+    if(r&&r.ProfileName){await switchServer(r.ProfileName);goPage("world");}
+    toast(TT("↺ Realm restored · ")+name);
+  });
 }
 async function switchServer(name){
   if(!name||name===S.profileName) return;
@@ -256,25 +419,92 @@ async function switchServer(name){
   if(currentPage==="mods") scanMods();
   if(currentPage==="runes") refreshCfgList(true);
 }
-function addServerProfile(){
-  promptModal(TT("Name the new realm"),"e.g. Midgard Two",async name=>{
-    name=(name||"").trim();
-    if(!name) return;
-    const existing=(S.servers||[]).find(s=>String(s.name).toLowerCase()===name.toLowerCase());
-    if(existing){switchServer(existing.name);return;}
-    const prefs={...(S.prefs||{}),ProfileName:name,Name:name,AutoStart:false,
-      Port:((S.prefs?.Port??2456)+2)};
-    const r=await rpc("profiles.save",{name,prefs});
-    if(r===FAIL) return;
-    await switchServer(name);
-    goPage("world"); // land on World so ports/paths get configured before kindling
+/* New-Server wizard: a realm gets its OWN identity (name, world, free ports) and,
+   by default, its OWN isolated install (independent BepInEx/plugins) + save folder,
+   so a second server is genuinely separate rather than a shadow of the first. The
+   heavy lifting (provisioning the isolated install) happens in servers.create. */
+async function addServerProfile(){
+  if(!Native.available){
+    // Mock/preview: keep the old lightweight add so the UI is explorable offline.
+    promptModal(TT("Name the new realm"),"e.g. Midgard Two",name=>{
+      name=(name||"").trim(); if(!name) return;
+      S.servers=[...(S.servers||[]),{name,status:"Stopped",running:false,playersOnline:0,active:false}];
+      renderServerChips();
+    });
+    return;
+  }
+  const m=modalOpen(
+    `<div class="mtitle">${esc(TT("Found a new realm"))}</div>`+
+    `<div class="mbody" style="display:flex;flex-direction:column;gap:2px">`+
+      `<div class="field"><label>${esc(TT("Realm name"))}</label>`+
+        `<input type="text" id="wsName" placeholder="e.g. Midgard Two" spellcheck="false" autocomplete="off"></div>`+
+      `<div class="field"><label>${esc(TT("World"))}</label>`+
+        `<input type="text" id="wsWorld" placeholder="${esc(TT("its own new world"))}" spellcheck="false" autocomplete="off">`+
+        `<div class="fieldnote" id="wsPorts">${esc(TT("finding a free port…"))}</div></div>`+
+      `<div class="togglerow"><span class="tl">${esc(TT("Separate install (own mods)"))}</span>`+
+        `<div class="toggle on" id="wsIso"></div></div>`+
+      `<div class="togglerow"><span class="tl">${esc(TT("Copy this server's mods to start"))}</span>`+
+        `<div class="toggle on" id="wsSeed"></div></div>`+
+      `<div class="togglerow"><span class="tl">${esc(TT("Separate save folder (own worlds/backups)"))}</span>`+
+        `<div class="toggle on" id="wsSaveIso"></div></div>`+
+      `<div class="mbody-note" id="wsStatus"></div>`+
+    `</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="wsCancel">Cancel</button>`+
+      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(TT("Forge realm"))}</button></div>`);
+
+  const nameI=m.querySelector("#wsName"), worldI=m.querySelector("#wsWorld");
+  const iso=m.querySelector("#wsIso"), seed=m.querySelector("#wsSeed"), saveIso=m.querySelector("#wsSaveIso");
+  const portsN=m.querySelector("#wsPorts"), statusN=m.querySelector("#wsStatus");
+  const okB=m.querySelector("#wsOk");
+  const on=el=>el.classList.contains("on");
+  [iso,seed,saveIso].forEach(t=>t.addEventListener("click",()=>{
+    t.classList.toggle("on");
+    // Seeding mods only makes sense with a separate install: dim it when install is shared.
+    if(t===iso){ if(!on(iso)){seed.classList.remove("on");seed.style.opacity=".4";} else {seed.style.opacity="";} }
+  }));
+
+  let ports=null;
+  rpc("servers.suggestPort",{}).then(r=>{
+    if(r&&r!==FAIL){ports=r; portsN.textContent=TT("will claim game port ")+r.gamePort+" (+"+(r.gamePort+1)+") · RCON "+r.rconPort;}
+    else portsN.textContent=TT("ports will be auto-assigned");
   });
+
+  m.querySelector("#wsCancel").addEventListener("click",modalClose);
+  okB.addEventListener("click",async()=>{
+    const name=nameI.value.trim();
+    if(!name){nameI.focus();return;}
+    if((S.servers||[]).some(s=>String(s.name).toLowerCase()===name.toLowerCase())){
+      statusN.textContent=TT("A realm by that name already burns."); return;
+    }
+    okB.disabled=true; okB.textContent=TT("Forging…");
+    statusN.textContent=on(iso)?TT("provisioning a separate install (this can take a moment)…"):TT("saving…");
+    const created=await rpc("servers.create",{
+      name, world:worldI.value.trim(),
+      isolateInstall:on(iso), seedMods:on(iso)&&on(seed), isolateSaveFolder:on(saveIso),
+      port:ports?ports.gamePort:null, rconPort:ports?ports.rconPort:null,
+    });
+    if(created===FAIL||!created){
+      okB.disabled=false; okB.textContent=TT("Forge realm");
+      statusN.textContent=TT("Could not forge that realm — see the saga log.");
+      return;
+    }
+    modalClose();
+    await switchServer(created.ProfileName);
+    goPage("world"); // land on World so ports/paths are visible for the new realm
+  });
+  setTimeout(()=>nameI.focus(),30);
 }
 $("#srvStrip").addEventListener("click",e=>{
-  const add=e.target.closest("#srvAdd");
-  if(add){addServerProfile();return;}
+  if(e.target.closest("#srvAdd")){addServerProfile();return;}
+  if(e.target.closest("#srvRestore")){restoreModal();return;}
   const chip=e.target.closest(".srvchip[data-srv]");
   if(chip)switchServer(chip.dataset.srv);
+});
+$("#srvStrip").addEventListener("contextmenu",e=>{
+  const chip=e.target.closest(".srvchip[data-srv]");
+  if(!chip) return;
+  e.preventDefault();
+  serverChipMenu(chip.dataset.srv,e.clientX,e.clientY);
 });
 
 /* ---------- HEARTH: uptime + douse ---------- */
@@ -1493,7 +1723,64 @@ function renderAllFromPrefs(){
   renderWorldForm();
   renderNet();
   renderHearthNative();
+  try{renderEditBar();}catch(_){}
 }
+
+/* ---------- EDIT BAR (World hall) ----------
+   A persistent banner that makes it plain WHICH realm you're editing and shows
+   live collision warnings (port/RCON/install/world) against every other realm -
+   long before the throwing launch-time check would fire. Pull-based: only the
+   World hall renders it, and each check is guarded by a sequence counter so a
+   slow result from an older keystroke never overwrites a newer one. */
+let _editBarSeq=0, _ebT=null;
+function editBarValues(){
+  const p=S.prefs||{};
+  const gv=(id,fb)=>{const el=$("#"+id);return el&&el.value!=null&&el.value!==""?el.value:fb;};
+  const worldSel=$("#fWorld");
+  return {
+    profile:S.profileName||p.ProfileName||"",
+    name:String(gv("fName",p.Name)||"").trim(),
+    world:(worldSel&&worldSel.value)||p.WorldName||"",
+    port:parseInt(gv("fPort",p.Port??2456),10)||0,
+    rconEnabled:$("#tRcon")?T("tRcon"):!!p.RconEnabled,
+    rconPort:parseInt(gv("fRconPort",p.RconPort??25575),10)||0,
+    exePath:gv("fServerExe",p.ServerExePath??""),
+    saveFolder:gv("fSaveDir",p.SaveDataFolderPath??"")
+  };
+}
+async function renderEditBar(){
+  const bar=$("#editBar"); if(!bar) return;
+  // The bar belongs to the World hall - that's where the identity fields live.
+  if(currentPage!=="world"||!S.prefs){bar.style.display="none";return;}
+  const v=editBarValues();
+  const rconTxt=v.rconEnabled?("RCON "+(v.rconPort||"?")):"RCON off";
+  bar.innerHTML=
+    `<span class="ebedit">${esc(TT("Editing"))}</span>`+
+    `<span class="ebname">${esc(v.name||v.profile||TT("this realm"))}</span>`+
+    `<span class="ebmeta">${esc(TT("world"))} <b>${esc(v.world||"-")}</b> · ${esc(TT("port"))} <b>${v.port||"-"}</b> · <b>${esc(rconTxt)}</b></span>`+
+    `<span class="ebwarn" id="ebWarn" style="display:none"></span>`;
+  bar.style.display="flex";
+  if(!Native.available) return;
+  const seq=++_editBarSeq;
+  const warnings=await rpc("servers.checkCollision",{
+    profile:v.profile,port:v.port,rconEnabled:v.rconEnabled,rconPort:v.rconPort,
+    world:v.world,exePath:v.exePath,saveFolder:v.saveFolder});
+  if(seq!==_editBarSeq) return; // a newer keystroke already superseded this check
+  const w=$("#ebWarn"); if(!w) return;
+  if(Array.isArray(warnings)&&warnings.length){
+    w.textContent="⚠ "+warnings.length+" "+TT(warnings.length===1?"conflict":"conflicts");
+    w.title=warnings.map(x=>x.message).join("  •  ");
+    w.style.display="";
+  }else{
+    w.style.display="none";
+  }
+}
+function scheduleEditBar(){clearTimeout(_ebT);_ebT=setTimeout(()=>{renderEditBar().catch(()=>{});},260);}
+["fName","fPort","fRconPort","fServerExe","fSaveDir"].forEach(id=>{
+  const el=$("#"+id); if(el) el.addEventListener("input",scheduleEditBar);
+});
+$("#fWorld")?.addEventListener("change",scheduleEditBar);
+$("#tRcon")?.addEventListener("click",scheduleEditBar);
 
 /* ---------- FIRST-LAUNCH SETUP WIZARD ---------- */
 const WIZ={step:0,exe:"",save:"",exeValid:false,status:{},mods:{}};

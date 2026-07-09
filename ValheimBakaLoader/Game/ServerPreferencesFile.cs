@@ -1,5 +1,6 @@
 using Newtonsoft.Json;
 using System;
+using System.Collections.Generic;
 
 namespace ValheimBakaLoader.Game
 {
@@ -51,5 +52,11 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("rconEnabled")] public bool? RconEnabled { get; set; }
         [JsonProperty("rconPort")] public int? RconPort { get; set; }
         [JsonProperty("rconPassword")] public string RconPassword { get; set; }
+
+        // -- Multi-server isolation --
+
+        [JsonProperty("archived")] public bool? Archived { get; set; }
+        [JsonProperty("isolatedInstall")] public bool? IsolatedInstall { get; set; }
+        [JsonProperty("modManifest")] public List<ModManifestEntry> ModManifest { get; set; }
     }
 }

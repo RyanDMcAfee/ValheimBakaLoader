@@ -665,3 +665,16 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .srvchip.add{border-style:dashed;color:var(--bone-faint)}
 .srvchip.add:hover{color:var(--ember-hi);border-color:var(--ember)}
 .srvsep{width:44px;height:1px;background:rgba(140,109,63,.25);margin:2px 0 4px;flex:none}
+
+/* ---------- EDIT BAR: which realm every hall is editing + live conflict warnings ---------- */
+.editbar{display:flex;align-items:center;gap:9px;padding:5px 16px;font-family:var(--sans);
+  font-size:11.5px;color:var(--bone-dim);background:var(--iron-deep);
+  border-bottom:1px solid rgba(140,109,63,.22);flex:none}
+.editbar .ebedit{font-family:var(--serif);letter-spacing:.14em;text-transform:uppercase;
+  font-size:9px;color:var(--bone-faint)}
+.editbar .ebname{color:var(--ember-hi);font-weight:600;letter-spacing:.02em}
+.editbar .ebmeta{color:var(--bone-dim)}
+.editbar .ebmeta b{color:var(--bone);font-weight:600}
+.editbar .ebwarn{margin-left:auto;color:var(--amber);font-weight:600;cursor:help;
+  padding:2px 8px;border:1px solid rgba(232,169,60,.4);border-radius:6px;
+  background:rgba(232,169,60,.08)}

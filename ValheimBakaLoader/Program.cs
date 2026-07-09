@@ -65,6 +65,7 @@ namespace ValheimBakaLoader
             services.AddSingleton<IModScanner, ModScanner>();
             services.AddSingleton<IModUpdateService, ModUpdateService>();
             services.AddSingleton<IModRemovalService, ModRemovalService>();
+            services.AddSingleton<IInstallIsolationService, InstallIsolationService>();
             services.AddSingleton<IAppUpdateService, AppUpdateService>();
             services.AddSingleton<IHeartbeatService, HeartbeatService>();
             services.AddSingleton<ISoftwareUpdateProvider, SoftwareUpdateProvider>();
