@@ -2731,7 +2731,7 @@ if(Native.available){
 if(!Native.available){
 
   /* upkeep card preview values (native fills these from userprefs.get) */
-  $("#blVersion").textContent="v0.9.17";
+  $("#blVersion").textContent=$("#sideVer").textContent; // mirror the shipped version string
 
   /* multi-server chip strip preview */
   S.servers=[
