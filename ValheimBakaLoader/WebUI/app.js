@@ -446,11 +446,25 @@ async function addServerProfile(){
       `<div class="field"><label>${esc(TT("World seed"))}</label>`+
         `<input type="text" id="wsWorldSeed" placeholder="${esc(TT("random (leave blank)"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote">${esc(TT("only for a brand-new world · fixed forever once created"))}</div></div>`+
-      `<div class="togglerow"><span class="tl">${esc(TT("Separate install (own mods)"))}</span>`+
+      `<div class="togglerow" title="${esc(TT(
+        "ON — this realm gets its own BepInEx: its own mods, mod configs, and cache, fully independent of your other servers. "+
+        "Example: run Epic Loot here while your main server stays vanilla, or trial a mod update without risking the live world. "+
+        "The bulky game files are shared behind the scenes, so this does NOT duplicate the multi-gigabyte install.\n\n"+
+        "OFF — the realm runs from the same install and mod folder as the base server: installing, updating, or removing a mod on either one changes both."
+      ))}"><span class="tl">${esc(TT("Separate install (own mods)"))}</span>`+
         `<div class="toggle on" id="wsIso"></div></div>`+
-      `<div class="togglerow"><span class="tl">${esc(TT("Copy this server's mods to start"))}</span>`+
+      `<div class="togglerow" title="${esc(TT(
+        "ON — the new realm starts with a copy of the current server's mods and their configs, then goes its own way: updating or removing a mod here never touches the original. "+
+        "Example: clone your main server's whole mod set to build a matching test server.\n\n"+
+        "OFF — the realm starts clean with no mods; add them later in the MODS hall.\n\n"+
+        "Only applies with a separate install — on a shared install the mods are shared by definition."
+      ))}"><span class="tl">${esc(TT("Copy this server's mods to start"))}</span>`+
         `<div class="toggle on" id="wsSeed"></div></div>`+
-      `<div class="togglerow"><span class="tl">${esc(TT("Separate save folder (own worlds/backups)"))}</span>`+
+      `<div class="togglerow" title="${esc(TT(
+        "ON — this realm keeps its worlds and backups in its own save folder, so two servers can never write to the same world file and backups never mix. "+
+        "Example: Midgard Two saves under its own folder instead of the shared IronGate\\Valheim one.\n\n"+
+        "OFF — the realm uses the shared Valheim save folder. That works, as long as two realms never host the same world at the same time (BakaLoader warns if they would)."
+      ))}"><span class="tl">${esc(TT("Separate save folder (own worlds/backups)"))}</span>`+
         `<div class="toggle on" id="wsSaveIso"></div></div>`+
       `<div class="mbody-note" id="wsStatus"></div>`+
     `</div>`+
