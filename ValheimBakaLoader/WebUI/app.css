@@ -113,8 +113,11 @@ body{
 /* per-character ember smoulder - app.js wraps each letter in a .mc span with its own
    randomized duration/phase (--dur/--del), so every letter breathes on its own clock.
    Most letters swell toward a whiter-hot amber (emberW); a few run redder (emberR). */
-.mead .mc{animation:emberW var(--dur,4.8s) ease-in-out var(--del,0s) infinite}
-.mead .mc-r{animation-name:emberR}
+.mead .mc,.lchip.on .mc{animation:emberW var(--dur,4.8s) ease-in-out var(--del,0s) infinite}
+.mead .mc-r,.lchip.on .mc-r{animation-name:emberR}
+/* fog chip: embers only while the layer is ON (that's when it may veil everything);
+   hover stills the flicker to a uniform bright, same as the mead link */
+.lchip.on:hover .mc{animation:none;color:var(--ember-hi)}
 @keyframes emberW{
   0%,100%{color:var(--amber);text-shadow:0 0 3px rgba(255,122,26,.22),0 0 9px rgba(232,169,60,.12)}
   16%{color:#F2BB60;text-shadow:0 0 6px rgba(255,150,44,.48),0 0 13px rgba(232,169,60,.26)}

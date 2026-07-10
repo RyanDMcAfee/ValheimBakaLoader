@@ -726,12 +726,13 @@ $("#openLogs").addEventListener("click",()=>{
   else toast("ᛃ Logs folder · preview only");
 });
 
-/* horn-of-mead - wrap every letter in its own span so each ember glows on its own
-   clock (randomized duration + phase; ~1 in 3 letters runs the redder keyframe set) */
-(function emberizeMead(){
-  const link=$("#meadLink");
+/* ember smoulder - wrap every letter in its own span so each ember glows on its
+   own clock (randomized duration + phase; ~1 in 3 letters runs the redder
+   keyframe set). Used by the horn-of-mead link and the Atlas fog-of-war chip. */
+function emberize(el){
+  if(!el) return;
   const rnd=(lo,hi)=>lo+Math.random()*(hi-lo);
-  [...link.childNodes].forEach(node=>{
+  [...el.childNodes].forEach(node=>{
     if(node.nodeType!==Node.TEXT_NODE) return;   // keep the <br> intact
     const frag=document.createDocumentFragment();
     for(const ch of node.textContent){
@@ -745,7 +746,9 @@ $("#openLogs").addEventListener("click",()=>{
     }
     node.replaceWith(frag);
   });
-})();
+}
+emberize($("#meadLink"));
+emberize($("#lchipFog")); // fog now defaults on (may veil the whole realm) - keep its switch eye-catching
 
 /* horn-of-mead - opens the donate page in the default browser (native only) */
 $("#meadLink").addEventListener("click",e=>{
@@ -2168,9 +2171,9 @@ $("#cfgOpenBtn").addEventListener("click",()=>{
 const ATLAS={
   world:null,
   mapImg:null, mapReady:false, mapExtent:10500,   // world meters, center -> png edge
-  fogImg:null, fogReady:false, fogExtent:12288,   // fog png spans ±2048*12/2 m
+  fogImg:null, fogReady:false, fogTex:null, fogExtent:12288, // fog png spans ±2048*12/2 m
   info:null, rendering:false, seq:0,
-  layers:{portals:true,pois:true,builds:true,pins:false,fog:false},
+  layers:{portals:true,pois:true,builds:true,pins:false,fog:true},
   cam:{cx:0,cz:0,ppm:0},                          // ppm = screen px per world meter
   drag:null,
 };
@@ -2182,7 +2185,7 @@ function atlasMsg(text){
 }
 function atlasReset(){
   ATLAS.world=null; ATLAS.mapImg=null; ATLAS.mapReady=false;
-  ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.info=null;
+  ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.info=null;
   ATLAS.cam.ppm=0; ATLAS.seq++;
   atlasMsg("Loading the known world…");
   if(currentPage==="atlas") atlasEnter();
@@ -2195,7 +2198,7 @@ async function atlasEnter(){
   if(!world){atlasMsg("No world chosen yet — pick one in the World hall.");return;}
   if(ATLAS.world!==world){
     ATLAS.world=world; ATLAS.mapImg=null; ATLAS.mapReady=false;
-    ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.info=null; ATLAS.cam.ppm=0;
+    ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.info=null; ATLAS.cam.ppm=0;
   }
   if(!ATLAS.mapReady&&!ATLAS.rendering) atlasRenderMap(false);
   atlasRefreshInfo();
@@ -2238,7 +2241,7 @@ async function atlasRefreshInfo(){
   if(r.fogUrl){
     ATLAS.fogExtent=Number(r.fogExtent)||12288;
     const fi=new Image();
-    fi.onload=()=>{if(seq===ATLAS.seq){ATLAS.fogImg=fi;ATLAS.fogReady=true;atlasDraw();}};
+    fi.onload=()=>{if(seq===ATLAS.seq){ATLAS.fogImg=fi;ATLAS.fogTex=null;ATLAS.fogReady=true;atlasDraw();}};
     fi.src=r.fogUrl;
   }else{ATLAS.fogImg=null;ATLAS.fogReady=false;}
   renderAtlasSide(); atlasDraw();
@@ -2444,6 +2447,30 @@ function atlasResize(){
   if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
   atlasDraw();
 }
+/* Tolkien-style parchment chart used as the fog-of-war veil: unexplored land
+   is "still on the old maps". Shipped at WebUI/assets/fog-parchment.png. */
+const FOG_PARCHMENT=new Image();
+FOG_PARCHMENT.onload=()=>{ATLAS.fogTex=null;if(currentPage==="atlas")atlasDraw();};
+FOG_PARCHMENT.src="assets/fog-parchment.png";
+/* Bake the parchment through the fog png's alpha once per save (the png's own
+   colour is ignored - it is only the explored/unexplored cutout). Drawing the
+   result onto itself compounds the mask's .8 alpha to ~.96 so the veil reads
+   as solid vellum with only a faint ghost of the terrain beneath. */
+function atlasFogTex(){
+  if(!ATLAS.fogImg) return null;
+  if(ATLAS.fogTex) return ATLAS.fogTex;
+  if(!(FOG_PARCHMENT.complete&&FOG_PARCHMENT.naturalWidth)) return null; // plain veil until it loads
+  const cnv=document.createElement("canvas");
+  cnv.width=ATLAS.fogImg.width; cnv.height=ATLAS.fogImg.height;
+  const g=cnv.getContext("2d");
+  g.drawImage(FOG_PARCHMENT,0,0,cnv.width,cnv.height);
+  g.globalCompositeOperation="destination-in";
+  g.drawImage(ATLAS.fogImg,0,0);
+  g.globalCompositeOperation="source-over";
+  g.drawImage(cnv,0,0);
+  ATLAS.fogTex=cnv;
+  return cnv;
+}
 function atlasDraw(){
   const cv=$("#atlasCanvas"); if(!cv||!cv.width) return;
   const ctx=cv.getContext("2d");
@@ -2456,10 +2483,29 @@ function atlasDraw(){
   ctx.imageSmoothingEnabled=true;
   const sz=2*ATLAS.mapExtent*c.ppm;
   ctx.drawImage(ATLAS.mapImg,w2sX(-ATLAS.mapExtent),w2sY(ATLAS.mapExtent),sz,sz);
-  /* fog veils the map but not the waypoint markers - this is an admin's chart */
-  if(ATLAS.layers.fog&&ATLAS.fogReady){
-    const fsz=2*ATLAS.fogExtent*c.ppm;
-    ctx.drawImage(ATLAS.fogImg,w2sX(-ATLAS.fogExtent),w2sY(ATLAS.fogExtent),fsz,fsz);
+  /* fog veils the map but not the waypoint markers - this is an admin's chart.
+     The veil is a Tolkien-style parchment map, not a black shroud. No shared
+     cartography data = nothing explored, so the whole realm stays parchment. */
+  if(ATLAS.layers.fog){
+    const pReady=FOG_PARCHMENT.complete&&FOG_PARCHMENT.naturalWidth;
+    if(ATLAS.fogReady){
+      const fsz=2*ATLAS.fogExtent*c.ppm;
+      ctx.drawImage(atlasFogTex()||ATLAS.fogImg,w2sX(-ATLAS.fogExtent),w2sY(ATLAS.fogExtent),fsz,fsz);
+    }else{
+      const ext=Math.max(ATLAS.mapExtent,ATLAS.fogExtent),fsz=2*ext*c.ppm;
+      if(pReady){
+        ctx.globalAlpha=.97;
+        ctx.drawImage(FOG_PARCHMENT,w2sX(-ext),w2sY(ext),fsz,fsz);
+        ctx.globalAlpha=1;
+        ctx.fillStyle="rgba(58,44,24,.85)";            // ink on vellum
+      }else{
+        ctx.fillStyle="rgba(6,7,10,.8)"; ctx.fillRect(w2sX(-ext),w2sY(ext),fsz,fsz);
+        ctx.fillStyle="rgba(226,217,196,.45)";
+      }
+      ctx.font="11px 'IBM Plex Mono',monospace"; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.fillText("ᚾ unexplored — no cartography table has shared the realm yet",s.w/2,s.h/2);
+      ctx.textAlign="start";
+    }
   }
   const info=ATLAS.info;
   const showLbl=c.ppm>0.045;
@@ -2538,13 +2584,13 @@ function atlasDraw(){
   cv.addEventListener("dblclick",()=>{atlasFit();atlasDraw();});
   try{new ResizeObserver(()=>{if(currentPage==="atlas")atlasResize();}).observe($("#atlasWrap"));}catch{}
 })();
-/* layer chips - fog gets an honest empty state instead of a silent no-op */
+/* layer chips - fog with no shared data still veils the whole realm (honest
+   "nothing explored" state), so the toggle always works; just explain the dark */
 $$(".lchip").forEach(ch=>ch.addEventListener("click",()=>{
   const layer=ch.dataset.layer;
   const turningOn=!ATLAS.layers[layer];
   if(layer==="fog"&&turningOn&&Native.available&&(!ATLAS.info||!ATLAS.info.hasSharedMap)){
-    toast(TT("ᚾ No shared map data yet — a viking must press 'Record discoveries' on a cartography table first."));
-    return;
+    toast(TT("ᚾ No shared map yet — the realm stays veiled until a viking presses 'Record discoveries' on a cartography table."));
   }
   if(layer==="pins"&&turningOn&&Native.available&&ATLAS.info&&ATLAS.info.hasDb&&!(ATLAS.info.pins||[]).length){
     toast(TT("ᛘ No table pins yet — pins ride the cartography table's shared map."));
@@ -2579,6 +2625,7 @@ function atlasMock(){
   blob(520,330,110,"#DADEE2"); blob(620,600,150,"#BDA95F"); blob(390,610,120,"#69607A");
   blob(512,830,140,"#80352A"); blob(512,190,140,"#C6D2DA");
   g.globalCompositeOperation="destination-in";
+  g.fillStyle="#000"; // opaque mask - a leftover gradient here erased the island
   g.beginPath(); g.arc(512,512,470,0,Math.PI*2); g.fill();
   g.globalCompositeOperation="destination-over";
   g.fillStyle="#080C12"; g.fillRect(0,0,size,size);
