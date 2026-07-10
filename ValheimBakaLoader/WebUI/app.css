@@ -678,3 +678,69 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .editbar .ebwarn{margin-left:auto;color:var(--amber);font-weight:600;cursor:help;
   padding:2px 8px;border:1px solid rgba(232,169,60,.4);border-radius:6px;
   background:rgba(232,169,60,.08)}
+
+/* ---------- ATLAS (webmap + skies) ---------- */
+#page-atlas{display:none;flex-direction:column;height:100%}
+#page-atlas.active{display:flex}
+#page-atlas .card::before{content:"ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ"}
+.atlas-grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:14px}
+.atlas-mapcard{display:flex;flex-direction:column;min-height:0;padding:12px}
+.atlas-bar{flex:none;display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:2px 2px 10px}
+.lchip{font-size:9.5px;letter-spacing:1.4px;text-transform:uppercase;font-weight:600;
+  font-family:var(--sans);padding:3px 10px;border-radius:20px;border:1px solid var(--bronze);
+  color:var(--bone-faint);background:transparent;cursor:pointer;transition:all .15s var(--ease)}
+.lchip:hover{color:var(--bone);border-color:var(--bronze-hi)}
+.lchip.on{background:var(--ember-dim);border-color:var(--ember);color:var(--ember-hi)}
+.atlas-wrap{flex:1;position:relative;min-height:0;border-radius:8px;overflow:hidden;
+  background:#080C12;border:1px solid rgba(140,109,63,.3);
+  box-shadow:inset 0 2px 14px rgba(0,0,0,.55)}
+#atlasCanvas{position:absolute;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}
+#atlasCanvas.dragging{cursor:grabbing}
+.atlas-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  text-align:center;padding:24px;font-family:var(--serif);font-size:13px;letter-spacing:.06em;
+  color:var(--bone-dim);background:rgba(8,12,18,.55);pointer-events:none;
+  transition:opacity .3s var(--ease)}
+.atlas-msg.hidden{opacity:0}
+.atlas-coord{position:absolute;left:10px;bottom:8px;font-family:var(--mono);font-size:10px;
+  color:var(--bone-faint);background:rgba(8,12,18,.6);padding:2px 8px;border-radius:6px;
+  pointer-events:none;font-variant-numeric:tabular-nums}
+.atlas-side{display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto}
+.atlas-side .card{flex:none}
+.atlas-side .atlas-waycard{flex:1;min-height:120px;display:flex;flex-direction:column}
+.atlas-facts{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.afact{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;font-family:var(--sans)}
+.afact .ak{color:var(--bone-faint);letter-spacing:.04em}
+.afact .av{color:var(--bone);font-variant-numeric:tabular-nums;text-align:right}
+.atlas-roster{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.atlas-roster .vrow{padding:4px 0}
+.atlas-roster .empty{font-size:11.5px;color:var(--bone-faint);font-family:var(--sans)}
+.atlas-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:8px}
+.atlas-list .wp{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;
+  cursor:pointer;font-family:var(--sans);font-size:11.5px;color:var(--bone-dim);
+  transition:background .15s var(--ease)}
+.atlas-list .wp:hover{background:rgba(255,255,255,.05);color:var(--bone)}
+.atlas-list .wp .wr{font-size:12px;width:16px;text-align:center;flex:none}
+.atlas-list .wp .wn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.atlas-list .wp .wc{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);flex:none}
+.atlas-list .empty{font-size:11.5px;color:var(--bone-faint);font-family:var(--sans);padding:4px 8px}
+@media (max-width:1180px){.atlas-grid{grid-template-columns:minmax(0,1fr) 240px}}
+
+/* ---------- ATLAS weather (deterministic skies + wind) ---------- */
+.wx-arrow{display:inline-block;margin-right:6px;color:var(--ember);font-weight:700;
+  transition:transform .8s var(--ease);transform-origin:50% 50%}
+.wx-biomes{display:flex;flex-wrap:wrap;gap:4px;margin-top:9px}
+.wxb{font-size:9px;letter-spacing:.8px;text-transform:uppercase;font-weight:600;
+  font-family:var(--sans);padding:2px 8px;border-radius:16px;border:1px solid var(--bronze);
+  color:var(--bone-faint);cursor:pointer;transition:all .15s var(--ease)}
+.wxb:hover{color:var(--bone);border-color:var(--bronze-hi)}
+.wxb.on{background:var(--ember-dim);border-color:var(--ember);color:var(--ember-hi)}
+.wx-forecast{display:flex;flex-direction:column;gap:2px;margin-top:5px}
+.wxf{display:flex;align-items:center;gap:7px;font-family:var(--sans);font-size:11px;
+  color:var(--bone-dim);padding:2px 0}
+.wxf .wxft{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);min-width:58px;
+  font-variant-numeric:tabular-nums}
+.wxf .wxfr{width:14px;text-align:center;color:var(--ember-hi);flex:none}
+.wxf .wxfe{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wxf .wxfw{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);
+  font-variant-numeric:tabular-nums}
+#wxNow .wxfr{margin-right:4px}

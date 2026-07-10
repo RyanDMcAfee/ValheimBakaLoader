@@ -32,10 +32,11 @@
       <div class="navitem" data-page="vikings"><span class="rune">ᛗ</span><span class="lbl">Vikings</span></div>
       <div class="navitem" data-page="mods"><span class="rune">ᚱ</span><span class="lbl">Mods</span></div>
       <div class="navitem" data-page="world"><span class="rune">ᛃ</span><span class="lbl">World</span></div>
+      <div class="navitem" data-page="atlas"><span class="rune">ᛞ</span><span class="lbl">Atlas</span></div>
       <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl">Runes</span></div>
       <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl">Saga</span></div>
       <div class="side-foot">
-        <span class="moon">☾</span><span id="sideVer">v0.9.32</span>
+        <span class="moon">☾</span><span id="sideVer">v0.9.33</span>
         <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of<br>mead&nbsp;⚑</a>
       </div>
     </nav>
@@ -214,6 +215,9 @@
             <div class="formgrid">
               <div class="field"><label>Server Name</label><input type="text" id="fName" value="Baka Gaijin"></div>
               <div class="field"><label>World</label><select id="fWorld"></select></div>
+              <div class="field"><label>World Seed <span class="r" title="Seed is set at world creation and can never change">ᛟ</span></label>
+                <div class="pathrow"><input type="text" id="fSeed" value="" readonly title="A world's seed is fixed at creation and cannot be changed"><span class="copychip" id="copySeed" title="Copy seed">COPY</span></div>
+              </div>
               <div class="field"><label>Password</label>
                 <div class="pathrow"><input type="password" id="fPassword" value=""><span class="copychip" id="eyePw" title="Show / hide password">SHOW</span></div>
               </div>
@@ -297,6 +301,72 @@
           </div>
         </section>
 
+        <!-- ============ PAGE: ATLAS (webmap + skies) ============ -->
+        <section class="page" id="page-atlas">
+          <div class="pagehead">
+            <h1><span class="r">ᛞ</span>ATLAS</h1>
+            <span class="sub" id="atlasSub">the known world</span>
+            <div class="grow"></div>
+            <span class="pill amber" id="atlasModWarn" style="display:none" title=""></span>
+            <button class="btn btn-ghost btn-sm" id="atlasRecenter" title="Fit the whole world in view">ᚹ&nbsp; Recenter</button>
+            <button class="btn btn-ember btn-sm" id="atlasRedraw" style="margin-left:8px" title="Re-render the map from the world seed">ᛞ&nbsp; Redraw map</button>
+          </div>
+
+          <div class="atlas-grid">
+            <div class="card atlas-mapcard">
+              <div class="atlas-bar">
+                <span class="microlabel" style="margin:0 6px 0 0">Layers</span>
+                <button class="lchip on" id="lchipPortals" data-layer="portals">ᛈ portals</button>
+                <button class="lchip on" id="lchipPois" data-layer="pois">ᛒ altars &amp; traders</button>
+                <button class="lchip on" id="lchipBuilds" data-layer="builds">ᚺ builds</button>
+                <button class="lchip" id="lchipPins" data-layer="pins">ᛘ table pins</button>
+                <button class="lchip" id="lchipFog" data-layer="fog">ᚾ fog of war</button>
+                <div class="grow"></div>
+                <span class="microlabel" id="atlasZoomLbl"></span>
+              </div>
+              <div class="atlas-wrap" id="atlasWrap">
+                <canvas id="atlasCanvas"></canvas>
+                <div class="atlas-msg" id="atlasMsg">Loading the known world…</div>
+                <div class="atlas-coord" id="atlasCoord"></div>
+              </div>
+            </div>
+
+            <div class="atlas-side">
+              <div class="card">
+                <div class="microlabel">Skies over <span id="atlasWorldName">—</span></div>
+                <div class="bigval" id="atlasDay">—</div>
+                <div class="subval" id="atlasClock">world clock unknown</div>
+                <div class="atlas-facts">
+                  <div class="afact"><span class="ak">Last save</span><span class="av" id="atlasSaved">—</span></div>
+                  <div class="afact"><span class="ak">Explored</span><span class="av" id="atlasExplored">—</span></div>
+                  <div class="afact"><span class="ak">Event</span><span class="av" id="atlasEvent">—</span></div>
+                </div>
+                <div id="wxBox" style="margin-top:8px;display:none">
+                  <div class="atlas-facts">
+                    <div class="afact"><span class="ak">Skies now</span><span class="av" id="wxNow">—</span></div>
+                    <div class="afact"><span class="ak">Wind</span><span class="av"><span id="wxArrow" class="wx-arrow">↑</span><span id="wxWind">—</span></span></div>
+                  </div>
+                  <div class="wx-biomes" id="wxBiomes"></div>
+                  <div class="microlabel" style="margin-top:8px">Forecast</div>
+                  <div id="wxForecast" class="wx-forecast"></div>
+                  <div class="subval" id="wxAnchor" style="margin-top:6px"></div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="microlabel">Vikings ashore</div>
+                <div id="atlasRoster" class="atlas-roster"></div>
+                <div class="subval" style="margin-top:6px">Mod-free maps can't track live positions — the roster shows who's online.</div>
+              </div>
+
+              <div class="card atlas-waycard">
+                <div class="microlabel">Waypoints</div>
+                <div id="atlasWaypoints" class="atlas-list"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- ============ PAGE: RUNES (BepInEx config editor) ============ -->
         <section class="page" id="page-runes">
           <div class="runes" style="height:100%">
@@ -352,7 +422,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v0.9.32</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v0.9.33</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>

@@ -11,6 +11,9 @@ using ValheimBakaLoader.Game;
 using ValheimBakaLoader.Properties;
 using ValheimBakaLoader.Tools;
 using ValheimBakaLoader.Tools.Logging;
+// The Atlas engine has its own WorldGen (the seed->terrain port), which collides
+// with ValheimBakaLoader.Tools.WorldGen (the -modifier vocabulary) used below.
+using AtlasEngine = ValheimBakaLoader.Tools.Atlas;
 
 namespace ValheimBakaLoader.Forms
 {
@@ -71,6 +74,28 @@ namespace ValheimBakaLoader.Forms
         private bool _modUpdateInProgress;
         private bool _requiredModInstallInProgress;
         private bool _maxPlayersSaveInProgress;
+        private bool _atlasRenderInProgress;
+        private bool _atlasInfoInProgress;
+
+        /// <summary>
+        /// Locations worth pinning on the Atlas map (boss altars, spawn, traders),
+        /// keyed by their save-file prefab name. Everything else in the ~19k location
+        /// list is dungeon/ruin noise at map scale.
+        /// </summary>
+        private static readonly Dictionary<string, string> AtlasPoiLabels = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["StartTemple"] = "Sacrificial Stones",
+            ["Eikthyrnir"] = "Eikthyr",
+            ["GDKing"] = "The Elder",
+            ["Bonemass"] = "Bonemass",
+            ["Dragonqueen"] = "Moder",
+            ["GoblinKing"] = "Yagluth",
+            ["Mistlands_DvergrBossEntrance1"] = "The Queen",
+            ["FaderLocation"] = "Fader",
+            ["Vendor_BlackForest"] = "Haldor",
+            ["Hildir_camp"] = "Hildir",
+            ["BogWitch_Camp"] = "Bog Witch",
+        };
 
         /// <summary>
         /// Azumatt's server-side mod that raises Valheim's hard 10-player cap. Installed
@@ -910,6 +935,25 @@ namespace ValheimBakaLoader.Forms
                 if (isolateSaveFolder)
                     created.SaveDataFolderPath = MakeIsolatedSaveFolder(name);
 
+                // Optional explicit seed for the NEW world: pre-write its .fwl (the
+                // dedicated server has no -seed argument, but it adopts a pre-existing
+                // .fwl on first launch). FwlWriter hard-refuses when the world already
+                // exists - a created world's seed is immutable. Blank = let the game
+                // roll a random seed itself on first launch.
+                var worldSeed = (p.Value<string>("worldSeed") ?? "").Trim();
+                if (worldSeed.Length > 0)
+                {
+                    var targetSaveFolder = isolateSaveFolder
+                        ? created.SaveDataFolderPath
+                        : ResolveSaveDataFolder(created.SaveDataFolderPath);
+                    if (string.IsNullOrWhiteSpace(targetSaveFolder))
+                        throw new InvalidOperationException("No save folder is configured, so the world seed can't be applied.");
+
+                    var written = FwlWriter.WriteNewWorld(targetSaveFolder, world, worldSeed);
+                    Logger.Information("Pre-created world '{0}' with seed '{1}' ({2}).",
+                        world, written.SeedName, written.Seed);
+                }
+
                 if (isolateInstall)
                 {
                     var baseExe = GetServerExePathFor(ActiveProfileName);
@@ -1195,6 +1239,52 @@ namespace ValheimBakaLoader.Forms
                 });
             });
 
+            // World identity from the .fwl (read-only): the typed seed string and the
+            // numeric seed the game derived from it. exists=false means the world has
+            // no .fwl yet (it will be generated - with a random seed - on first launch).
+            RegisterRpc("world.seed", p =>
+            {
+                var world = p.Value<string>("world");
+                if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+
+                var saveFolder = ResolveSaveDataFolder(null);
+                var info = FwlReader.TryReadWorld(saveFolder, world);
+                return Task.FromResult<object>(new
+                {
+                    world,
+                    exists = info != null,
+                    seedName = info?.SeedName ?? "",
+                    seed = info?.Seed ?? 0,
+                    worldVersion = info?.WorldVersion ?? 0,
+                });
+            });
+
+            // Chooses the seed for a world that does NOT exist yet by pre-writing its
+            // .fwl (the server adopts it on first launch). FwlWriter hard-refuses when
+            // the world already exists - a created world's seed is immutable.
+            RegisterRpc("world.setSeed", p =>
+            {
+                var world = p.Value<string>("world");
+                if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+                var seedName = (p.Value<string>("seedName") ?? "").Trim();
+                if (seedName.Length == 0) throw new ArgumentException("seedName is required");
+
+                var saveFolder = ResolveSaveDataFolder(null);
+                if (string.IsNullOrWhiteSpace(saveFolder))
+                    throw new InvalidOperationException("No save folder is configured, so the world seed can't be applied.");
+
+                var written = FwlWriter.WriteNewWorld(saveFolder, world, seedName);
+                Logger.Information("Pre-created world '{0}' with seed '{1}' ({2}).",
+                    world, written.SeedName, written.Seed);
+                return Task.FromResult<object>(new
+                {
+                    world,
+                    exists = true,
+                    seedName = written.SeedName,
+                    seed = written.Seed,
+                });
+            });
+
             RegisterRpc("worldgen.get", p =>
             {
                 // Saved world-generation dials for one world (empty defaults when unset).
@@ -1234,6 +1324,185 @@ namespace ValheimBakaLoader.Forms
                 WorldPrefsProvider.SavePreferences(prefs);
 
                 return Task.FromResult<object>(new { world, preset = "", modifiers });
+            });
+
+            // Renders the Atlas biome/terrain map for a world's seed to a cached PNG
+            // served via the atlas.baka virtual host. Mod-free: the map is computed
+            // from our own WorldGenerator port, adapted to Expand World Size configs
+            // where detected (other worldgen mods surface as honest warnings).
+            RegisterRpc("atlas.render", async p =>
+            {
+                if (_atlasRenderInProgress)
+                    throw new InvalidOperationException("A map render is already in progress.");
+                _atlasRenderInProgress = true;
+                try
+                {
+                    var world = p.Value<string>("world");
+                    if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+                    var size = Math.Clamp(p.Value<int?>("size") ?? 2048, 256, 4096);
+                    var force = p.Value<bool?>("force") ?? false;
+
+                    var info = FwlReader.TryReadWorld(ResolveSaveDataFolder(null), world);
+                    if (info == null)
+                        throw new InvalidOperationException(
+                            $"World '{world}' has no .fwl yet - choose a seed or start the server once first.");
+
+                    // Adapt to worldgen mods where possible; warn honestly where not.
+                    var exePath = GetServerExePath();
+                    var installDir = string.IsNullOrWhiteSpace(exePath) ? null : Path.GetDirectoryName(exePath);
+                    var compat = AtlasEngine.ModCompatScanner.Scan(installDir);
+
+                    var compatKey = compat.HasExpandWorldSize
+                        ? FormattableString.Invariant($"_ews{compat.WorldEdge:0}s{compat.WorldStretch:0.##}b{compat.BiomeStretch:0.##}")
+                        : "";
+                    var fileName = $"map_{info.Seed}_{size}{compatKey}.png";
+                    var path = Path.Combine(GetAtlasCacheDir(), fileName);
+
+                    if (force || !File.Exists(path))
+                    {
+                        var seed = info.Seed;
+                        await Task.Run(() =>
+                        {
+                            var gen = new AtlasEngine.WorldGen(seed);
+                            AtlasEngine.MapRenderer.RenderToPng(
+                                gen, path, size,
+                                pct => PostEvent("atlas.renderProgress", new { world, pct }),
+                                default, compat);
+                        });
+                    }
+
+                    return (object)new
+                    {
+                        world,
+                        seed = info.Seed,
+                        seedName = info.SeedName,
+                        url = $"https://{AtlasVirtualHost}/{fileName}",
+                        sizePx = size,
+                        radius = compat.WorldRadius,
+                        edge = compat.WorldEdge,
+                        warnings = compat.Warnings,
+                    };
+                }
+                finally
+                {
+                    _atlasRenderInProgress = false;
+                }
+            });
+
+            // Parses the world's .db save (read-only, share-friendly) into a live
+            // snapshot for the Atlas hall: day/clock, tagged portals, placed POIs,
+            // build sites, and the cartography tables' combined fog of war (baked
+            // into a mask PNG served via atlas.baka). Mod-free: everything comes
+            // from vanilla save data.
+            RegisterRpc("atlas.worldInfo", async p =>
+            {
+                if (_atlasInfoInProgress)
+                    throw new InvalidOperationException("A world scan is already in progress.");
+                _atlasInfoInProgress = true;
+                try
+                {
+                    var world = p.Value<string>("world");
+                    if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+
+                    var fwl = FwlReader.FindWorldFwl(ResolveSaveDataFolder(null), world);
+                    var dbPath = fwl == null ? null : Path.ChangeExtension(fwl, ".db");
+                    if (dbPath == null || !File.Exists(dbPath))
+                        return (object)new { world, hasDb = false };
+
+                    var savedAtUtc = File.GetLastWriteTimeUtc(dbPath);
+                    var db = await Task.Run(() => AtlasEngine.WorldDbReader.TryRead(dbPath));
+                    if (db == null)
+                        return (object)new { world, hasDb = false };
+
+                    // Combined fog of war: OR every cartography table's explored bitmap.
+                    AtlasEngine.SharedMapData shared = null;
+                    foreach (var table in db.MapTables)
+                    {
+                        var decoded = AtlasEngine.SharedMapData.TryDecode(table.Data);
+                        if (decoded == null) continue;
+                        if (shared == null) shared = decoded;
+                        else shared.MergeFrom(decoded);
+                    }
+
+                    string fogUrl = null;
+                    double exploredPercent = 0;
+                    var pins = new List<object>();
+                    float fogExtent = AtlasEngine.SharedMapData.VanillaPixelSize * 2048f / 2f;
+                    if (shared != null)
+                    {
+                        int exploredCount = 0;
+                        for (int i = 0; i < shared.Explored.Length; i++)
+                            if (shared.Explored[i]) exploredCount++;
+                        exploredPercent = exploredCount * 100.0 / shared.Explored.Length;
+                        fogExtent = shared.TextureSize * AtlasEngine.SharedMapData.VanillaPixelSize / 2f;
+
+                        foreach (var pin in shared.Pins)
+                            pins.Add(new { name = pin.Name, x = pin.X, z = pin.Z, type = pin.Type, done = pin.Checked });
+
+                        // Bake the fog mask (transparent where explored, dark veil
+                        // elsewhere), flipped so row 0 = north like the biome map.
+                        // Keyed on the .db timestamp so a fresh save invalidates it.
+                        var safeWorld = string.Concat(world.Split(Path.GetInvalidFileNameChars()));
+                        var fogFile = $"fog_{safeWorld}_{savedAtUtc.Ticks}.png";
+                        var fogPath = Path.Combine(GetAtlasCacheDir(), fogFile);
+                        if (!File.Exists(fogPath))
+                        {
+                            var size = shared.TextureSize;
+                            var mask = shared.Explored;
+                            await Task.Run(() =>
+                            {
+                                var px = new int[size * size];
+                                const int veil = unchecked((int)0xCC06070A);
+                                for (int py = 0; py < size; py++)
+                                {
+                                    int src = py * size;
+                                    int dst = (size - 1 - py) * size;
+                                    for (int col = 0; col < size; col++)
+                                        px[dst + col] = mask[src + col] ? 0 : veil;
+                                }
+                                AtlasEngine.MapRenderer.SavePng(px, size, fogPath);
+                            });
+                        }
+                        fogUrl = $"https://{AtlasVirtualHost}/{fogFile}";
+                    }
+
+                    return (object)new
+                    {
+                        world,
+                        hasDb = true,
+                        worldVersion = db.WorldVersion,
+                        day = db.DayNumber,
+                        netTime = db.NetTime,
+                        zdoCount = db.ZdoCount,
+                        zones = db.GeneratedZoneCount,
+                        globalKeys = db.GlobalKeys,
+                        savedAtUtc = savedAtUtc.ToString("o"),
+                        savedAgeSeconds = (DateTime.UtcNow - savedAtUtc).TotalSeconds,
+                        portals = db.Portals
+                            .Select(pt => new { tag = pt.Tag, x = pt.X, z = pt.Z })
+                            .ToList(),
+                        pois = db.Locations
+                            .Where(l => l.Placed && AtlasPoiLabels.ContainsKey(l.Prefab))
+                            .Select(l => new { prefab = l.Prefab, label = AtlasPoiLabels[l.Prefab], x = l.X, z = l.Z })
+                            .ToList(),
+                        builds = db.BuildClusters
+                            .Select(b => new { x = b.CenterX, z = b.CenterZ, pieces = b.PieceCount, radius = b.RadiusMeters })
+                            .ToList(),
+                        mapTables = db.MapTables.Count,
+                        hasSharedMap = shared != null,
+                        exploredPercent,
+                        pins,
+                        fogUrl,
+                        fogExtent,
+                        eventName = db.EventName,
+                        eventX = db.EventPosX,
+                        eventZ = db.EventPosZ,
+                    };
+                }
+                finally
+                {
+                    _atlasInfoInProgress = false;
+                }
             });
 
             // --- Max players (MaxPlayerCount mod cfg) ---

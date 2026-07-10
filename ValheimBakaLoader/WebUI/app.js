@@ -201,10 +201,11 @@ function goPage(name){
   $$(".page").forEach(p=>{
     const on=p.id==="page-"+name;
     p.classList.toggle("active",on);
-    p.style.display=on?"block":"none";
+    p.style.display=on?(p.id==="page-atlas"?"flex":"block"):"none"; // atlas is a flex column
   });
   currentPage=name;
   try{renderEditBar();}catch(_){}
+  if(name==="atlas"){try{atlasEnter();}catch(_){}} // also drives the mock preview
   if(Native.available){
     if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods();
     if(name==="vikings") refreshPlayers();
@@ -404,6 +405,7 @@ async function switchServer(name){
   S.players=[]; S.invite=null; S.net={conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]};
   S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
   S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
+  try{atlasReset();}catch{}
   const st=await rpc("server.state");
   if(st!==FAIL){S.state=null;applyState(st);}
   renderAllFromPrefs();
@@ -441,6 +443,9 @@ async function addServerProfile(){
       `<div class="field"><label>${esc(TT("World"))}</label>`+
         `<input type="text" id="wsWorld" placeholder="${esc(TT("its own new world"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote" id="wsPorts">${esc(TT("finding a free port…"))}</div></div>`+
+      `<div class="field"><label>${esc(TT("World seed"))}</label>`+
+        `<input type="text" id="wsWorldSeed" placeholder="${esc(TT("random (leave blank)"))}" spellcheck="false" autocomplete="off">`+
+        `<div class="fieldnote">${esc(TT("only for a brand-new world · fixed forever once created"))}</div></div>`+
       `<div class="togglerow"><span class="tl">${esc(TT("Separate install (own mods)"))}</span>`+
         `<div class="toggle on" id="wsIso"></div></div>`+
       `<div class="togglerow"><span class="tl">${esc(TT("Copy this server's mods to start"))}</span>`+
@@ -480,6 +485,7 @@ async function addServerProfile(){
     statusN.textContent=on(iso)?TT("provisioning a separate install (this can take a moment)…"):TT("saving…");
     const created=await rpc("servers.create",{
       name, world:worldI.value.trim(),
+      worldSeed:m.querySelector("#wsWorldSeed").value.trim(),
       isolateInstall:on(iso), seedMods:on(iso)&&on(seed), isolateSaveFolder:on(saveIso),
       port:ports?ports.gamePort:null, rconPort:ports?ports.rconPort:null,
     });
@@ -1621,6 +1627,7 @@ async function renderWorldSelect(){
   const names=[...new Set([...(Array.isArray(r)&&r!==FAIL?r:[]),...(cur?[cur]:[])])];
   $("#fWorld").innerHTML=names.map(n=>`<option${n===cur?" selected":""}>${esc(n)}</option>`).join("");
   renderWorldMods();
+  renderWorldSeed();
 }
 /* World-generation dials. value "" = Normal = game default (no -modifier arg emitted).
    Every non-empty value must match Game/WorldGen.cs exactly - the C# save validates. */
@@ -1652,8 +1659,31 @@ async function renderWorldMods(){
   for(const [key,def] of Object.entries(WORLDGEN))
     $("#"+def.sel).innerHTML=wgOptions(key,cur[key]||"");
 }
-$("#fWorld").addEventListener("change",renderWorldMods);
+/* World seed: read-only identity from the world's .fwl. A seed is fixed at world
+   creation and can NEVER change (the field is locked); a world with no .fwl yet
+   gets its seed on first launch - random, or the one chosen in the realm wizard. */
+let _seedSeq=0;
+async function renderWorldSeed(){
+  const el=$("#fSeed"); if(!el) return;
+  const world=$("#fWorld").value||S.prefs?.WorldName||"";
+  const seq=++_seedSeq;
+  if(!Native.available){el.value="yBvEFPKD9S · 649688311";el.dataset.copy="yBvEFPKD9S";return;}
+  if(!world){el.value="";el.dataset.copy="";return;}
+  const r=await rpc("world.seed",{world});
+  if(seq!==_seedSeq) return; // a newer lookup superseded this one
+  if(r===FAIL||!r){el.value="";el.dataset.copy="";return;}
+  if(r.exists){el.value=r.seedName+" · "+r.seed;el.dataset.copy=r.seedName;}
+  else{el.value=TT("not created yet · seed set on first launch");el.dataset.copy="";}
+}
+$("#copySeed").addEventListener("click",()=>{
+  const v=$("#fSeed")?.dataset.copy||"";
+  if(!v){toast(TT("no seed yet · world not created"));return;}
+  navigator.clipboard?.writeText(v).catch(()=>{});
+  toast(TT("ᛟ seed copied · ")+v);
+});
+$("#fWorld").addEventListener("change",()=>{renderWorldMods();renderWorldSeed();});
 renderWorldMods(); // seed the dials with Normal defaults (both modes)
+renderWorldSeed();
 /* Max players: server-wide, not per-world. 10 = vanilla cap (no mod); above 10 the
    MaxPlayerCount server mod's cfg is the source of truth. */
 async function renderMaxPlayers(){
@@ -1783,10 +1813,20 @@ $("#fWorld")?.addEventListener("change",scheduleEditBar);
 $("#tRcon")?.addEventListener("click",scheduleEditBar);
 
 /* ---------- FIRST-LAUNCH SETUP WIZARD ---------- */
-const WIZ={step:0,exe:"",save:"",exeValid:false,status:{},mods:{}};
+const WIZ={step:0,exe:"",save:"",exeValid:false,status:{},mods:{},worldSeed:"",seedWorld:"",seedEligible:false};
 
 function wizardOpen(status){
-  Object.assign(WIZ,{step:0,exe:"",save:"",exeValid:false,status:status||{},mods:{}});
+  Object.assign(WIZ,{step:0,exe:"",save:"",exeValid:false,status:status||{},mods:{},worldSeed:"",seedWorld:"",seedEligible:false});
+  // Seed is choosable ONLY for a world that doesn't exist yet (an existing
+  // world's seed is immutable). Probe now; the answer lands well before step 3.
+  const world=S.prefs?.WorldName||"";
+  if(world){
+    WIZ.seedWorld=world;
+    if(!Native.available){WIZ.seedEligible=true;}
+    else rpc("world.seed",{world}).then(r=>{
+      WIZ.seedEligible=r!==FAIL&&r&&!r.exists;
+    });
+  }
   wizardRender();
 }
 
@@ -1807,6 +1847,14 @@ async function wizFinish(skip){
   const world=S.prefs?.WorldName;
   if(!skip&&world&&Object.values(WIZ.mods).some(v=>v))
     await rpc("worldgen.save",{world,modifiers:WIZ.mods});
+  // chosen seed applies ONLY to a not-yet-created world (C# refuses otherwise)
+  if(!skip&&WIZ.seedEligible&&WIZ.worldSeed.trim()&&WIZ.seedWorld){
+    const sr=await rpc("world.setSeed",{world:WIZ.seedWorld,seedName:WIZ.worldSeed.trim()});
+    if(sr!==FAIL&&sr?.seedName){
+      logLine("ok","[BakaLoader] world '"+WIZ.seedWorld+"' will be born from seed '"+sr.seedName+"' ("+sr.seed+")");
+      renderWorldSeed();
+    }
+  }
   toast(skip?"ᛉ Setup skipped · set paths any time in the WORLD hall"
             :"ᛉ Setup complete · may the voyage be bold");
   logLine("ok","[BakaLoader] first-time setup "+(skip?"skipped":"completed"));
@@ -1856,6 +1904,10 @@ function wizardRender(){
       Object.entries(WORLDGEN).map(([key,def])=>
         `<div class="field"><label>${esc(def.label)}</label><select id="wizMod_${key}" data-wgkey="${key}">${wgOptions(key,WIZ.mods[key]||"")}</select></div>`).join("")+
       `</div>`+
+      (WIZ.seedEligible?
+        `<div class="field" style="margin-top:8px"><label>World seed</label>`+
+        `<input type="text" id="wizSeed" placeholder="random (leave blank)" spellcheck="false" autocomplete="off">`+
+        `<div class="wiz-help">Seed for the new world <strong>${esc(WIZ.seedWorld)}</strong> - it hasn't been created yet. Blank = random. A world's seed is <strong>fixed forever</strong> once created.</div></div>`:"")+
       `<div class="wiz-help">Max players defaults to <strong>10</strong> - Valheim's built-in cap. Raise it later in the <strong>WORLD</strong> hall under <strong>WORLD MODIFIERS</strong> (installs the MaxPlayerCount server mod).</div>`;
     nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="wNext">Next</button>`;
@@ -1956,6 +2008,8 @@ function wizardRender(){
   if(WIZ.step===3){
     m.querySelectorAll("[data-wgkey]").forEach(sel=>
       sel.addEventListener("change",()=>{WIZ.mods[sel.dataset.wgkey]=sel.value;}));
+    const seedI=m.querySelector("#wizSeed");
+    if(seedI){seedI.value=WIZ.worldSeed;seedI.addEventListener("input",()=>{WIZ.worldSeed=seedI.value;});}
   }
 }
 
@@ -2091,6 +2145,444 @@ $("#cfgOpenBtn").addEventListener("click",()=>{
   rpc("shell.open",{target:"config"});
 });
 
+/* ============ ATLAS (webmap + skies) ============
+   Mod-free webmap: the biome map is rendered server-side from the world seed
+   (atlas.render), live world facts come from a read-only .db parse
+   (atlas.worldInfo), and fog of war is the cartography tables' combined
+   explored mask. No plugin, no game hook - so no live player dots; the
+   roster shows who's online instead. */
+const ATLAS={
+  world:null,
+  mapImg:null, mapReady:false, mapExtent:10500,   // world meters, center -> png edge
+  fogImg:null, fogReady:false, fogExtent:12288,   // fog png spans ±2048*12/2 m
+  info:null, rendering:false, seq:0,
+  layers:{portals:true,pois:true,builds:true,pins:false,fog:false},
+  cam:{cx:0,cz:0,ppm:0},                          // ppm = screen px per world meter
+  drag:null,
+};
+function atlasWorldName(){return (S.prefs&&S.prefs.WorldName)||null;}
+function atlasMsg(text){
+  const el=$("#atlasMsg"); if(!el) return;
+  if(text==null){el.classList.add("hidden");return;}
+  el.textContent=text; el.classList.remove("hidden");
+}
+function atlasReset(){
+  ATLAS.world=null; ATLAS.mapImg=null; ATLAS.mapReady=false;
+  ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.info=null;
+  ATLAS.cam.ppm=0; ATLAS.seq++;
+  atlasMsg("Loading the known world…");
+  if(currentPage==="atlas") atlasEnter();
+}
+async function atlasEnter(){
+  atlasResize();
+  if(!Native.available){atlasMock();return;}
+  const world=atlasWorldName();
+  $("#atlasWorldName").textContent=world||"—";
+  if(!world){atlasMsg("No world chosen yet — pick one in the World hall.");return;}
+  if(ATLAS.world!==world){
+    ATLAS.world=world; ATLAS.mapImg=null; ATLAS.mapReady=false;
+    ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.info=null; ATLAS.cam.ppm=0;
+  }
+  if(!ATLAS.mapReady&&!ATLAS.rendering) atlasRenderMap(false);
+  atlasRefreshInfo();
+}
+async function atlasRenderMap(force){
+  const world=ATLAS.world; if(!world||ATLAS.rendering) return;
+  ATLAS.rendering=true; const seq=++ATLAS.seq;
+  atlasMsg("Charting the realm from its seed…");
+  const r=await rpc("atlas.render",{world,size:2048,force:!!force});
+  ATLAS.rendering=false;
+  if(seq!==ATLAS.seq) return;
+  if(r===FAIL||!r||!r.url){
+    atlasMsg("The map could not be drawn — set a seed or start the server once first.");
+    return;
+  }
+  ATLAS.mapExtent=Number(r.edge)||10500;
+  const warn=$("#atlasModWarn");
+  if(warn){
+    if(r.warnings&&r.warnings.length){
+      warn.style.display=""; warn.textContent="⚠ worldgen mods"; warn.title=r.warnings.join("\n");
+    }else warn.style.display="none";
+  }
+  const img=new Image();
+  img.onload=()=>{
+    if(seq!==ATLAS.seq) return;
+    ATLAS.mapImg=img; ATLAS.mapReady=true; atlasMsg(null);
+    if(!ATLAS.cam.ppm) atlasFit();
+    atlasDraw();
+  };
+  img.onerror=()=>{if(seq===ATLAS.seq)atlasMsg("Map image failed to load.");};
+  img.src=r.url+"?t="+Date.now(); // bust the WebView2 cache after re-renders
+}
+async function atlasRefreshInfo(){
+  const world=ATLAS.world; if(!world) return;
+  const seq=ATLAS.seq;
+  const r=await Native.call("atlas.worldInfo",{world}).catch(()=>null);
+  if(seq!==ATLAS.seq||!r) return;
+  r._rxAt=Date.now(); // weather clock anchors netTime+savedAge to this receipt
+  ATLAS.info=r;
+  if(r.fogUrl){
+    ATLAS.fogExtent=Number(r.fogExtent)||12288;
+    const fi=new Image();
+    fi.onload=()=>{if(seq===ATLAS.seq){ATLAS.fogImg=fi;ATLAS.fogReady=true;atlasDraw();}};
+    fi.src=r.fogUrl;
+  }else{ATLAS.fogImg=null;ATLAS.fogReady=false;}
+  renderAtlasSide(); atlasDraw();
+}
+function renderAtlasSide(){
+  const info=ATLAS.info;
+  $("#atlasWorldName").textContent=ATLAS.world||"—";
+  if(!info||!info.hasDb){
+    $("#atlasDay").textContent="—";
+    $("#atlasClock").textContent="no save file yet — the clock starts with the first launch";
+    $("#atlasSaved").textContent="—"; $("#atlasExplored").textContent="—"; $("#atlasEvent").textContent="—";
+  }else{
+    $("#atlasDay").textContent="Day "+info.day;
+    const frac=((Number(info.netTime)%1800)+1800)%1800/1800;
+    const mins=Math.floor(frac*24*60);
+    $("#atlasClock").textContent="in-game "+String(Math.floor(mins/60)).padStart(2,"0")+":"+String(mins%60).padStart(2,"0")+" at last save";
+    $("#atlasSaved").textContent=atlasAge(info.savedAgeSeconds);
+    $("#atlasExplored").textContent=info.hasSharedMap
+      ? info.exploredPercent.toFixed(1)+"% ("+info.mapTables+(info.mapTables===1?" table)":" tables)")
+      : "no shared map yet";
+    $("#atlasEvent").textContent=info.eventName?info.eventName:"quiet skies";
+  }
+  /* roster: who's online (mod-free maps can't place them) */
+  const roster=$("#atlasRoster");
+  if(roster){
+    const online=(S.players||[]).filter(p=>p.status==="Online");
+    roster.innerHTML=online.map(p=>
+      `<div class="vrow"><span class="vdot on"></span><span class="vname">${esc(p.displayName)}</span></div>`
+    ).join("")||`<div class="empty">${TT("No vikings ashore right now.")}</div>`;
+  }
+  /* waypoints: altars & traders, then portals, then table pins */
+  const wp=$("#atlasWaypoints");
+  if(wp){
+    const rows=[];
+    if(info&&info.hasDb){
+      (info.pois||[]).forEach(l=>rows.push({r:"ᛒ",n:l.label,x:l.x,z:l.z}));
+      (info.portals||[]).forEach(p=>rows.push({r:"ᛈ",n:p.tag||"(untagged)",x:p.x,z:p.z}));
+      (info.pins||[]).forEach(p=>rows.push({r:"ᛘ",n:p.name||"(pin)",x:p.x,z:p.z}));
+    }
+    wp.innerHTML=rows.map((w,i)=>
+      `<div class="wp" data-i="${i}"><span class="wr">${w.r}</span><span class="wn">${esc(w.n)}</span><span class="wc">${Math.round(w.x)}, ${Math.round(w.z)}</span></div>`
+    ).join("")||`<div class="empty">${TT("Waypoints appear once the world has been saved.")}</div>`;
+    wp._rows=rows;
+  }
+  renderWeather();
+}
+function atlasAge(sec){
+  sec=Number(sec)||0;
+  if(sec<90) return Math.round(sec)+"s ago";
+  if(sec<5400) return Math.round(sec/60)+" min ago";
+  if(sec<172800) return (sec/3600).toFixed(1)+" h ago";
+  return Math.round(sec/86400)+" days ago";
+}
+/* --- deterministic skies: Valheim's weather is a pure function of net time ---
+   Weather rerolls every 666 s from Unity's xorshift128 PRNG seeded with the
+   period index; wind is 4 re-seeded octaves. No mod, no game hook - the same
+   math the server runs, so we can forecast. Env tables drift with game patches;
+   they are data, not code. */
+/* WX-ENGINE-BEGIN (pure - no DOM; extracted by the validation harness) */
+const WX_ENVS={
+  Meadows:[["Clear",25],["Rain",1],["Misty",1],["ThunderStorm",1],["LightRain",1]],
+  BlackForest:[["DeepForest_Mist",20],["Rain",1],["Misty",1],["ThunderStorm",1]],
+  Swamp:[["SwampRain",1]],
+  Mountain:[["SnowStorm",1],["Snow",5]],
+  Plains:[["Heath_clear",5],["Misty",1],["LightRain",1]],
+  Mistlands:[["Mistlands_clear",15],["Mistlands_rain",1],["Mistlands_thunder",1]],
+  Ashlands:[["Ashlands_ashrain",30],["Ashlands_misty",2],["Ashlands_CinderRain",4],["Ashlands_storm",1]],
+  DeepNorth:[["Twilight_SnowStorm",1],["Twilight_Snow",2],["Twilight_Clear",1]],
+  Ocean:[["Rain",1],["LightRain",1],["Misty",1],["Clear",10],["ThunderStorm",1]],
+};
+const WX_WIND={Clear:[.1,.6],Misty:[.1,.3],Rain:[.5,1],LightRain:[.1,.6],ThunderStorm:[.8,1],
+  DeepForest_Mist:[.1,.6],SwampRain:[.1,.3],Snow:[.1,.6],SnowStorm:[.8,1],Heath_clear:[.4,.8],
+  Twilight_Clear:[.2,.6],Twilight_Snow:[.3,.6],Twilight_SnowStorm:[.7,1],
+  Mistlands_clear:[.05,.2],Mistlands_rain:[.05,.2],Mistlands_thunder:[.5,1],
+  Ashlands_ashrain:[.1,.5],Ashlands_misty:[.1,.5],Ashlands_CinderRain:[.7,.75],Ashlands_storm:[1,1]};
+/* Unity Random (xorshift128) - float-rounded to match the game's 32-bit math */
+function wxRng(seed){
+  let x=seed>>>0,
+      y=(Math.imul(x,1812433253)+1)>>>0,
+      z=(Math.imul(y,1812433253)+1)>>>0,
+      w=(Math.imul(z,1812433253)+1)>>>0;
+  const next=()=>{let t=(x^(x<<11))>>>0;t=(t^(t>>>8))>>>0;x=y;y=z;z=w;w=(w^(w>>>19)^t)>>>0;return w;};
+  const value=()=>Math.fround((next()&0x7FFFFF)/8388607);
+  const range=(a,b)=>Math.fround(Math.fround(Math.fround(a-b)*value())+b); // Unity Range = REVERSED lerp
+  return {next,value,range};
+}
+function wxEnvAt(netTime,biome){
+  const envs=WX_ENVS[biome]||WX_ENVS.Meadows;
+  const r=wxRng(Math.floor(netTime/666)|0);
+  let total=0; for(const e of envs) total=Math.fround(total+e[1]);
+  const roll=r.range(0,total);
+  let cum=0;
+  for(const e of envs){cum=Math.fround(cum+e[1]); if(cum>=roll) return e[0];}
+  return envs[envs.length-1][0];
+}
+function wxWindAt(netTime,env){
+  let angle=0,intensity=0.5;
+  for(const o of [1,2,4,8]){
+    const r=wxRng(Math.floor(netTime/(1000/o))|0);
+    angle=Math.fround(angle+Math.fround(r.value()*Math.fround(2*Math.PI/o)));
+    intensity=Math.fround(intensity+Math.fround(Math.fround(-0.5/o)+Math.fround(r.value()/o)));
+  }
+  const wr=WX_WIND[env]||[0.05,1];
+  const t=Math.min(1,Math.max(0,intensity));
+  let inten=wr[0]+(wr[1]-wr[0])*t;          // Mathf.Lerp clamps t
+  inten=Math.min(1,Math.max(0.05,inten));
+  const deg=((angle*180/Math.PI)%360+360)%360; // dir=(sin a,0,cos a): 0 = north(+Z), clockwise
+  return {deg,intensity:inten};
+}
+function wxCompass(deg){
+  const n=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+  return n[Math.round(deg/22.5)%16];
+}
+/* WX-ENGINE-END */
+const WX_LABEL={Clear:"Clear skies",Rain:"Rain",Misty:"Mist",ThunderStorm:"Thunderstorm",
+  LightRain:"Light rain",DeepForest_Mist:"Forest mist",SwampRain:"Swamp drizzle",Snow:"Snowfall",
+  SnowStorm:"Blizzard",Heath_clear:"Clear heath winds",Twilight_Clear:"Cold and clear",
+  Twilight_Snow:"Driving snow",Twilight_SnowStorm:"Polar storm",Mistlands_clear:"Still mists",
+  Mistlands_rain:"Misty rain",Mistlands_thunder:"Mistland thunder",Ashlands_ashrain:"Ash rain",
+  Ashlands_misty:"Ash haze",Ashlands_CinderRain:"Cinder rain",Ashlands_storm:"Firestorm"};
+const WX_RUNE={Clear:"ᛋ",Heath_clear:"ᛋ",Twilight_Clear:"ᛋ",Mistlands_clear:"ᛋ",
+  Rain:"ᛚ",LightRain:"ᛚ",SwampRain:"ᛚ",Mistlands_rain:"ᛚ",Ashlands_ashrain:"ᛚ",Ashlands_CinderRain:"ᛚ",
+  Misty:"ᚾ",DeepForest_Mist:"ᚾ",Ashlands_misty:"ᚾ",
+  ThunderStorm:"ᚦ",Mistlands_thunder:"ᚦ",Ashlands_storm:"ᚦ",
+  Snow:"ᛁ",Twilight_Snow:"ᛁ",SnowStorm:"ᚺ",Twilight_SnowStorm:"ᚺ"};
+/* Net time right now: the .db value plus wall-clock drift while vikings are
+   ashore. Empty modern dedicated servers PAUSE world time, and logout forces a
+   save - so with nobody online the saved value IS the current value. */
+function wxNetTimeNow(){
+  const info=ATLAS.info;
+  if(!info||!info.hasDb) return null;
+  const base=Number(info.netTime)||0;
+  const online=(S.players||[]).filter(p=>p.status==="Online").length;
+  if(!online&&Native.available) return {t:base,paused:true};
+  const rx=Number(info._rxAt)||Date.now();
+  return {t:base+(Number(info.savedAgeSeconds)||0)+(Date.now()-rx)/1000,paused:false};
+}
+function wxClockLabel(t,relDay){
+  const day=Math.floor(t/1800);
+  const mins=Math.floor(((t%1800)+1800)%1800/1800*24*60);
+  const hm=String(Math.floor(mins/60)).padStart(2,"0")+":"+String(mins%60).padStart(2,"0");
+  return day!==relDay?"d"+day+" "+hm:hm;
+}
+function renderWeather(){
+  const box=$("#wxBox"); if(!box) return;
+  const nt=wxNetTimeNow();
+  if(!nt){box.style.display="none";return;}
+  box.style.display="";
+  const biome=ATLAS.wxBiome||"Meadows";
+  const env=wxEnvAt(nt.t,biome);
+  const wind=wxWindAt(nt.t,env);
+  $("#wxNow").innerHTML=`<span class="wxfr">${WX_RUNE[env]||"ᛋ"}</span>${esc(TT(WX_LABEL[env]||env))}`;
+  $("#wxArrow").style.transform="rotate("+Math.round(wind.deg)+"deg)";
+  $("#wxWind").textContent=wxCompass(wind.deg)+" · "+Math.round(wind.intensity*100)+"%";
+  const period=Math.floor(nt.t/666),today=Math.floor(nt.t/1800),rows=[];
+  for(let i=1;i<=5;i++){
+    const pt=(period+i)*666;
+    const e=wxEnvAt(pt,biome);
+    const w=wxWindAt(pt,e);
+    rows.push(`<div class="wxf"><span class="wxft">${wxClockLabel(pt,today)}</span>`+
+      `<span class="wxfr">${WX_RUNE[e]||""}</span><span class="wxfe">${esc(TT(WX_LABEL[e]||e))}</span>`+
+      `<span class="wxfw">${Math.round(w.intensity*100)}%</span></div>`);
+  }
+  $("#wxForecast").innerHTML=rows.join("");
+  $("#wxAnchor").textContent=nt.paused
+    ?TT("Time stands still — no vikings ashore.")
+    :TT("Anchored to the last world save.");
+}
+/* biome picker pills */
+(function(){
+  const bs=$("#wxBiomes"); if(!bs) return;
+  const BIOMES=[["Meadows","Meadows"],["BlackForest","Black Forest"],["Swamp","Swamp"],
+    ["Mountain","Mountain"],["Plains","Plains"],["Mistlands","Mistlands"],
+    ["Ashlands","Ashlands"],["DeepNorth","Deep North"],["Ocean","Ocean"]];
+  bs.innerHTML=BIOMES.map(b=>`<span class="wxb${b[0]==="Meadows"?" on":""}" data-b="${b[0]}">${b[1]}</span>`).join("");
+  bs.addEventListener("click",e=>{
+    const el=e.target.closest(".wxb"); if(!el) return;
+    ATLAS.wxBiome=el.dataset.b;
+    bs.querySelectorAll(".wxb").forEach(x=>x.classList.toggle("on",x===el));
+    renderWeather();
+  });
+})();
+setInterval(()=>{if(currentPage==="atlas")renderWeather();},5000);
+/* --- canvas: transforms, draw, pan/zoom --- */
+function atlasWrapSize(){
+  const w=$("#atlasWrap");
+  return w?{w:w.clientWidth,h:w.clientHeight}:{w:0,h:0};
+}
+function atlasFitPpm(){
+  const s=atlasWrapSize();
+  return s.w&&s.h?Math.min(s.w,s.h)/(2*ATLAS.mapExtent):0;
+}
+function atlasFit(){
+  ATLAS.cam.cx=0; ATLAS.cam.cz=0; ATLAS.cam.ppm=atlasFitPpm()||0.03;
+}
+function w2sX(wx){const s=atlasWrapSize();return (wx-ATLAS.cam.cx)*ATLAS.cam.ppm+s.w/2;}
+function w2sY(wz){const s=atlasWrapSize();return s.h/2-(wz-ATLAS.cam.cz)*ATLAS.cam.ppm;}
+function atlasResize(){
+  const cv=$("#atlasCanvas"); if(!cv) return;
+  const s=atlasWrapSize(); if(!s.w||!s.h) return;
+  const dpr=window.devicePixelRatio||1;
+  const W=Math.round(s.w*dpr),H=Math.round(s.h*dpr);
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
+  atlasDraw();
+}
+function atlasDraw(){
+  const cv=$("#atlasCanvas"); if(!cv||!cv.width) return;
+  const ctx=cv.getContext("2d");
+  const dpr=window.devicePixelRatio||1;
+  const s=atlasWrapSize();
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle="#080C12"; ctx.fillRect(0,0,s.w,s.h);
+  if(!ATLAS.mapReady||!ATLAS.cam.ppm) return;
+  const c=ATLAS.cam;
+  ctx.imageSmoothingEnabled=true;
+  const sz=2*ATLAS.mapExtent*c.ppm;
+  ctx.drawImage(ATLAS.mapImg,w2sX(-ATLAS.mapExtent),w2sY(ATLAS.mapExtent),sz,sz);
+  /* fog veils the map but not the waypoint markers - this is an admin's chart */
+  if(ATLAS.layers.fog&&ATLAS.fogReady){
+    const fsz=2*ATLAS.fogExtent*c.ppm;
+    ctx.drawImage(ATLAS.fogImg,w2sX(-ATLAS.fogExtent),w2sY(ATLAS.fogExtent),fsz,fsz);
+  }
+  const info=ATLAS.info;
+  const showLbl=c.ppm>0.045;
+  ctx.font="10px 'IBM Plex Mono',monospace"; ctx.textBaseline="middle";
+  if(info&&info.hasDb){
+    if(ATLAS.layers.builds)(info.builds||[]).forEach(b=>{
+      const x=w2sX(b.x),y=w2sY(b.z),r=Math.max(4,b.radius*c.ppm);
+      ctx.strokeStyle="rgba(198,164,110,.75)"; ctx.fillStyle="rgba(198,164,110,.12)";
+      ctx.lineWidth=1; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    });
+    if(ATLAS.layers.pins)(info.pins||[]).forEach(p=>{
+      const x=w2sX(p.x),y=w2sY(p.z);
+      ctx.fillStyle="rgba(226,217,196,.85)";
+      ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill();
+      if(showLbl&&p.name){ctx.fillStyle="rgba(226,217,196,.6)";ctx.fillText(p.name,x+6,y);}
+    });
+    if(ATLAS.layers.portals)(info.portals||[]).forEach(p=>{
+      const x=w2sX(p.x),y=w2sY(p.z);
+      ctx.fillStyle="#63B3C4"; ctx.strokeStyle="rgba(8,12,18,.9)"; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(x,y-5); ctx.lineTo(x+4,y); ctx.lineTo(x,y+5); ctx.lineTo(x-4,y); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      if(showLbl&&p.tag){ctx.fillStyle="rgba(99,179,196,.9)";ctx.fillText(p.tag,x+7,y);}
+    });
+    if(ATLAS.layers.pois)(info.pois||[]).forEach(l=>{
+      const x=w2sX(l.x),y=w2sY(l.z);
+      ctx.fillStyle="#FF7A1A"; ctx.strokeStyle="rgba(8,12,18,.9)"; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill(); ctx.stroke();
+      if(showLbl){ctx.fillStyle="rgba(255,164,92,.95)";ctx.fillText(l.label,x+8,y);}
+    });
+    if(info.eventName){
+      const x=w2sX(info.eventX),y=w2sY(info.eventZ);
+      ctx.strokeStyle="rgba(196,74,58,.9)"; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(x,y,9,0,Math.PI*2); ctx.stroke();
+    }
+  }
+  const z=$("#atlasZoomLbl");
+  if(z) z.textContent=Math.round(1/c.ppm)+" m/px";
+}
+/* pan / zoom / coord readout */
+(function(){
+  const cv=$("#atlasCanvas"); if(!cv) return;
+  cv.addEventListener("pointerdown",e=>{
+    try{cv.setPointerCapture(e.pointerId);}catch(_){}
+    ATLAS.drag={x:e.clientX,y:e.clientY,cx:ATLAS.cam.cx,cz:ATLAS.cam.cz};
+    cv.classList.add("dragging");
+  });
+  cv.addEventListener("pointermove",e=>{
+    const rect=cv.getBoundingClientRect();
+    const mx=e.clientX-rect.left,my=e.clientY-rect.top;
+    if(ATLAS.mapReady&&ATLAS.cam.ppm){
+      const wx=ATLAS.cam.cx+(mx-rect.width/2)/ATLAS.cam.ppm;
+      const wz=ATLAS.cam.cz-(my-rect.height/2)/ATLAS.cam.ppm;
+      const co=$("#atlasCoord"); if(co)co.textContent=Math.round(wx)+", "+Math.round(wz);
+    }
+    if(!ATLAS.drag) return;
+    ATLAS.cam.cx=ATLAS.drag.cx-(e.clientX-ATLAS.drag.x)/ATLAS.cam.ppm;
+    ATLAS.cam.cz=ATLAS.drag.cz+(e.clientY-ATLAS.drag.y)/ATLAS.cam.ppm;
+    atlasDraw();
+  });
+  ["pointerup","pointercancel"].forEach(ev=>cv.addEventListener(ev,()=>{
+    ATLAS.drag=null; cv.classList.remove("dragging");
+  }));
+  cv.addEventListener("wheel",e=>{
+    e.preventDefault();
+    if(!ATLAS.cam.ppm) return;
+    const rect=cv.getBoundingClientRect();
+    const mx=e.clientX-rect.left,my=e.clientY-rect.top;
+    const wx=ATLAS.cam.cx+(mx-rect.width/2)/ATLAS.cam.ppm;
+    const wz=ATLAS.cam.cz-(my-rect.height/2)/ATLAS.cam.ppm;
+    const f=e.deltaY<0?1.18:1/1.18;
+    ATLAS.cam.ppm=Math.min(Math.max(ATLAS.cam.ppm*f,(atlasFitPpm()||0.01)*0.5),8);
+    ATLAS.cam.cx=wx-(mx-rect.width/2)/ATLAS.cam.ppm;   // keep the cursor's world point fixed
+    ATLAS.cam.cz=wz+(my-rect.height/2)/ATLAS.cam.ppm;
+    atlasDraw();
+  },{passive:false});
+  cv.addEventListener("dblclick",()=>{atlasFit();atlasDraw();});
+  try{new ResizeObserver(()=>{if(currentPage==="atlas")atlasResize();}).observe($("#atlasWrap"));}catch{}
+})();
+/* layer chips - fog gets an honest empty state instead of a silent no-op */
+$$(".lchip").forEach(ch=>ch.addEventListener("click",()=>{
+  const layer=ch.dataset.layer;
+  const turningOn=!ATLAS.layers[layer];
+  if(layer==="fog"&&turningOn&&Native.available&&(!ATLAS.info||!ATLAS.info.hasSharedMap)){
+    toast(TT("ᚾ No shared map data yet — a viking must press 'Record discoveries' on a cartography table first."));
+    return;
+  }
+  if(layer==="pins"&&turningOn&&Native.available&&ATLAS.info&&ATLAS.info.hasDb&&!(ATLAS.info.pins||[]).length){
+    toast(TT("ᛘ No table pins yet — pins ride the cartography table's shared map."));
+    return;
+  }
+  ATLAS.layers[layer]=turningOn;
+  ch.classList.toggle("on",turningOn);
+  atlasDraw();
+}));
+$("#atlasRecenter").addEventListener("click",()=>{atlasFit();atlasDraw();});
+$("#atlasRedraw").addEventListener("click",()=>{
+  if(!Native.available){toast("ᛞ Preview · the real map renders in the app");return;}
+  atlasRenderMap(true);
+});
+$("#atlasWaypoints").addEventListener("click",e=>{
+  const row=e.target.closest(".wp"); if(!row) return;
+  const w=($("#atlasWaypoints")._rows||[])[Number(row.dataset.i)];
+  if(!w) return;
+  ATLAS.cam.cx=w.x; ATLAS.cam.cz=w.z;
+  ATLAS.cam.ppm=Math.max(ATLAS.cam.ppm,(atlasFitPpm()||0.03)*6);
+  atlasDraw();
+});
+/* mock fixture: a synthetic island so the preview exercises pan/zoom/layers */
+function atlasMock(){
+  if(ATLAS.mapReady){renderAtlasSide();atlasDraw();return;}
+  const size=1024,off=document.createElement("canvas");
+  off.width=size; off.height=size;
+  const g=off.getContext("2d");
+  g.fillStyle="#0E2A4A"; g.fillRect(0,0,size,size);
+  const blob=(x,y,r,col)=>{const gr=g.createRadialGradient(x,y,0,x,y,r);gr.addColorStop(0,col);gr.addColorStop(1,"rgba(0,0,0,0)");g.fillStyle=gr;g.beginPath();g.arc(x,y,r,0,Math.PI*2);g.fill();};
+  blob(512,512,300,"#5E8A3D"); blob(400,430,170,"#34502F"); blob(640,420,130,"#5E5440");
+  blob(520,330,110,"#DADEE2"); blob(620,600,150,"#BDA95F"); blob(390,610,120,"#69607A");
+  blob(512,830,140,"#80352A"); blob(512,190,140,"#C6D2DA");
+  g.globalCompositeOperation="destination-in";
+  g.beginPath(); g.arc(512,512,470,0,Math.PI*2); g.fill();
+  g.globalCompositeOperation="destination-over";
+  g.fillStyle="#080C12"; g.fillRect(0,0,size,size);
+  const img=new Image();
+  img.onload=()=>{
+    ATLAS.world="Final Sunset"; ATLAS.mapImg=img; ATLAS.mapReady=true; ATLAS.mapExtent=10500;
+    ATLAS.info={hasDb:true,day:333,netTime:333*1800+912,savedAgeSeconds:245,_rxAt:Date.now(),
+      hasSharedMap:false,mapTables:2,exploredPercent:0,eventName:"",
+      portals:[{tag:"Farm",x:88,z:-353},{tag:"Bonemass",x:-2450,z:1180},{tag:"Bjorngard",x:1420,z:2210}],
+      pois:[{label:"Sacrificial Stones",x:20,z:-18},{label:"Eikthyr",x:610,z:840},{label:"The Elder",x:-1830,z:-960}],
+      builds:[{x:88,z:-353,pieces:2854,radius:289},{x:-2410,z:1130,pieces:412,radius:96}],
+      pins:[]};
+    $("#atlasWorldName").textContent=ATLAS.world;
+    atlasMsg(null); atlasFit(); atlasDraw(); renderAtlasSide();
+  };
+  img.src=off.toDataURL("image/png");
+}
+
 /* ============ NATIVE WIRING (WebView2 host drives real data) ============ */
 if(Native.available){
 
@@ -2106,6 +2598,11 @@ if(Native.available){
     const avg=S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length;
     $("#saveAvg").textContent="avg "+Math.round(avg)+"ms";
     S.saveSec=S.saveInterval;
+    if(currentPage==="atlas") atlasRefreshInfo(); // fresh .db on disk = fresh atlas facts/fog
+  });
+  Native.on("atlas.renderProgress",d=>{
+    if(currentPage==="atlas"&&d&&d.world===ATLAS.world&&ATLAS.rendering)
+      atlasMsg("Charting the realm from its seed… "+d.pct+"%");
   });
   Native.on("server.inviteCode",d=>{
     if(!d?.code||!isActiveProfile(d?.profile)) return;

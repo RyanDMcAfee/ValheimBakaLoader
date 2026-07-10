@@ -47,6 +47,17 @@ namespace ValheimBakaLoader.Forms
         #endregion
 
         private const string VirtualHost = "app.baka";
+        private const string AtlasVirtualHost = "atlas.baka";
+
+        /// <summary>Writable cache folder for rendered Atlas map PNGs, served via the atlas.baka virtual host.</summary>
+        internal static string GetAtlasCacheDir()
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ValheimBakaLoader", "AtlasCache");
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
 
         #region Native interop (drag / resize for the borderless window)
 
@@ -186,6 +197,11 @@ namespace ValheimBakaLoader.Forms
             var webUiPath = Path.Combine(AppContext.BaseDirectory, "WebUI");
             core.SetVirtualHostNameToFolderMapping(
                 VirtualHost, webUiPath, CoreWebView2HostResourceAccessKind.Allow);
+
+            // Rendered Atlas map PNGs live in a writable LocalAppData cache
+            // (the install folder backing app.baka may be read-only).
+            core.SetVirtualHostNameToFolderMapping(
+                AtlasVirtualHost, GetAtlasCacheDir(), CoreWebView2HostResourceAccessKind.Allow);
 
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.IsZoomControlEnabled = false;
