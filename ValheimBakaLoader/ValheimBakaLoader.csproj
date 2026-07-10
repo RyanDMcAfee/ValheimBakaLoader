@@ -10,7 +10,7 @@
 		<Description>A simple user interface for running Valheim Dedicated Server on Windows.</Description>
 		<Copyright>2026</Copyright>
 		<PackageLicenseFile>LICENSE</PackageLicenseFile>
-		<Version>0.9.34</Version>
+		<Version>0.9.35</Version>
     <!-- Build date adapted from: https://rmauro.dev/add-build-time-to-your-csharp-assembly/ -->
     <SourceRevisionId>build$([System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"))</SourceRevisionId>
 	</PropertyGroup>

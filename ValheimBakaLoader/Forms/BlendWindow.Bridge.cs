@@ -915,7 +915,7 @@ namespace ValheimBakaLoader.Forms
                 var created = ServerPreferences.FromFile(prefs);
 
                 created.ProfileName = name;
-                created.Name = string.IsNullOrWhiteSpace(created.Name) ? name : created.Name;
+                created.Name = name;              // its own in-game name, never the base server's
                 created.WorldName = world;
                 created.Port = gamePort;
                 created.RconPort = rconPort;
@@ -948,9 +948,10 @@ namespace ValheimBakaLoader.Forms
 
                 if (isolateInstall)
                 {
-                    var baseExe = GetServerExePathFor(ActiveProfileName);
+                    var baseExe = GetCanonicalBaseServerExe();
+                    var seedSourceBepInEx = GetActiveBepInExDir();
                     var result = await Task.Run(() =>
-                        InstallIsolation.ProvisionInstall(baseExe, name, seedMods));
+                        InstallIsolation.ProvisionInstall(baseExe, name, seedMods, seedSourceBepInEx));
                     created.ServerExePath = result.ServerExePath;
                     created.IsolatedInstall = true;
                     Logger.Information("Created isolated server '{0}': install={1}, world={2}, port={3}.",
@@ -991,6 +992,12 @@ namespace ValheimBakaLoader.Forms
                         {
                             var world = Path.GetFileNameWithoutExtension(fwl);
                             if (string.IsNullOrWhiteSpace(world) || owned.Contains(world)) continue;
+
+                            // Automatic backup snapshots ("World_backup_auto-…") of a world some
+                            // profile still owns aren't adoptable realms - hide them so a live
+                            // server's snapshot trail doesn't flood the restore panel.
+                            var backupIdx = world.IndexOf("_backup_", StringComparison.OrdinalIgnoreCase);
+                            if (backupIdx > 0 && owned.Contains(world.Substring(0, backupIdx))) continue;
 
                             var db = Path.Combine(dir, world + ".db");
                             long size = 0;
@@ -1041,6 +1048,14 @@ namespace ValheimBakaLoader.Forms
                 var sub = p.Value<string>("sub");
                 if (string.IsNullOrWhiteSpace(sub)) sub = "worlds_local";
 
+                // Fail loudly BEFORE creating anything: a missing source must never produce a
+                // profile that claims the world while zero files were actually copied.
+                var srcWorldsDir = string.IsNullOrWhiteSpace(sourceFolder) ? null : Path.Combine(sourceFolder, sub);
+                if (srcWorldsDir == null || !Directory.Exists(srcWorldsDir)
+                    || !File.Exists(Path.Combine(srcWorldsDir, world + ".fwl")))
+                    throw new ArgumentException(
+                        $"World '{world}' was not found under '{sourceFolder ?? "<null>"}\\{sub}' - nothing was adopted.");
+
                 var name = (p.Value<string>("name") ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(name)) name = world;
 
@@ -1057,7 +1072,7 @@ namespace ValheimBakaLoader.Forms
                 var basePrefs = ServerPrefsProvider.LoadPreferences(ActiveProfileName) ?? new ServerPreferences();
                 var created = ServerPreferences.FromFile(basePrefs.ToFile());
                 created.ProfileName = name;
-                created.Name = string.IsNullOrWhiteSpace(created.Name) ? name : created.Name;
+                created.Name = name;   // its own in-game name, never the base server's
                 created.WorldName = world;
                 created.Port = gamePort;
                 created.RconPort = rconPort;
@@ -1069,11 +1084,12 @@ namespace ValheimBakaLoader.Forms
                 var saveFolder = MakeIsolatedSaveFolder(name);
                 created.SaveDataFolderPath = saveFolder;
 
-                var baseExe = GetServerExePathFor(ActiveProfileName);
+                var baseExe = GetCanonicalBaseServerExe();
+                var seedSourceBepInEx = GetActiveBepInExDir();
                 await Task.Run(() =>
                 {
                     CopyWorldFiles(sourceFolder, sub, world, saveFolder);
-                    var result = InstallIsolation.ProvisionInstall(baseExe, name, seedMods);
+                    var result = InstallIsolation.ProvisionInstall(baseExe, name, seedMods, seedSourceBepInEx);
                     created.ServerExePath = result.ServerExePath;
                 });
                 created.IsolatedInstall = true;
@@ -2321,6 +2337,20 @@ namespace ValheimBakaLoader.Forms
             foreach (var pr in ServerPrefsProvider.LoadPreferences())
                 Consider(pr.SaveDataFolderPath);
 
+            // Per-server isolated save folders live at "<base>/servers/<name>". Scan every
+            // base's servers/ subtree too - not just folders referenced by a live profile -
+            // so worlds from a deleted-but-files-kept realm still surface as orphans.
+            foreach (var baseFolder in list.ToList())
+            {
+                var serversRoot = Path.Combine(baseFolder, "servers");
+                if (!Directory.Exists(serversRoot)) continue;
+                try
+                {
+                    foreach (var sub in Directory.GetDirectories(serversRoot)) Consider(sub);
+                }
+                catch { /* unreadable servers dir - skip */ }
+            }
+
             return list;
         }
 
@@ -2354,7 +2384,10 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private string MakeIsolatedSaveFolder(string profileName)
         {
-            var baseSave = ResolveSaveDataFolder(null);
+            // Always anchor at the USER-level base save folder, never the current profile's:
+            // an isolated profile's own save folder ends in "servers/<name>", and anchoring
+            // there would nest every realm created from it ("servers/A/servers/B/...").
+            var baseSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
             if (string.IsNullOrWhiteSpace(baseSave))
             {
                 // No configured save folder yet: fall back to the Valheim LocalLow default.
@@ -2685,6 +2718,56 @@ namespace ValheimBakaLoader.Forms
         }
 
         private string GetServerExePath() => GetServerExePathFor(CurrentProfile);
+
+        /// <summary>
+        /// The canonical base server exe to provision new isolated installs from. When the
+        /// active profile itself runs from a BakaLoader-managed isolated install, hoists back
+        /// out to the true base install: provisioning FROM an instance would root the new
+        /// install at ".bakaloader-instances/.bakaloader-instances/…" and point its game-data
+        /// junctions at another instance's junctions - a chain that breaks the moment that
+        /// intermediate realm is deleted.
+        /// </summary>
+        private string GetCanonicalBaseServerExe()
+        {
+            var exe = GetServerExePathFor(ActiveProfileName);
+            try
+            {
+                if (string.IsNullOrWhiteSpace(exe)) return exe;
+                var dir = Path.GetDirectoryName(Path.GetFullPath(exe));
+                var parent = string.IsNullOrWhiteSpace(dir) ? null : Directory.GetParent(dir);
+                if (parent != null && string.Equals(parent.Name, InstallIsolationService.InstancesRootName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    var baseRoot = parent.Parent?.FullName;
+                    if (baseRoot != null)
+                    {
+                        var hoisted = Path.Combine(baseRoot, Path.GetFileName(exe));
+                        if (File.Exists(hoisted)) return hoisted;
+                    }
+
+                    var userExe = UserPrefsProvider.LoadPreferences().ServerExePath;
+                    if (!string.IsNullOrWhiteSpace(userExe) && File.Exists(userExe)) return userExe;
+                }
+            }
+            catch { /* fall through to the profile's own exe */ }
+            return exe;
+        }
+
+        /// <summary>
+        /// The ACTIVE server's BepInEx directory - the wizard promises "copy this server's
+        /// mods", so mod seeding always reads from the active profile's install even when the
+        /// junction/link work is anchored at the canonical base install.
+        /// </summary>
+        private string GetActiveBepInExDir()
+        {
+            try
+            {
+                var exe = GetServerExePathFor(ActiveProfileName);
+                var dir = string.IsNullOrWhiteSpace(exe) ? null : Path.GetDirectoryName(exe);
+                return string.IsNullOrWhiteSpace(dir) ? null : Path.Combine(dir, "BepInEx");
+            }
+            catch { return null; }
+        }
 
         private string GetServerExePathFor(string profileName)
         {

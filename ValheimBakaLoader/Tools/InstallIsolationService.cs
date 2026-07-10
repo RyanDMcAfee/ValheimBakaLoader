@@ -33,9 +33,13 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         /// <param name="baseExePath">Path to the base (Steam) server .exe to derive from.</param>
         /// <param name="profileName">Profile name; sanitized into the install folder name.</param>
-        /// <param name="seedPluginsFromBase">When true, copies the base install's mods into the new
-        /// install so it starts as a clone; when false, the new install starts with no mods.</param>
-        IsolatedInstallResult ProvisionInstall(string baseExePath, string profileName, bool seedPluginsFromBase);
+        /// <param name="seedPluginsFromBase">When true, copies mods into the new install so it
+        /// starts as a clone; when false, the new install starts with no mods.</param>
+        /// <param name="seedSourceBepInExDir">Optional BepInEx directory to seed mods/configs FROM
+        /// (e.g. the active server's, which may itself be an isolated install). Null seeds from the
+        /// base install's own BepInEx.</param>
+        IsolatedInstallResult ProvisionInstall(string baseExePath, string profileName, bool seedPluginsFromBase,
+            string seedSourceBepInExDir = null);
 
         /// <summary>
         /// True when <paramref name="installDir"/> lives under a BakaLoader-managed instances root
@@ -74,7 +78,8 @@ namespace ValheimBakaLoader.Tools
             Logger = logger;
         }
 
-        public IsolatedInstallResult ProvisionInstall(string baseExePath, string profileName, bool seedPluginsFromBase)
+        public IsolatedInstallResult ProvisionInstall(string baseExePath, string profileName, bool seedPluginsFromBase,
+            string seedSourceBepInExDir = null)
         {
             if (string.IsNullOrWhiteSpace(baseExePath) || !File.Exists(baseExePath))
                 throw new InvalidOperationException($"Base server .exe not found: {baseExePath ?? "<null>"}");
@@ -98,7 +103,8 @@ namespace ValheimBakaLoader.Tools
                     var name = new DirectoryInfo(dir).Name;
                     if (string.Equals(name, "BepInEx", StringComparison.OrdinalIgnoreCase))
                     {
-                        ProvisionBepInEx(dir, Path.Combine(installDir, name), seedPluginsFromBase, sameVolume);
+                        ProvisionBepInEx(dir, Path.Combine(installDir, name), seedPluginsFromBase, sameVolume,
+                            seedSourceBepInExDir);
                     }
                     else
                     {
@@ -132,9 +138,17 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        private void ProvisionBepInEx(string srcBep, string dstBep, bool seedPlugins, bool sameVolume)
+        private void ProvisionBepInEx(string srcBep, string dstBep, bool seedPlugins, bool sameVolume,
+            string seedSourceBepInExDir = null)
         {
             Directory.CreateDirectory(dstBep);
+
+            // Mods/configs seed from the requested source (the ACTIVE server's BepInEx, which may
+            // itself be an isolated install) when one is given; the read-only runtime dirs always
+            // junction to the canonical base so no junction ever points at another junction.
+            var seedBep = !string.IsNullOrWhiteSpace(seedSourceBepInExDir) && Directory.Exists(seedSourceBepInExDir)
+                ? seedSourceBepInExDir
+                : srcBep;
 
             foreach (var dir in Directory.EnumerateDirectories(srcBep))
             {
@@ -148,7 +162,8 @@ namespace ValheimBakaLoader.Tools
                 else if (string.Equals(name, "plugins", StringComparison.OrdinalIgnoreCase))
                 {
                     var dst = Path.Combine(dstBep, "plugins");
-                    if (seedPlugins) CopyDirectory(dir, dst);
+                    var seedSrc = Path.Combine(seedBep, "plugins");
+                    if (seedPlugins && Directory.Exists(seedSrc)) CopyDirectory(seedSrc, dst);
                     else Directory.CreateDirectory(dst);
                 }
                 else if (string.Equals(name, "cache", StringComparison.OrdinalIgnoreCase))
@@ -158,14 +173,16 @@ namespace ValheimBakaLoader.Tools
                 }
                 else
                 {
-                    // config and any other subdir: real per-server copy.
-                    CopyDirectory(dir, Path.Combine(dstBep, name));
+                    // config and any other subdir: real per-server copy, from the seed source
+                    // when it carries the same subdir (mod configs travel with the mods).
+                    var seedSrc = Path.Combine(seedBep, name);
+                    CopyDirectory(Directory.Exists(seedSrc) ? seedSrc : dir, Path.Combine(dstBep, name));
                 }
             }
 
-            foreach (var file in Directory.EnumerateFiles(srcBep))
+            foreach (var file in Directory.EnumerateFiles(seedBep))
             {
-                // Loose BepInEx files (BepInEx.cfg, doorstop logs): copy so per-server edits don't bleed.
+                // Loose BepInEx files (doorstop logs, stray cfgs): copy so per-server edits don't bleed.
                 File.Copy(file, Path.Combine(dstBep, Path.GetFileName(file)), overwrite: true);
             }
         }
@@ -261,6 +278,14 @@ namespace ValheimBakaLoader.Tools
             var parent = Directory.GetParent(baseDir)?.FullName;
             if (!string.IsNullOrWhiteSpace(parent))
             {
+                // Belt-and-braces: a managed instance already lives at
+                // "<root>/.bakaloader-instances/<name>". Provisioning from it must reuse
+                // that root - never nest a second instances dir inside the first.
+                var parentName = new DirectoryInfo(parent).Name;
+                if (string.Equals(parentName, InstancesRootName, StringComparison.OrdinalIgnoreCase)
+                    && TryEnsureWritableDirectory(parent))
+                    return parent;
+
                 var candidate = Path.Combine(parent, InstancesRootName);
                 if (TryEnsureWritableDirectory(candidate)) return candidate;
             }
