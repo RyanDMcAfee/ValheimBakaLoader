@@ -77,6 +77,7 @@ namespace ValheimBakaLoader
             services.AddSingleton<ISpawnHelperInstaller, SpawnHelperInstaller>();
             services.AddSingleton<IKillAllInstaller, KillAllInstaller>();
             services.AddSingleton<ICommanderInstaller, CommanderInstaller>();
+            services.AddSingleton<IMaxPlayersInstaller, MaxPlayersInstaller>();
             services.AddSingleton<IRequiredModChecker, RequiredModChecker>();
             services.AddSingleton<PlayerListService>();
             services.AddSingleton<ItemCatalog>();

@@ -41,6 +41,7 @@ namespace ValheimBakaLoader.Forms
         private IAppUpdateService AppUpdateService;
         private IHeartbeatService Heartbeat;
         private IInstallIsolationService InstallIsolation;
+        private IMaxPlayersInstaller MaxPlayersInstaller;
         private IApplicationLogger AppLogger;
 
         /// <summary>The profile whose preferences were last loaded/saved through the bridge.</summary>
@@ -97,21 +98,11 @@ namespace ValheimBakaLoader.Forms
             ["BogWitch_Camp"] = "Bog Witch",
         };
 
-        /// <summary>
-        /// Azumatt's server-side mod that raises Valheim's hard 10-player cap. Installed
-        /// on demand when the user sets Max Players above 10; its BepInEx cfg is the
-        /// single source of truth for the configured count (no pref duplication).
-        /// </summary>
-        private static readonly RequiredMod MaxPlayerCountMod = new()
-        {
-            Author = "Azumatt",
-            ModName = "MaxPlayerCount",
-            Description = "Server-side mod that raises Valheim's built-in 10-player cap.",
-            ThunderstoreUrl = "https://thunderstore.io/c/valheim/p/Azumatt/MaxPlayerCount/",
-            RequiredFor = "Max Players above 10 in the World hall",
-        };
-
-        private const string MaxPlayerCountCfgFile = "Azumatt.MaxPlayerCount.cfg";
+        // Max Players above vanilla's 10 is handled by the bundled BakaLoaderMaxPlayers
+        // companion plugin (Resources/MaxPlayers), installed on demand via MaxPlayersInstaller.
+        // It replaced the third-party Azumatt-MaxPlayerCount mod in 0.9.34; the installer
+        // migrates legacy installs automatically at server start. Its BepInEx cfg is the
+        // single source of truth for the configured count (no pref duplication).
 
         private void InitializeBridge(
             IServiceProvider serviceProvider,
@@ -147,6 +138,7 @@ namespace ValheimBakaLoader.Forms
             AppUpdateService = appUpdateService;
             Heartbeat = heartbeatService;
             InstallIsolation = serviceProvider.GetRequiredService<IInstallIsolationService>();
+            MaxPlayersInstaller = serviceProvider.GetRequiredService<IMaxPlayersInstaller>();
             AppLogger = appLogger;
 
             // Anonymous usage heartbeat (gated on the ShareAnonymousStats pref).
@@ -1505,38 +1497,49 @@ namespace ValheimBakaLoader.Forms
                 }
             });
 
-            // --- Max players (MaxPlayerCount mod cfg) ---
+            // --- Max players (bundled BakaLoaderMaxPlayers plugin cfg) ---
             RegisterRpc("maxplayers.get", p => Task.FromResult<object>(ReadMaxPlayers()));
 
-            RegisterRpc("maxplayers.save", async p =>
+            RegisterRpc("maxplayers.save", p =>
             {
                 if (_maxPlayersSaveInProgress)
                     throw new InvalidOperationException("A max-players change is already in progress.");
                 _maxPlayersSaveInProgress = true;
                 try
                 {
-                    // 1-127: the mod patches an Ldc_I4_S (sbyte) operand, so 127 is the true ceiling.
+                    // 1-127: the plugin patches lobby-cap constants that are sbyte-sized in
+                    // vanilla IL, so 127 stays the supported ceiling.
                     var count = Math.Clamp(p.Value<int?>("count") ?? 10, 1, 127);
                     var pluginsDir = GetPluginsDirectory();
-                    var installed = IsMaxPlayerModInstalled(pluginsDir);
 
-                    if (!installed)
+                    // Opportunistic legacy migration + DLL refresh. No-op while the server
+                    // runs (the old DLL is file-locked); PrepareCompanionPlugins retries
+                    // at the next server start.
+                    MaxPlayersInstaller.EnsureCurrent(pluginsDir);
+
+                    var installed = MaxPlayersInstaller.IsInstalled(pluginsDir);
+                    var legacy = MaxPlayersInstaller.IsLegacyInstalled(pluginsDir);
+
+                    if (!installed && !legacy)
                     {
-                        // Vanilla cap requested and no mod present - nothing to do.
-                        if (count <= 10) return new { count = 10, modInstalled = false };
+                        // Vanilla cap requested and no plugin present - nothing to do.
+                        if (count <= 10)
+                            return Task.FromResult<object>(new { count = 10, modInstalled = false });
 
-                        if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
-                            throw new DirectoryNotFoundException(
-                                "BepInEx plugins folder not found - set a valid server .exe path first.");
-
-                        var ok = await RequiredModChecker.InstallModAsync(MaxPlayerCountMod, pluginsDir);
-                        if (!ok)
-                            throw new InvalidOperationException(
-                                "Couldn't install the MaxPlayerCount mod from Thunderstore.");
+                        MaxPlayersInstaller.Install(pluginsDir); // throws with a friendly message on failure
+                        installed = true;
                     }
 
-                    WriteMaxPlayersCfg(count);
-                    return new { count, modInstalled = true, note = "Applies on the next server start." };
+                    if (installed)
+                        MaxPlayersInstaller.WriteConfiguredCount(GetConfigDirectory(), count);
+
+                    // Legacy mod still on disk (migration deferred until the server stops):
+                    // keep ITS cfg in sync too, so the chosen count applies no matter which
+                    // plugin loads at the next start.
+                    if (legacy) WriteLegacyMaxPlayersCfg(count);
+
+                    return Task.FromResult<object>(
+                        new { count, modInstalled = true, note = "Applies on the next server start." });
                 }
                 finally
                 {
@@ -2735,39 +2738,40 @@ namespace ValheimBakaLoader.Forms
             return Path.Combine(dir, fileName);
         }
 
-        private bool IsMaxPlayerModInstalled(string pluginsDir) =>
-            !string.IsNullOrWhiteSpace(pluginsDir)
-            && Directory.Exists(Path.Combine(pluginsDir, MaxPlayerCountMod.FolderName));
-
         private object ReadMaxPlayers()
         {
-            if (!IsMaxPlayerModInstalled(GetPluginsDirectory()))
-                return new { count = 10, modInstalled = false };
+            var pluginsDir = GetPluginsDirectory();
+            var configDir = GetConfigDirectory();
 
-            // Mod present: its cfg is the source of truth. Missing cfg or key means the
-            // mod hasn't written one yet - it would apply its OWN default of 20 (not 10).
-            var count = 20;
-            var dir = GetConfigDirectory();
-            var path = dir == null ? null : Path.Combine(dir, MaxPlayerCountCfgFile);
-            if (path != null && File.Exists(path))
+            if (MaxPlayersInstaller.IsInstalled(pluginsDir))
             {
-                foreach (var line in File.ReadAllLines(path))
-                {
-                    var t = line.Trim();
-                    if (!t.StartsWith("MaxPlayerCount", StringComparison.OrdinalIgnoreCase)) continue;
-                    var eq = t.IndexOf('=');
-                    if (eq > 0 && int.TryParse(t[(eq + 1)..].Trim(), out var v)) { count = v; break; }
-                }
+                // Our bundled plugin's cfg is the source of truth; a missing cfg or key
+                // means the plugin default of 10 applies.
+                var count = MaxPlayersInstaller.ReadConfiguredCount(configDir) ?? 10;
+                return new { count, modInstalled = true };
             }
-            return new { count, modInstalled = true };
+
+            if (MaxPlayersInstaller.IsLegacyInstalled(pluginsDir))
+            {
+                // Legacy Azumatt mod still on disk (migration runs at the next server
+                // start). Missing cfg or key means it would apply its OWN default of 20.
+                var count = MaxPlayersInstaller.ReadLegacyCount(configDir) ?? 20;
+                return new { count, modInstalled = true };
+            }
+
+            return new { count = 10, modInstalled = false };
         }
 
-        private void WriteMaxPlayersCfg(int count)
+        // The legacy Azumatt mod's cfg, kept in sync only while its one-way migration to
+        // the bundled BakaLoaderMaxPlayers plugin is still pending (see MaxPlayersInstaller).
+        private const string LegacyMaxPlayersCfgFile = "Azumatt.MaxPlayerCount.cfg";
+
+        private void WriteLegacyMaxPlayersCfg(int count)
         {
             var dir = GetConfigDirectory()
                 ?? throw new InvalidOperationException("Server exe path is not configured");
             Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, MaxPlayerCountCfgFile);
+            var path = Path.Combine(dir, LegacyMaxPlayersCfgFile);
 
             if (File.Exists(path))
             {
@@ -2782,7 +2786,7 @@ namespace ValheimBakaLoader.Forms
             }
             else
             {
-                // Freshly-installed mod hasn't run yet - seed a minimal cfg so the FIRST
+                // Mod present but cfg not written yet - seed a minimal cfg so the next
                 // start uses the chosen value instead of the mod's surprise default of 20.
                 File.WriteAllText(path,
                     "[1 - General]\n\n" +

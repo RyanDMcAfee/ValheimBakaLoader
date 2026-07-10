@@ -67,6 +67,9 @@
 		<Content Include="Resources\Commander\BakaLoaderCommander.dll" Condition="Exists('Resources\Commander\BakaLoaderCommander.dll')">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>
+		<Content Include="Resources\MaxPlayers\BakaLoaderMaxPlayers.dll" Condition="Exists('Resources\MaxPlayers\BakaLoaderMaxPlayers.dll')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
 		<!-- Exclude the .cs source reference files from compilation -->
 		<Compile Remove="Resources\SpawnHelper\BakaLoaderSpawnHelper.cs" />
 		<None Include="Resources\SpawnHelper\BakaLoaderSpawnHelper.cs" />
@@ -74,6 +77,8 @@
 		<None Include="Resources\KillAll\BakaKillAll.cs" />
 		<Compile Remove="Resources\Commander\BakaLoaderCommander.cs" />
 		<None Include="Resources\Commander\BakaLoaderCommander.cs" />
+		<Compile Remove="Resources\MaxPlayers\BakaLoaderMaxPlayers.cs" />
+		<None Include="Resources\MaxPlayers\BakaLoaderMaxPlayers.cs" />
 	</ItemGroup>
 
 	<!--

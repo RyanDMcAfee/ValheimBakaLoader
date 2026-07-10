@@ -42,6 +42,7 @@ namespace ValheimBakaLoader.Tools
             "BakaLoaderSpawnHelper",
             "BakaLoaderItemIndexer",
             "BakaLoaderCommander",
+            "BakaLoaderMaxPlayers",
             "MMHOOK",
         };
 

@@ -157,6 +157,7 @@ namespace ValheimBakaLoader.Game
         private readonly ISpawnHelperInstaller SpawnHelperInstaller;
         private readonly IKillAllInstaller KillAllInstaller;
         private readonly ICommanderInstaller CommanderInstaller;
+        private readonly IMaxPlayersInstaller MaxPlayersInstaller;
 
         // Rebuilt on every Start(); tails the new process's stdout/stderr.
         private IValheimServerLogger ServerLogger;
@@ -169,7 +170,8 @@ namespace ValheimBakaLoader.Game
             IItemIndexerInstaller itemIndexerInstaller,
             ISpawnHelperInstaller spawnHelperInstaller,
             IKillAllInstaller killAllInstaller,
-            ICommanderInstaller commanderInstaller)
+            ICommanderInstaller commanderInstaller,
+            IMaxPlayersInstaller maxPlayersInstaller)
         {
             ApplicationLogger = appLogger;
             ProcessProvider = processProvider;
@@ -179,6 +181,7 @@ namespace ValheimBakaLoader.Game
             SpawnHelperInstaller = spawnHelperInstaller;
             KillAllInstaller = killAllInstaller;
             CommanderInstaller = commanderInstaller;
+            MaxPlayersInstaller = maxPlayersInstaller;
 
             LogLineRules = BuildLogLineRules();
             StatusChanged += OnStatusTransition;
@@ -511,6 +514,10 @@ namespace ValheimBakaLoader.Game
             Install("item indexer", () => ItemIndexerInstaller?.EnsureInstalled(pluginsDir));
             Install("spawn helper", () => SpawnHelperInstaller?.EnsureInstalled(pluginsDir));
             Install("kill-all", () => KillAllInstaller?.EnsureInstalled(pluginsDir));
+            // Max-players is install-on-demand (only present when the cap was raised past 10),
+            // but EnsureCurrent still runs every start: it refreshes an existing install and
+            // migrates away from the legacy third-party Azumatt-MaxPlayerCount mod.
+            Install("max-players", () => MaxPlayersInstaller?.EnsureCurrent(pluginsDir));
             Install("Commander", () =>
             {
                 // Commander = BakaLoader's own RCON server + native command suite. Its cfg

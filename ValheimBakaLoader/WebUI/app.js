@@ -1698,8 +1698,8 @@ $("#copySeed").addEventListener("click",()=>{
 $("#fWorld").addEventListener("change",()=>{renderWorldMods();renderWorldSeed();});
 renderWorldMods(); // seed the dials with Normal defaults (both modes)
 renderWorldSeed();
-/* Max players: server-wide, not per-world. 10 = vanilla cap (no mod); above 10 the
-   MaxPlayerCount server mod's cfg is the source of truth. */
+/* Max players: server-wide, not per-world. 10 = vanilla cap (no plugin); above 10 the
+   bundled BakaLoader max-players plugin's cfg is the source of truth. */
 async function renderMaxPlayers(){
   if(!Native.available) return;
   const r=await rpc("maxplayers.get",{});
@@ -1742,14 +1742,14 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
     for(const [key,def] of Object.entries(WORLDGEN)){const v=$("#"+def.sel).value;if(v)modifiers[key]=v;}
     await rpc("worldgen.save",{world:prefs.WorldName,modifiers});
   }
-  // max players rides along too - >10 auto-installs the MaxPlayerCount server mod
+  // max players rides along too - >10 auto-installs the bundled max-players plugin
   const mp=parseInt($("#fMaxPlayers").value,10);
   if(!Number.isNaN(mp)){
     const mr=await rpc("maxplayers.save",{count:mp});
     if(mr!==FAIL&&mr?.count!=null){
       $("#fMaxPlayers").value=mr.count;
       if(mr.modInstalled&&mp>10)
-        logLine("ok","[BakaLoader] max players set to "+mr.count+" (MaxPlayerCount mod · next start)");
+        logLine("ok","[BakaLoader] max players set to "+mr.count+" (bundled plugin · next start)");
     }
   }
   S.prefs=r; S.profileName=r.ProfileName; S.saveInterval=r.SaveInterval??600;
@@ -1922,7 +1922,7 @@ function wizardRender(){
         `<div class="field" style="margin-top:8px"><label>World seed</label>`+
         `<input type="text" id="wizSeed" placeholder="random (leave blank)" spellcheck="false" autocomplete="off">`+
         `<div class="wiz-help">Seed for the new world <strong>${esc(WIZ.seedWorld)}</strong> - it hasn't been created yet. Blank = random. A world's seed is <strong>fixed forever</strong> once created.</div></div>`:"")+
-      `<div class="wiz-help">Max players defaults to <strong>10</strong> - Valheim's built-in cap. Raise it later in the <strong>WORLD</strong> hall under <strong>WORLD MODIFIERS</strong> (installs the MaxPlayerCount server mod).</div>`;
+      `<div class="wiz-help">Max players defaults to <strong>10</strong> - Valheim's built-in cap. Raise it later in the <strong>WORLD</strong> hall under <strong>WORLD MODIFIERS</strong> (installs a small bundled server plugin).</div>`;
     nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="wNext">Next</button>`;
   }else{
