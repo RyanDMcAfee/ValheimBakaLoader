@@ -2171,7 +2171,8 @@ $("#cfgOpenBtn").addEventListener("click",()=>{
 const ATLAS={
   world:null,
   mapImg:null, mapReady:false, mapExtent:10500,   // world meters, center -> png edge
-  fogImg:null, fogReady:false, fogTex:null, fogExtent:12288, // fog png spans ±2048*12/2 m
+  fogImg:null, fogReady:false, fogTex:null, fogMask:null, fogExtent:12288, // fog png spans ±2048*12/2 m
+  viewBase:0,                                     // min(wrap w,h) at last resize - keeps the chart scaling with the window
   info:null, rendering:false, seq:0,
   layers:{portals:true,pois:true,builds:true,pins:false,fog:true},
   cam:{cx:0,cz:0,ppm:0},                          // ppm = screen px per world meter
@@ -2185,7 +2186,7 @@ function atlasMsg(text){
 }
 function atlasReset(){
   ATLAS.world=null; ATLAS.mapImg=null; ATLAS.mapReady=false;
-  ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.info=null;
+  ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.fogMask=null; ATLAS.info=null;
   ATLAS.cam.ppm=0; ATLAS.seq++;
   atlasMsg("Loading the known world…");
   if(currentPage==="atlas") atlasEnter();
@@ -2198,7 +2199,7 @@ async function atlasEnter(){
   if(!world){atlasMsg("No world chosen yet — pick one in the World hall.");return;}
   if(ATLAS.world!==world){
     ATLAS.world=world; ATLAS.mapImg=null; ATLAS.mapReady=false;
-    ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.info=null; ATLAS.cam.ppm=0;
+    ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.fogMask=null; ATLAS.info=null; ATLAS.cam.ppm=0;
   }
   if(!ATLAS.mapReady&&!ATLAS.rendering) atlasRenderMap(false);
   atlasRefreshInfo();
@@ -2241,7 +2242,7 @@ async function atlasRefreshInfo(){
   if(r.fogUrl){
     ATLAS.fogExtent=Number(r.fogExtent)||12288;
     const fi=new Image();
-    fi.onload=()=>{if(seq===ATLAS.seq){ATLAS.fogImg=fi;ATLAS.fogTex=null;ATLAS.fogReady=true;atlasDraw();}};
+    fi.onload=()=>{if(seq===ATLAS.seq){ATLAS.fogImg=fi;ATLAS.fogTex=null;ATLAS.fogMask=null;ATLAS.fogReady=true;atlasDraw();}};
     fi.src=r.fogUrl;
   }else{ATLAS.fogImg=null;ATLAS.fogReady=false;}
   renderAtlasSide(); atlasDraw();
@@ -2442,6 +2443,11 @@ function w2sY(wz){const s=atlasWrapSize();return s.h/2-(wz-ATLAS.cam.cz)*ATLAS.c
 function atlasResize(){
   const cv=$("#atlasCanvas"); if(!cv) return;
   const s=atlasWrapSize(); if(!s.w||!s.h) return;
+  /* the chart scales WITH the window: growing the pane grows the map by the
+     same ratio (relative zoom is preserved) instead of just adding empty sea */
+  const m=Math.min(s.w,s.h);
+  if(ATLAS.viewBase&&ATLAS.cam.ppm&&m!==ATLAS.viewBase) ATLAS.cam.ppm*=m/ATLAS.viewBase;
+  ATLAS.viewBase=m;
   const dpr=window.devicePixelRatio||1;
   const W=Math.round(s.w*dpr),H=Math.round(s.h*dpr);
   if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
@@ -2471,6 +2477,29 @@ function atlasFogTex(){
   ATLAS.fogTex=cnv;
   return cnv;
 }
+/* Markers are swallowed by the veil: a waypoint the crew hasn't charted stays
+   secret. Samples the fog png's alpha at a world position (unexplored = ~.8
+   alpha, explored = fully clear). No fog data at all = everything is veiled. */
+function atlasFogMaskData(){
+  if(!ATLAS.fogImg) return null;
+  if(ATLAS.fogMask) return ATLAS.fogMask;
+  const cnv=document.createElement("canvas");
+  cnv.width=ATLAS.fogImg.width; cnv.height=ATLAS.fogImg.height;
+  const g=cnv.getContext("2d",{willReadFrequently:true});
+  g.drawImage(ATLAS.fogImg,0,0);
+  try{ATLAS.fogMask=g.getImageData(0,0,cnv.width,cnv.height);}catch{return null;}
+  return ATLAS.fogMask;
+}
+function atlasFogHides(wx,wz){
+  if(!ATLAS.layers.fog) return false;
+  if(!ATLAS.fogReady) return true;               // nothing shared - whole realm veiled
+  const m=atlasFogMaskData(); if(!m) return true;
+  const e=ATLAS.fogExtent;
+  const px=Math.round((wx+e)/(2*e)*(m.width-1));
+  const py=Math.round((e-wz)/(2*e)*(m.height-1));
+  if(px<0||py<0||px>=m.width||py>=m.height) return true;
+  return m.data[(py*m.width+px)*4+3]>96;         // veil alpha is ~204 where unexplored
+}
 function atlasDraw(){
   const cv=$("#atlasCanvas"); if(!cv||!cv.width) return;
   const ctx=cv.getContext("2d");
@@ -2483,9 +2512,9 @@ function atlasDraw(){
   ctx.imageSmoothingEnabled=true;
   const sz=2*ATLAS.mapExtent*c.ppm;
   ctx.drawImage(ATLAS.mapImg,w2sX(-ATLAS.mapExtent),w2sY(ATLAS.mapExtent),sz,sz);
-  /* fog veils the map but not the waypoint markers - this is an admin's chart.
-     The veil is a Tolkien-style parchment map, not a black shroud. No shared
-     cartography data = nothing explored, so the whole realm stays parchment. */
+  /* The veil is a Tolkien-style parchment sea chart, not a black shroud. No
+     shared cartography data = nothing explored, so the whole realm stays
+     parchment - and every marker underneath it stays secret (atlasFogHides). */
   if(ATLAS.layers.fog){
     const pReady=FOG_PARCHMENT.complete&&FOG_PARCHMENT.naturalWidth;
     if(ATLAS.fogReady){
@@ -2512,17 +2541,20 @@ function atlasDraw(){
   ctx.font="10px 'IBM Plex Mono',monospace"; ctx.textBaseline="middle";
   if(info&&info.hasDb){
     if(ATLAS.layers.builds)(info.builds||[]).forEach(b=>{
+      if(atlasFogHides(b.x,b.z)) return;
       const x=w2sX(b.x),y=w2sY(b.z),r=Math.max(4,b.radius*c.ppm);
       ctx.strokeStyle="rgba(198,164,110,.75)"; ctx.fillStyle="rgba(198,164,110,.12)";
       ctx.lineWidth=1; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
     });
     if(ATLAS.layers.pins)(info.pins||[]).forEach(p=>{
+      if(atlasFogHides(p.x,p.z)) return;
       const x=w2sX(p.x),y=w2sY(p.z);
       ctx.fillStyle="rgba(226,217,196,.85)";
       ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill();
       if(showLbl&&p.name){ctx.fillStyle="rgba(226,217,196,.6)";ctx.fillText(p.name,x+6,y);}
     });
     if(ATLAS.layers.portals)(info.portals||[]).forEach(p=>{
+      if(atlasFogHides(p.x,p.z)) return;
       const x=w2sX(p.x),y=w2sY(p.z);
       ctx.fillStyle="#63B3C4"; ctx.strokeStyle="rgba(8,12,18,.9)"; ctx.lineWidth=1;
       ctx.beginPath(); ctx.moveTo(x,y-5); ctx.lineTo(x+4,y); ctx.lineTo(x,y+5); ctx.lineTo(x-4,y); ctx.closePath();
@@ -2530,12 +2562,13 @@ function atlasDraw(){
       if(showLbl&&p.tag){ctx.fillStyle="rgba(99,179,196,.9)";ctx.fillText(p.tag,x+7,y);}
     });
     if(ATLAS.layers.pois)(info.pois||[]).forEach(l=>{
+      if(atlasFogHides(l.x,l.z)) return;
       const x=w2sX(l.x),y=w2sY(l.z);
       ctx.fillStyle="#FF7A1A"; ctx.strokeStyle="rgba(8,12,18,.9)"; ctx.lineWidth=1;
       ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill(); ctx.stroke();
       if(showLbl){ctx.fillStyle="rgba(255,164,92,.95)";ctx.fillText(l.label,x+8,y);}
     });
-    if(info.eventName){
+    if(info.eventName&&!atlasFogHides(info.eventX,info.eventZ)){
       const x=w2sX(info.eventX),y=w2sY(info.eventZ);
       ctx.strokeStyle="rgba(196,74,58,.9)"; ctx.lineWidth=2;
       ctx.beginPath(); ctx.arc(x,y,9,0,Math.PI*2); ctx.stroke();
