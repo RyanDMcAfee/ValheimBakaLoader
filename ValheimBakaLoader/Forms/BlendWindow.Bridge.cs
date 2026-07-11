@@ -1346,6 +1346,22 @@ namespace ValheimBakaLoader.Forms
                 Apply("StartMinimized", v => prefs.StartMinimized = v.Value<bool>());
                 Apply("SaveProfileOnStart", v => prefs.SaveProfileOnStart = v.Value<bool>());
                 Apply("WriteApplicationLogsToFile", v => prefs.WriteApplicationLogsToFile = v.Value<bool>());
+                Apply("LogsFolderPath", v =>
+                {
+                    // Blank = back to the default folder. A custom path must be
+                    // rooted (no relative surprises) and creatable, or the save fails loud.
+                    var path = v.Value<string>()?.Trim();
+                    if (string.IsNullOrWhiteSpace(path))
+                    {
+                        prefs.LogsFolderPath = null;
+                        return;
+                    }
+                    var expanded = Environment.ExpandEnvironmentVariables(path);
+                    if (!Path.IsPathRooted(expanded))
+                        throw new ArgumentException("The logs folder must be a full path (e.g. D:\\ValheimLogs).");
+                    Directory.CreateDirectory(expanded); // throws if unusable
+                    prefs.LogsFolderPath = path;
+                });
                 Apply("EnablePasswordValidation", v => prefs.EnablePasswordValidation = v.Value<bool>());
                 Apply("DarkMode", v => prefs.DarkMode = v.Value<bool>());
                 Apply("PlainTerminology", v => prefs.PlainTerminology = v.Value<bool>());
@@ -2617,6 +2633,11 @@ namespace ValheimBakaLoader.Forms
             // --- Logs ---
             RegisterRpc("logs.appBuffer", p => Task.FromResult<object>(AppLogger.LogBuffer.ToList()));
 
+            // In-memory tail of the ACTIVE profile's current server session (empty
+            // when the server has never been started this app run).
+            RegisterRpc("logs.serverBuffer", p => Task.FromResult<object>(
+                Server?.Logger?.LogBuffer?.ToList() ?? new List<string>()));
+
             // --- Network / IP ---
             RegisterRpc("ip.get", p => Task.FromResult<object>(new
             {
@@ -2648,7 +2669,7 @@ namespace ValheimBakaLoader.Forms
                     "serverDir" => Path.GetDirectoryName(GetServerExePath() ?? ""),
                     "config" => GetConfigDirectory(),
                     "plugins" => GetPluginsDirectory(),
-                    "logs" => Resources.LogsFolderPath,
+                    "logs" => ResolveLogsFolder(),
                     "appData" => Path.GetDirectoryName(Resources.UserPrefsFilePathV2),
                     _ => throw new ArgumentException($"Unknown shell.open target: {target}"),
                 };
@@ -3216,6 +3237,8 @@ namespace ValheimBakaLoader.Forms
                 prefs.StartMinimized,
                 prefs.SaveProfileOnStart,
                 prefs.WriteApplicationLogsToFile,
+                prefs.LogsFolderPath,
+                DefaultLogsFolderPath = Environment.ExpandEnvironmentVariables(Resources.LogsFolderPath),
                 prefs.EnablePasswordValidation,
                 prefs.DarkMode,
                 prefs.PlainTerminology,
@@ -3399,6 +3422,19 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// The effective logs folder: the user's custom choice when set, else the
+        /// app default - always env-expanded and created so Explorer can open it.
+        /// </summary>
+        private string ResolveLogsFolder()
+        {
+            var custom = UserPrefsProvider.LoadPreferences().LogsFolderPath;
+            var folder = Environment.ExpandEnvironmentVariables(
+                string.IsNullOrWhiteSpace(custom) ? Resources.LogsFolderPath : custom);
+            Directory.CreateDirectory(folder);
+            return folder;
+        }
+
+        /// <summary>
         /// Builds runtime server options from a preferences payload, mirroring
         /// MainWindow.GetServerOptionsFromFormState (user-pref fallbacks, world prefs,
         /// log handler).
@@ -3434,6 +3470,7 @@ namespace ValheimBakaLoader.Forms
                     ? serverPrefs.SaveDataFolderPath
                     : userPrefs.SaveDataFolderPath,
                 LogToFile = serverPrefs.WriteServerLogsToFile,
+                LogFolderPath = userPrefs.LogsFolderPath,
                 AutoRestart = serverPrefs.AutoRestart,
                 AutoRestartDelay = serverPrefs.AutoRestartDelay,
                 EmptyServerRestart = serverPrefs.EmptyServerRestart,

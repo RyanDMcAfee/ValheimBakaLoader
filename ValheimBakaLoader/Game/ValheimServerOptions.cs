@@ -39,6 +39,9 @@ namespace ValheimBakaLoader.Game
 
         bool LogToFile { get; }
 
+        // Custom folder for the session log files; null/blank = the app default.
+        string LogFolderPath { get; }
+
         bool AutoRestart { get; }
 
         int AutoRestartDelay { get; }
@@ -99,6 +102,8 @@ namespace ValheimBakaLoader.Game
         public string SaveDataFolderPath { get; set; }
 
         public bool LogToFile { get; set; }
+
+        public string LogFolderPath { get; set; }
 
         public bool AutoRestart { get; set; }
 

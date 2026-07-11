@@ -400,6 +400,7 @@
               <h1><span class="r">ᛋ</span>SAGA</h1>
               <span class="sub">live chronicle of the realm</span>
               <div class="grow"></div>
+              <button class="btn btn-ghost btn-sm" id="vellumBtn" title="Log settings: where the scrolls are kept, and what gets written">ᚹ&nbsp; Vellum</button>
               <button class="btn btn-ghost btn-sm" id="openLogs">ᛃ&nbsp; Logs folder</button>
             </div>
             <div class="termwrap">
@@ -409,7 +410,10 @@
                 <span class="fpill" data-f="warn">Warn</span>
                 <span class="fpill" data-f="err">Error</span>
                 <span class="fpill" data-f="net">Net</span>
-                <span style="margin-left:auto" class="pill green">streaming</span>
+                <input id="termSearch" class="termsearch" placeholder="search the saga…" spellcheck="false" autocomplete="off">
+                <span class="pill ember hidden" id="termNew" title="Jump to the newest lines">↓ 0 new</span>
+                <span class="fpill" id="termCopy" title="Copy the visible lines to the clipboard">ᛝ copy</span>
+                <span class="pill green" id="termStream">streaming</span>
               </div>
               <div class="term" id="term"></div>
               <div class="termin">
@@ -554,6 +558,7 @@
         <div class="pitem" data-cmd="Open config folder"><span class="r">ᛃ</span>Open config folder<span class="k">path</span></div>
         <div class="pitem" data-cmd="Open plugins folder"><span class="r">ᛃ</span>Open plugins folder<span class="k">path</span></div>
         <div class="pitem" data-cmd="Open server logs"><span class="r">ᛃ</span>Open server logs<span class="k">path</span></div>
+        <div class="pitem" data-cmd="Log settings…"><span class="r">ᚹ</span>Log settings…<span class="k">vellum</span></div>
         <div class="pitem pconsole hidden" id="palConsole" data-cmd=""><span class="r">ᛊ</span><span id="palConsoleLbl">Send to server console</span><span class="k">rcon</span></div>
       </div>
       <div class="pfoot"><span><kbd>↑↓</kbd> navigate</span><span><kbd>Enter</kbd> invoke</span><span>no match? <kbd>Enter</kbd> sends it to the console</span><span><kbd>Esc</kbd> dismiss</span></div>

@@ -34,6 +34,10 @@ namespace ValheimBakaLoader.Game
 
         public bool WriteApplicationLogsToFile { get; set; } = true;
 
+        // Custom folder for app + server log files; null/blank = the default
+        // %USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\logs.
+        public string LogsFolderPath { get; set; }
+
         public bool EnablePasswordValidation { get; set; } = true;
 
         public bool DarkMode { get; set; } = true;
@@ -93,6 +97,7 @@ namespace ValheimBakaLoader.Game
                 StartMinimized = file.StartMinimized ?? defaults.StartMinimized,
                 SaveProfileOnStart = file.SaveProfileOnStart ?? defaults.SaveProfileOnStart,
                 WriteApplicationLogsToFile = file.WriteApplicationLogsToFile ?? defaults.WriteApplicationLogsToFile,
+                LogsFolderPath = file.LogsFolderPath ?? defaults.LogsFolderPath,
                 EnablePasswordValidation = file.EnablePasswordValidation ?? defaults.EnablePasswordValidation,
                 DarkMode = file.DarkMode ?? defaults.DarkMode,
                 PlainTerminology = file.PlainTerminology ?? defaults.PlainTerminology,
@@ -136,6 +141,7 @@ namespace ValheimBakaLoader.Game
             StartMinimized = StartMinimized,
             SaveProfileOnStart = SaveProfileOnStart,
             WriteApplicationLogsToFile = WriteApplicationLogsToFile,
+            LogsFolderPath = LogsFolderPath,
             EnablePasswordValidation = EnablePasswordValidation,
             DarkMode = DarkMode,
             PlainTerminology = PlainTerminology,

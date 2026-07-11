@@ -221,6 +221,15 @@ const TERM_PAIRS=[
   ["SAGA","CONSOLE"],
   ["Saga","Console"],
   ["saga","log"],
+  ["Helm turned","Switched to"],
+  ["helm turned","switched to"],
+  ["Vellum inscribed · log settings saved","Log settings saved"],
+  ["The Vellum","Log settings"],
+  ["where the chronicle is kept","file locations & retention"],
+  ["each server session writes its own scroll","each server session writes its own file"],
+  ["new scrolls land here","new log files land here"],
+  ["rune in the","toggle in the"],
+  ["Inscribe","Save"],
   ["rites","settings"],
   ["rite","action"],
   ["forge","mods"],
@@ -486,6 +495,10 @@ async function switchServer(name){
   try{renderWorldMods();}catch{}
   try{renderMaxPlayers();}catch{}
   refreshServers();
+  logDivider(TT("helm turned · ")+prefs.ProfileName);
+  // replay this server's in-memory session tail so the saga isn't blank after a switch
+  const sbuf=await rpc("logs.serverBuffer");
+  if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length) sbuf.slice(-200).forEach(logRaw);
   logLine("info","[BakaLoader] switched to profile '"+name+"'");
   toast(TT("ᛒ Helm turned · ")+prefs.ProfileName);
   if(currentPage==="mods") scanMods();
@@ -645,6 +658,10 @@ function applyState(st){
   if(!st) return;
   const prev=S.state?.status;
   S.state=st;
+  if(st.status==="Starting"&&prev!=="Starting"){
+    // each server session opens under its own rule in the chronicle
+    logDivider(TT("session · ")+(S.profileName||"server")+" · "+new Date().toLocaleString());
+  }
   if(st.status==="Running"&&prev!=="Running"){
     S.upSince=Date.now();
     if(S.saveSec==null) S.saveSec=S.saveInterval;
@@ -1107,6 +1124,7 @@ function invokePal(){
   if(sel.dataset.cmd==="Custom domain"){waystoneWizard();return;}   // works in preview too
   if(sel.dataset.cmd==="World backups"){barrowModal();return;}      // works in preview too
   if(sel.dataset.cmd==="Server analytics"){goPage("skald");return;} // works in preview too
+  if(sel.dataset.cmd==="Log settings…"){vellumModal();return;}      // works in preview too
   if(Native.available){
     const cmd=sel.dataset.cmd;
     if(sel.id==="palConsole"){
@@ -1193,33 +1211,146 @@ function toast(msg){
 }
 
 /* ---------- SAGA TERMINAL ---------- */
-const term=$("#term"); let filter="all";
-function logLine(kind,text){
+const term=$("#term"); let filter="all", termQ="";
+const TERM_CAP=1200;                      // scrollback (lines kept in the DOM)
+let termPin=true, termUnseen=0;           // pinned-to-bottom = live tail; scrolled up = paused
+
+/* one visibility rule for pills + search (dividers ride every pill, hide under search) */
+function lnVisible(el){
+  const k=el.dataset.k;
+  if(k==="div") return !termQ;
+  const passK=(filter==="all"||filter===k||(filter==="info"&&k==="ok"));
+  return passK&&(!termQ||(el.dataset.s||"").includes(termQ));
+}
+function applyTermVis(){
+  $$("#term .ln").forEach(l=>{l.style.display=lnVisible(l)?"":"none";});
+  if(termPin) term.scrollTop=term.scrollHeight;
+}
+function renderTermStream(){
+  const chip=$("#termNew"), pill=$("#termStream");
+  if(termPin){
+    chip.classList.add("hidden");
+    pill.textContent="streaming"; pill.className="pill green";
+  }else{
+    chip.textContent="↓ "+termUnseen+" new";
+    chip.classList.toggle("hidden",termUnseen===0);
+    pill.textContent="paused"; pill.className="pill amber";
+  }
+}
+function termAppend(d){
+  term.appendChild(d);
+  while(term.children.length>TERM_CAP) term.firstChild.remove();
+  if(termPin) term.scrollTop=term.scrollHeight;
+  else if(d.style.display!=="none"&&d.dataset.k!=="div"){termUnseen++;renderTermStream();}
+}
+function logLine(kind,text,time){
   const d=document.createElement("div");
   d.className="ln "+kind; d.dataset.k=kind;
-  d.innerHTML=`<span class="t">${clock()}:${String(new Date().getSeconds()).padStart(2,"0")}</span>  <span class="${kind}">${esc(text)}</span>`;
-  d.style.display=(filter==="all"||filter===kind||(filter==="info"&&kind==="ok"))?"":"none";
-  term.appendChild(d);
-  while(term.children.length>160) term.firstChild.remove();
-  term.scrollTop=term.scrollHeight;
+  d.dataset.s=(text||"").toLowerCase();
+  const t=time||clock()+":"+String(new Date().getSeconds()).padStart(2,"0");
+  d.innerHTML=`<span class="t">${esc(t)}</span>  <span class="${kind}">${esc(text)}</span>`;
+  d.style.display=lnVisible(d)?"":"none";
+  termAppend(d);
 }
+/* horizontal rule with a label - marks session starts and helm turns */
+function logDivider(text){
+  const d=document.createElement("div");
+  d.className="ln div"; d.dataset.k="div"; d.dataset.s="";
+  d.innerHTML=`<span class="divline"></span><span class="divtxt">${esc(text)}</span><span class="divline"></span>`;
+  d.style.display=lnVisible(d)?"":"none";
+  termAppend(d);
+}
+/* App-log lines arrive as "[HH:mm:ss.fff] [WRN] msg" - lift the timestamp into the
+   time cell (no double clocks) and read the severity tag instead of guessing.
+   Server lines carry no tag, so they fall back to content heuristics. */
+const LOG_TS_RE=/^\[(\d\d:\d\d:\d\d)(?:\.\d+)?\]\s*/;
+const LOG_TAG_RE=/^\[(VER|DBG|WRN|ERR|FAT)\]\s*/;
+const LOG_TAG_KIND={VER:"dbg",DBG:"dbg",WRN:"warn",ERR:"err",FAT:"err"};
 function classifyLog(line){
-  const l=(line||"").toLowerCase();
-  if(l.includes("error")||l.includes("exception")) return "err";
-  if(l.includes("warn")) return "warn";
-  return "info";
+  let text=line??"", time=null, kind=null;
+  const ts=text.match(LOG_TS_RE);
+  if(ts){time=ts[1];text=text.slice(ts[0].length);}
+  const tag=text.match(LOG_TAG_RE);
+  if(tag){kind=LOG_TAG_KIND[tag[1]];text=text.slice(tag[0].length);}
+  if(!kind){
+    if(NET_RE.test(text)) kind="net";
+    else{
+      const l=text.toLowerCase();
+      if(/\bexception\b|\berror\b|\bfailed\b|\bfatal\b/.test(l)||/^\s+at\s+\S/.test(text)) kind="err";
+      else if(/\bwarn/.test(l)) kind="warn";
+      else kind="info";
+    }
+  }
+  return {kind,time,text};
 }
+function logRaw(line){const c=classifyLog(line);logLine(c.kind,c.text,c.time);}
 
 /* filter pills */
-$$(".fpill").forEach(p=>p.addEventListener("click",()=>{
-  $$(".fpill").forEach(x=>x.classList.remove("active")); p.classList.add("active");
+$$(".fpill[data-f]").forEach(p=>p.addEventListener("click",()=>{
+  $$(".fpill[data-f]").forEach(x=>x.classList.remove("active")); p.classList.add("active");
   filter=p.dataset.f;
-  $$("#term .ln").forEach(l=>{
-    const k=l.dataset.k;
-    l.style.display=(filter==="all"||filter===k||(filter==="info"&&k==="ok"))?"":"none";
-  });
-  term.scrollTop=term.scrollHeight;
+  applyTermVis();
 }));
+
+/* search - narrows whatever the active pill shows */
+$("#termSearch").addEventListener("input",e=>{
+  termQ=e.target.value.trim().toLowerCase();
+  applyTermVis();
+});
+
+/* pause-on-scroll-up: leave the bottom and the tail holds still; a chip counts
+   what arrived while reading. Click the chip (or scroll back down) to resume. */
+term.addEventListener("scroll",()=>{
+  const atBottom=term.scrollTop+term.clientHeight>=term.scrollHeight-8;
+  if(atBottom&&!termPin){termPin=true;termUnseen=0;renderTermStream();}
+  else if(!atBottom&&termPin){termPin=false;renderTermStream();}
+});
+$("#termNew").addEventListener("click",()=>{
+  termPin=true;termUnseen=0;term.scrollTop=term.scrollHeight;renderTermStream();
+});
+
+/* copy exactly what's on screen (current pill + search) */
+$("#termCopy").addEventListener("click",()=>{
+  const lines=$$("#term .ln").filter(l=>l.style.display!=="none"&&l.dataset.k!=="div")
+    .map(l=>l.textContent);
+  navigator.clipboard?.writeText(lines.join("\n")).catch(()=>{});
+  toast("ᛝ "+lines.length+" saga lines copied");
+});
+
+/* ---------- THE VELLUM (log settings) ---------- */
+async function vellumModal(){
+  let up=null;
+  if(Native.available){const r=await rpc("userprefs.get");if(r!==FAIL)up=r;}
+  const m=modalOpen(
+    `<div class="mtitle">ᚹ ${esc(TT("The Vellum"))} · ${esc(TT("where the chronicle is kept"))}</div>`+
+    `<div class="mbody">`+
+      `<div class="field"><label>${esc(TT("Logs folder"))}</label>`+
+        `<input type="text" id="vlPath" value="${esc(up?.LogsFolderPath||"")}" placeholder="${esc(up?.DefaultLogsFolderPath||"the default folder")}" spellcheck="false" autocomplete="off">`+
+        `<div class="fieldnote">${esc(TT("blank = the default · must be a full path (e.g. D:\\ValheimLogs) · new scrolls land here; a running session keeps writing its current file"))}</div></div>`+
+      `<label class="togglerow" style="cursor:pointer"><span class="tl">${esc(TT("Keep BakaLoader's own log"))}`+
+        `<br><span style="font-size:9.5px;opacity:.7">ApplicationLogs_&lt;day&gt;.txt · ${esc(TT("30-day keep"))}</span></span>`+
+        `<div class="toggle${(up?up.WriteApplicationLogsToFile:true)?" on":""}" id="vlApp"></div></label>`+
+      `<div class="fieldnote">${esc(TT("each server session writes its own scroll — ServerLogs-<realm>-<start time>.txt — pruned after 30 days. Per-realm writing is the 'Write server logs to file' rune in the realm's settings."))}</div>`+
+      `<div class="fieldnote" id="vlStatus"></div>`+
+    `</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="vlCancel">Cancel</button>`+
+      `<button class="btn btn-ember btn-sm" id="vlOk">${esc(TT("Inscribe"))}</button></div>`);
+  const tApp=m.querySelector("#vlApp");
+  tApp.addEventListener("click",()=>tApp.classList.toggle("on"));
+  m.querySelector("#vlCancel").addEventListener("click",modalClose);
+  m.querySelector("#vlOk").addEventListener("click",async()=>{
+    if(!Native.available){modalClose();toast("ᚹ Vellum · preview only");return;}
+    const st=m.querySelector("#vlStatus");
+    const r=await rpc("userprefs.save",{prefs:{
+      LogsFolderPath:m.querySelector("#vlPath").value.trim(),
+      WriteApplicationLogsToFile:tApp.classList.contains("on"),
+    }});
+    if(r===FAIL){st.textContent=TT("could not save — the folder must be a full, writable path (e.g. D:\\ValheimLogs)");return;}
+    modalClose();
+    toast(TT("ᚹ Vellum inscribed · log settings saved"));
+  });
+}
+$("#vellumBtn").addEventListener("click",vellumModal);
 
 /* command input */
 const tIn=$("#termIn"), tCaret=$("#termCaret");
@@ -3521,10 +3652,10 @@ if(Native.available){
   Native.on("player.updated",p=>{
     if(currentPage==="skald"&&isActiveProfile(p?.serverKey))skaldRefresh();
   });
-  Native.on("log.app",d=>{if(d?.line!=null)logLine(classifyLog(d.line),d.line);});
+  Native.on("log.app",d=>{if(d?.line!=null)logRaw(d.line);});
   Native.on("log.server",d=>{
     if(d?.line==null||!isActiveProfile(d?.profile)) return;
-    logLine(classifyLog(d.line),d.line);
+    logRaw(d.line);
     parseNetLine(d.line); // net telemetry rides the server log
   });
 
@@ -3595,7 +3726,13 @@ if(Native.available){
       if(r!==FAIL&&r){S.extIp=r.external;S.intIp=r.internal;renderNet();}
     });
     const buf=await rpc("logs.appBuffer");
-    if(buf!==FAIL&&Array.isArray(buf)) buf.forEach(l=>logLine(classifyLog(l),l));
+    if(buf!==FAIL&&Array.isArray(buf)) buf.forEach(logRaw);
+    // a server may already be mid-session (auto-start / adopted) - replay its tail too
+    const sbuf=await rpc("logs.serverBuffer");
+    if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length){
+      logDivider(TT("earlier this session"));
+      sbuf.slice(-200).forEach(logRaw);
+    }
     await refreshPlayers();
     renderAllFromPrefs();
     renderMods();

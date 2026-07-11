@@ -38,5 +38,13 @@ namespace ValheimBakaLoader.Tools.Logging
 
             return Prefs.LoadPreferences().WriteApplicationLogsToFile ? "ApplicationLogs" : null;
         }
+
+        protected override string ResolveLogFolder()
+        {
+            // ResolveLogFile runs first in BuildSink, so Prefs is wired by now -
+            // but stay safe if the call order ever changes.
+            var custom = Prefs?.LoadPreferences().LogsFolderPath;
+            return string.IsNullOrWhiteSpace(custom) ? base.ResolveLogFolder() : custom;
+        }
     }
 }

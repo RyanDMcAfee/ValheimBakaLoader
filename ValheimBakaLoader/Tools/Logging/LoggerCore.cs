@@ -91,6 +91,27 @@ namespace ValheimBakaLoader.Tools.Logging
         /// </summary>
         protected abstract string ResolveLogFile();
 
+        /// <summary>
+        /// The folder log files land in. Overridable so the user's
+        /// "logs folder" preference can redirect output; may contain
+        /// environment variables. Re-evaluated on <see cref="Rebuild"/>.
+        /// </summary>
+        protected virtual string ResolveLogFolder() => Resources.LogsFolderPath;
+
+        /// <summary>
+        /// How the file sink rolls. Day = one file per calendar day (the app log);
+        /// Infinite = one fixed file (per-session server logs bake their own stamp
+        /// into the file name instead).
+        /// </summary>
+        protected virtual RollingInterval Rolling => RollingInterval.Day;
+
+        /// <summary>
+        /// Hook for cleaning up old log files when the sink is (re)built.
+        /// Serilog's retention only tracks its own rolling set, so per-session
+        /// files from previous runs prune themselves here.
+        /// </summary>
+        protected virtual void PruneOldLogs(string folder) { }
+
         /// <summary>Tears down the sink so the next write reflects new settings.</summary>
         protected void Rebuild()
         {
@@ -128,15 +149,29 @@ namespace ValheimBakaLoader.Tools.Logging
             var fileName = ResolveLogFile();
             if (!string.IsNullOrWhiteSpace(fileName))
             {
-                var folder = Environment.ExpandEnvironmentVariables(Resources.LogsFolderPath);
-                Directory.CreateDirectory(folder);
-                var path = Path.Join(folder, $"{PathExtensions.GetValidFileName(fileName)}_.txt");
+                // A bad custom logs folder must never take the logger down with it -
+                // fall back to in-memory/live-stream only and keep running.
+                try
+                {
+                    var folder = Environment.ExpandEnvironmentVariables(ResolveLogFolder());
+                    Directory.CreateDirectory(folder);
+                    try { PruneOldLogs(folder); } catch { /* best-effort cleanup */ }
 
-                config.WriteTo.File(path,
-                    rollingInterval: RollingInterval.Day,
-                    retainedFileTimeLimit: TimeSpan.FromDays(30),
-                    outputTemplate: "{Message:lj}{NewLine}",
-                    shared: true); // The app and a server can share one file.
+                    // Day-rolling files carry Serilog's date suffix after the "_";
+                    // fixed (per-session) files are named in full already.
+                    var suffix = Rolling == RollingInterval.Infinite ? "" : "_";
+                    var path = Path.Join(folder, $"{PathExtensions.GetValidFileName(fileName)}{suffix}.txt");
+
+                    config.WriteTo.File(path,
+                        rollingInterval: Rolling,
+                        retainedFileTimeLimit: TimeSpan.FromDays(30),
+                        outputTemplate: "{Message:lj}{NewLine}",
+                        shared: true); // The app and a server can share one file.
+                }
+                catch
+                {
+                    // Folder unusable (bad path, no permission) - skip file output.
+                }
             }
 
             return config.CreateLogger();

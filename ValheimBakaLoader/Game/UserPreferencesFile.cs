@@ -26,6 +26,7 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("shareAnonymousStats")] public bool? ShareAnonymousStats { get; set; }
         [JsonProperty("saveProfileOnStart")] public bool? SaveProfileOnStart { get; set; }
         [JsonProperty("writeApplicationLogsToFile")] public bool? WriteApplicationLogsToFile { get; set; }
+        [JsonProperty("logsFolderPath")] public string LogsFolderPath { get; set; }
         [JsonProperty("enablePasswordValidation")] public bool? EnablePasswordValidation { get; set; }
         [JsonProperty("darkMode")] public bool? DarkMode { get; set; }
         [JsonProperty("plainTerminology")] public bool? PlainTerminology { get; set; }

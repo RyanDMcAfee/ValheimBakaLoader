@@ -428,6 +428,21 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .term .err{color:#F08078}
 .term .net{color:var(--cold-hi)}
 .term .cmd{color:var(--ember-hi);font-weight:700}
+.term .dbg{color:var(--bone-faint);opacity:.7}
+/* labeled rule marking session starts / helm turns */
+.term .ln.div{display:flex;align-items:center;gap:10px;margin:7px 0;animation:none}
+.term .ln.div .divline{flex:1;height:1px;background:rgba(140,109,63,.35)}
+.term .ln.div .divtxt{flex:none;font-size:9px;letter-spacing:1.8px;text-transform:uppercase;
+  color:var(--bone-faint);white-space:nowrap}
+/* saga search + paused chip */
+.termsearch{margin-left:auto;width:190px;background:rgba(0,0,0,.3);border:1px solid var(--bronze);
+  border-radius:20px;padding:3px 11px;color:var(--bone);font-family:var(--mono);font-size:10px;
+  outline:none;transition:border-color .15s var(--ease)}
+.termsearch::placeholder{color:var(--bone-faint)}
+.termsearch:focus{border-color:var(--ember)}
+.termhead .hidden{display:none}
+#termNew{cursor:pointer}
+#termStream{cursor:default}
 .termin{flex:none;display:flex;align-items:center;gap:8px;padding:8px 14px;
   border-top:1px solid rgba(140,109,63,.25);background:rgba(0,0,0,.3)}
 .termin .prompt{font-family:var(--mono);color:var(--ember);font-weight:700;font-size:12px;
