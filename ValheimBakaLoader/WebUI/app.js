@@ -2456,8 +2456,38 @@ function atlasResize(){
 /* Tolkien-style parchment chart used as the fog-of-war veil: unexplored land
    is "still on the old maps". Shipped at WebUI/assets/fog-parchment.png. */
 const FOG_PARCHMENT=new Image();
-FOG_PARCHMENT.onload=()=>{ATLAS.fogTex=null;if(currentPage==="atlas")atlasDraw();};
+FOG_PARCHMENT.onload=()=>{ATLAS.fogTex=null;ATLAS.fogPlainTex=null;if(currentPage==="atlas")atlasDraw();};
 FOG_PARCHMENT.src="assets/fog-parchment.png";
+/* The realm is a 10.5km disc - the cloud veil should sit over the world only,
+   thinning to nothing past the rim. destination-in with a radial gradient
+   feathers the veil's edge into a soft circular cutout. extentM = world meters
+   from the canvas centre to its edge. */
+function atlasVeilFeather(g,w,h,extentM){
+  const cx=w/2,cy=h/2;
+  const r1=10500/extentM*(w/2);                 // world rim in canvas px
+  const r0=Math.max(0,9300/extentM*(w/2));      // fade starts inside the rim
+  const grad=g.createRadialGradient(cx,cy,r0,cx,cy,r1);
+  grad.addColorStop(0,"rgba(0,0,0,1)");
+  grad.addColorStop(1,"rgba(0,0,0,0)");
+  g.globalCompositeOperation="destination-in";
+  g.fillStyle=grad; g.fillRect(0,0,w,h);
+  g.globalCompositeOperation="source-over";
+}
+/* No-cartography veil: the parchment itself, feathered to the world circle.
+   Cached per extent (re-baked if the world's fog extent changes). */
+function atlasFogPlainTex(extentM){
+  if(ATLAS.fogPlainTex&&ATLAS.fogPlainTexExt===extentM) return ATLAS.fogPlainTex;
+  if(!(FOG_PARCHMENT.complete&&FOG_PARCHMENT.naturalWidth)) return null;
+  const cnv=document.createElement("canvas");
+  cnv.width=cnv.height=1024;
+  const g=cnv.getContext("2d");
+  g.globalAlpha=.97;
+  g.drawImage(FOG_PARCHMENT,0,0,1024,1024);
+  g.globalAlpha=1;
+  atlasVeilFeather(g,1024,1024,extentM);
+  ATLAS.fogPlainTex=cnv; ATLAS.fogPlainTexExt=extentM;
+  return cnv;
+}
 /* Bake the parchment through the fog png's alpha once per save (the png's own
    colour is ignored - it is only the explored/unexplored cutout). Drawing the
    result onto itself compounds the mask's .8 alpha to ~.96 so the veil reads
@@ -2474,6 +2504,7 @@ function atlasFogTex(){
   g.drawImage(ATLAS.fogImg,0,0);
   g.globalCompositeOperation="source-over";
   g.drawImage(cnv,0,0);
+  atlasVeilFeather(g,cnv.width,cnv.height,ATLAS.fogExtent);
   ATLAS.fogTex=cnv;
   return cnv;
 }
@@ -2522,10 +2553,9 @@ function atlasDraw(){
       ctx.drawImage(atlasFogTex()||ATLAS.fogImg,w2sX(-ATLAS.fogExtent),w2sY(ATLAS.fogExtent),fsz,fsz);
     }else{
       const ext=Math.max(ATLAS.mapExtent,ATLAS.fogExtent),fsz=2*ext*c.ppm;
-      if(pReady){
-        ctx.globalAlpha=.97;
-        ctx.drawImage(FOG_PARCHMENT,w2sX(-ext),w2sY(ext),fsz,fsz);
-        ctx.globalAlpha=1;
+      const plain=pReady?atlasFogPlainTex(ext):null;
+      if(plain){
+        ctx.drawImage(plain,w2sX(-ext),w2sY(ext),fsz,fsz);
         ctx.fillStyle="rgba(58,44,24,.85)";            // ink on vellum
       }else{
         ctx.fillStyle="rgba(6,7,10,.8)"; ctx.fillRect(w2sX(-ext),w2sY(ext),fsz,fsz);
