@@ -25,6 +25,13 @@ const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const pad=n=>String(n).padStart(2,"0");
 function fmtT(d){const t=new Date(d);return isNaN(t)?"-":pad(t.getHours())+":"+pad(t.getMinutes());}
+/* "3d ago at 1945" - delta plus wall-clock, the way you'd tell a friend. */
+function agoAt(d){
+  const t=new Date(d); if(isNaN(t)) return "-";
+  const s=Math.max(0,(Date.now()-t.getTime())/1000);
+  const ago=s<60?"just now":s<3600?Math.floor(s/60)+"m ago":s<86400?Math.floor(s/3600)+"h ago":Math.floor(s/86400)+"d ago";
+  return ago+" at "+pad(t.getHours())+pad(t.getMinutes());
+}
 
 /* RPC wrapper: every call catches + toasts; returns FAIL sentinel instead of rejecting
    so no rejected promise is ever unhandled. */
@@ -140,6 +147,22 @@ const TERM_PAIRS=[
   ["WAYSTONE","DOMAIN"],
   ["Waystone","Domain"],
   ["waystone","domain"],
+  ["Unearth this layer","Restore this backup"],
+  ["Layer unearthed","Backup restored"],
+  ["Layer deleted","Backup deleted"],
+  ["The Barrow","Backups"],
+  ["the Barrow","the backup manager"],
+  ["Unearthing","Restoring"],
+  ["UNEARTH","RESTORE"],
+  ["Unearth","Restore"],
+  ["unearth","restore"],
+  ["unearthing","restore"],
+  ["BARROW","BACKUPS"],
+  ["Barrow","Backups"],
+  ["Layers","Backups"],
+  ["Layer","Backup"],
+  ["layers","backups"],
+  ["layer","backup"],
   ["BepInEx config scrolls","BepInEx config files"],
   ["no .cfg scrolls found","no .cfg files found"],
   ["Scrolls reloaded","Configs reloaded"],
@@ -1057,6 +1080,7 @@ function invokePal(){
   closePal();
   if(sel.dataset.cmd==="Discord sharing"){goPage("herald");return;} // works in preview too
   if(sel.dataset.cmd==="Custom domain"){waystoneWizard();return;}   // works in preview too
+  if(sel.dataset.cmd==="World backups"){barrowModal();return;}      // works in preview too
   if(Native.available){
     const cmd=sel.dataset.cmd;
     if(sel.id==="palConsole"){
@@ -1533,12 +1557,133 @@ async function savesModal(){
     `<div class="dsec">Backups <span class="subval" style="text-transform:none;letter-spacing:0">· ${bk.length} on disk</span></div>`+bkRows+
     (info?.folder?`<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(info.folder)}</div>`:"")+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mOpenWorlds">Open folder</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBarrow">${esc(TT("The Barrow"))}</button><button class="btn btn-ghost btn-sm" id="mOpenWorlds">Open folder</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
   m.querySelector("#mCancel").addEventListener("click",modalClose);
+  m.querySelector("#mBarrow").addEventListener("click",()=>barrowModal());
   m.querySelector("#mOpenWorlds").addEventListener("click",()=>{
     if(!Native.available){toast("ᛃ Preview · folder opens in the app");return;}
     rpc("shell.open",{target:"saveData"});
   });
+}
+
+/* ---------- THE BARROW (layered per-world backup manager) ---------- */
+/* Preview-mode stand-in data so the whole flow can be walked without the app. */
+const BARROW_MOCK=[
+  {world:"Midgard",folder:"C:/Users/you/AppData/LocalLow/IronGate/Valheim",sub:"worlds_local",
+   owner:"Default",running:true,sizeBytes:48234567,day:412,
+   modifiedUtc:new Date(Date.now()-7*60000).toISOString(),backupBytes:139460000,
+   backups:[
+     {file:"Midgard_backup_auto-20260711-060000.fwl",kind:"auto",sizeBytes:47102003,day:411,hasDb:true,modifiedUtc:new Date(Date.now()-5*3600000).toISOString()},
+     {file:"Midgard.fwl.old",kind:"old",sizeBytes:46990111,day:410,hasDb:true,modifiedUtc:new Date(Date.now()-26*3600000).toISOString()},
+     {file:"Midgard_backup_restore-20260708-193045.fwl",kind:"restore",sizeBytes:45367886,day:398,hasDb:true,modifiedUtc:new Date(Date.now()-3*86400000-4.25*3600000).toISOString()},
+   ]},
+  {world:"Trialgrounds",folder:"C:/Users/you/AppData/LocalLow/BakaLoader/servers/proving",sub:"worlds_local",
+   owner:null,running:false,sizeBytes:9034120,day:23,
+   modifiedUtc:new Date(Date.now()-12*86400000).toISOString(),backupBytes:8877001,
+   backups:[
+     {file:"Trialgrounds_backup_auto-20260629-120000.fwl",kind:"auto",sizeBytes:8877001,day:22,hasDb:true,modifiedUtc:new Date(Date.now()-12*86400000-3600000).toISOString()},
+   ]},
+];
+const BARROW_KIND={auto:"AUTO SNAPSHOT",old:"LAST GOOD",restore:"PRE-RESTORE",other:"BACKUP"};
+function barrowFolderLabel(g){
+  const parts=String(g.folder||"").split(/[\\/]/).filter(Boolean);
+  const i=parts.findIndex(x=>x.toLowerCase()==="servers");
+  const tail=i>=0&&parts[i+1]?"servers/"+parts[i+1]:parts[parts.length-1]||"";
+  return tail+(g.sub==="worlds"?" · worlds":"");
+}
+async function barrowFetch(){
+  if(!Native.available) return BARROW_MOCK;
+  const r=await rpc("backups.overview",{});
+  return r===FAIL?null:(r||[]);
+}
+async function barrowModal(){
+  const groups=await barrowFetch();
+  if(!groups){toast("ᚦ Could not read the backups");return;}
+  const rows=groups.length?groups.map((g,i)=>
+    `<div class="drow browRow" data-i="${i}" style="cursor:pointer">`+
+    `<span class="dk mono">${esc(g.world)}</span>`+
+    `<span class="dv">${g.owner?esc(g.owner):"<span style='opacity:.55'>unclaimed</span>"}${g.running?` <span style="color:var(--ok,#7dc98f)">● ${esc(TT("raiding"))}</span>`:""}</span>`+
+    `<span class="dv mono">${(g.backups||[]).length} ${TT((g.backups||[]).length===1?"layer":"layers")} · ${fmtBytes((g.sizeBytes||0)+(g.backupBytes||0))}</span>`+
+    `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span>`+
+    `</div><div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(g))}${g.day!=null?" · day "+g.day:""}</div>`
+  ).join(""):`<div class="subval" style="padding:6px 2px">no worlds found on disk yet</div>`;
+  const m=modalOpen(
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛝ</span>${esc(TT("The Barrow"))}</div>`+
+    `<div class="mbody">`+
+    `<div class="subval" style="margin-bottom:8px">${esc(TT("every realm's layers - automatic snapshots, the game's last-good pair, and the safety copies laid down before each restore"))}</div>`+
+    rows+`</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  m.querySelectorAll(".browRow").forEach(r=>r.addEventListener("click",()=>barrowWorldModal(groups[+r.dataset.i])));
+}
+function barrowWorldModal(g){
+  const layerRow=(b,i)=>
+    `<div class="drow"><span class="dk mono" style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(b.file)}</span>`+
+    `<span class="dv" style="flex:0 0 auto">${BARROW_KIND[b.kind]||"BACKUP"}</span>`+
+    `<span class="dv mono" style="flex:0 0 auto">${fmtBytes(b.sizeBytes)}${b.day!=null?" · day "+b.day:""}</span>`+
+    `<span class="dv" style="flex:0 0 auto">${agoAt(b.modifiedUtc)}</span>`+
+    `<span class="copychip bUnearth" data-i="${i}"${g.running?` style="opacity:.4;cursor:not-allowed" title="stop the server first"`:""}>${esc(TT("UNEARTH"))}</span>`+
+    `<span class="copychip bDrop" data-i="${i}" style="color:var(--warn,#e0a35c)">✕</span>`+
+    `</div>`;
+  const bks=g.backups||[];
+  const m=modalOpen(
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛝ</span>${esc(TT("The Barrow"))} · ${esc(g.world)}</div>`+
+    `<div class="mbody">`+
+    `<div class="dsec">Live</div>`+
+    `<div class="drow"><span class="dk mono">${esc(g.world)}.fwl + .db</span>`+
+    `<span class="dv mono">${fmtBytes(g.sizeBytes)}${g.day!=null?" · day "+g.day:""}</span>`+
+    `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span></div>`+
+    (g.running?`<div class="subval" style="padding:2px 2px 6px;color:var(--warn,#e0a35c)">${esc(TT("this realm is raiding right now - stop the server to unearth a layer"))}</div>`:"")+
+    `<div class="dsec">${esc(TT("Layers"))} <span class="subval" style="text-transform:none;letter-spacing:0">· ${bks.length} on disk · ${fmtBytes(g.backupBytes||0)}</span></div>`+
+    (bks.length?bks.map(layerRow).join(""):`<div class="subval" style="padding:4px 2px">no backup layers yet - the game lays down automatic snapshots as it saves</div>`)+
+    `<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(g.folder)}/${esc(g.sub)}</div>`+
+    `</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBack">Back</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  m.querySelector("#mBack").addEventListener("click",()=>barrowModal());
+  const reopen=async()=>{
+    const groups=await barrowFetch();
+    const g2=groups&&groups.find(x=>x.world===g.world&&x.folder===g.folder&&x.sub===g.sub);
+    if(g2) barrowWorldModal(g2); else barrowModal();
+  };
+  m.querySelectorAll(".bUnearth").forEach(c=>c.addEventListener("click",()=>{
+    if(g.running){toast("ᚦ "+TT("Stop the server first - the live realm would clobber the restored files"));return;}
+    const b=bks[+c.dataset.i];
+    confirmModal(TT("Unearth this layer?"),
+      `<div class="subval">${esc(TT("The live realm is copied to a fresh safety layer first, then"))} <span class="mono">${esc(b.file)}</span> ${esc(TT("replaces the live files. Every unearthing is reversible from the Barrow."))}${b.hasDb?"":" <span style='color:var(--warn,#e0a35c)'>"+esc(TT("This layer has no .db - only the world seed/meta is restored."))+"</span>"}</div>`,
+      TT("Unearth"),async()=>{
+        if(!Native.available){
+          const ts=new Date();
+          g.backups.unshift({file:g.world+"_backup_restore-"+ts.getFullYear()+pad(ts.getMonth()+1)+pad(ts.getDate())+"-"+pad(ts.getHours())+pad(ts.getMinutes())+"00.fwl",kind:"restore",sizeBytes:g.sizeBytes,day:g.day,hasDb:true,modifiedUtc:ts.toISOString()});
+          toast("ᛝ "+TT("Layer unearthed")+" · preview only");
+          setTimeout(()=>barrowWorldModal(g),0); // confirmModal closes itself right after onOk
+          return;
+        }
+        const r=await rpc("backups.restore",{world:g.world,folder:g.folder,sub:g.sub,file:b.file});
+        if(r===FAIL) return;
+        toast("ᛝ "+TT("Layer unearthed")+" · "+TT("safety copy laid down"));
+        logLine("ok","[BakaLoader] restored '"+g.world+"' from "+b.file+(r.snapshot?" · safety copy "+r.snapshot:""));
+        reopen();
+      });
+  }));
+  m.querySelectorAll(".bDrop").forEach(c=>c.addEventListener("click",()=>{
+    const b=bks[+c.dataset.i];
+    confirmModal(TT("Delete this layer?"),
+      `<div class="subval"><span class="mono">${esc(b.file)}</span>${b.hasDb?" "+esc(TT("and its paired .db")):""} ${esc(TT("will be deleted from disk. This cannot be undone."))}</div>`,
+      "Delete",async()=>{
+        if(!Native.available){
+          g.backups=g.backups.filter(x=>x!==b);
+          toast("ᛪ "+TT("Layer deleted")+" · preview only");
+          setTimeout(()=>barrowWorldModal(g),0);
+          return;
+        }
+        const r=await rpc("backups.delete",{world:g.world,folder:g.folder,sub:g.sub,file:b.file});
+        if(r===FAIL) return;
+        toast("ᛪ "+TT("Layer deleted"));
+        logLine("warn","[BakaLoader] deleted backup layer "+b.file+" of '"+g.world+"'");
+        reopen();
+      });
+  }));
 }
 
 /* card click wiring (chips inside the cards must not trigger the drill-down) */

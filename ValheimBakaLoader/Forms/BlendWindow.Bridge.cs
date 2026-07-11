@@ -1396,6 +1396,183 @@ namespace ValheimBakaLoader.Forms
                 });
             });
 
+            // --- The Barrow: layered per-world backup manager ---
+
+            // Every world on disk (across the shared save folder AND all per-server isolated
+            // folders) with its full layer stack: automatic snapshots, the game's last-known-good
+            // .old pair, and the safety copies BakaLoader takes before every restore.
+            RegisterRpc("backups.overview", p =>
+            {
+                var profiles = ServerPrefsProvider.LoadPreferences();
+                var groups = new List<object>();
+
+                foreach (var saveFolder in KnownSaveFolders())
+                {
+                    foreach (var sub in new[] { "worlds_local", "worlds" })
+                    {
+                        var dir = Path.Combine(saveFolder, sub);
+                        if (!Directory.Exists(dir)) continue;
+
+                        string[] fwls;
+                        try { fwls = Directory.GetFiles(dir, "*.fwl"); }
+                        catch { continue; }
+
+                        foreach (var fwl in fwls)
+                        {
+                            var world = Path.GetFileNameWithoutExtension(fwl);
+                            // Backup layers are folded under their live world, never listed as worlds.
+                            if (string.IsNullOrWhiteSpace(world)
+                                || world.IndexOf("_backup_", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+
+                            var owner = profiles.FirstOrDefault(pr =>
+                                string.Equals(pr.WorldName, world, StringComparison.OrdinalIgnoreCase)
+                                && SameFolder(pr.SaveDataFolderPath, saveFolder));
+                            var running = owner != null
+                                && Sessions.TryGetValue(owner.ProfileName, out var session)
+                                && session.Server.Status != ServerStatus.Stopped;
+
+                            long liveSize = 0;
+                            try { liveSize += new FileInfo(fwl).Length; } catch { /* ignore */ }
+                            var liveDb = Path.Combine(dir, world + ".db");
+                            try { if (File.Exists(liveDb)) liveSize += new FileInfo(liveDb).Length; } catch { /* ignore */ }
+                            DateTime liveModified;
+                            try { liveModified = File.GetLastWriteTimeUtc(File.Exists(liveDb) ? liveDb : fwl); }
+                            catch { liveModified = DateTime.MinValue; }
+
+                            var layers = new List<object>();
+                            long backupBytes = 0;
+                            void AddLayer(string fwlPath, string dbPath, string kind)
+                            {
+                                if (!File.Exists(fwlPath)) return;
+                                long size = 0;
+                                try { size += new FileInfo(fwlPath).Length; } catch { /* ignore */ }
+                                var hasDb = File.Exists(dbPath);
+                                try { if (hasDb) size += new FileInfo(dbPath).Length; } catch { /* ignore */ }
+                                DateTime modified;
+                                try { modified = File.GetLastWriteTimeUtc(hasDb ? dbPath : fwlPath); }
+                                catch { modified = DateTime.MinValue; }
+                                backupBytes += size;
+                                layers.Add(new
+                                {
+                                    file = Path.GetFileName(fwlPath),
+                                    kind,
+                                    sizeBytes = size,
+                                    modifiedUtc = modified,
+                                    day = TryReadWorldDay(dbPath),
+                                    hasDb,
+                                });
+                            }
+
+                            string[] snapshots;
+                            try { snapshots = Directory.GetFiles(dir, world + "_backup_*.fwl"); }
+                            catch { snapshots = Array.Empty<string>(); }
+                            foreach (var snap in snapshots)
+                            {
+                                // Precise prefix match so "MyWorld" never swallows "MyWorld2" snapshots.
+                                var snapName = Path.GetFileName(snap);
+                                if (!snapName.StartsWith(world + "_backup_", StringComparison.OrdinalIgnoreCase)) continue;
+                                var stem = Path.Combine(dir, Path.GetFileNameWithoutExtension(snap));
+                                var kind = snapName.IndexOf("_backup_auto-", StringComparison.OrdinalIgnoreCase) >= 0 ? "auto"
+                                    : snapName.IndexOf("_backup_restore-", StringComparison.OrdinalIgnoreCase) >= 0 ? "restore"
+                                    : "other";
+                                AddLayer(snap, stem + ".db", kind);
+                            }
+                            AddLayer(Path.Combine(dir, world + ".fwl.old"), Path.Combine(dir, world + ".db.old"), "old");
+
+                            groups.Add(new
+                            {
+                                world,
+                                folder = saveFolder,
+                                sub,
+                                owner = owner?.ProfileName,
+                                running,
+                                sizeBytes = liveSize,
+                                modifiedUtc = liveModified,
+                                day = TryReadWorldDay(liveDb),
+                                backups = layers
+                                    .OrderByDescending(l => (DateTime)l.GetType().GetProperty("modifiedUtc").GetValue(l))
+                                    .ToList(),
+                                backupBytes,
+                            });
+                        }
+                    }
+                }
+
+                return Task.FromResult<object>(groups
+                    .OrderByDescending(g => (DateTime)g.GetType().GetProperty("modifiedUtc").GetValue(g))
+                    .ToList());
+            });
+
+            // Restores one backup layer over the live world pair - but FIRST lays down a
+            // safety copy of the current live files ("{world}_backup_restore-<ts>"), so a
+            // restore is always reversible from the Barrow itself. Refuses while any server
+            // in that save folder is running the world (the game would clobber the files).
+            RegisterRpc("backups.restore", p =>
+            {
+                var (dir, world, file) = ValidateBackupRef(p, requireBackupShape: true);
+
+                foreach (var pr in ServerPrefsProvider.LoadPreferences())
+                {
+                    if (!string.Equals(pr.WorldName, world, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (Sessions.TryGetValue(pr.ProfileName, out var session)
+                        && session.Server.Status != ServerStatus.Stopped)
+                        throw new InvalidOperationException(
+                            $"'{pr.ProfileName}' is running world '{world}' right now - stop it before restoring a backup.");
+                }
+
+                var liveFwl = Path.Combine(dir, world + ".fwl");
+                var liveDb = Path.Combine(dir, world + ".db");
+
+                // Safety layer first: snapshot whatever is live right now.
+                string snapshot = null;
+                if (File.Exists(liveFwl))
+                {
+                    var ts = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+                    snapshot = $"{world}_backup_restore-{ts}";
+                    File.Copy(liveFwl, Path.Combine(dir, snapshot + ".fwl"), overwrite: true);
+                    if (File.Exists(liveDb)) File.Copy(liveDb, Path.Combine(dir, snapshot + ".db"), overwrite: true);
+                }
+
+                // The layer's paired .db: same stem for snapshots, ".db.old" for the .old pair.
+                var srcFwl = Path.Combine(dir, file);
+                var srcDb = file.EndsWith(".fwl.old", StringComparison.OrdinalIgnoreCase)
+                    ? Path.Combine(dir, world + ".db.old")
+                    : Path.Combine(dir, Path.GetFileNameWithoutExtension(file) + ".db");
+
+                File.Copy(srcFwl, liveFwl, overwrite: true);
+                var restoredDb = File.Exists(srcDb);
+                if (restoredDb) File.Copy(srcDb, liveDb, overwrite: true);
+
+                Logger.Information("Barrow restore: '{0}' <- '{1}' (db: {2}; safety copy: {3}).",
+                    world, file, restoredDb, snapshot ?? "none");
+                return Task.FromResult<object>(new
+                {
+                    ok = true,
+                    snapshot,
+                    restoredDb,
+                    day = TryReadWorldDay(restoredDb ? liveDb : null),
+                });
+            });
+
+            // Deletes one backup layer (its .fwl + paired .db). The live pair can never be
+            // named here - ValidateBackupRef only accepts backup-shaped filenames.
+            RegisterRpc("backups.delete", p =>
+            {
+                var (dir, world, file) = ValidateBackupRef(p, requireBackupShape: true);
+
+                var deleted = new List<string>();
+                var fwlPath = Path.Combine(dir, file);
+                var dbPath = file.EndsWith(".fwl.old", StringComparison.OrdinalIgnoreCase)
+                    ? Path.Combine(dir, world + ".db.old")
+                    : Path.Combine(dir, Path.GetFileNameWithoutExtension(file) + ".db");
+
+                if (File.Exists(fwlPath)) { File.Delete(fwlPath); deleted.Add(Path.GetFileName(fwlPath)); }
+                if (File.Exists(dbPath)) { File.Delete(dbPath); deleted.Add(Path.GetFileName(dbPath)); }
+
+                Logger.Information("Barrow delete: world '{0}' layer '{1}' ({2} file(s)).", world, file, deleted.Count);
+                return Task.FromResult<object>(new { deleted });
+            });
+
             // World identity from the .fwl (read-only): the typed seed string and the
             // numeric seed the game derived from it. exists=false means the world has
             // no .fwl yet (it will be generated - with a random seed - on first launch).
@@ -2501,6 +2678,91 @@ namespace ValheimBakaLoader.Forms
             }
 
             return list;
+        }
+
+        /// <summary>
+        /// True when two paths point at the same directory (full-path normalized,
+        /// trailing-separator and case insensitive). False on any unresolvable path.
+        /// </summary>
+        private static bool SameFolder(string a, string b)
+        {
+            if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
+            try
+            {
+                return string.Equals(
+                    Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Best-effort in-game day read from a Valheim .db header: int32 worldVersion
+        /// followed by a double netTime in seconds; one day is 1800 seconds (EnvMan).
+        /// Returns null on any doubt - a missing day is better than a wrong one.
+        /// </summary>
+        private static long? TryReadWorldDay(string dbPath)
+        {
+            if (string.IsNullOrWhiteSpace(dbPath)) return null;
+            try
+            {
+                if (!File.Exists(dbPath)) return null;
+                using var stream = File.OpenRead(dbPath);
+                if (stream.Length < 12) return null;
+                using var reader = new BinaryReader(stream);
+                var version = reader.ReadInt32();
+                if (version <= 0 || version >= 100) return null;
+                var netTime = reader.ReadDouble();
+                if (double.IsNaN(netTime) || netTime < 0 || netTime >= 4e9) return null;
+                return (long)(netTime / 1800.0);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Validates a Barrow backup reference ({world, folder, sub, file}) and resolves it to
+        /// a real on-disk location. Hard rules: no path separators or ".." anywhere, folder must
+        /// be one of the known save folders, sub must be worlds_local/worlds, and (when
+        /// requireBackupShape) the file must be a backup-shaped name for THAT world - either
+        /// "{world}_backup_*.fwl" or "{world}.fwl.old" - so the live pair can never be targeted.
+        /// </summary>
+        private (string dir, string world, string file) ValidateBackupRef(JObject p, bool requireBackupShape)
+        {
+            var world = p.Value<string>("world");
+            var folder = p.Value<string>("folder");
+            var sub = p.Value<string>("sub");
+            var file = p.Value<string>("file");
+
+            if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+            if (string.IsNullOrWhiteSpace(file)) throw new ArgumentException("file is required");
+
+            foreach (var piece in new[] { world, file })
+            {
+                if (piece.IndexOfAny(new[] { '/', '\\' }) >= 0 || piece.Contains(".."))
+                    throw new ArgumentException("Invalid characters in backup reference.");
+            }
+
+            if (sub != "worlds_local" && sub != "worlds")
+                throw new ArgumentException("Invalid save subfolder.");
+
+            if (string.IsNullOrWhiteSpace(folder) || !KnownSaveFolders().Any(k => SameFolder(k, folder)))
+                throw new ArgumentException("Unknown save folder.");
+
+            if (requireBackupShape)
+            {
+                var isSnapshot = file.StartsWith(world + "_backup_", StringComparison.OrdinalIgnoreCase)
+                    && file.EndsWith(".fwl", StringComparison.OrdinalIgnoreCase);
+                var isOldPair = string.Equals(file, world + ".fwl.old", StringComparison.OrdinalIgnoreCase);
+                if (!isSnapshot && !isOldPair)
+                    throw new ArgumentException("Not a backup layer of that world.");
+            }
+
+            var dir = Path.Combine(Path.GetFullPath(folder), sub);
+            if (!Directory.Exists(dir)) throw new ArgumentException("Save subfolder does not exist.");
+            if (!File.Exists(Path.Combine(dir, file))) throw new ArgumentException("That backup no longer exists.");
+
+            return (dir, world, file);
         }
 
         /// <summary>
