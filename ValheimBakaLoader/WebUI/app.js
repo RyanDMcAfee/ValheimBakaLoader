@@ -119,6 +119,16 @@ const TERM_PAIRS=[
   ["sailing forth","connecting"],
   ["Sail Forth","Copy Join Info"],
   ["sail forth","connect"],
+  ["The Herald speaks","Status post published"],
+  ["The Herald falls silent","Status post removed"],
+  ["Summon the Herald","Discord sharing setup"],
+  ["Let the Herald speak","Publish the post"],
+  ["The Herald","Discord sharing"],
+  ["the Herald","the Discord post"],
+  ["HERALD","DISCORD"],
+  ["Herald","Discord"],
+  ["Forge the webhook","Create the webhook"],
+  ["Choose the tidings","Choose what to share"],
   ["BepInEx config scrolls","BepInEx config files"],
   ["no .cfg scrolls found","no .cfg files found"],
   ["Scrolls reloaded","Configs reloaded"],
@@ -210,6 +220,7 @@ function goPage(name){
     if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods();
     if(name==="vikings") refreshPlayers();
     if(name==="runes") refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
+    if(name==="herald") refreshHerald();      // re-read prefs so the hall always shows the saved truth
   }
 }
 $$(".navitem").forEach(n=>n.addEventListener("click",()=>goPage(n.dataset.page)));
@@ -1023,6 +1034,7 @@ function invokePal(){
   if(!sel) return;
   if(sel.classList.contains("disabled")){toast("ᚦ "+(sel.title||"Unavailable right now"));return;}
   closePal();
+  if(sel.dataset.cmd==="Discord sharing"){goPage("herald");return;} // works in preview too
   if(Native.available){
     const cmd=sel.dataset.cmd;
     if(sel.id==="palConsole"){
@@ -1220,6 +1232,7 @@ async function initUpkeep(){
     PLAIN=!!up.PlainTerminology;
     if(PLAIN) applyTerms();
     if(up.AppVersion) $("#blVersion").textContent="v"+up.AppVersion;
+    heraldApply(up); /* Herald hall shares the same DTO */
   }
   /* the generic [data-t] handler already flipped .on before these fire, so just persist */
   const save=()=>rpc("userprefs.save",{prefs:{AutoUpdateBakaLoader:T("tAutoUpdApp"),StartWithWindows:T("tStartWin"),ShareAnonymousStats:T("tShareStats"),PlainTerminology:T("tPlainTerms")}});
@@ -1228,6 +1241,93 @@ async function initUpkeep(){
   $("#tShareStats").addEventListener("click",save);
   $("#tPlainTerms").addEventListener("click",()=>{PLAIN=T("tPlainTerms");save();applyTerms();});
 }
+
+/* ---------- HERALD (Discord sharing · one self-editing status post) ----------
+   The C# DiscordStatusService owns the post: it debounces edits and PATCHes the
+   same message forever. This hall only reads/writes prefs + the 3 discord.* RPCs. */
+let HERALD_HAS_POST=false;
+const HERALD_URL_RE=/^https:\/\/((ptb|canary)\.)?discord(app)?\.com\/api\/(v\d+\/)?webhooks\/\d+\/[\w-]+/;
+function heraldRenderPost(){
+  const el=$("#heraldPostStat"); if(!el) return;
+  el.textContent=TT(HERALD_HAS_POST
+    ?"post is placed · it edits itself whenever the realm changes"
+    :"no post yet · publish to place the Herald in your channel");
+}
+function heraldApply(up){
+  setT("tHerald",up.DiscordSharingEnabled);
+  setT("tHeraldAddr",up.DiscordShareAddress);
+  setT("tHeraldPass",up.DiscordSharePassword);
+  setT("tHeraldEvents",up.DiscordEventPosts);
+  $("#heraldUrl").value=up.DiscordWebhookUrl||"";
+  $("#heraldThread").value=up.DiscordWebhookThreadId||"";
+  HERALD_HAS_POST=!!up.HasDiscordStatusMessage;
+  heraldRenderPost();
+}
+async function refreshHerald(){
+  if(!Native.available) return; /* preview keeps whatever the user clicked */
+  const up=await rpc("userprefs.get");
+  if(up!==FAIL&&up) heraldApply(up);
+}
+function heraldSave(extra){
+  return rpc("userprefs.save",{prefs:Object.assign({
+    DiscordSharingEnabled:T("tHerald"),
+    DiscordShareAddress:T("tHeraldAddr"),
+    DiscordSharePassword:T("tHeraldPass"),
+    DiscordEventPosts:T("tHeraldEvents"),
+    DiscordWebhookUrl:$("#heraldUrl").value.trim(),
+    DiscordWebhookThreadId:$("#heraldThread").value.trim()
+  },extra||{})});
+}
+["tHerald","tHeraldAddr","tHeraldPass","tHeraldEvents"].forEach(id=>
+  $("#"+id).addEventListener("click",()=>heraldSave()));
+{
+  const inp=$("#heraldUrl"),stat=$("#heraldUrlStat");
+  let t=null;
+  inp.addEventListener("input",()=>{
+    clearTimeout(t);
+    const v=inp.value.trim();
+    if(!v){
+      stat.className="wiz-stat dim";stat.textContent="paste a webhook URL, or run the setup wizard";
+      t=setTimeout(()=>heraldSave(),400);return;
+    }
+    stat.className="wiz-stat dim";stat.textContent="checking…";
+    t=setTimeout(async()=>{
+      const r=Native.available?await rpc("discord.validate",{url:v})
+        :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:"that doesn't look like a Discord webhook URL"};
+      if(r===FAIL) return;
+      stat.className="wiz-stat "+(r.ok?"ok":"bad");
+      stat.textContent=r.ok?("ᛉ webhook answers · \""+(r.name||"webhook")+"\"")
+                           :("ᚦ "+(r.error||"that webhook does not answer"));
+      if(r.ok) heraldSave();
+    },500);
+  });
+  $("#heraldThread").addEventListener("change",()=>heraldSave());
+}
+$("#heraldPublish").addEventListener("click",async()=>{
+  const url=$("#heraldUrl").value.trim();
+  if(!url){toast("ᚦ No webhook URL · paste one or run the setup wizard");return;}
+  setT("tHerald",true); /* publishing implies sharing is on */
+  await heraldSave();
+  if(!Native.available){HERALD_HAS_POST=true;heraldRenderPost();toast("ᚺ preview · post published");return;}
+  const r=await rpc("discord.publish");
+  if(r===FAIL) return;
+  if(r.ok){
+    HERALD_HAS_POST=true;heraldRenderPost();
+    toast("ᚺ The Herald speaks · status post placed in Discord");
+    logLine("ok","[Herald] Discord status post published");
+  }else toast("ᚦ "+(r.error||"publish failed"));
+});
+$("#heraldRemove").addEventListener("click",async()=>{
+  if(!Native.available){HERALD_HAS_POST=false;heraldRenderPost();toast("ᚺ preview · post removed");return;}
+  const r=await rpc("discord.remove");
+  if(r===FAIL) return;
+  if(r.ok){
+    HERALD_HAS_POST=false;heraldRenderPost();
+    toast("ᚺ The Herald falls silent · post removed from Discord");
+    logLine("warn","[Herald] Discord status post removed");
+  }else toast("ᚦ "+(r.error||"remove failed"));
+});
+$("#heraldWizBtn").addEventListener("click",()=>heraldWizard());
 
 /* ---------- CONTEXT MENU (live, JS-positioned) ---------- */
 const ctxEl=$("#ctxMenu");
@@ -2053,6 +2153,150 @@ $("#btnSetupReset").addEventListener("click",()=>{
     },40);
   });
 });
+
+/* ---------- HERALD SETUP WIZARD ----------
+   Same shell as the first-launch wizard: numbered steps, per-step help,
+   live webhook validation, and a first publish at the end. */
+const HWIZ={step:0,url:"",thread:"",valid:false,name:"",addr:true,pass:false,events:false};
+function heraldWizard(){
+  Object.assign(HWIZ,{
+    step:0,
+    url:$("#heraldUrl").value.trim(),
+    thread:$("#heraldThread").value.trim(),
+    valid:false,name:"",
+    addr:T("tHeraldAddr"),pass:T("tHeraldPass"),events:T("tHeraldEvents")
+  });
+  heraldWizRender();
+}
+async function heraldWizFinish(){
+  /* persist choices + flip sharing on, then place (or refresh) the post */
+  setT("tHerald",true);
+  setT("tHeraldAddr",HWIZ.addr);setT("tHeraldPass",HWIZ.pass);setT("tHeraldEvents",HWIZ.events);
+  $("#heraldUrl").value=HWIZ.url.trim();
+  $("#heraldThread").value=HWIZ.thread.trim();
+  modalClose();
+  await heraldSave();
+  if(!Native.available){
+    HERALD_HAS_POST=true;heraldRenderPost();
+    toast("ᚺ preview · the Herald is set up");return;
+  }
+  const r=await rpc("discord.publish");
+  if(r===FAIL) return;
+  if(r.ok){
+    HERALD_HAS_POST=true;heraldRenderPost();
+    $("#heraldUrlStat").className="wiz-stat ok";
+    $("#heraldUrlStat").textContent="ᛉ webhook answers"+(HWIZ.name?" · \""+HWIZ.name+"\"":"");
+    toast("ᚺ The Herald speaks · status post placed in Discord");
+    logLine("ok","[Herald] Discord sharing configured · status post published");
+  }else{
+    toast("ᚦ "+(r.error||"publish failed")+" · check the webhook in the HERALD hall");
+  }
+}
+function heraldWizRender(){
+  const names=["WELCOME","WEBHOOK","TIDINGS","PUBLISH"];
+  const steps=`<div class="wiz-steps">`+names.map((n,i)=>
+    `<span class="ws${i===HWIZ.step?" on":i<HWIZ.step?" done":""}"><b>${i+1}</b>${n}</span>`).join("")+`</div>`;
+  let body="",nav="";
+
+  if(HWIZ.step===0){
+    body=
+      `<div class="mtitle">${TT("Summon the Herald")}</div>`+
+      `<div class="wiz-help">${TT("The Herald keeps <strong>one</strong> status post in a Discord channel of your choosing and quietly <strong>edits that same post</strong> whenever the realm changes. It never sends a stream of messages - your channel stays clean.")}</div>`+
+      `<div class="wiz-paths">`+
+      `<div><span class="r">ᛒ</span><strong>${TT("The post always carries")}</strong> · server name, status, players online, world, mod count, last mod update, next restart.</div>`+
+      `<div><span class="r">ᛜ</span><strong>${TT("You choose")}</strong> · ${TT("whether the join address, the password, and one-off event posts are included.")}</div>`+
+      `<div><span class="r">ᛟ</span><strong>${TT("What you need")}</strong> · ${TT("a Discord server where you can manage webhooks (or a friendly admin who can). Takes about a minute.")}</div>`+
+      `</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="hwCancel">Cancel</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="hwNext">Begin</button>`;
+  }else if(HWIZ.step===1){
+    body=
+      `<div class="mtitle">${TT("Forge the webhook")}</div>`+
+      `<div class="wiz-help">${TT("A webhook is a private posting address for one channel. In <strong>Discord</strong>:")}<br>`+
+      `1 · ${TT("open your Discord server and click its name → <strong>Server Settings</strong>")}<br>`+
+      `2 · ${TT("go to <strong>Integrations → Webhooks → New Webhook</strong>")}<br>`+
+      `3 · ${TT("name it (say, <em>BakaLoader Herald</em>) and pick the channel the post should live in")}<br>`+
+      `4 · ${TT("press <strong>Copy Webhook URL</strong> and paste it below")}</div>`+
+      `<div class="field"><label>Webhook URL</label><input type="text" id="hwUrl" spellcheck="false" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></div>`+
+      `<div class="wiz-stat dim" id="hwUrlStat">${TT("paste the URL · the Herald will knock on it to make sure it answers")}</div>`+
+      `<div class="field" style="margin-top:8px"><label>${TT("Thread ID · optional")}</label><input type="text" id="hwThread" spellcheck="false" autocomplete="off" placeholder="${TT("blank = post in the channel itself")}"></div>`+
+      `<div class="wiz-help" style="margin-top:4px">${TT("Thread ID is only for posting inside a thread or forum post: right-click the thread → <strong>Copy Thread ID</strong> (needs Developer Mode, under App Settings → Advanced). Most people leave this blank.")}</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">Back</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="hwNext" disabled>Next</button>`;
+  }else if(HWIZ.step===2){
+    body=
+      `<div class="mtitle">${TT("Choose the tidings")}</div>`+
+      `<div class="wiz-help">${TT("The post always shows name, status, players, world, mods and the next restart. Decide what else rides along - everything can be changed later in the <strong>HERALD</strong> hall.")}</div>`+
+      `<div class="togglerow"><span class="tl">${TT("Join address (IP:port)")}</span><span class="toggle${HWIZ.addr?" on":""}" id="hwAddr" title="${esc(TT("Include the server's public IP and port so friends copy it straight from Discord."))}"></span></div>`+
+      `<div class="togglerow"><span class="tl">${TT("Server password")}</span><span class="toggle${HWIZ.pass?" on":""}" id="hwPass" title="${esc(TT("Include the password in the post. Anyone who can read the channel sees it."))}"></span></div>`+
+      `<div class="wiz-stat dim" id="hwPassWarn" style="color:var(--amber)">${HWIZ.pass?TT("ᚦ everyone in that channel will see the password - private channels only"):""}</div>`+
+      `<div class="togglerow"><span class="tl">${TT("Event posts")}</span><span class="toggle${HWIZ.events?" on":""}" id="hwEvents" title="${esc(TT("Also send one-off messages for server start/stop/crash and player join/leave. Separate messages - not edits of the status post."))}"></span></div>`+
+      `<div class="wiz-help" style="margin-top:2px">${TT("Event posts are extra one-off messages (start · stop · crash · join · leave). Leave off for the single silent status post only.")}</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">Back</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="hwNext">Next</button>`;
+  }else{
+    body=
+      `<div class="mtitle">${TT("Let the Herald speak")}</div>`+
+      `<div class="wiz-sum">`+
+      `<div class="row"><span class="k">Webhook</span><span class="v">${esc(HWIZ.name?("\""+HWIZ.name+"\" · answers"):"validated")}</span></div>`+
+      `<div class="row"><span class="k">${TT("Thread")}</span><span class="v">${esc(HWIZ.thread.trim()||TT("none · posts in the channel itself"))}</span></div>`+
+      `<div class="row"><span class="k">${TT("Join address")}</span><span class="v">${HWIZ.addr?"shared":"hidden"}</span></div>`+
+      `<div class="row"><span class="k">${TT("Password")}</span><span class="v">${HWIZ.pass?TT("shared · trusted channel"):"hidden"}</span></div>`+
+      `<div class="row"><span class="k">${TT("Event posts")}</span><span class="v">${HWIZ.events?"on":"off"}</span></div>`+
+      `</div>`+
+      `<div class="wiz-help">${TT("Finish places the first post. From then on the Herald edits that same post whenever the realm changes - you never need to touch it again.")}</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">Back</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="hwNext">${TT("Publish the post")}</button>`;
+  }
+
+  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`);
+  m.classList.add("wiz");
+  const on=(sel,fn)=>{const el=m.querySelector(sel);if(el)el.addEventListener("click",fn);};
+  on("#hwCancel",modalClose);
+  on("#hwBack",()=>{HWIZ.step--;heraldWizRender();});
+  on("#hwNext",()=>{
+    if(HWIZ.step===3){heraldWizFinish();return;}
+    HWIZ.step++;heraldWizRender();
+  });
+
+  if(HWIZ.step===1){
+    const inp=m.querySelector("#hwUrl"),thr=m.querySelector("#hwThread"),
+          stat=m.querySelector("#hwUrlStat"),next=m.querySelector("#hwNext");
+    inp.value=HWIZ.url; thr.value=HWIZ.thread;
+    thr.addEventListener("input",()=>{HWIZ.thread=thr.value;});
+    let t=null;
+    const check=()=>{
+      HWIZ.url=inp.value;
+      clearTimeout(t);
+      const v=inp.value.trim();
+      if(!v){
+        HWIZ.valid=false;next.disabled=true;
+        stat.className="wiz-stat dim";stat.textContent=TT("paste the URL · the Herald will knock on it to make sure it answers");
+        return;
+      }
+      stat.className="wiz-stat dim";stat.textContent="checking…";
+      t=setTimeout(async()=>{
+        const r=Native.available?await rpc("discord.validate",{url:v})
+          :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:"that doesn't look like a Discord webhook URL"};
+        const ok=r!==FAIL&&!!r.ok;
+        HWIZ.valid=ok;HWIZ.name=ok?(r.name||""):"";next.disabled=!ok;
+        stat.className="wiz-stat "+(ok?"ok":"bad");
+        stat.textContent=ok?("ᛉ "+TT("the webhook answers")+(HWIZ.name?" · \""+HWIZ.name+"\"":""))
+                           :("ᚦ "+((r&&r.error)||TT("that webhook does not answer · re-copy the URL from Discord")));
+      },350);
+    };
+    inp.addEventListener("input",check);
+    if(HWIZ.url) check();
+    setTimeout(()=>inp.focus(),30);
+  }
+  if(HWIZ.step===2){
+    const flip=(id,key)=>{const el=m.querySelector(id);el.addEventListener("click",()=>{
+      HWIZ[key]=!HWIZ[key];el.classList.toggle("on",HWIZ[key]);
+      if(key==="pass") m.querySelector("#hwPassWarn").textContent=HWIZ.pass?TT("ᚦ everyone in that channel will see the password - private channels only"):"";
+    });};
+    flip("#hwAddr","addr");flip("#hwPass","pass");flip("#hwEvents","events");
+  }
+}
 
 /* ---------- RUNES (BepInEx .cfg editor) ---------- */
 const CFG={files:[],file:null,dirty:false,mock:null};
@@ -2906,6 +3150,7 @@ if(!Native.available){
 
   /* upkeep card preview values (native fills these from userprefs.get) */
   $("#blVersion").textContent=$("#sideVer").textContent; // mirror the shipped version string
+  setT("tHeraldAddr",true); // herald preview mirrors the C# default (address shared, rest off)
 
   /* multi-server chip strip preview */
   S.servers=[

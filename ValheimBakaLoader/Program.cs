@@ -71,6 +71,7 @@ namespace ValheimBakaLoader
             services.AddSingleton<ISoftwareUpdateProvider, SoftwareUpdateProvider>();
             services.AddSingleton<IRemoteApiClient, RemoteApiClient>();
             services.AddSingleton<IDiscordWebhookService, DiscordWebhookService>();
+            services.AddSingleton<IDiscordStatusService, DiscordStatusService>();
 
             // Server management: companion plugins, RCON, player and pref data.
             services.AddSingleton<IItemIndexerInstaller, ItemIndexerInstaller>();

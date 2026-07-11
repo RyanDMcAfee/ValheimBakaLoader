@@ -35,6 +35,11 @@ namespace ValheimBakaLoader.Game
 
         [JsonProperty("discordWebhookUrl")] public string DiscordWebhookUrl { get; set; }
         [JsonProperty("discordWebhookThreadId")] public string DiscordWebhookThreadId { get; set; }
+        [JsonProperty("discordSharingEnabled")] public bool? DiscordSharingEnabled { get; set; }
+        [JsonProperty("discordShareAddress")] public bool? DiscordShareAddress { get; set; }
+        [JsonProperty("discordSharePassword")] public bool? DiscordSharePassword { get; set; }
+        [JsonProperty("discordEventPosts")] public bool? DiscordEventPosts { get; set; }
+        [JsonProperty("discordStatusMessageId")] public string DiscordStatusMessageId { get; set; }
 
         // -- Nested collections --
 

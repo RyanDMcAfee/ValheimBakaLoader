@@ -139,6 +139,9 @@ namespace ValheimBakaLoader.Game
         private CancellationTokenSource EmptyRestartCts;
         // Fires a scheduled (e.g. every 6 hours) restart while the server is running.
         private CancellationTokenSource ScheduledRestartCts;
+        // When the next scheduled restart will fire (UTC); null when no restart is armed.
+        // Consumed by the Discord status post ("next restart" field).
+        public DateTime? NextScheduledRestartUtc { get; private set; }
         // While the server sits empty, periodically checks for pending mod updates and, if any
         // are found, restarts to install them (item C: auto-update on an empty server).
         private CancellationTokenSource EmptyUpdateCts;
@@ -1228,6 +1231,8 @@ namespace ValheimBakaLoader.Game
             ScheduledRestartCts = cts;
             var token = cts.Token;
 
+            NextScheduledRestartUtc = DateTime.UtcNow + TimeSpan.FromSeconds(intervalSeconds);
+
             ApplicationLogger.Information("Scheduling automatic restart every {hours} hour(s).", Math.Max(1, Options.ScheduledRestartHours));
 
             Task.Run(async () =>
@@ -1252,6 +1257,8 @@ namespace ValheimBakaLoader.Game
 
         private void CancelScheduledRestart()
         {
+            NextScheduledRestartUtc = null;
+
             var cts = ScheduledRestartCts;
             if (cts == null) return;
 

@@ -48,6 +48,21 @@ namespace ValheimBakaLoader.Game
 
         public string DiscordWebhookThreadId { get; set; }
 
+        // Master switch for the Herald hall: single self-editing Discord status post.
+        public bool DiscordSharingEnabled { get; set; }
+
+        // Include the server's public IP:port in the status post.
+        public bool DiscordShareAddress { get; set; } = true;
+
+        // Include the server password in the status post (off by default - anyone in the channel can see it).
+        public bool DiscordSharePassword { get; set; }
+
+        // Also post one-off event embeds (server started/stopped/crashed, player joined/left).
+        public bool DiscordEventPosts { get; set; }
+
+        // Discord message id of the status post we keep editing; state, not a user setting.
+        public string DiscordStatusMessageId { get; set; }
+
         public List<ServerPreferences> Servers { get; set; } = new();
 
         public List<WorldPreferences> Worlds { get; set; } = new();
@@ -79,6 +94,11 @@ namespace ValheimBakaLoader.Game
                 SetupCompleted = file.SetupCompleted ?? defaults.SetupCompleted,
                 DiscordWebhookUrl = file.DiscordWebhookUrl ?? defaults.DiscordWebhookUrl,
                 DiscordWebhookThreadId = file.DiscordWebhookThreadId ?? defaults.DiscordWebhookThreadId,
+                DiscordSharingEnabled = file.DiscordSharingEnabled ?? defaults.DiscordSharingEnabled,
+                DiscordShareAddress = file.DiscordShareAddress ?? defaults.DiscordShareAddress,
+                DiscordSharePassword = file.DiscordSharePassword ?? defaults.DiscordSharePassword,
+                DiscordEventPosts = file.DiscordEventPosts ?? defaults.DiscordEventPosts,
+                DiscordStatusMessageId = file.DiscordStatusMessageId ?? defaults.DiscordStatusMessageId,
 
                 Servers = (file.Servers ?? new())
                     .Where(s => s != null)
@@ -116,6 +136,11 @@ namespace ValheimBakaLoader.Game
             SetupCompleted = SetupCompleted,
             DiscordWebhookUrl = DiscordWebhookUrl,
             DiscordWebhookThreadId = DiscordWebhookThreadId,
+            DiscordSharingEnabled = DiscordSharingEnabled,
+            DiscordShareAddress = DiscordShareAddress,
+            DiscordSharePassword = DiscordSharePassword,
+            DiscordEventPosts = DiscordEventPosts,
+            DiscordStatusMessageId = DiscordStatusMessageId,
 
             Servers = (Servers ?? new())
                 .Select(s => s.ToFile())

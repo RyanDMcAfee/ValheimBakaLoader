@@ -35,6 +35,7 @@
       <div class="navitem" data-page="atlas"><span class="rune">ᛞ</span><span class="lbl">Atlas</span></div>
       <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl">Runes</span></div>
       <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl">Saga</span></div>
+      <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Herald</span></div>
       <div class="side-foot">
         <span class="moon">☾</span><span id="sideVer">v0.9.33</span>
         <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of<br>mead&nbsp;⚑</a>
@@ -418,6 +419,48 @@
           </div>
         </section>
 
+        <!-- ============ PAGE: HERALD (Discord sharing · one self-editing status post) ============ -->
+        <section class="page" id="page-herald" style="display:none">
+          <div class="pagehead">
+            <h1><span class="r">ᚺ</span>HERALD</h1>
+            <span class="sub">one Discord post · edits itself · never floods the channel</span>
+            <div class="grow"></div>
+            <button class="btn btn-ember btn-sm" id="heraldWizBtn" title="Guided setup: create a webhook in Discord, paste it here, choose what to share, publish the first post">ᚺ&nbsp; Setup wizard</button>
+          </div>
+          <div class="herald-grid">
+            <!-- THE HERALD: master switch + webhook -->
+            <div class="card b-herald">
+              <div class="microlabel"><span class="r">ᚺ</span>The Herald</div>
+              <div class="subval" style="margin:2px 0 10px">BakaLoader keeps <strong>one</strong> status post in your Discord channel and quietly edits it whenever the realm changes - players joining, mods updating, the next restart drawing near. One post, forever fresh. No spam.</div>
+              <div class="togglerow"><span class="tl">Share this server on Discord</span><span class="toggle" id="tHerald" data-t title="Master switch. On: the status post keeps itself up to date. Off: nothing is ever sent."></span></div>
+              <div class="field" style="margin-top:10px"><label>Webhook URL <span class="r" title="In Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL. The setup wizard walks you through it.">ᛟ</span></label>
+                <input type="text" id="heraldUrl" spellcheck="false" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></div>
+              <div class="wiz-stat dim" id="heraldUrlStat" style="margin-top:4px">paste a webhook URL, or run the setup wizard</div>
+              <div class="field" style="margin-top:8px"><label>Thread ID <span class="r" title="Optional. Only for posting inside a thread or forum post: right-click the thread → Copy Thread ID (needs Discord developer mode, under App Settings → Advanced). Blank = post directly in the channel.">ᛟ</span></label>
+                <input type="text" id="heraldThread" spellcheck="false" autocomplete="off" placeholder="optional · blank = post in the channel itself"></div>
+            </div>
+            <!-- WHAT THE POST CARRIES -->
+            <div class="card b-heraldshare">
+              <div class="microlabel"><span class="r">ᛜ</span>What the post carries</div>
+              <div class="subval" style="margin:2px 0 8px">Always: server name, status, players online, world, mod count, last mod update, next restart. Optional extras:</div>
+              <div class="togglerow"><span class="tl">Join address (IP:port)</span><span class="toggle" id="tHeraldAddr" data-t title="Include the server's public IP and port so friends copy it straight from Discord."></span></div>
+              <div class="togglerow"><span class="tl">Server password</span><span class="toggle" id="tHeraldPass" data-t title="Include the password in the post. Anyone who can read the channel sees it - only for private channels."></span></div>
+              <div class="subval" style="margin:2px 0 4px;color:var(--amber)">ᚦ the password is visible to everyone in that channel - trusted halls only</div>
+              <div class="togglerow"><span class="tl">Event posts</span><span class="toggle" id="tHeraldEvents" data-t title="Also send one-off messages when the server starts, stops or crashes, and when vikings join or leave. These are separate messages, not edits of the status post."></span></div>
+              <div class="subval" style="margin:2px 0 0">one-off messages for start · stop · crash · join · leave</div>
+            </div>
+            <!-- THE POST -->
+            <div class="card b-heraldpost">
+              <div class="microlabel"><span class="r">ᛒ</span>The post</div>
+              <div class="subval" id="heraldPostStat" style="margin:2px 0 12px">no post yet · publish to place the Herald in your channel</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn btn-ember btn-sm" id="heraldPublish" title="Create the status post now - or refresh it immediately if it already exists">ᛒ&nbsp; Publish now</button>
+                <button class="btn btn-ghost btn-sm" id="heraldRemove" title="Delete the status post from Discord. Settings stay - publish again any time.">ᛪ&nbsp; Remove post</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
       </div>
 
       <!-- STATUSBAR -->
@@ -447,6 +490,7 @@
         <div class="pitem" data-cmd="Kick player…"><span class="r">ᚲ</span>Kick player…<span class="k">viking</span></div>
         <div class="pitem" data-cmd="Update all mods"><span class="r">ᛟ</span>Update all mods<span class="k">forge</span></div>
         <div class="pitem" data-cmd="Copy join address"><span class="r">ᛜ</span>Copy join address<span class="k">net</span></div>
+        <div class="pitem" data-cmd="Discord sharing"><span class="r">ᚺ</span>Discord sharing<span class="k">herald</span></div>
         <div class="pitem" data-cmd="Open world folder"><span class="r">ᛃ</span>Open world folder<span class="k">path</span></div>
         <div class="pitem" data-cmd="Open config folder"><span class="r">ᛃ</span>Open config folder<span class="k">path</span></div>
         <div class="pitem" data-cmd="Open plugins folder"><span class="r">ᛃ</span>Open plugins folder<span class="k">path</span></div>

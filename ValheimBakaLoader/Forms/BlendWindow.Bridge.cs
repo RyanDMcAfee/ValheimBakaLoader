@@ -42,6 +42,8 @@ namespace ValheimBakaLoader.Forms
         private IHeartbeatService Heartbeat;
         private IInstallIsolationService InstallIsolation;
         private IMaxPlayersInstaller MaxPlayersInstaller;
+        private IDiscordStatusService DiscordStatus;
+        private IDiscordWebhookService DiscordWebhooks;
         private IApplicationLogger AppLogger;
 
         /// <summary>The profile whose preferences were last loaded/saved through the bridge.</summary>
@@ -139,7 +141,13 @@ namespace ValheimBakaLoader.Forms
             Heartbeat = heartbeatService;
             InstallIsolation = serviceProvider.GetRequiredService<IInstallIsolationService>();
             MaxPlayersInstaller = serviceProvider.GetRequiredService<IMaxPlayersInstaller>();
+            DiscordStatus = serviceProvider.GetRequiredService<IDiscordStatusService>();
+            DiscordWebhooks = serviceProvider.GetRequiredService<IDiscordWebhookService>();
             AppLogger = appLogger;
+
+            // The Herald: single self-editing Discord status post (gated on prefs inside the service).
+            DiscordStatus.SnapshotProvider = BuildDiscordSnapshot;
+            DiscordStatus.RequestUpdate();
 
             // Anonymous usage heartbeat (gated on the ShareAnonymousStats pref).
             Heartbeat.ServerRunningProvider = () =>
@@ -189,14 +197,47 @@ namespace ValheimBakaLoader.Forms
             var profile = session.ProfileName;
             var server = session.Server;
 
+            // Tracks whether the most recent exit was a crash, so the Stopped transition
+            // below doesn't ALSO announce a routine "server stopped" for it.
+            // (ServerCrashed always fires before the status lands on Stopped.)
+            var crashAnnounced = false;
+
+            string DisplayName() =>
+                ServerPrefsProvider.LoadPreferences(profile)?.Name is string n && !string.IsNullOrWhiteSpace(n)
+                    ? n : profile;
+
             server.StatusChanged += (s, status) =>
             {
                 PostEvent("server.status", BuildServerState(session));
                 PostEvent("servers.changed", BuildServersList());
+
+                DiscordStatus.RequestUpdate();
+
+                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                {
+                    if (status == ServerStatus.Running)
+                    {
+                        crashAnnounced = false;
+                        DiscordWebhooks.SendServerStarted(DisplayName());
+                    }
+                    else if (status == ServerStatus.Stopped && !crashAnnounced)
+                    {
+                        DiscordWebhooks.SendServerStopped(DisplayName());
+                    }
+                }
             };
             server.WorldSaved += (s, seconds) => PostEvent("server.worldSaved", new { seconds, profile });
             server.InviteCodeReady += (s, code) => PostEvent("server.inviteCode", new { code, profile });
-            server.ServerCrashed += (s, e) => PostEvent("server.crashed", new { profile });
+            server.ServerCrashed += (s, e) =>
+            {
+                PostEvent("server.crashed", new { profile });
+                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                {
+                    crashAnnounced = true;
+                    var willRestart = server.Options?.AutoRestart == true;
+                    DiscordWebhooks.SendServerCrashed(DisplayName(), willRestart, server.Options?.AutoRestartDelay ?? 0);
+                }
+            };
             server.CountdownTick += (s, message) => PostEvent("server.countdown", new { message, profile });
         }
 
@@ -625,6 +666,9 @@ namespace ValheimBakaLoader.Forms
                 var results = await ModUpdateService.UpdateModsAsync(updatable);
                 Logger.Information("Auto-updated {count} mod(s) for profile {profile}",
                     results.Count(r => r.Updated), profile);
+
+                // Herald: mod count / last-update time changed.
+                DiscordStatus.RequestUpdate();
             };
         }
 
@@ -665,9 +709,30 @@ namespace ValheimBakaLoader.Forms
 
             // Status transitions drive the server chips' player-count badges.
             PlayerDataProvider.PlayerStatusChanged += (s, player) =>
+            {
                 PostEvent("servers.changed", BuildServersList());
 
-            IpAddressProvider.ExternalIpChanged += (s, ip) => PostEvent("ip.external", new { ip });
+                // Herald: player counts changed - refresh the Discord status post.
+                DiscordStatus.RequestUpdate();
+
+                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts
+                    && !string.IsNullOrWhiteSpace(player?.PlayerName))
+                {
+                    var serverName = ServerPrefsProvider.LoadPreferences(player.ServerKey)?.Name;
+                    if (string.IsNullOrWhiteSpace(serverName)) serverName = player.ServerKey ?? "server";
+
+                    if (player.PlayerStatus == PlayerStatus.Online)
+                        DiscordWebhooks.SendPlayerJoined(player.PlayerName, serverName);
+                    else if (player.PlayerStatus == PlayerStatus.Offline)
+                        DiscordWebhooks.SendPlayerLeft(player.PlayerName, serverName);
+                }
+            };
+
+            IpAddressProvider.ExternalIpChanged += (s, ip) =>
+            {
+                PostEvent("ip.external", new { ip });
+                DiscordStatus.RequestUpdate();
+            };
             IpAddressProvider.InternalIpChanged += (s, ip) => PostEvent("ip.internal", new { ip });
 
             ServerPrefsProvider.PreferencesSaved += (s, all) =>
@@ -1176,8 +1241,19 @@ namespace ValheimBakaLoader.Forms
                 Apply("PlainTerminology", v => prefs.PlainTerminology = v.Value<bool>());
                 Apply("DiscordWebhookUrl", v => prefs.DiscordWebhookUrl = v.Value<string>());
                 Apply("DiscordWebhookThreadId", v => prefs.DiscordWebhookThreadId = v.Value<string>());
+                Apply("DiscordSharingEnabled", v => prefs.DiscordSharingEnabled = v.Value<bool>());
+                Apply("DiscordShareAddress", v => prefs.DiscordShareAddress = v.Value<bool>());
+                Apply("DiscordSharePassword", v => prefs.DiscordSharePassword = v.Value<bool>());
+                Apply("DiscordEventPosts", v => prefs.DiscordEventPosts = v.Value<bool>());
 
                 UserPrefsProvider.SavePreferences(prefs);
+
+                // A Discord-affecting save should refresh the status post right away
+                // (e.g. share-password toggled -> the field appears/disappears).
+                if (dto.Properties().Any(prop => prop.Name.StartsWith("Discord", StringComparison.OrdinalIgnoreCase)))
+                {
+                    DiscordStatus.RequestUpdate();
+                }
 
                 // When the "start with Windows" toggle was part of this save, mirror it into the
                 // Windows Run registry key so the choice actually takes effect (mirrors MainWindow).
@@ -1188,6 +1264,28 @@ namespace ValheimBakaLoader.Forms
                 }
 
                 return Task.FromResult<object>(BuildUserPrefsDto());
+            });
+
+            // --- Discord (the Herald) ---
+            // Checks a pasted webhook URL is real by GETting its metadata - sends nothing.
+            RegisterRpc("discord.validate", async p =>
+            {
+                var result = await DiscordStatus.ValidateWebhookAsync(p.Value<string>("url"));
+                return new { ok = result.Ok, error = result.Error, name = result.Detail };
+            });
+
+            // Creates the status post if none exists yet, otherwise edits it in place.
+            RegisterRpc("discord.publish", async p =>
+            {
+                var result = await DiscordStatus.PublishNowAsync();
+                return new { ok = result.Ok, error = result.Error, detail = result.Detail };
+            });
+
+            // Deletes the status post from the channel and forgets its id.
+            RegisterRpc("discord.remove", async p =>
+            {
+                var result = await DiscordStatus.RemoveStatusMessageAsync();
+                return new { ok = result.Ok, error = result.Error };
             });
 
             // --- Worlds ---
@@ -2497,6 +2595,79 @@ namespace ValheimBakaLoader.Forms
                 prefs.SetupCompleted,
                 prefs.DiscordWebhookUrl,
                 prefs.DiscordWebhookThreadId,
+                prefs.DiscordSharingEnabled,
+                prefs.DiscordShareAddress,
+                prefs.DiscordSharePassword,
+                prefs.DiscordEventPosts,
+                HasDiscordStatusMessage = !string.IsNullOrWhiteSpace(prefs.DiscordStatusMessageId),
+                AppVersion = AssemblyHelper.GetApplicationVersion(),
+            };
+        }
+
+        /// <summary>
+        /// Everything the Herald's Discord status post shows, built fresh at publish time.
+        /// Prefers a live (non-stopped) session - the active one wins ties - and falls back
+        /// to the active profile so a stopped server still reports "Offline" truthfully.
+        /// </summary>
+        private DiscordStatusSnapshot BuildDiscordSnapshot()
+        {
+            var session = Sessions.Values
+                .Where(s => s.Server.Status != ServerStatus.Stopped)
+                .OrderByDescending(s => string.Equals(s.ProfileName, ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                .FirstOrDefault();
+
+            var profile = session?.ProfileName ?? ActiveProfileName;
+            var server = session?.Server;
+            var prefs = ServerPrefsProvider.LoadPreferences(profile);
+
+            var status = server?.Status ?? ServerStatus.Stopped;
+            var statusText = status switch
+            {
+                ServerStatus.Running => "Online",
+                ServerStatus.Starting => "Starting up…",
+                ServerStatus.Stopping => "Shutting down…",
+                _ => "Offline",
+            };
+
+            var playersOnline = PlayerDataProvider.Data.Count(pl =>
+                (pl.PlayerStatus == PlayerStatus.Online || pl.PlayerStatus == PlayerStatus.Joining)
+                && string.Equals(pl.ServerKey, profile, StringComparison.OrdinalIgnoreCase));
+
+            // Mod count + the newest plugin-folder write time (= last mod install/update).
+            var modCount = 0;
+            DateTime? lastModUpdate = null;
+            try
+            {
+                var pluginsDir = GetPluginsDirectoryFor(profile);
+                if (!string.IsNullOrWhiteSpace(pluginsDir) && Directory.Exists(pluginsDir))
+                {
+                    var mods = ModScanner.ScanPlugins(pluginsDir);
+                    modCount = mods?.Count ?? 0;
+                    lastModUpdate = (mods ?? new())
+                        .Select(m => m.PluginDirectory)
+                        .Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d))
+                        .Select(d => (DateTime?)Directory.GetLastWriteTimeUtc(d))
+                        .DefaultIfEmpty(null)
+                        .Max();
+                }
+            }
+            catch { /* mod info is decorative - never block the status post on it */ }
+
+            var externalIp = IpAddressProvider.ExternalIpAddress;
+
+            return new DiscordStatusSnapshot
+            {
+                ServerName = !string.IsNullOrWhiteSpace(prefs?.Name) ? prefs.Name : profile,
+                WorldName = prefs?.WorldName,
+                StatusText = statusText,
+                ServerRunning = status == ServerStatus.Running,
+                ServerStarting = status == ServerStatus.Starting || status == ServerStatus.Stopping,
+                AddressText = string.IsNullOrWhiteSpace(externalIp) ? null : $"{externalIp}:{prefs?.Port ?? 2456}",
+                Password = prefs?.Password,
+                PlayersOnline = playersOnline,
+                ModCount = modCount,
+                LastModUpdateUtc = lastModUpdate,
+                NextRestartUtc = server?.NextScheduledRestartUtc,
                 AppVersion = AssemblyHelper.GetApplicationVersion(),
             };
         }
