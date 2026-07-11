@@ -63,6 +63,11 @@ namespace ValheimBakaLoader.Game
         // Discord message id of the status post we keep editing; state, not a user setting.
         public string DiscordStatusMessageId { get; set; }
 
+        // Optional hostname shown instead of the raw public IP in join prompts and the
+        // Discord status post (e.g. "valheim.example.com"). Valheim clients resolve A/AAAA
+        // records when joining by name; the port must still be shared (no SRV support).
+        public string CustomJoinDomain { get; set; }
+
         public List<ServerPreferences> Servers { get; set; } = new();
 
         public List<WorldPreferences> Worlds { get; set; } = new();
@@ -99,6 +104,7 @@ namespace ValheimBakaLoader.Game
                 DiscordSharePassword = file.DiscordSharePassword ?? defaults.DiscordSharePassword,
                 DiscordEventPosts = file.DiscordEventPosts ?? defaults.DiscordEventPosts,
                 DiscordStatusMessageId = file.DiscordStatusMessageId ?? defaults.DiscordStatusMessageId,
+                CustomJoinDomain = file.CustomJoinDomain ?? defaults.CustomJoinDomain,
 
                 Servers = (file.Servers ?? new())
                     .Where(s => s != null)
@@ -141,6 +147,7 @@ namespace ValheimBakaLoader.Game
             DiscordSharePassword = DiscordSharePassword,
             DiscordEventPosts = DiscordEventPosts,
             DiscordStatusMessageId = DiscordStatusMessageId,
+            CustomJoinDomain = CustomJoinDomain,
 
             Servers = (Servers ?? new())
                 .Select(s => s.ToFile())

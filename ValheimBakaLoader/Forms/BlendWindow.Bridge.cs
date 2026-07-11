@@ -1245,12 +1245,15 @@ namespace ValheimBakaLoader.Forms
                 Apply("DiscordShareAddress", v => prefs.DiscordShareAddress = v.Value<bool>());
                 Apply("DiscordSharePassword", v => prefs.DiscordSharePassword = v.Value<bool>());
                 Apply("DiscordEventPosts", v => prefs.DiscordEventPosts = v.Value<bool>());
+                Apply("CustomJoinDomain", v => prefs.CustomJoinDomain = v.Value<string>()?.Trim());
 
                 UserPrefsProvider.SavePreferences(prefs);
 
                 // A Discord-affecting save should refresh the status post right away
-                // (e.g. share-password toggled -> the field appears/disappears).
-                if (dto.Properties().Any(prop => prop.Name.StartsWith("Discord", StringComparison.OrdinalIgnoreCase)))
+                // (e.g. share-password toggled -> the field appears/disappears; the
+                // custom join domain changes the address line in the post).
+                if (dto.Properties().Any(prop => prop.Name.StartsWith("Discord", StringComparison.OrdinalIgnoreCase)
+                    || prop.Name.Equals("CustomJoinDomain", StringComparison.OrdinalIgnoreCase)))
                 {
                     DiscordStatus.RequestUpdate();
                 }
@@ -1286,6 +1289,54 @@ namespace ValheimBakaLoader.Forms
             {
                 var result = await DiscordStatus.RemoveStatusMessageAsync();
                 return new { ok = result.Ok, error = result.Error };
+            });
+
+            // --- Custom join domain (the Waystone) ---
+            // Resolves a hostname through real DNS and compares it to the server's public IP,
+            // so the wizard can prove the A record points home before the domain is trusted.
+            RegisterRpc("domain.check", async p =>
+            {
+                var domain = (p.Value<string>("domain") ?? "").Trim().TrimEnd('.');
+
+                // Bare hostname only - no scheme, no port, no path.
+                if (domain.Length == 0 || domain.Length > 253
+                    || Uri.CheckHostName(domain) != UriHostNameType.Dns
+                    || !domain.Contains('.'))
+                {
+                    return new { ok = false, error = "not a valid hostname", ips = Array.Empty<string>(), publicIp = IpAddressProvider.ExternalIpAddress, match = false };
+                }
+
+                try
+                {
+                    var resolveTask = System.Net.Dns.GetHostAddressesAsync(domain);
+                    var winner = await Task.WhenAny(resolveTask, Task.Delay(TimeSpan.FromSeconds(6)));
+                    if (winner != resolveTask)
+                    {
+                        return new { ok = false, error = "DNS lookup timed out", ips = Array.Empty<string>(), publicIp = IpAddressProvider.ExternalIpAddress, match = false };
+                    }
+
+                    var ips = (await resolveTask)
+                        .Select(a => a.ToString())
+                        .Distinct()
+                        .ToArray();
+                    var publicIp = IpAddressProvider.ExternalIpAddress;
+                    var match = !string.IsNullOrWhiteSpace(publicIp)
+                        && ips.Contains(publicIp, StringComparer.OrdinalIgnoreCase);
+
+                    return new
+                    {
+                        ok = ips.Length > 0,
+                        error = ips.Length > 0 ? null : "the name resolves to nothing",
+                        ips,
+                        publicIp,
+                        match,
+                    };
+                }
+                catch (Exception e)
+                {
+                    AppLogger.Debug("domain.check failed for {Domain}: {Error}", domain, e.Message);
+                    return new { ok = false, error = "the name does not resolve yet", ips = Array.Empty<string>(), publicIp = IpAddressProvider.ExternalIpAddress, match = false };
+                }
             });
 
             // --- Worlds ---
@@ -2599,6 +2650,7 @@ namespace ValheimBakaLoader.Forms
                 prefs.DiscordShareAddress,
                 prefs.DiscordSharePassword,
                 prefs.DiscordEventPosts,
+                prefs.CustomJoinDomain,
                 HasDiscordStatusMessage = !string.IsNullOrWhiteSpace(prefs.DiscordStatusMessageId),
                 AppVersion = AssemblyHelper.GetApplicationVersion(),
             };
@@ -2655,6 +2707,10 @@ namespace ValheimBakaLoader.Forms
 
             var externalIp = IpAddressProvider.ExternalIpAddress;
 
+            // A verified custom domain reads better than a raw IP and survives IP changes.
+            var joinHost = UserPrefsProvider.LoadPreferences()?.CustomJoinDomain;
+            if (string.IsNullOrWhiteSpace(joinHost)) joinHost = externalIp;
+
             return new DiscordStatusSnapshot
             {
                 ServerName = !string.IsNullOrWhiteSpace(prefs?.Name) ? prefs.Name : profile,
@@ -2662,7 +2718,7 @@ namespace ValheimBakaLoader.Forms
                 StatusText = statusText,
                 ServerRunning = status == ServerStatus.Running,
                 ServerStarting = status == ServerStatus.Starting || status == ServerStatus.Stopping,
-                AddressText = string.IsNullOrWhiteSpace(externalIp) ? null : $"{externalIp}:{prefs?.Port ?? 2456}",
+                AddressText = string.IsNullOrWhiteSpace(joinHost) ? null : $"{joinHost}:{prefs?.Port ?? 2456}",
                 Password = prefs?.Password,
                 PlayersOnline = playersOnline,
                 ModCount = modCount,

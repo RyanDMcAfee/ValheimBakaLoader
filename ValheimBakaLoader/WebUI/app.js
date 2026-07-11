@@ -45,6 +45,7 @@ const S={
   mods:null, modsScanned:false, modsScanning:false, modsUpdating:false, lastScan:null,
   modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
   extIp:null, intIp:null,
+  domain:null,            // custom join domain (the Waystone) - shown instead of the raw public IP when set
   invite:null,            // crossplay invite code (shown while known; cleared on stop)
   saveDur:[],             // last 10 world-save durations (ms) for the rolling average
   lastSaveAt:null,        // Date of the last observed world save
@@ -129,6 +130,16 @@ const TERM_PAIRS=[
   ["Herald","Discord"],
   ["Forge the webhook","Create the webhook"],
   ["Choose the tidings","Choose what to share"],
+  ["Raise the Waystone","Save the domain"],
+  ["Raise a Waystone","Set up a custom domain"],
+  ["The Waystone stands","Domain saved"],
+  ["The Waystone falls","Domain removed"],
+  ["Name the Waystone","Choose the name"],
+  ["Prove the Waystone","Verify the domain"],
+  ["current Waystone","current domain"],
+  ["WAYSTONE","DOMAIN"],
+  ["Waystone","Domain"],
+  ["waystone","domain"],
   ["BepInEx config scrolls","BepInEx config files"],
   ["no .cfg scrolls found","no .cfg files found"],
   ["Scrolls reloaded","Configs reloaded"],
@@ -182,7 +193,7 @@ const TT=plainify;
 /* Static lore-bearing elements: text nodes only (rune glyphs + pills untouched).
    Dynamic surfaces (#vikSub, #runesSub, hState/hPid, toasts…) route through TT()
    at render time instead - caching their originals would restore stale values. */
-const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,.capshead,#page-vikings th,#secRites,#page-saga .sub,#page-world .sub,.pitem .k";
+const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,.capshead,#page-vikings th,#secRites,#page-saga .sub,#page-world .sub,.pitem .k,#waystoneBtn";
 const TERM_ORIG=new Map();
 function applyTerms(){
   $$(TERM_STATIC_SEL).forEach(el=>[...el.childNodes].forEach(n=>{
@@ -644,10 +655,13 @@ stokeBtn.addEventListener("click",e=>{
   logLine("warn","[BakaLoader] restart requested - stoking the hearth");
 });
 /* Sail Forth copies a full join prompt - everything a friend needs to connect:
-   server name / world / public ip:port / password (+ crossplay code when known). */
+   server name / world / public ip:port / password (+ crossplay code when known).
+   When a Waystone (custom domain) is raised, the domain rides in place of the raw IP -
+   Valheim resolves A/AAAA records on join, but the port must still travel with it (no SRV). */
+function joinHost(){return S.domain||S.extIp||"…";}
 function buildJoinPrompt(){
   const p=S.prefs||{};
-  const addr=(S.extIp||"…")+":"+(p.Port??2456);
+  const addr=joinHost()+":"+(p.Port??2456);
   const lines=[p.Name||"Valheim server", p.WorldName||"-", addr];
   if(p.Password) lines.push(p.Password);
   if(p.Crossplay&&S.invite) lines.push("crossplay code "+S.invite);
@@ -700,9 +714,16 @@ $("#copyIp").addEventListener("click",e=>{
   toast("ᚾ Address copied · 203.0.113.42:2456");
   setTimeout(()=>e.target.textContent="COPY",1400);
 });
+function renderWaystone(){
+  const line=$("#netDomainLine"); if(!line) return;
+  const port=S.prefs?.Port??2456;
+  line.style.display=S.domain?"":"none";
+  if(S.domain) $("#netDomain").textContent=S.domain+":"+port;
+}
 function renderNet(){
   if(!Native.available) return;
   const port=S.prefs?.Port??2456;
+  renderWaystone();
   $("#netAddr").textContent=(S.extIp||"…")+":"+port;
   $("#netLan").textContent="LAN "+(S.intIp||"…")+":"+port;
   $("#netLoc").textContent="127.0.0.1:"+port;
@@ -716,7 +737,7 @@ function renderNet(){
   $("#netPill").className="pill "+(on?"green":"blue");
 }
 /* LAN / local / invite copy chips - copy exactly what's displayed (works in mock + native) */
-[["#copyLan","#netLan"],["#copyLoc","#netLoc"],["#copyInv","#netInvite"]].forEach(([chip,src])=>{
+[["#copyLan","#netLan"],["#copyLoc","#netLoc"],["#copyInv","#netInvite"],["#copyDomain","#netDomain"]].forEach(([chip,src])=>{
   $(chip).addEventListener("click",e=>{
     e.stopPropagation();
     const txt=$(src).textContent.replace(/^(LAN|invite)\s+/,"");
@@ -1035,6 +1056,7 @@ function invokePal(){
   if(sel.classList.contains("disabled")){toast("ᚦ "+(sel.title||"Unavailable right now"));return;}
   closePal();
   if(sel.dataset.cmd==="Discord sharing"){goPage("herald");return;} // works in preview too
+  if(sel.dataset.cmd==="Custom domain"){waystoneWizard();return;}   // works in preview too
   if(Native.available){
     const cmd=sel.dataset.cmd;
     if(sel.id==="palConsole"){
@@ -1074,7 +1096,7 @@ function invokePal(){
       goPage("vikings");
       toast("ᚲ Right-click a viking to kick");
     }else if(cmd==="Copy join address"){
-      const addr=(S.extIp||"…")+":"+(S.prefs?.Port??2456);
+      const addr=joinHost()+":"+(S.prefs?.Port??2456);
       navigator.clipboard?.writeText(addr).catch(()=>{});
       toast("ᛟ Join address copied · "+addr);
     }else if(cmd==="Open world folder"){
@@ -1233,6 +1255,8 @@ async function initUpkeep(){
     if(PLAIN) applyTerms();
     if(up.AppVersion) $("#blVersion").textContent="v"+up.AppVersion;
     heraldApply(up); /* Herald hall shares the same DTO */
+    S.domain=(up.CustomJoinDomain||"").trim()||null;
+    renderWaystone();
   }
   /* the generic [data-t] handler already flipped .on before these fire, so just persist */
   const save=()=>rpc("userprefs.save",{prefs:{AutoUpdateBakaLoader:T("tAutoUpdApp"),StartWithWindows:T("tStartWin"),ShareAnonymousStats:T("tShareStats"),PlainTerminology:T("tPlainTerms")}});
@@ -1454,6 +1478,7 @@ function netModal(){
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᚾ</span>Network</div>`+
     `<div class="mbody">`+
     `<div class="dsec">Addresses</div>`+
+    (S.domain?addrRow(TT("Waystone"),S.domain+":"+port,true):"")+
     addrRow("Public",(S.extIp||"-")+":"+port,true)+
     addrRow("LAN",(S.intIp||"-")+":"+port,true)+
     addrRow("Local","127.0.0.1:"+port,true)+
@@ -2297,6 +2322,173 @@ function heraldWizRender(){
     flip("#hwAddr","addr");flip("#hwPass","pass");flip("#hwEvents","events");
   }
 }
+
+/* ---------- WAYSTONE (custom join domain wizard) ----------
+   Lets friends join by name (valheim.example.com) instead of a raw IP. Valheim
+   clients resolve A/AAAA records when joining by name, but there is NO SRV
+   support - the port always travels with the name. The domain is a user-level
+   pref (CustomJoinDomain); every join surface prefers it once raised. */
+const WWIZ={step:0,domain:"",syntaxOk:false,res:null};
+const WAYSTONE_HOST_RE=/^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/i;
+function waystoneNormalize(v){
+  return (v||"").trim().toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//,"") /* pasted with a scheme */
+    .replace(/[/#?].*$/,"")                /* pasted with a path */
+    .replace(/:\d+$/,"")                   /* pasted with a port */
+    .replace(/\.$/,"");                    /* trailing dot */
+}
+async function waystoneSave(domain){
+  if(Native.available){
+    const r=await rpc("userprefs.save",{prefs:{CustomJoinDomain:domain}});
+    if(r===FAIL) return false;
+  }
+  S.domain=(domain||"").trim()||null;
+  renderWaystone();
+  return true;
+}
+function waystoneWizard(){
+  Object.assign(WWIZ,{step:0,domain:S.domain||"",syntaxOk:!!S.domain,res:null});
+  waystoneWizRender();
+}
+async function waystoneWizFinish(){
+  modalClose();
+  if(await waystoneSave(WWIZ.domain)){
+    toast("ᛦ "+TT("The Waystone stands")+" · "+WWIZ.domain);
+    logLine("ok","[Waystone] custom join domain set · "+WWIZ.domain);
+  }
+}
+function waystoneWizRender(){
+  const names=["WELCOME","NAME","POINT","PROVE"];
+  const steps=`<div class="wiz-steps">`+names.map((n,i)=>
+    `<span class="ws${i===WWIZ.step?" on":i<WWIZ.step?" done":""}"><b>${i+1}</b>${n}</span>`).join("")+`</div>`;
+  const myIp=S.extIp||(Native.available?"…":"203.0.113.42");
+  const port=S.prefs?.Port??2456;
+  let body="",nav="";
+
+  if(WWIZ.step===0){
+    body=
+      `<div class="mtitle">${TT("Raise a Waystone")}</div>`+
+      `<div class="wiz-help">${TT("A Waystone gives your server a <strong>name</strong> - friends type <span class=\"mono\">valheim.your-domain.com</span> instead of a raw IP. The name survives IP changes: update one DNS record and every join prompt, copy chip and Discord post follows.")}</div>`+
+      `<div class="wiz-paths">`+
+      `<div><span class="r">ᛟ</span><strong>${TT("What you need")}</strong> · ${TT("a domain you own (any registrar), or a free dynamic-DNS name (DuckDNS, No-IP). Nothing is bought or installed here - this wizard only teaches your DNS to point at this server.")}</div>`+
+      `<div><span class="r">ᚦ</span><strong>${TT("One honest limit")}</strong> · ${TT("Valheim resolves the name but has <strong>no SRV support</strong>, so the port always travels with it: friends join with")} <span class="mono">${esc("name:"+port)}</span>.</div>`+
+      `<div><span class="r">ᛜ</span><strong>${TT("Where it shows")}</strong> · ${TT("Sail Forth join prompts, the Network card, Copy join address, and the Herald's Discord post all prefer the name once it's raised.")}</div>`+
+      `</div>`+
+      (S.domain?`<div class="wiz-stat dim" style="margin-top:8px">${TT("current Waystone")} · <span class="mono">${esc(S.domain)}</span></div>`:"");
+    nav=`<button class="btn btn-ghost btn-sm" id="wwCancel">Cancel</button>`+
+        (S.domain?`<button class="btn btn-ghost btn-sm" id="wwRemove" title="${esc(TT("Lower the Waystone - join surfaces go back to showing the raw public IP. Your DNS record is untouched."))}">${TT("Remove")}</button>`:"")+
+        `<span class="grow"></span><button class="btn btn-ember btn-sm" id="wwNext">Begin</button>`;
+  }else if(WWIZ.step===1){
+    body=
+      `<div class="mtitle">${TT("Name the Waystone")}</div>`+
+      `<div class="wiz-help">${TT("Pick the full name friends will type. A <strong>subdomain</strong> keeps your main site untouched - <span class=\"mono\">valheim.example.com</span> rather than <span class=\"mono\">example.com</span>. Dynamic-DNS users: paste the name your provider gave you, like <span class=\"mono\">mysaga.duckdns.org</span>.")}</div>`+
+      `<div class="field"><label>${TT("Domain name")}</label><input type="text" id="wwDomain" spellcheck="false" autocomplete="off" placeholder="valheim.example.com" title="${esc(TT("Just the name - no https://, no port. Pasting a full URL is fine; it will be trimmed."))}"></div>`+
+      `<div class="wiz-stat dim" id="wwDomStat">${TT("type the name · letters, digits and hyphens, with at least one dot")}</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">Back</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wwNext" disabled>Next</button>`;
+  }else if(WWIZ.step===2){
+    body=
+      `<div class="mtitle">${TT("Point the name at this server")}</div>`+
+      `<div class="wiz-help">${TT("Teach DNS that")} <span class="mono">${esc(WWIZ.domain)}</span> ${TT("lives at this server's public IP:")} <span class="mono">${esc(myIp)}</span></div>`+
+      `<div class="wiz-paths">`+
+      `<div><span class="r">ᚨ</span><strong>${TT("Own domain · add an A record")}</strong><br>`+
+      `1 · ${TT("open your DNS provider's dashboard (Cloudflare, Namecheap, Porkbun, wherever the domain lives)")}<br>`+
+      `2 · ${TT("add a record: <strong>Type</strong> A · <strong>Name/Host</strong> the subdomain part (for <span class=\"mono\">valheim.example.com</span> enter <span class=\"mono\">valheim</span>) · <strong>Value</strong>")} <span class="mono">${esc(myIp)}</span><br>`+
+      `3 · ${TT("<strong>TTL</strong> 300-3600 s is fine · on Cloudflare set the cloud to <strong>DNS only</strong> (grey) - the orange proxy does not carry game traffic")}</div>`+
+      `<div><span class="r">ᛉ</span><strong>${TT("Home connection · IP changes? use dynamic DNS")}</strong><br>`+
+      `· ${TT("<strong>DuckDNS</strong> (free): claim <span class=\"mono\">yourname.duckdns.org</span>, run their tiny updater so the record follows your IP")}<br>`+
+      `· ${TT("<strong>No-IP</strong> or your <strong>router's built-in DDNS</strong> page work the same way")}<br>`+
+      `· ${TT("own a domain AND have a changing IP? point a CNAME at your dynamic-DNS name")}</div>`+
+      `<div><span class="r">ᚦ</span><strong>${TT("Remember")}</strong> · ${TT("the name only replaces the IP - friends still need the port")} (<span class="mono">${esc(String(port))}</span>)${TT(", and port-forwarding stays exactly as it is today.")}</div>`+
+      `</div>`+
+      `<div class="wiz-help" style="margin-top:6px">${TT("New records usually answer in a minute or two; some resolvers take up to an hour. The next step checks it live - you can finish either way and re-check later.")}</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">Back</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wwNext">${TT("Prove it")}</button>`;
+  }else{
+    body=
+      `<div class="mtitle">${TT("Prove the Waystone")}</div>`+
+      `<div class="wiz-help">${TT("BakaLoader asks DNS for")} <span class="mono">${esc(WWIZ.domain)}</span> ${TT("and compares the answer with this server's public IP.")}</div>`+
+      `<div class="wiz-stat dim" id="wwCheckStat">${TT("asking the name-servers…")}</div>`+
+      `<div class="wiz-sum" id="wwCheckSum" style="display:none"></div>`+
+      `<div class="wiz-help" style="margin-top:6px">${TT("A fresh record can lag behind - if it doesn't resolve yet you can still raise the Waystone now and it starts working the moment DNS catches up.")}</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">Back</button>`+
+        `<button class="btn btn-ghost btn-sm" id="wwAgain">${TT("Check again")}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wwNext">${TT("Raise the Waystone")}</button>`;
+  }
+
+  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`);
+  m.classList.add("wiz");
+  const on=(sel,fn)=>{const el=m.querySelector(sel);if(el)el.addEventListener("click",fn);};
+  on("#wwCancel",modalClose);
+  on("#wwBack",()=>{WWIZ.step--;waystoneWizRender();});
+  on("#wwRemove",async()=>{
+    modalClose();
+    if(await waystoneSave("")){
+      toast("ᛦ "+TT("The Waystone falls")+" · "+TT("back to the raw IP"));
+      logLine("warn","[Waystone] custom join domain removed");
+    }
+  });
+  on("#wwNext",()=>{
+    if(WWIZ.step===3){waystoneWizFinish();return;}
+    WWIZ.step++;waystoneWizRender();
+  });
+
+  if(WWIZ.step===1){
+    const inp=m.querySelector("#wwDomain"),stat=m.querySelector("#wwDomStat"),next=m.querySelector("#wwNext");
+    inp.value=WWIZ.domain;
+    let t=null;
+    const check=()=>{
+      clearTimeout(t);
+      t=setTimeout(()=>{
+        const v=waystoneNormalize(inp.value);
+        WWIZ.domain=v;
+        if(!v){
+          WWIZ.syntaxOk=false;next.disabled=true;
+          stat.className="wiz-stat dim";stat.textContent=TT("type the name · letters, digits and hyphens, with at least one dot");
+          return;
+        }
+        const ok=WAYSTONE_HOST_RE.test(v);
+        WWIZ.syntaxOk=ok;next.disabled=!ok;
+        stat.className="wiz-stat "+(ok?"ok":"bad");
+        stat.textContent=ok?("ᛉ "+TT("a well-formed name")+" · "+v)
+                           :("ᚦ "+TT("not a valid hostname - needs a dot, no spaces, no ports, like valheim.example.com"));
+      },350);
+    };
+    inp.addEventListener("input",check);
+    if(WWIZ.domain) check();
+    setTimeout(()=>inp.focus(),30);
+  }
+  if(WWIZ.step===3){
+    const stat=m.querySelector("#wwCheckStat"),sum=m.querySelector("#wwCheckSum");
+    const runCheck=async()=>{
+      stat.className="wiz-stat dim";stat.style.color="";stat.textContent=TT("asking the name-servers…");
+      sum.style.display="none";
+      const r=Native.available?await rpc("domain.check",{domain:WWIZ.domain})
+        :await new Promise(res=>setTimeout(()=>res({ok:true,ips:[myIp],publicIp:myIp,match:true}),600));
+      if(r===FAIL){stat.className="wiz-stat bad";stat.textContent="ᚦ "+TT("the check itself failed - you can still raise the Waystone");return;}
+      WWIZ.res=r;
+      if(r.ok&&r.match){
+        stat.className="wiz-stat ok";
+        stat.textContent="ᛉ "+TT("the name answers with this server's IP - perfect");
+      }else if(r.ok){
+        stat.className="wiz-stat";stat.style.color="var(--amber)";
+        stat.textContent="ᚦ "+TT("the name resolves, but not to this server's public IP - a stale record, a proxy (orange cloud?), or propagation still in flight");
+      }else{
+        stat.className="wiz-stat bad";
+        stat.textContent="ᚦ "+((r.error&&TT(r.error))||TT("the name does not resolve yet"))+" · "+TT("give DNS a few minutes, then Check again");
+      }
+      sum.style.display="";
+      sum.innerHTML=
+        `<div class="row"><span class="k">${TT("Name")}</span><span class="v mono">${esc(WWIZ.domain)}</span></div>`+
+        `<div class="row"><span class="k">${TT("Resolves to")}</span><span class="v mono">${esc((r.ips&&r.ips.length?r.ips.join(" · "):"-"))}</span></div>`+
+        `<div class="row"><span class="k">${TT("This server")}</span><span class="v mono">${esc(r.publicIp||myIp)}</span></div>`+
+        `<div class="row"><span class="k">${TT("Friends join with")}</span><span class="v mono">${esc(WWIZ.domain+":"+port)}</span></div>`;
+    };
+    on("#wwAgain",runCheck);
+    runCheck();
+  }
+}
+$("#waystoneBtn")?.addEventListener("click",e=>{e.stopPropagation();waystoneWizard();});
 
 /* ---------- RUNES (BepInEx .cfg editor) ---------- */
 const CFG={files:[],file:null,dirty:false,mock:null};

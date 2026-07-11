@@ -110,12 +110,13 @@
             <!-- NETWORK -->
             <div class="card hov b-net" id="netCard" title="Click for network details">
               <div class="microlabel"><span class="r">ᚾ</span>Network</div>
+              <div class="netline" id="netDomainLine" style="display:none"><span id="netDomain">-</span><span class="copychip" id="copyDomain">COPY</span></div>
               <div class="netline"><span id="netAddr">203.0.113.42:2456</span><span class="copychip" id="copyIp">COPY</span></div>
               <div class="netline"><span id="netLan">LAN 192.168.1.34:2456</span><span class="copychip" id="copyLan">COPY</span></div>
               <div class="netline"><span id="netLoc">127.0.0.1:2456</span><span class="copychip" id="copyLoc">COPY</span></div>
               <div class="netline" id="netInviteLine" style="display:none"><span id="netInvite">invite -</span><span class="copychip" id="copyInv">COPY</span></div>
               <div class="netline" id="netRconLine"><span id="netRcon">RCON 127.0.0.1:25575</span></div>
-              <div style="margin-top:8px"><span class="pill green" id="netPill">rcon bound</span></div>
+              <div style="margin-top:8px;display:flex;align-items:center;gap:8px"><span class="pill green" id="netPill">rcon bound</span><span class="copychip" id="waystoneBtn" title="Raise a Waystone - give the server a name (like valheim.your-domain.com) so friends join by name instead of a raw IP. Guided setup with per-step DNS instructions. Needs a domain you own, or a free dynamic-DNS name.">WAYSTONE</span></div>
             </div>
 
             <!-- MODS -->
@@ -491,6 +492,7 @@
         <div class="pitem" data-cmd="Update all mods"><span class="r">ᛟ</span>Update all mods<span class="k">forge</span></div>
         <div class="pitem" data-cmd="Copy join address"><span class="r">ᛜ</span>Copy join address<span class="k">net</span></div>
         <div class="pitem" data-cmd="Discord sharing"><span class="r">ᚺ</span>Discord sharing<span class="k">herald</span></div>
+        <div class="pitem" data-cmd="Custom domain"><span class="r">ᛦ</span>Custom domain<span class="k">waystone</span></div>
         <div class="pitem" data-cmd="Open world folder"><span class="r">ᛃ</span>Open world folder<span class="k">path</span></div>
         <div class="pitem" data-cmd="Open config folder"><span class="r">ᛃ</span>Open config folder<span class="k">path</span></div>
         <div class="pitem" data-cmd="Open plugins folder"><span class="r">ᛃ</span>Open plugins folder<span class="k">path</span></div>
