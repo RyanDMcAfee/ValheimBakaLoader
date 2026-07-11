@@ -190,6 +190,9 @@ body{
 .b-heraldshare::before{content:"ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ"}
 .b-heraldpost::before{content:"ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ   ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ   ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ   ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ   ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ"}
 .cfg-edcard::before{content:"ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ"}
+/* skáld=the court poet who keeps the tally · kviða=the lay he recites */
+#page-skald .card::before{content:"ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ"}
+#page-skald .sk-feed::before{content:"ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ"}
 .card.hov:hover{border-color:rgba(255,122,26,.55);transform:translateY(-2px);
   box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 22px rgba(255,122,26,.15),inset 0 1px 0 rgba(255,255,255,.04)}
 .microlabel{font-size:9.5px;letter-spacing:2.6px;text-transform:uppercase;font-weight:600;
@@ -223,6 +226,25 @@ body{
 .herald-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;align-items:start}
 .b-herald{grid-row:span 2}
 .herald-grid .togglerow{margin-top:4px}
+
+/* ============ SKALD (local analytics) ============ */
+.skald-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:12px}
+.skald-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;align-items:start}
+.skald-grid .sk-players{grid-row:span 2}
+.skfeed{display:flex;flex-direction:column;gap:2px;max-height:320px;overflow-y:auto;padding-right:4px}
+.skrow{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-family:var(--mono);font-size:11px;
+  color:var(--bone-dim);font-variant-numeric:tabular-nums;border-bottom:1px solid rgba(140,109,63,.12)}
+.skrow:last-child{border-bottom:none}
+.skrow .skw{color:var(--bone);font-weight:600}
+.skrow .skt{margin-left:auto;font-size:10px;white-space:nowrap;flex:none}
+.skrow .skk{flex:none;width:14px;text-align:center}
+.skrow .skk.join{color:var(--moss)}
+.skrow .skk.leave{color:var(--cold-hi)}
+.skrow .skk.death{color:var(--ember-hi)}
+.skrow .skk.start{color:var(--moss)}
+.skrow .skk.stop{color:var(--cold-hi)}
+.skrow .skk.crash{color:#E85B4B}
+.skempty{font-family:var(--mono);font-size:11px;color:var(--bone-dim);padding:8px 0}
 
 /* Hearth flame */
 .hearth-card{display:flex;flex-direction:column}

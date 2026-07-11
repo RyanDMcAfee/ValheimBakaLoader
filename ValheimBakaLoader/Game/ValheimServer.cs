@@ -76,6 +76,12 @@ namespace ValheimBakaLoader.Game
         public event EventHandler ServerCrashed;
 
         /// <summary>
+        /// Fires when a player's character dies (the game logs a ZDOID of 0:0 for the
+        /// character on death). The string is the character name from the log line.
+        /// </summary>
+        public event EventHandler<string> PlayerDied;
+
+        /// <summary>
         /// Raised while a scheduled restart countdown is running. The string is a short
         /// status message (e.g. "Restart in 5 minutes"), or null when the countdown ends.
         /// </summary>
@@ -1345,6 +1351,13 @@ namespace ValheimBakaLoader.Game
             if (string.IsNullOrWhiteSpace(characterName)) return;
 
             // Group 2 is the session-scoped ZDOID; group 3 trails it and has no known use.
+            // A ZDOID of "0:0" means the character just DIED (the game clears their id),
+            // not that they spawned - surface that as a death instead.
+            if (match.Groups[2].Value == "0" && match.Groups[3].Value == "0")
+            {
+                PlayerDied?.Invoke(this, characterName);
+            }
+
             PlayerDataRepository.SetPlayerOnline(characterName, match.Groups[2].Value, ServerKey);
         }
 

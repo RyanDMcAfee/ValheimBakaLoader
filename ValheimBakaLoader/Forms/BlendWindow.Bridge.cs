@@ -44,7 +44,14 @@ namespace ValheimBakaLoader.Forms
         private IMaxPlayersInstaller MaxPlayersInstaller;
         private IDiscordStatusService DiscordStatus;
         private IDiscordWebhookService DiscordWebhooks;
+        private IAnalyticsService Analytics;
         private IApplicationLogger AppLogger;
+
+        // Last status the Skald recorded per player key, so the analytics journal only
+        // gets real join/leave transitions (PlayerStatusChanged also fires on plain
+        // name-resolution updates with no status change).
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PlayerStatus> AnalyticsPlayerStatus =
+            new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The profile whose preferences were last loaded/saved through the bridge.</summary>
         private string CurrentProfile;
@@ -143,6 +150,7 @@ namespace ValheimBakaLoader.Forms
             MaxPlayersInstaller = serviceProvider.GetRequiredService<IMaxPlayersInstaller>();
             DiscordStatus = serviceProvider.GetRequiredService<IDiscordStatusService>();
             DiscordWebhooks = serviceProvider.GetRequiredService<IDiscordWebhookService>();
+            Analytics = serviceProvider.GetRequiredService<IAnalyticsService>();
             AppLogger = appLogger;
 
             // The Herald: single self-editing Discord status post (gated on prefs inside the service).
@@ -202,6 +210,10 @@ namespace ValheimBakaLoader.Forms
             // (ServerCrashed always fires before the status lands on Stopped.)
             var crashAnnounced = false;
 
+            // Same idea for the Skald's journal, kept separate because the Discord flag
+            // only gets set when Discord event posts are enabled.
+            var crashRecorded = false;
+
             string DisplayName() =>
                 ServerPrefsProvider.LoadPreferences(profile)?.Name is string n && !string.IsNullOrWhiteSpace(n)
                     ? n : profile;
@@ -210,6 +222,17 @@ namespace ValheimBakaLoader.Forms
             {
                 PostEvent("server.status", BuildServerState(session));
                 PostEvent("servers.changed", BuildServersList());
+
+                if (status == ServerStatus.Running)
+                {
+                    crashRecorded = false;
+                    Analytics.Record(new AnalyticsEvent { Kind = "start", Server = profile });
+                }
+                else if (status == ServerStatus.Stopped && !crashRecorded)
+                {
+                    // A crash already closed this uptime span with its own event.
+                    Analytics.Record(new AnalyticsEvent { Kind = "stop", Server = profile });
+                }
 
                 DiscordStatus.RequestUpdate();
 
@@ -231,6 +254,10 @@ namespace ValheimBakaLoader.Forms
             server.ServerCrashed += (s, e) =>
             {
                 PostEvent("server.crashed", new { profile });
+
+                crashRecorded = true;
+                Analytics.Record(new AnalyticsEvent { Kind = "crash", Server = profile });
+
                 if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
                 {
                     crashAnnounced = true;
@@ -239,6 +266,27 @@ namespace ValheimBakaLoader.Forms
                 }
             };
             server.CountdownTick += (s, message) => PostEvent("server.countdown", new { message, profile });
+            server.PlayerDied += (s, characterName) =>
+            {
+                // Tie the character back to a known player when possible: same server,
+                // seen using this character most recently, preferring whoever is online.
+                var player = PlayerDataProvider.Data
+                    .Where(pl => (pl.ServerKey == null || string.Equals(pl.ServerKey, profile, StringComparison.OrdinalIgnoreCase))
+                              && string.Equals(pl.LastStatusCharacter, characterName, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(pl => pl.PlayerStatus == PlayerStatus.Online)
+                    .ThenByDescending(pl => pl.LastStatusChange)
+                    .FirstOrDefault();
+
+                Analytics.Record(new AnalyticsEvent
+                {
+                    Kind = "death",
+                    Server = profile,
+                    PlayerKey = player?.Key,
+                    PlayerName = player?.PlayerName,
+                    Character = characterName,
+                });
+                PostEvent("server.playerDied", new { character = characterName, profile });
+            };
         }
 
         /// <summary>
@@ -667,9 +715,42 @@ namespace ValheimBakaLoader.Forms
                 Logger.Information("Auto-updated {count} mod(s) for profile {profile}",
                     results.Count(r => r.Updated), profile);
 
+                RecordModUpdates(profile, results);
+
                 // Herald: mod count / last-update time changed.
                 DiscordStatus.RequestUpdate();
             };
+        }
+
+        /// <summary>Per-player scratch bucket for the analytics.overview aggregation.</summary>
+        private class SkaldPlayerAgg
+        {
+            public string Key;
+            public string Name;
+            public string Character;
+            public double PlaySec;
+            public int Sessions;
+            public int Deaths;
+            public DateTime LastSeen;
+            public DateTime? OpenSince;
+            public bool OnlineNow;
+        }
+
+        /// <summary>Writes each successful mod update into the Skald's journal.</summary>
+        private void RecordModUpdates(string profile, IEnumerable<ModUpdateResult> results)
+        {
+            if (results == null) return;
+            foreach (var r in results.Where(r => r != null && r.Updated))
+            {
+                Analytics.Record(new AnalyticsEvent
+                {
+                    Kind = "modup",
+                    Server = profile,
+                    Mod = r.Mod?.FullName ?? r.Mod?.ModName,
+                    FromVersion = r.FromVersion,
+                    ToVersion = r.ToVersion,
+                });
+            }
         }
 
         /// <summary>
@@ -714,6 +795,35 @@ namespace ValheimBakaLoader.Forms
 
                 // Herald: player counts changed - refresh the Discord status post.
                 DiscordStatus.RequestUpdate();
+
+                // Skald journal: record real join/leave transitions only. This event also
+                // fires on name-resolution updates with an unchanged status, so gate on a
+                // per-player last-recorded-status map.
+                if (player != null
+                    && (player.PlayerStatus == PlayerStatus.Online || player.PlayerStatus == PlayerStatus.Offline))
+                {
+                    var seenBefore = AnalyticsPlayerStatus.TryGetValue(player.Key, out var last);
+                    AnalyticsPlayerStatus[player.Key] = player.PlayerStatus;
+
+                    // Only an Online arrival counts as a join; only Online->Offline counts
+                    // as a leave (a failed join that never got Online isn't a session).
+                    var isJoin = player.PlayerStatus == PlayerStatus.Online && (!seenBefore || last != PlayerStatus.Online);
+                    var isLeave = player.PlayerStatus == PlayerStatus.Offline && seenBefore && last == PlayerStatus.Online;
+
+                    if (isJoin || isLeave)
+                    {
+                        Analytics.Record(new AnalyticsEvent
+                        {
+                            Kind = isJoin ? "join" : "leave",
+                            // Legacy player records predating multi-server have no
+                            // ServerKey; attribute those to the profile on screen.
+                            Server = player.ServerKey ?? ActiveProfileName,
+                            PlayerKey = player.Key,
+                            PlayerName = player.PlayerName,
+                            Character = player.LastStatusCharacter,
+                        });
+                    }
+                }
 
                 if (UserPrefsProvider.LoadPreferences().DiscordEventPosts
                     && !string.IsNullOrWhiteSpace(player?.PlayerName))
@@ -1575,6 +1685,194 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(new { deleted });
             });
 
+            // --- The Skald (analytics) ---
+            // Aggregates the local analytics journal for one server profile: playtime per
+            // player (join->leave pairing), uptime (start->stop/crash pairing), deaths, a
+            // recent-happenings feed, and the mod update history. Computed entirely from
+            // the append-only local journal - nothing here touches the network.
+            RegisterRpc("analytics.overview", p =>
+            {
+                var profile = p.Value<string>("profile");
+                if (string.IsNullOrWhiteSpace(profile)) profile = ActiveProfileName;
+
+                var running = Sessions.TryGetValue(profile, out var session)
+                    && session.Server.Status == ServerStatus.Running;
+
+                var events = Analytics.EventsFor(profile);
+                var now = DateTime.UtcNow;
+
+                // When the app was closed mid-session the journal holds open spans with
+                // no closing event. Close those at the LAST journaled moment rather than
+                // "now" so dead time between app runs doesn't inflate the totals.
+                var lastEventTime = events.Count > 0 ? events[^1].TimeUtc : now;
+
+                // -- Uptime: "start" opens a span; "stop"/"crash" closes it.
+                double uptimeSec = 0, currentUptimeSec = 0;
+                DateTime? upSince = null;
+                int starts = 0, crashes = 0;
+                foreach (var e in events)
+                {
+                    switch (e.Kind)
+                    {
+                        case "start":
+                            starts++;
+                            // Two starts with no stop between them = the earlier session's
+                            // end never got journaled; close it at the second start.
+                            if (upSince.HasValue) uptimeSec += Math.Max(0, (e.TimeUtc - upSince.Value).TotalSeconds);
+                            upSince = e.TimeUtc;
+                            break;
+                        case "crash":
+                            crashes++;
+                            goto case "stop";
+                        case "stop":
+                            if (upSince.HasValue)
+                            {
+                                uptimeSec += Math.Max(0, (e.TimeUtc - upSince.Value).TotalSeconds);
+                                upSince = null;
+                            }
+                            break;
+                    }
+                }
+                if (upSince.HasValue)
+                {
+                    var end = running ? now : lastEventTime;
+                    var span = Math.Max(0, (end - upSince.Value).TotalSeconds);
+                    uptimeSec += span;
+                    if (running) currentUptimeSec = span;
+                }
+
+                // -- Players: pair join->leave per player; stop/crash closes everyone.
+                var players = new Dictionary<string, SkaldPlayerAgg>(StringComparer.OrdinalIgnoreCase);
+
+                SkaldPlayerAgg AggFor(AnalyticsEvent e)
+                {
+                    var key = e.PlayerKey;
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        // Death events can lack a player key when the character couldn't
+                        // be tied to a known player - fold into a character-name match.
+                        var byCharacter = players.Values.FirstOrDefault(a =>
+                            !string.IsNullOrWhiteSpace(e.Character)
+                            && string.Equals(a.Character, e.Character, StringComparison.OrdinalIgnoreCase));
+                        if (byCharacter != null) return byCharacter;
+                        key = e.PlayerName ?? e.Character ?? "unknown";
+                    }
+                    if (!players.TryGetValue(key, out var agg))
+                    {
+                        agg = new SkaldPlayerAgg { Key = key };
+                        players[key] = agg;
+                    }
+                    if (!string.IsNullOrWhiteSpace(e.PlayerName)) agg.Name = e.PlayerName;
+                    if (!string.IsNullOrWhiteSpace(e.Character)) agg.Character = e.Character;
+                    return agg;
+                }
+
+                foreach (var e in events)
+                {
+                    switch (e.Kind)
+                    {
+                        case "join":
+                        {
+                            var a = AggFor(e);
+                            a.OpenSince ??= e.TimeUtc;
+                            a.Sessions++;
+                            a.LastSeen = e.TimeUtc;
+                            break;
+                        }
+                        case "leave":
+                        {
+                            var a = AggFor(e);
+                            if (a.OpenSince.HasValue)
+                            {
+                                a.PlaySec += Math.Max(0, (e.TimeUtc - a.OpenSince.Value).TotalSeconds);
+                                a.OpenSince = null;
+                            }
+                            a.LastSeen = e.TimeUtc;
+                            break;
+                        }
+                        case "death":
+                        {
+                            var a = AggFor(e);
+                            a.Deaths++;
+                            a.LastSeen = e.TimeUtc;
+                            break;
+                        }
+                        case "stop":
+                        case "crash":
+                            foreach (var a in players.Values)
+                            {
+                                if (!a.OpenSince.HasValue) continue;
+                                a.PlaySec += Math.Max(0, (e.TimeUtc - a.OpenSince.Value).TotalSeconds);
+                                a.OpenSince = null;
+                            }
+                            break;
+                    }
+                }
+                foreach (var a in players.Values)
+                {
+                    if (!a.OpenSince.HasValue) continue;
+                    var end = running ? now : lastEventTime;
+                    a.PlaySec += Math.Max(0, (end - a.OpenSince.Value).TotalSeconds);
+                    a.OnlineNow = running;
+                    a.OpenSince = null;
+                }
+
+                var feedKinds = new HashSet<string> { "join", "leave", "death", "start", "stop", "crash" };
+                var feed = events
+                    .Where(e => feedKinds.Contains(e.Kind))
+                    .OrderByDescending(e => e.TimeUtc)
+                    .Take(120)
+                    .Select(e => new { t = e.TimeUtc, kind = e.Kind, name = e.PlayerName, character = e.Character })
+                    .ToList();
+
+                var mods = events
+                    .Where(e => e.Kind == "modup" || e.Kind == "modin")
+                    .OrderByDescending(e => e.TimeUtc)
+                    .Take(60)
+                    .Select(e => new { t = e.TimeUtc, kind = e.Kind, mod = e.Mod, from = e.FromVersion, to = e.ToVersion })
+                    .ToList();
+
+                return Task.FromResult<object>(new
+                {
+                    profile,
+                    running,
+                    since = events.Count > 0 ? (DateTime?)events[0].TimeUtc : null,
+                    eventCount = events.Count,
+                    uptime = new
+                    {
+                        totalSec = Math.Round(uptimeSec),
+                        currentSec = Math.Round(currentUptimeSec),
+                        starts,
+                        crashes,
+                    },
+                    players = players.Values
+                        .OrderByDescending(a => a.OnlineNow)
+                        .ThenByDescending(a => a.PlaySec)
+                        .Select(a => new
+                        {
+                            key = a.Key,
+                            name = a.Name ?? a.Character ?? a.Key,
+                            character = a.Character,
+                            playSec = Math.Round(a.PlaySec),
+                            sessions = a.Sessions,
+                            deaths = a.Deaths,
+                            lastSeen = a.LastSeen,
+                            online = a.OnlineNow,
+                        })
+                        .ToList(),
+                    totals = new
+                    {
+                        playSec = Math.Round(players.Values.Sum(a => a.PlaySec)),
+                        deaths = players.Values.Sum(a => a.Deaths),
+                        sessions = players.Values.Sum(a => a.Sessions),
+                        modUpdates = events.Count(e => e.Kind == "modup"),
+                        modInstalls = events.Count(e => e.Kind == "modin"),
+                    },
+                    feed,
+                    mods,
+                });
+            });
+
             // World identity from the .fwl (read-only): the typed seed string and the
             // numeric seed the game derived from it. exists=false means the world has
             // no .fwl yet (it will be generated - with a random seed - on first launch).
@@ -2126,6 +2424,8 @@ namespace ValheimBakaLoader.Forms
                     var updatable = mods.Where(m => m.UpdateAvailable).ToList();
                     var results = await ModUpdateService.UpdateModsAsync(updatable);
 
+                    RecordModUpdates(ActiveProfileName, results);
+
                     return results.Select(r => new
                     {
                         mod = r.Mod.FullName,
@@ -2192,6 +2492,18 @@ namespace ValheimBakaLoader.Forms
                 try
                 {
                     var result = await ModUpdateService.InstallFromThunderstoreAsync(reference, pluginsDir);
+
+                    if (result.Installed)
+                    {
+                        Analytics.Record(new AnalyticsEvent
+                        {
+                            Kind = "modin",
+                            Server = ActiveProfileName,
+                            Mod = $"{result.Owner}-{result.Name}",
+                            ToVersion = result.Version,
+                        });
+                    }
+
                     return new
                     {
                         result.Installed,

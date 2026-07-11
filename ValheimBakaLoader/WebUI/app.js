@@ -163,6 +163,29 @@ const TERM_PAIRS=[
   ["Layer","Backup"],
   ["layers","backups"],
   ["layer","backup"],
+  ["nothing chronicled yet - happenings appear as the realm lives","nothing recorded yet - events appear as the server runs"],
+  ["counted on this machine only, nothing leaves it","stored on this machine only, never uploaded"],
+  ["no mod updates chronicled yet","no mod updates recorded yet"],
+  ["the realm's story in numbers","the server's history in numbers"],
+  ["the hearth collapsed","server crashed"],
+  ["valkyries dispatched","player deaths"],
+  ["chronicled since","recorded since"],
+  ["hearth kindled","server started"],
+  ["hearth doused","server stopped"],
+  ["Hearth burned","Server uptime"],
+  ["fell in battle","died"],
+  ["Mod chronicle","Mod history"],
+  ["unique souls","unique players"],
+  ["came ashore","joined"],
+  ["raiding now","online now"],
+  ["sailed off","left"],
+  ["Happenings","Recent events"],
+  ["Kindlings","Starts"],
+  ["visits","sessions"],
+  ["alight","running"],
+  ["SKALD","ANALYTICS"],
+  ["Skald","Analytics"],
+  ["skald","analytics"],
   ["BepInEx config scrolls","BepInEx config files"],
   ["no .cfg scrolls found","no .cfg files found"],
   ["Scrolls reloaded","Configs reloaded"],
@@ -216,7 +239,7 @@ const TT=plainify;
 /* Static lore-bearing elements: text nodes only (rune glyphs + pills untouched).
    Dynamic surfaces (#vikSub, #runesSub, hState/hPid, toasts…) route through TT()
    at render time instead - caching their originals would restore stale values. */
-const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,.capshead,#page-vikings th,#secRites,#page-saga .sub,#page-world .sub,.pitem .k,#waystoneBtn";
+const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,.capshead,#page-vikings th,#page-skald th,#skDeathsSub,#secRites,#page-saga .sub,#page-world .sub,.pitem .k,#waystoneBtn";
 const TERM_ORIG=new Map();
 function applyTerms(){
   $$(TERM_STATIC_SEL).forEach(el=>[...el.childNodes].forEach(n=>{
@@ -236,6 +259,7 @@ function applyTerms(){
   try{renderCaps();}catch{}
   try{renderPlayers();}catch{}
   try{if(CFG.files&&CFG.files.length)renderCfgList();}catch{}
+  try{if(SKALD)renderSkald();}catch{}
 }
 
 /* ---------- NAV ---------- */
@@ -250,6 +274,7 @@ function goPage(name){
   currentPage=name;
   try{renderEditBar();}catch(_){}
   if(name==="atlas"){try{atlasEnter();}catch(_){}} // also drives the mock preview
+  if(name==="skald"){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
   if(Native.available){
     if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods();
     if(name==="vikings") refreshPlayers();
@@ -1081,6 +1106,7 @@ function invokePal(){
   if(sel.dataset.cmd==="Discord sharing"){goPage("herald");return;} // works in preview too
   if(sel.dataset.cmd==="Custom domain"){waystoneWizard();return;}   // works in preview too
   if(sel.dataset.cmd==="World backups"){barrowModal();return;}      // works in preview too
+  if(sel.dataset.cmd==="Server analytics"){goPage("skald");return;} // works in preview too
   if(Native.available){
     const cmd=sel.dataset.cmd;
     if(sel.id==="palConsole"){
@@ -1689,6 +1715,110 @@ function barrowWorldModal(g){
 /* card click wiring (chips inside the cards must not trigger the drill-down) */
 $("#netCard")?.addEventListener("click",e=>{if(!e.target.closest(".copychip"))netModal();});
 $("#savesCard")?.addEventListener("click",e=>{if(!e.target.closest(".copychip"))savesModal();});
+
+/* ---------- SKALD (local analytics · the realm's story in numbers) ----------
+   Everything the Skald knows lives in analytics.json on this machine - the
+   journal is never uploaded anywhere. Preview mode renders a mock hall. */
+const SKALD_MOCK={
+  profile:"Final Sunset",running:true,
+  since:new Date(Date.now()-42*86400000).toISOString(),eventCount:1874,
+  uptime:{totalSec:1123260,currentSec:16320,starts:57,crashes:2},
+  players:[
+    {key:"Steam:76561198000000001",name:"Bjorn",character:"Bjorn Ironside",playSec:432600,sessions:64,deaths:23,lastSeen:new Date(Date.now()-4*60000).toISOString(),online:true},
+    {key:"Steam:76561198000000002",name:"Astrid",character:"Astrid",playSec:301200,sessions:48,deaths:11,lastSeen:new Date(Date.now()-11*60000).toISOString(),online:true},
+    {key:"Steam:76561198000000003",name:"Leif",character:"Leif the Lost",playSec:122400,sessions:31,deaths:19,lastSeen:new Date(Date.now()-2*86400000).toISOString(),online:false},
+    {key:"Steam:76561198000000004",name:"Freya",character:"Freya",playSec:56200,sessions:28,deaths:8,lastSeen:new Date(Date.now()-5*86400000-3*3600000).toISOString(),online:false},
+  ],
+  totals:{playSec:912400,deaths:61,sessions:171,modUpdates:38,modInstalls:9},
+  feed:[
+    {t:new Date(Date.now()-4*60000).toISOString(),kind:"join",name:"Bjorn",character:"Bjorn Ironside"},
+    {t:new Date(Date.now()-26*60000).toISOString(),kind:"death",name:"Astrid",character:"Astrid"},
+    {t:new Date(Date.now()-64*60000).toISOString(),kind:"join",name:"Astrid",character:"Astrid"},
+    {t:new Date(Date.now()-4.5*3600000).toISOString(),kind:"start"},
+    {t:new Date(Date.now()-4.6*3600000).toISOString(),kind:"stop"},
+    {t:new Date(Date.now()-9*3600000).toISOString(),kind:"leave",name:"Leif",character:"Leif the Lost"},
+    {t:new Date(Date.now()-2*86400000).toISOString(),kind:"crash"},
+  ],
+  mods:[
+    {t:new Date(Date.now()-4.5*3600000).toISOString(),kind:"modup",mod:"Therzie-Warfare",from:"1.9.5",to:"1.9.7"},
+    {t:new Date(Date.now()-4.5*3600000).toISOString(),kind:"modup",mod:"ValheimModding-Jotunn",from:"2.26.0",to:"2.26.2"},
+    {t:new Date(Date.now()-6*86400000).toISOString(),kind:"modin",mod:"Azumatt-AzuExtendedPlayerInventory",to:"1.4.6"},
+  ],
+};
+/* "13d 0h" / "4h 32m" / "7m" / "40s" - big spans coarse, small spans exact */
+function skDur(sec){
+  sec=Math.max(0,Math.round(Number(sec)||0));
+  const d=Math.floor(sec/86400),h=Math.floor(sec%86400/3600),m=Math.floor(sec%3600/60);
+  if(d>0) return d+"d "+h+"h";
+  if(h>0) return h+"h "+m+"m";
+  if(m>0) return m+"m";
+  return sec+"s";
+}
+const SKALD_ICON={join:"→",leave:"←",death:"†",start:"ᚠ",stop:"ᛪ",crash:"ᚦ"};
+const SKALD_VERB={join:"came ashore",leave:"sailed off",death:"fell in battle",
+  start:"hearth kindled",stop:"hearth doused",crash:"the hearth collapsed"};
+let SKALD=null;
+async function skaldFetch(){
+  if(!Native.available) return SKALD_MOCK;
+  const r=await rpc("analytics.overview",{});
+  return r===FAIL?null:r;
+}
+let skaldBusy=false;
+async function skaldRefresh(){
+  if(skaldBusy) return; skaldBusy=true;
+  try{
+    const d=await skaldFetch();
+    if(d){SKALD=d;renderSkald();}
+  }finally{skaldBusy=false;}
+}
+function renderSkald(){
+  const d=SKALD; if(!d) return;
+  const u=d.uptime||{},t=d.totals||{};
+  $("#skUptime").textContent=skDur(u.totalSec);
+  const now=$("#skNowPill");
+  if(d.running&&(u.currentSec||0)>0){now.style.display="";now.textContent=TT("alight")+" "+skDur(u.currentSec);}
+  else now.style.display="none";
+  $("#skStarts").textContent=u.starts??0;
+  const cp=$("#skCrashPill");
+  if((u.crashes||0)>0){cp.style.display="";cp.textContent=u.crashes+(u.crashes===1?" crash":" crashes");}
+  else cp.style.display="none";
+  $("#skVikings").textContent=(d.players||[]).length;
+  $("#skVikingsSub").textContent=TT("unique souls")+" · "+(t.sessions??0)+" "+TT("visits");
+  $("#skDeaths").textContent=t.deaths??0;
+  $("#skModUps").textContent=t.modUpdates??0;
+  $("#skModUpsSub").textContent="updates · "+(t.modInstalls??0)+" installs";
+  $("#skaldSub").textContent=TT((d.since?"chronicled since "+new Date(d.since).toLocaleDateString()+" · ":"")
+    +"counted on this machine only, nothing leaves it");
+  /* playtime per viking */
+  const rows=(d.players||[]).map(p=>
+    `<tr><td><span class="vdot ${p.online?"on":"off"}" style="display:inline-block;margin-right:8px"></span>`+
+    `<span class="vname">${esc(p.name||p.character||p.key)}</span>`+
+    (p.character&&p.character!==p.name?` <span class="subval">(${esc(p.character)})</span>`:"")+`</td>`+
+    `<td class="mono">${skDur(p.playSec)}</td><td class="mono">${p.sessions??0}</td><td class="mono">${p.deaths??0}</td>`+
+    `<td class="mono">${p.online?`<span style="color:var(--moss)">${esc(TT("raiding now"))}</span>`:agoAt(p.lastSeen)}</td></tr>`
+  ).join("");
+  $("#skPlayerTable").innerHTML=rows
+    ||`<tr><td colspan="5" style="padding:10px 12px" class="skempty">${esc(TT("No vikings have set sail for this realm yet."))}</td></tr>`;
+  /* happenings feed */
+  const feed=(d.feed||[]).map(e=>{
+    const who=e.name||e.character;
+    const what=(e.kind==="join"||e.kind==="leave"||e.kind==="death")
+      ?`<span class="skw">${esc(who||"?")}</span> ${esc(TT(SKALD_VERB[e.kind]))}`
+      :esc(TT(SKALD_VERB[e.kind]||e.kind));
+    return `<div class="skrow"><span class="skk ${e.kind}">${SKALD_ICON[e.kind]||"·"}</span><span>${what}</span><span class="skt">${agoAt(e.t)}</span></div>`;
+  }).join("");
+  $("#skFeed").innerHTML=feed
+    ||`<div class="skempty">${esc(TT("nothing chronicled yet - happenings appear as the realm lives"))}</div>`;
+  /* mod chronicle */
+  const mods=(d.mods||[]).map(e=>{
+    const ver=e.kind==="modin"?(e.to?"v"+e.to:""):((e.from?e.from+" → ":"")+(e.to||""));
+    return `<div class="skrow"><span class="skk" style="color:var(--amber)">${e.kind==="modin"?"ᚨ":"ᚱ"}</span>`+
+      `<span><span class="skw">${esc(e.mod||"?")}</span> ${e.kind==="modin"?"installed":"updated"}${ver?" "+esc(ver):""}</span>`+
+      `<span class="skt">${agoAt(e.t)}</span></div>`;
+  }).join("");
+  $("#skModFeed").innerHTML=mods
+    ||`<div class="skempty">${esc(TT("no mod updates chronicled yet"))}</div>`;
+}
 
 /* ---------- VIKINGS (players) ---------- */
 /* RCON target mirrors MainWindow.GetRconTargetName: LastStatusCharacter || PlayerName.
@@ -3383,6 +3513,14 @@ if(Native.available){
   Native.on("ip.internal",d=>{S.intIp=d?.ip??null;renderNet();});
   Native.on("profiles.changed",()=>{refreshServers();});
   Native.on("servers.changed",d=>{if(Array.isArray(d)){S.servers=d;renderServerChips();}});
+  /* Skald hall keeps itself fresh while it is the page on screen */
+  Native.on("server.status",()=>{if(currentPage==="skald")skaldRefresh();});
+  Native.on("server.playerDied",d=>{
+    if(currentPage==="skald"&&isActiveProfile(d?.profile))skaldRefresh();
+  });
+  Native.on("player.updated",p=>{
+    if(currentPage==="skald"&&isActiveProfile(p?.serverKey))skaldRefresh();
+  });
   Native.on("log.app",d=>{if(d?.line!=null)logLine(classifyLog(d.line),d.line);});
   Native.on("log.server",d=>{
     if(d?.line==null||!isActiveProfile(d?.profile)) return;

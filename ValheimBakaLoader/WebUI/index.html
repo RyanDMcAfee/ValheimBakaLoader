@@ -36,6 +36,7 @@
       <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl">Runes</span></div>
       <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl">Saga</span></div>
       <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Herald</span></div>
+      <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Skald</span></div>
       <div class="side-foot">
         <span class="moon">☾</span><span id="sideVer">v0.9.33</span>
         <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of<br>mead&nbsp;⚑</a>
@@ -462,6 +463,60 @@
           </div>
         </section>
 
+        <!-- ============ PAGE: SKALD (analytics · the realm's story in numbers) ============ -->
+        <section class="page" id="page-skald" style="display:none">
+          <div class="pagehead">
+            <h1><span class="r">ᛏ</span>SKALD</h1>
+            <span class="sub" id="skaldSub">the realm's story in numbers · counted on this machine only, nothing leaves it</span>
+          </div>
+          <div class="skald-stats">
+            <div class="card">
+              <div class="microlabel"><span class="r">ᚠ</span>Hearth burned</div>
+              <div class="bigval" id="skUptime">-</div>
+              <div class="subval">total across 180 days</div>
+              <div style="margin-top:9px"><span class="pill green" id="skNowPill" style="display:none">alight -</span></div>
+            </div>
+            <div class="card">
+              <div class="microlabel"><span class="r">ᚱ</span>Kindlings</div>
+              <div class="bigval" id="skStarts">-</div>
+              <div class="subval">server starts</div>
+              <div style="margin-top:9px"><span class="pill amber" id="skCrashPill" style="display:none">- crashes</span></div>
+            </div>
+            <div class="card">
+              <div class="microlabel"><span class="r">ᛗ</span>Vikings</div>
+              <div class="bigval" id="skVikings">-</div>
+              <div class="subval" id="skVikingsSub">unique souls · - visits</div>
+            </div>
+            <div class="card">
+              <div class="microlabel"><span class="r">ᚦ</span>Deaths</div>
+              <div class="bigval" id="skDeaths">-</div>
+              <div class="subval" id="skDeathsSub">valkyries dispatched</div>
+            </div>
+            <div class="card">
+              <div class="microlabel"><span class="r">ᚷ</span>Mod chronicle</div>
+              <div class="bigval" id="skModUps">-</div>
+              <div class="subval" id="skModUpsSub">updates · - installs</div>
+            </div>
+          </div>
+          <div class="skald-grid">
+            <div class="card sk-players" style="padding:0">
+              <div style="height:14px"></div>
+              <table>
+                <thead><tr><th style="width:32%">Viking</th><th>Playtime</th><th>Visits</th><th>Deaths</th><th>Last seen</th></tr></thead>
+                <tbody id="skPlayerTable"></tbody>
+              </table>
+            </div>
+            <div class="card sk-feed">
+              <div class="microlabel"><span class="r">ᛋ</span>Happenings</div>
+              <div class="skfeed" id="skFeed"></div>
+            </div>
+            <div class="card sk-mods">
+              <div class="microlabel"><span class="r">ᚱ</span>Mod chronicle</div>
+              <div class="skfeed" id="skModFeed"></div>
+            </div>
+          </div>
+        </section>
+
       </div>
 
       <!-- STATUSBAR -->
@@ -494,6 +549,7 @@
         <div class="pitem" data-cmd="Discord sharing"><span class="r">ᚺ</span>Discord sharing<span class="k">herald</span></div>
         <div class="pitem" data-cmd="Custom domain"><span class="r">ᛦ</span>Custom domain<span class="k">waystone</span></div>
         <div class="pitem" data-cmd="World backups"><span class="r">ᛝ</span>World backups<span class="k">barrow</span></div>
+        <div class="pitem" data-cmd="Server analytics"><span class="r">ᛏ</span>Server analytics<span class="k">skald</span></div>
         <div class="pitem" data-cmd="Open world folder"><span class="r">ᛃ</span>Open world folder<span class="k">path</span></div>
         <div class="pitem" data-cmd="Open config folder"><span class="r">ᛃ</span>Open config folder<span class="k">path</span></div>
         <div class="pitem" data-cmd="Open plugins folder"><span class="r">ᛃ</span>Open plugins folder<span class="k">path</span></div>

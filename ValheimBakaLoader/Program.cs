@@ -68,6 +68,7 @@ namespace ValheimBakaLoader
             services.AddSingleton<IInstallIsolationService, InstallIsolationService>();
             services.AddSingleton<IAppUpdateService, AppUpdateService>();
             services.AddSingleton<IHeartbeatService, HeartbeatService>();
+            services.AddSingleton<IAnalyticsService, AnalyticsService>();
             services.AddSingleton<ISoftwareUpdateProvider, SoftwareUpdateProvider>();
             services.AddSingleton<IRemoteApiClient, RemoteApiClient>();
             services.AddSingleton<IDiscordWebhookService, DiscordWebhookService>();
