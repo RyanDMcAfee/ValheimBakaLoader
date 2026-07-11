@@ -2175,6 +2175,7 @@ const ATLAS={
   viewBase:0,                                     // min(wrap w,h) at last resize - keeps the chart scaling with the window
   info:null, rendering:false, seq:0,
   layers:{portals:true,pois:true,builds:true,pins:false,fog:true},
+  fogWipe:null,                                   // {to,r} while the fog toggle wipes concentrically from world center
   cam:{cx:0,cz:0,ppm:0},                          // ppm = screen px per world meter
   drag:null,
 };
@@ -2521,8 +2522,30 @@ function atlasFogMaskData(){
   try{ATLAS.fogMask=g.getImageData(0,0,cnv.width,cnv.height);}catch{return null;}
   return ATLAS.fogMask;
 }
+/* Toggling the fog wipes it on/off in a concentric ring from the world's
+   center (0,0) outward: inside the growing circle shows the NEW state, outside
+   keeps the OLD state until the ring passes. Markers ride the same ring. */
+function atlasFogWipe(to){
+  const dur=3200, maxR=Math.max(ATLAS.mapExtent||10500,10500)*1.02;
+  const start=performance.now();
+  const w={to,r:0};
+  ATLAS.fogWipe=w;
+  const step=now=>{
+    if(ATLAS.fogWipe!==w) return;                // superseded by a newer toggle
+    const p=Math.min(1,(now-start)/dur);
+    w.r=(0.5-0.5*Math.cos(Math.PI*p))*maxR;      // ease-in-out - mist drifts, no snap
+    if(p<1&&currentPage==="atlas"){atlasDraw();requestAnimationFrame(step);}
+    else{ATLAS.fogWipe=null;atlasDraw();}
+  };
+  requestAnimationFrame(step);
+}
+function atlasFogEffectiveOn(wx,wz){
+  const a=ATLAS.fogWipe;
+  if(a) return ((wx*wx+wz*wz)<=a.r*a.r)?a.to:!a.to;
+  return ATLAS.layers.fog;
+}
 function atlasFogHides(wx,wz){
-  if(!ATLAS.layers.fog) return false;
+  if(!atlasFogEffectiveOn(wx,wz)) return false;
   if(!ATLAS.fogReady) return true;               // nothing shared - whole realm veiled
   const m=atlasFogMaskData(); if(!m) return true;
   const e=ATLAS.fogExtent;
@@ -2546,24 +2569,50 @@ function atlasDraw(){
   /* The veil is a Tolkien-style parchment sea chart, not a black shroud. No
      shared cartography data = nothing explored, so the whole realm stays
      parchment - and every marker underneath it stays secret (atlasFogHides). */
-  if(ATLAS.layers.fog){
+  const wipe=ATLAS.fogWipe;
+  if(ATLAS.layers.fog||wipe){
+    /* During a wipe the veil is drawn to a scratch canvas, then a feathered
+       radial gradient at the ring (destination-in when appearing, -out when
+       vanishing) melts its edge so the wave rolls in like mist, not a knife. */
+    let g=ctx;
+    if(wipe){
+      const sc=ATLAS.fogWipeCnv||(ATLAS.fogWipeCnv=document.createElement("canvas"));
+      if(sc.width!==cv.width||sc.height!==cv.height){sc.width=cv.width;sc.height=cv.height;}
+      g=sc.getContext("2d");
+      g.setTransform(dpr,0,0,dpr,0,0);
+      g.clearRect(0,0,s.w,s.h);
+    }
     const pReady=FOG_PARCHMENT.complete&&FOG_PARCHMENT.naturalWidth;
     if(ATLAS.fogReady){
       const fsz=2*ATLAS.fogExtent*c.ppm;
-      ctx.drawImage(atlasFogTex()||ATLAS.fogImg,w2sX(-ATLAS.fogExtent),w2sY(ATLAS.fogExtent),fsz,fsz);
+      g.drawImage(atlasFogTex()||ATLAS.fogImg,w2sX(-ATLAS.fogExtent),w2sY(ATLAS.fogExtent),fsz,fsz);
     }else{
       const ext=Math.max(ATLAS.mapExtent,ATLAS.fogExtent),fsz=2*ext*c.ppm;
       const plain=pReady?atlasFogPlainTex(ext):null;
       if(plain){
-        ctx.drawImage(plain,w2sX(-ext),w2sY(ext),fsz,fsz);
-        ctx.fillStyle="rgba(58,44,24,.85)";            // ink on vellum
+        g.drawImage(plain,w2sX(-ext),w2sY(ext),fsz,fsz);
+        g.fillStyle="rgba(58,44,24,.85)";              // ink on vellum
       }else{
-        ctx.fillStyle="rgba(6,7,10,.8)"; ctx.fillRect(w2sX(-ext),w2sY(ext),fsz,fsz);
-        ctx.fillStyle="rgba(226,217,196,.45)";
+        g.fillStyle="rgba(6,7,10,.8)"; g.fillRect(w2sX(-ext),w2sY(ext),fsz,fsz);
+        g.fillStyle="rgba(226,217,196,.45)";
       }
-      ctx.font="11px 'IBM Plex Mono',monospace"; ctx.textAlign="center"; ctx.textBaseline="middle";
-      ctx.fillText("ᚾ unexplored — no cartography table has shared the realm yet",s.w/2,s.h/2);
-      ctx.textAlign="start";
+      if(!wipe){
+        g.font="11px 'IBM Plex Mono',monospace"; g.textAlign="center"; g.textBaseline="middle";
+        g.fillText("ᚾ unexplored — no cartography table has shared the realm yet",s.w/2,s.h/2);
+        g.textAlign="start";
+      }
+    }
+    if(wipe){
+      const wcx=w2sX(0),wcy=w2sY(0);
+      const rPx=Math.max(wipe.r*c.ppm,0.01);
+      const fPx=Math.max(28,900*c.ppm);              // ~900 m soft edge, never razor-thin on screen
+      const grad=g.createRadialGradient(wcx,wcy,Math.max(0,rPx-fPx),wcx,wcy,rPx);
+      grad.addColorStop(0,"rgba(0,0,0,1)");
+      grad.addColorStop(1,"rgba(0,0,0,0)");
+      g.globalCompositeOperation=wipe.to?"destination-in":"destination-out";
+      g.fillStyle=grad; g.fillRect(0,0,s.w,s.h);
+      g.globalCompositeOperation="source-over";
+      ctx.drawImage(ATLAS.fogWipeCnv,0,0,s.w,s.h);
     }
   }
   const info=ATLAS.info;
@@ -2661,6 +2710,7 @@ $$(".lchip").forEach(ch=>ch.addEventListener("click",()=>{
   }
   ATLAS.layers[layer]=turningOn;
   ch.classList.toggle("on",turningOn);
+  if(layer==="fog"&&ATLAS.mapReady){atlasFogWipe(turningOn);return;}
   atlasDraw();
 }));
 $("#atlasRecenter").addEventListener("click",()=>{atlasFit();atlasDraw();});
