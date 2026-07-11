@@ -1404,7 +1404,7 @@ namespace ValheimBakaLoader.Forms
             RegisterRpc("backups.overview", p =>
             {
                 var profiles = ServerPrefsProvider.LoadPreferences();
-                var groups = new List<object>();
+                var groups = new List<(DateTime modified, object dto)>();
 
                 foreach (var saveFolder in KnownSaveFolders())
                 {
@@ -1439,7 +1439,7 @@ namespace ValheimBakaLoader.Forms
                             try { liveModified = File.GetLastWriteTimeUtc(File.Exists(liveDb) ? liveDb : fwl); }
                             catch { liveModified = DateTime.MinValue; }
 
-                            var layers = new List<object>();
+                            var layers = new List<(DateTime modified, object dto)>();
                             long backupBytes = 0;
                             void AddLayer(string fwlPath, string dbPath, string kind)
                             {
@@ -1452,7 +1452,7 @@ namespace ValheimBakaLoader.Forms
                                 try { modified = File.GetLastWriteTimeUtc(hasDb ? dbPath : fwlPath); }
                                 catch { modified = DateTime.MinValue; }
                                 backupBytes += size;
-                                layers.Add(new
+                                layers.Add((modified, new
                                 {
                                     file = Path.GetFileName(fwlPath),
                                     kind,
@@ -1460,7 +1460,7 @@ namespace ValheimBakaLoader.Forms
                                     modifiedUtc = modified,
                                     day = TryReadWorldDay(dbPath),
                                     hasDb,
-                                });
+                                }));
                             }
 
                             string[] snapshots;
@@ -1479,7 +1479,7 @@ namespace ValheimBakaLoader.Forms
                             }
                             AddLayer(Path.Combine(dir, world + ".fwl.old"), Path.Combine(dir, world + ".db.old"), "old");
 
-                            groups.Add(new
+                            groups.Add((liveModified, new
                             {
                                 world,
                                 folder = saveFolder,
@@ -1490,16 +1490,18 @@ namespace ValheimBakaLoader.Forms
                                 modifiedUtc = liveModified,
                                 day = TryReadWorldDay(liveDb),
                                 backups = layers
-                                    .OrderByDescending(l => (DateTime)l.GetType().GetProperty("modifiedUtc").GetValue(l))
+                                    .OrderByDescending(l => l.modified)
+                                    .Select(l => l.dto)
                                     .ToList(),
                                 backupBytes,
-                            });
+                            }));
                         }
                     }
                 }
 
                 return Task.FromResult<object>(groups
-                    .OrderByDescending(g => (DateTime)g.GetType().GetProperty("modifiedUtc").GetValue(g))
+                    .OrderByDescending(g => g.modified)
+                    .Select(g => g.dto)
                     .ToList());
             });
 
