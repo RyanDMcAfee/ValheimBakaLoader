@@ -1,7 +1,8 @@
 <h1 align="center">Valheim BakaLoader</h1>
 
 <p align="center">
-  <em>Run your modded Valheim server from one window. Mods, restarts, players, and a live map of your actual world.</em>
+  <em>Run your modded Valheim server from one window. Mods, restarts, players, and a live map of your actual world.</em><br>
+  <sub>Free Valheim dedicated server hosting software for Windows — a full server manager GUI, self-hosted on your own PC, no command line.</sub>
 </p>
 
 <p align="center">
