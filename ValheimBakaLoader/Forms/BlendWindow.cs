@@ -329,17 +329,38 @@ namespace ValheimBakaLoader.Forms
 
         private void PostJson(object payload)
         {
-            if (WebView?.CoreWebView2 == null) return;
+            // CRITICAL: never touch WebView/CoreWebView2 here — this method is called
+            // from background threads (server stdout, timers, RCON). The CoreWebView2
+            // getter is UI-thread-only; on some machines even a null-check of it from
+            // another thread throws E_NOINTERFACE and kills the process (GitHub crash
+            // report: InvalidOperationException "CoreWebView2 can only be accessed from
+            // the UI thread" via PipelineLogger.Write). Marshal FIRST, dereference later.
+            if (IsDisposed || !IsHandleCreated) return;
 
             var json = JsonConvert.SerializeObject(payload);
             if (InvokeRequired)
             {
-                try { BeginInvoke(new Action(() => WebView.CoreWebView2.PostWebMessageAsJson(json))); }
+                try { BeginInvoke(new Action(() => PostJsonOnUiThread(json))); }
                 catch (ObjectDisposedException) { /* window closing */ }
+                catch (InvalidOperationException) { /* handle destroyed mid-call */ }
             }
             else
             {
-                WebView.CoreWebView2.PostWebMessageAsJson(json);
+                PostJsonOnUiThread(json);
+            }
+        }
+
+        private void PostJsonOnUiThread(string json)
+        {
+            // A UI push must never take the app down, and must never log (logging
+            // routes back through PostEvent -> PostJson -> here: infinite recursion).
+            try
+            {
+                WebView?.CoreWebView2?.PostWebMessageAsJson(json);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"PostJson failed: {ex.Message}");
             }
         }
 
