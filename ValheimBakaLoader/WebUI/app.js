@@ -3301,15 +3301,22 @@ function atlasResize(){
 const FOG_PARCHMENT=new Image();
 FOG_PARCHMENT.onload=()=>{ATLAS.fogTex=null;ATLAS.fogPlainTex=null;if(currentPage==="atlas")atlasDraw();};
 FOG_PARCHMENT.src="assets/fog-parchment.png";
-/* The realm is a 10.5km disc - the cloud veil should sit over the world only,
-   thinning to nothing past the rim. destination-in with a radial gradient
-   feathers the veil's edge into a soft circular cutout. extentM = world meters
-   from the canvas centre to its edge. */
+/* The realm is a 10.5km disc - unexplored land must stay fully obfuscated all
+   the way out to the rim, so the veil DARKENS toward the edge (fading into the
+   #080C12 atlas backdrop) instead of thinning to transparency (which used to
+   let the map's outer ring show through the fog). source-atop only paints
+   where veil pixels exist, so cartography-explored cutouts stay clear - the
+   crew's charted paths remain visible right up to the rim. A destination-in
+   trim just PAST the rim (over backdrop only) keeps the circular silhouette.
+   extentM = world meters from the canvas centre to its edge. */
 function atlasVeilFeather(g,w,h,extentM){
-  const cx=w/2,cy=h/2;
-  const r1=10500/extentM*(w/2);                 // world rim in canvas px
-  const r0=Math.max(0,9300/extentM*(w/2));      // fade starts inside the rim
-  const grad=g.createRadialGradient(cx,cy,r0,cx,cy,r1);
+  const cx=w/2,cy=h/2,px=m=>m/extentM*(w/2);
+  let grad=g.createRadialGradient(cx,cy,px(9300),cx,cy,px(10500));
+  grad.addColorStop(0,"rgba(8,12,18,0)");
+  grad.addColorStop(1,"rgba(8,12,18,1)");
+  g.globalCompositeOperation="source-atop";
+  g.fillStyle=grad; g.fillRect(0,0,w,h);
+  grad=g.createRadialGradient(cx,cy,px(10500),cx,cy,px(10900));
   grad.addColorStop(0,"rgba(0,0,0,1)");
   grad.addColorStop(1,"rgba(0,0,0,0)");
   g.globalCompositeOperation="destination-in";
