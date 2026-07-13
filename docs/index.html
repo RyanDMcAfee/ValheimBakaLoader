@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Free Valheim Dedicated Server Manager for Windows — Valheim BakaLoader</title>
+<meta name="description" content="Valheim BakaLoader is free Valheim dedicated server hosting software for Windows. One-click self-hosted server, Thunderstore mod auto-updates, scheduled restarts, a live seed-rendered world map, and player management — no command line.">
+<link rel="canonical" href="https://ryandmcafee.github.io/ValheimBakaLoader/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Valheim BakaLoader — Free Valheim Dedicated Server Manager for Windows">
+<meta property="og:description" content="Run your modded Valheim server from one window. Mods, restarts, players, and a live map of your actual world. Free, self-hosted, no command line.">
+<meta property="og:url" content="https://ryandmcafee.github.io/ValheimBakaLoader/">
+<meta property="og:image" content="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-hearth.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Valheim BakaLoader — Free Valheim Dedicated Server Manager for Windows">
+<meta name="twitter:description" content="Run your modded Valheim server from one window. Free, self-hosted, no command line.">
+<meta name="twitter:image" content="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-hearth.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Valheim BakaLoader",
+  "operatingSystem": "Windows 10, Windows 11",
+  "applicationCategory": "GameApplication",
+  "description": "Free Valheim dedicated server manager and hosting software for Windows. One-click self-hosted server, Thunderstore mod auto-updates, scheduled restarts, live seed-rendered world map, and player management.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "downloadUrl": "https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest",
+  "url": "https://ryandmcafee.github.io/ValheimBakaLoader/",
+  "author": { "@type": "Person", "name": "Ryan McAfee" }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --iron:#1A1D21; --iron-deep:#14161A; --iron-deeper:#0F1114; --bg:#0A0B0D;
+  --ember:#FF7A1A; --ember-hi:#FFB35C; --ember-dim:rgba(255,122,26,.14);
+  --bronze:rgba(140,109,63,.4); --bronze-hi:rgba(140,109,63,.75);
+  --bone:#E8E2D5; --bone-dim:#9A927F; --bone-faint:#5E594E;
+  --cold:#5B7A8C; --cold-hi:#8FB4C9; --amber:#E8A93C; --moss:#6FA05C;
+  --serif:'Cinzel',Georgia,'Times New Roman',serif;
+  --mono:'JetBrains Mono',Consolas,'Cascadia Mono',monospace;
+  --sans:'Inter',system-ui,'Segoe UI',sans-serif;
+  --r:10px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--bone);font-family:var(--sans);line-height:1.65;font-size:16px}
+a{color:var(--ember-hi);text-decoration:none}
+a:hover{color:var(--ember)}
+.wrap{max-width:980px;margin:0 auto;padding:0 24px}
+.rune{color:var(--amber);font-family:var(--mono)}
+
+/* hero */
+header{padding:84px 0 48px;text-align:center;
+  background:radial-gradient(ellipse 70% 55% at 50% -10%, rgba(255,122,26,.10), transparent 70%)}
+h1{font-family:var(--serif);font-weight:700;font-size:clamp(30px,5vw,46px);letter-spacing:.02em;color:var(--bone)}
+h1 .flame{color:var(--ember)}
+.tagline{margin-top:14px;font-size:clamp(16px,2.4vw,19px);color:var(--bone-dim);max-width:640px;margin-left:auto;margin-right:auto}
+.subtitle{margin-top:10px;font-size:14px;color:var(--bone-faint)}
+.cta-row{margin-top:34px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-block;padding:14px 30px;border-radius:var(--r);font-weight:600;font-size:16px;
+  transition:transform .15s,box-shadow .15s}
+.btn-primary{background:linear-gradient(180deg,var(--ember),#D8620E);color:#160B02;
+  box-shadow:0 4px 24px rgba(255,122,26,.35)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 6px 32px rgba(255,122,26,.5);color:#160B02}
+.btn-ghost{border:1px solid var(--bronze-hi);color:var(--bone)}
+.btn-ghost:hover{border-color:var(--ember);color:var(--ember-hi)}
+.hero-note{margin-top:16px;font-size:13px;color:var(--bone-faint);font-family:var(--mono)}
+.hero-shot{margin:48px auto 0;max-width:920px;padding:0 24px}
+.hero-shot img{width:100%;border-radius:var(--r);border:1px solid var(--bronze);
+  box-shadow:0 20px 60px rgba(0,0,0,.6)}
+
+/* sections */
+section{padding:64px 0;border-top:1px solid rgba(140,109,63,.18)}
+h2{font-family:var(--serif);font-weight:600;font-size:clamp(22px,3.4vw,30px);margin-bottom:8px}
+h2 .rune{margin-right:10px}
+.lead{color:var(--bone-dim);max-width:720px;margin-bottom:36px}
+
+/* feature grid */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:18px}
+.card{background:var(--iron-deep);border:1px solid var(--bronze);border-radius:var(--r);padding:22px}
+.card h3{font-family:var(--serif);font-size:17px;font-weight:600;margin-bottom:8px;color:var(--bone)}
+.card h3 .rune{margin-right:8px}
+.card p{font-size:14px;color:var(--bone-dim)}
+
+/* screenshots */
+.shots{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.shot{background:var(--iron-deep);border:1px solid var(--bronze);border-radius:var(--r);overflow:hidden}
+.shot img{width:100%;display:block}
+.shot figcaption{padding:12px 16px;font-size:13px;color:var(--bone-dim)}
+.shot figcaption strong{color:var(--bone);font-family:var(--serif)}
+@media(max-width:720px){.shots{grid-template-columns:1fr}}
+
+/* steps */
+.steps{counter-reset:step;display:grid;gap:14px;max-width:720px}
+.step{background:var(--iron-deep);border:1px solid var(--bronze);border-radius:var(--r);
+  padding:18px 20px 18px 64px;position:relative}
+.step::before{counter-increment:step;content:counter(step);position:absolute;left:18px;top:16px;
+  width:30px;height:30px;border-radius:50%;background:var(--ember-dim);color:var(--ember-hi);
+  font-family:var(--mono);font-weight:500;display:flex;align-items:center;justify-content:center;font-size:14px}
+.step strong{color:var(--bone)}
+.step p{font-size:14px;color:var(--bone-dim)}
+code{font-family:var(--mono);font-size:.9em;background:var(--iron);border:1px solid var(--bronze);
+  border-radius:5px;padding:1px 6px;color:var(--amber)}
+
+/* faq */
+details{background:var(--iron-deep);border:1px solid var(--bronze);border-radius:var(--r);
+  margin-bottom:12px;overflow:hidden}
+summary{padding:16px 20px;cursor:pointer;font-weight:600;color:var(--bone);list-style:none;
+  display:flex;align-items:center;gap:10px}
+summary::before{content:"ᛞ";color:var(--amber);font-family:var(--mono);transition:transform .2s}
+details[open] summary::before{transform:rotate(90deg)}
+details div{padding:0 20px 18px 46px;font-size:14px;color:var(--bone-dim)}
+
+/* footer */
+footer{border-top:1px solid rgba(140,109,63,.18);padding:44px 0 56px;text-align:center;
+  font-size:13px;color:var(--bone-faint)}
+footer .links{margin-bottom:14px;display:flex;gap:22px;justify-content:center;flex-wrap:wrap}
+footer .links a{color:var(--bone-dim)}
+footer .links a:hover{color:var(--ember-hi)}
+.disclaimer{max-width:640px;margin:14px auto 0}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1><span class="flame">ᚠ</span> Valheim BakaLoader</h1>
+    <p class="tagline">Run your modded Valheim server from one window. Mods, restarts, players, and a live map of your actual world.</p>
+    <p class="subtitle">Free Valheim dedicated server hosting software for Windows — a full server manager GUI, self-hosted on your own PC, no command line.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest">ᛞ Download for Windows</a>
+      <a class="btn btn-ghost" href="https://github.com/RyanDMcAfee/ValheimBakaLoader">View on GitHub</a>
+    </div>
+    <p class="hero-note">free · no installer · unzip and run · Windows 10 / 11</p>
+  </div>
+  <div class="hero-shot">
+    <img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-hearth.png" alt="Valheim BakaLoader server manager dashboard — the Hearth" loading="eager">
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2><span class="rune">ᚱ</span>Everything a Valheim server host needs</h2>
+    <p class="lead">BakaLoader replaces the batch files, the console window nobody is allowed to close, and the 2am mystery crashes. Host a Valheim dedicated server — vanilla or heavily modded — and manage it like an app, not a science project.</p>
+    <div class="grid">
+      <div class="card"><h3><span class="rune">ᚠ</span>One-click hosting</h3><p>Start and stop your self-hosted Valheim dedicated server from a live dashboard. A first-launch wizard handles setup, ports, and world creation.</p></div>
+      <div class="card"><h3><span class="rune">ᚱ</span>Mod auto-updates</h3><p>Scans your BepInEx mods against Thunderstore and updates them on your schedule — or automatically while the server is empty. Paste a Thunderstore link to install.</p></div>
+      <div class="card"><h3><span class="rune">ᛏ</span>Scheduled restarts</h3><p>Restart on a timer with in-game countdown warnings so players can reach a bed first. Auto-restart when the server sits empty.</p></div>
+      <div class="card"><h3><span class="rune">ᛞ</span>Live world map</h3><p>The Atlas renders your actual world from its seed — no map mods required. Fog of war follows what your players have explored, plus a deterministic weather forecast.</p></div>
+      <div class="card"><h3><span class="rune">ᛗ</span>Player management</h3><p>See who's online, when they joined, and right-click for admin, kick, ban, heal, teleport, or item spawning.</p></div>
+      <div class="card"><h3><span class="rune">ᚲ</span>Backups &amp; logs</h3><p>Layered world backups with one-click restore, a searchable color-coded live log, config file editing, and Discord status posting.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="screens">
+  <div class="wrap">
+    <h2><span class="rune">ᛋ</span>A look inside</h2>
+    <p class="lead">Seven halls, one window: dashboard, players, mods, world settings, map, configs, and logs.</p>
+    <div class="shots">
+      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-atlas.png" alt="Valheim world map rendered from seed with fog of war and weather forecast" loading="lazy"><figcaption><strong>ᛞ Atlas</strong> — your world, mapped from the seed. No mods needed.</figcaption></figure>
+      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-mods.png" alt="Thunderstore mod manager with automatic update checking" loading="lazy"><figcaption><strong>ᚱ Mods</strong> — Thunderstore scan, one-click updates, paste-link installs.</figcaption></figure>
+      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-vikings.png" alt="Online player roster with right-click admin management" loading="lazy"><figcaption><strong>ᛗ Vikings</strong> — the roster, with a right-click menu for everything else.</figcaption></figure>
+      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-saga.png" alt="Live Valheim server log with search and level highlighting" loading="lazy"><figcaption><strong>ᛋ Saga</strong> — live server log with search, levels, and per-session files.</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2><span class="rune">ᛃ</span>Host a Valheim server in minutes</h2>
+    <p class="lead">No Docker, no SteamCMD scripts, no rented hardware. If your PC can run Valheim, it can host it.</p>
+    <div class="steps">
+      <div class="step"><strong>Download and unzip.</strong><p>Grab the <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest">latest release</a>, unzip it anywhere, and run <code>ValheimBakaLoader.exe</code>. No installer.</p></div>
+      <div class="step"><strong>Follow the wizard.</strong><p>The first-launch wizard finds (or helps you install) the Valheim dedicated server, names your world, and sets the password.</p></div>
+      <div class="step"><strong>Light the hearth.</strong><p>Press start. Share your address from the dashboard, set a restart schedule, and let mod auto-updates do their thing.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2><span class="rune">ᚺ</span>Questions</h2>
+    <details><summary>Is this really free Valheim server hosting?</summary><div>Yes — BakaLoader is free software that runs the official Valheim dedicated server on your own Windows PC. You self-host, so there is no monthly fee and no rented server. Your only costs are the electricity and bandwidth you already pay for.</div></details>
+    <details><summary>Does it work with mods?</summary><div>That's the point. BakaLoader manages BepInEx mods, scans them against Thunderstore, updates them on a schedule or while the server is empty, and installs new mods from a pasted Thunderstore link. It was built running a ~50-mod server.</div></details>
+    <details><summary>Do I need to know the command line?</summary><div>No. Everything — install, world creation, ports, mods, restarts, backups, player admin — happens in the app. There is no console window to babysit.</div></details>
+    <details><summary>What are the requirements?</summary><div>Windows 10 or 11, the .NET 6 desktop runtime, and enough headroom to run the Valheim dedicated server (it's light — a few GB of RAM). You do not need to own Valheim on the hosting machine; the dedicated server is a free Steam tool.</div></details>
+    <details><summary>Can my friends join from outside my network?</summary><div>Yes — like any self-hosted Valheim server you'll forward one UDP port on your router, and BakaLoader's guide walks you through it with screenshots. Crossplay is supported, and you can point a custom domain at your server instead of sharing an IP.</div></details>
+    <details><summary>Is it open source?</summary><div>The source is available to read on GitHub under a source-available license: free to download and run, including for donation-supported community servers.</div></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest">Download</a>
+      <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader">GitHub</a>
+      <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/discussions">Discussions</a>
+      <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/blob/main/LICENSE">License</a>
+      <a href="https://ko-fi.com/bakaloader">ᛥ A horn of mead</a>
+    </div>
+    <p>Valheim BakaLoader — a free dedicated server manager for Windows.</p>
+    <p class="disclaimer">A fan-made project, not affiliated with Valheim or Iron Gate Studio. Use at your own risk.</p>
+  </div>
+</footer>
+
+</body>
+</html>
