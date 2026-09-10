@@ -32,6 +32,11 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("plainTerminology")] public bool? PlainTerminology { get; set; }
         [JsonProperty("setupCompleted")] public bool? SetupCompleted { get; set; }
 
+        // -- Window --
+        // "WIDTHxHEIGHT" in device-independent pixels (96 dpi); see UserPreferences.WindowBounds.
+        [JsonProperty("windowBounds")] public string WindowBounds { get; set; }
+        [JsonProperty("windowMaximized")] public bool? WindowMaximized { get; set; }
+
         // -- Integrations --
 
         [JsonProperty("discordWebhookUrl")] public string DiscordWebhookUrl { get; set; }

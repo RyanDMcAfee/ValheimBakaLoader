@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="img/bl-hearth.png"><img src="img/bl-hearth.png" width="820" alt="The Hearth, BakaLoader's home dashboard"></a>
+  <a href="img/bl-hearth.png"><img src="img/bl-hearth.png" width="820" alt="The BakaLoader dashboard"></a>
 </p>
 
 > Fan-made. Not affiliated with Iron Gate or Coffee Stain. Use at your own risk, and keep backups of worlds you care about.
@@ -41,25 +41,26 @@ If you run mods, expect some of them to need updates from their authors. BakaLoa
 
 ## What it does
 
-The app is split into nine screens, each with a plain name and a Norse name. A toggle in Upkeep switches all labels to plain words if you prefer.
+The app is split into nine screens. Each has a plain name, with its Norse name shown underneath as a small caption. A "Show Norse names" switch in Upkeep hides the captions if you want plain labels only. A header on every screen shows the active server, its state, uptime and players online, with one Start or Stop button.
 
 | Screen | What it is for |
 |---|---|
-| **Hearth** (dashboard) | Server status, who is online, next save, network addresses, CPU and RAM, a tail of the log, and the Upkeep settings. |
-| **Vikings** (players) | Roster with platform and position. Right-click a player to promote, allow, kick, ban, heal, teleport or spawn items nearby. |
+| **Dashboard** (Hearth) | Server status, who is online, next save, network addresses, CPU and RAM, a tail of the log, and the Upkeep settings. |
+| **Players** (Vikings) | A sortable table with platform, session time, total playtime, last seen, deaths and position. The row button or a right-click opens the actions: promote, allow, kick, ban, heal, teleport or spawn items nearby. |
 | **Mods** | Scans your BepInEx folder against Thunderstore. Update one, update all, or paste a Thunderstore link to install. |
-| **World** (settings) | Server name, password, port, world and seed, crossplay, backups, world modifiers, restart rules, RCON and folders. |
-| **Atlas** (map) | Your world drawn from its seed with no map mods, fog of war from what players have shared at cartography tables, portals and builds as layers, and a weather forecast. |
-| **Runes** (config editor) | Edit your mods' config files in the app. |
-| **Saga** (log) | The live server log with levels, search, pause on scroll, and a console line. |
-| **Herald** (Discord) | One status post in a Discord channel that edits itself as the server changes. |
-| **Skald** (statistics) | Uptime, sessions, deaths and mod history, counted on your machine only. |
+| **Settings** (World) | Server name, password, port, world and seed, crossplay, backups, world modifiers, restart rules, RCON and folders. |
+| **Map** (Atlas) | Your world drawn from its seed with no map mods, fog of war from what players have shared at cartography tables, portals and builds as layers, and a weather forecast. |
+| **Configs** (Runes) | Edit your mods' config files in the app. |
+| **Log** (Saga) | The live server log with levels, search, pause on scroll, and a console line. |
+| **Discord** (Herald) | One status post in a Discord channel that edits itself as the server changes. |
+| **Statistics** (Skald) | Uptime, sessions, deaths and mod history, counted on your machine only. |
 
 ### Running the server
 - Start, stop and restart from the app. Scheduled restarts warn players in game first. Optional restart when the last player leaves, and relaunch after a crash.
 - The server process is tied to the app, so it cannot linger after BakaLoader closes, even through Task Manager or a crash. If a matching server is already running when you open BakaLoader, it offers to adopt it.
 - Closing the app while players are online asks first, then saves the world on the way out.
 - Copy your public address, LAN address or crossplay join code from the dashboard. Minimize to the tray if you want it out of the way.
+- Conditions that stay true, such as a server update waiting, a held start, a failed backup or a crash with a relaunch pending, sit in a bar above the page with their action until you deal with them. Toasts are only used to confirm what you just did.
 
 ### More than one server
 Each server has its own profile. Profiles can be fully isolated with their own install, mods and save folder. Switching is one click in the sidebar. The new-server wizard picks a free port and warns about collisions before they happen. Orphaned worlds from an old setup can be adopted by copying them; your originals stay where they are.
@@ -96,12 +97,12 @@ In-game broadcasts, the restart countdown, and the player actions use RCON throu
 <table width="100%">
   <tr>
     <td width="50%" valign="top">
-      <a href="img/bl-atlas.png"><img src="img/bl-atlas.png" alt="Atlas, the world map"></a>
-      <p align="center"><strong>Atlas.</strong> The world drawn from the seed, with fog of war and a forecast.</p>
+      <a href="img/bl-atlas.png"><img src="img/bl-atlas.png" alt="Map, the world drawn from its seed"></a>
+      <p align="center"><strong>Map.</strong> The world drawn from the seed, with fog of war and a forecast.</p>
     </td>
     <td width="50%" valign="top">
-      <a href="img/bl-vikings.png"><img src="img/bl-vikings.png" alt="Vikings, the player roster"></a>
-      <p align="center"><strong>Vikings.</strong> Who is on, from where, and a right-click menu for the rest.</p>
+      <a href="img/bl-vikings.png"><img src="img/bl-vikings.png" alt="Players, the roster"></a>
+      <p align="center"><strong>Players.</strong> Who is on, from where, for how long, and a menu for the rest.</p>
     </td>
   </tr>
   <tr>
@@ -110,14 +111,14 @@ In-game broadcasts, the restart countdown, and the player actions use RCON throu
       <p align="center"><strong>Mods.</strong> Thunderstore scan, one-click updates, paste a link to install.</p>
     </td>
     <td width="50%" valign="top">
-      <a href="img/bl-world.png"><img src="img/bl-world.png" alt="World settings"></a>
-      <p align="center"><strong>World.</strong> Everything the server is started with, in one form.</p>
+      <a href="img/bl-world.png"><img src="img/bl-world.png" alt="Server settings"></a>
+      <p align="center"><strong>Settings.</strong> Everything the server is started with, in one form.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="img/bl-saga.png"><img src="img/bl-saga.png" alt="Saga, the live log"></a>
-      <p align="center"><strong>Saga.</strong> The live log with the noise filtered out and a console line.</p>
+      <a href="img/bl-saga.png"><img src="img/bl-saga.png" alt="Log, the live server log"></a>
+      <p align="center"><strong>Log.</strong> The live log with the noise filtered out and a console line.</p>
     </td>
     <td width="50%" valign="top">
       <a href="img/bl-command.png"><img src="img/bl-command.png" alt="Command palette"></a>
@@ -143,7 +144,7 @@ This is a program that starts a server process, edits files in your Valheim fold
 **Network connections it makes**
 - `thunderstore.io` to read the mod index and download mod files you asked for.
 - `api.github.com` and GitHub release downloads to check for and fetch BakaLoader updates.
-- Your own Discord webhook, only if you set one up on the Herald screen.
+- Your own Discord webhook, only if you set one up on the Discord screen.
 - An anonymous heartbeat to a small stats endpoint, about every 5 minutes while the app is open: a one-way hashed device id, the app version, and whether a server is running. No addresses, names, passwords, world data or player data. Turn it off in Upkeep with "Share anonymous usage stats".
 
 **Files it writes**
@@ -160,7 +161,7 @@ The source is in this repository and every release is built from it. If Windows 
 - **Logs** are in `%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\logs\`. Application logs are per day, server logs are per session. You can change the folder on the Saga screen.
 - **The server will not start after a game update.** Steam may still have the update queued. Let Steam finish, then start again. BakaLoader tells you when it can see a pending update.
 - **Players see "incompatible version".** Client and server are on different builds. Update whichever is behind.
-- **Everyone is refused as banned after 1.0.** Your allow list has old-style ids. Open the Vikings screen once and BakaLoader adds the new form, or edit the file and prefix Steam ids with `V_`.
+- **Everyone is refused as banned after 1.0.** Your allow list has old-style ids. Open the Players screen once and BakaLoader adds the new form, or edit the file and prefix Steam ids with `V_`.
 - **Something else.** Open an issue with the log lines around the problem, or post in Discussions.
 
 ## Questions people ask

@@ -19,11 +19,22 @@
   --mono:'JetBrains Mono',Consolas,'Cascadia Mono',monospace;
   --sans:'Inter',system-ui,'Segoe UI',sans-serif;
   --r:10px; --ease:cubic-bezier(.4,0,.2,1);
+
+  /* ---- DESIGN TOKENS ----
+     One spacing rhythm, one radius set, one type scale and four tonal surfaces.
+     New rules use these; the older one-offs are left alone rather than churning
+     every line in the file. */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s8:32px; --s10:40px;
+  --r1:4px; --r2:8px; --r3:12px;
+  --t11:11px; --t13:13px; --t14:14px; --t16:16px; --t20:20px; --t28:28px;
+  --lh:1.5;
+  /* tonal ladder: ground → cards → raised/hover → menus and modals */
+  --surface-0:#0E1012; --surface-1:#191D22; --surface-2:#232830; --surface-3:#2C323B;
 }
 html,body{height:100%;overflow:hidden}
 body{
-  background:#0A0B0D;
-  font-family:var(--sans); color:var(--bone);
+  background:var(--surface-0);
+  font-family:var(--sans); color:var(--bone); line-height:var(--lh);
   user-select:none;
 }
 ::-webkit-scrollbar{width:9px;height:9px}
@@ -101,21 +112,27 @@ body{
 
 /* ============ SIDEBAR ============ */
 .side{
-  width:84px;flex:none;display:flex;flex-direction:column;align-items:center;
+  width:92px;flex:none;display:flex;flex-direction:column;align-items:center;
   padding:14px 0 12px;gap:4px;position:relative;
   background:
     repeating-linear-gradient(2deg,rgba(0,0,0,.14) 0 3px,transparent 3px 9px),
     repeating-linear-gradient(88deg,rgba(255,255,255,.012) 0 1px,transparent 1px 7px),
     linear-gradient(180deg,#1B1A17,#15140F);
-  border-right:1px solid var(--bronze);
+  border-right:1px solid var(--bronze);line-height:1.3;
 }
 .navitem{
-  width:64px;height:58px;flex:0 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  gap:5px;border-radius:9px;cursor:pointer;position:relative;color:var(--bone-dim);
+  width:76px;height:60px;flex:0 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:3px;border-radius:9px;cursor:pointer;position:relative;color:var(--bone-dim);
   transition:background .2s var(--ease),color .2s var(--ease);
 }
 .navitem .rune{font-size:19px;line-height:1;transition:all .2s var(--ease)}
-.navitem .lbl{font-size:8.5px;letter-spacing:1.8px;text-transform:uppercase;font-weight:600}
+.navitem .lbl{font-size:8.5px;letter-spacing:1.2px;text-transform:uppercase;font-weight:600;
+  line-height:1.1;white-space:nowrap}
+/* The Norse name rides under the plain label as a caption. Ember at weight 500 on
+   the rail reads at 6.6:1, so it never needs an opacity knock-down to sit back. */
+.navitem .norse{font-family:var(--serif);font-size:10px;letter-spacing:.4px;font-weight:500;
+  line-height:1.1;color:var(--ember);white-space:nowrap}
+.navitem.active .norse{color:var(--ember-hi)}
 .navitem:hover{color:var(--bone);background:rgba(255,255,255,.035)}
 .navitem::before{content:"";position:absolute;left:-10px;top:12px;bottom:12px;width:3px;
   border-radius:0 3px 3px 0;background:transparent;transition:all .2s var(--ease)}
@@ -180,7 +197,10 @@ body{
   animation:pageIn .28s var(--ease)}
 .page.active{display:block}
 @keyframes pageIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.pagehead{flex:none;display:flex;align-items:baseline;gap:14px;margin-bottom:16px}
+.pagehead{flex:none;display:flex;align-items:baseline;gap:14px;row-gap:6px;flex-wrap:wrap;margin-bottom:16px}
+/* Hall header: plain title, then the Norse name as a caption in the same serif. */
+.hnorse{font-family:var(--serif);font-size:var(--t11);font-weight:600;letter-spacing:3px;
+  text-transform:uppercase;color:var(--ember);white-space:nowrap}
 .pagehead h1{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:4px;color:var(--bone)}
 .pagehead h1 .r{color:var(--ember);margin-right:8px;text-shadow:0 0 10px rgba(255,122,26,.6)}
 .pagehead .sub{font-size:11px;color:var(--bone-dim);letter-spacing:.5px}
@@ -188,53 +208,61 @@ body{
 
 /* ============ CARDS ============ */
 .card{
-  background:linear-gradient(180deg,#1E2126,#191C20);
+  background:linear-gradient(180deg,var(--surface-2),var(--surface-1));
   border:1px solid var(--bronze);border-radius:var(--r);
-  padding:16px;position:relative;overflow:hidden;
+  padding:var(--s4);position:relative;overflow:hidden;
   box-shadow:0 4px 14px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.03);
   transition:border-color .22s var(--ease),box-shadow .22s var(--ease),transform .22s var(--ease);
 }
-.card::before{ /* rune-etched top strip */
-  content:"ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ ᚷ ᚹ ᚺ ᚾ ᛁ ᛃ ᛇ ᛈ ᛉ ᛊ ᛏ ᛒ ᛖ ᛗ ᛚ ᛜ ᛞ ᛟ ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ";
-  position:absolute;top:0;left:0;right:0;height:14px;overflow:hidden;
-  font-size:9px;letter-spacing:7px;text-align:center;line-height:14px;
-  color:rgba(140,109,63,.28);white-space:nowrap;pointer-events:none;
-  border-bottom:1px solid rgba(140,109,63,.14);
-  background:linear-gradient(180deg,rgba(0,0,0,.22),transparent);
-}
-/* Lore rune strips - each card wears its Old Norse name in Elder Futhark.
-   arinn=hearth · vikingar=vikings · midgardr=world (saves) · bifrost=the bridge (network)
-   galdrar=spells (mods) · galdrastafir=magic staves (mod table) · smidja=forge
-   vardveita=to preserve (upkeep) · hird=warband (player roster) · heimr=realm (world config)
-   runar=runes (config scrolls) · rista=to carve (editor) */
-.b-hearth::before{content:"ᚨ ᚱ ᛁ ᚾ ᚾ   ᚨ ᚱ ᛁ ᚾ ᚾ   ᚨ ᚱ ᛁ ᚾ ᚾ   ᚨ ᚱ ᛁ ᚾ ᚾ   ᚨ ᚱ ᛁ ᚾ ᚾ   ᚨ ᚱ ᛁ ᚾ ᚾ   ᚨ ᚱ ᛁ ᚾ ᚾ   ᚨ ᚱ ᛁ ᚾ ᚾ"}
-.b-vikings::before{content:"ᚹ ᛁ ᚲ ᛁ ᛜ ᚨ ᚱ   ᚹ ᛁ ᚲ ᛁ ᛜ ᚨ ᚱ   ᚹ ᛁ ᚲ ᛁ ᛜ ᚨ ᚱ   ᚹ ᛁ ᚲ ᛁ ᛜ ᚨ ᚱ   ᚹ ᛁ ᚲ ᛁ ᛜ ᚨ ᚱ   ᚹ ᛁ ᚲ ᛁ ᛜ ᚨ ᚱ"}
-.b-saves::before{content:"ᛗ ᛁ ᚦ ᚷ ᚨ ᚱ ᚦ ᚱ   ᛗ ᛁ ᚦ ᚷ ᚨ ᚱ ᚦ ᚱ   ᛗ ᛁ ᚦ ᚷ ᚨ ᚱ ᚦ ᚱ   ᛗ ᛁ ᚦ ᚷ ᚨ ᚱ ᚦ ᚱ   ᛗ ᛁ ᚦ ᚷ ᚨ ᚱ ᚦ ᚱ   ᛗ ᛁ ᚦ ᚷ ᚨ ᚱ ᚦ ᚱ"}
-.b-net::before{content:"ᛒ ᛁ ᚠ ᚱ ᛟ ᛊ ᛏ   ᛒ ᛁ ᚠ ᚱ ᛟ ᛊ ᛏ   ᛒ ᛁ ᚠ ᚱ ᛟ ᛊ ᛏ   ᛒ ᛁ ᚠ ᚱ ᛟ ᛊ ᛏ   ᛒ ᛁ ᚠ ᚱ ᛟ ᛊ ᛏ   ᛒ ᛁ ᚠ ᚱ ᛟ ᛊ ᛏ"}
-.b-mods::before{content:"ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ"}
-.b-forge::before{content:"ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ"}
-.b-upkeep::before{content:"ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ   ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ   ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ   ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ   ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ"}
-/* annall=the chronicle (recent log) */
-.b-log::before{content:"ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ"}
-.card.ctxwrap::before{content:"ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ"}
-#page-mods .card::before{content:"ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᛊ ᛏ ᚨ ᚠ ᛁ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᛊ ᛏ ᚨ ᚠ ᛁ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᛊ ᛏ ᚨ ᚠ ᛁ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᛊ ᛏ ᚨ ᚠ ᛁ ᚱ"}
-#page-world .card::before{content:"ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ"}
-.cfg-listcard::before{content:"ᚱ ᚢ ᚾ ᚨ ᚱ   ᚱ ᚢ ᚾ ᚨ ᚱ   ᚱ ᚢ ᚾ ᚨ ᚱ   ᚱ ᚢ ᚾ ᚨ ᚱ   ᚱ ᚢ ᚾ ᚨ ᚱ   ᚱ ᚢ ᚾ ᚨ ᚱ"}
-/* boðberi=messenger (herald) · tíðindi=tidings (what is shared) · orðsending=the message (the post) */
-.b-herald::before{content:"ᛒ ᛟ ᚦ ᛒ ᛖ ᚱ ᛁ   ᛒ ᛟ ᚦ ᛒ ᛖ ᚱ ᛁ   ᛒ ᛟ ᚦ ᛒ ᛖ ᚱ ᛁ   ᛒ ᛟ ᚦ ᛒ ᛖ ᚱ ᛁ   ᛒ ᛟ ᚦ ᛒ ᛖ ᚱ ᛁ   ᛒ ᛟ ᚦ ᛒ ᛖ ᚱ ᛁ"}
-.b-heraldshare::before{content:"ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ   ᛏ ᛁ ᚦ ᛁ ᚾ ᛞ ᛁ"}
-.b-heraldpost::before{content:"ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ   ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ   ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ   ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ   ᛟ ᚱ ᚦ ᛊ ᛖ ᚾ ᛞ ᛁ ᛜ"}
-.cfg-edcard::before{content:"ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ   ᚱ ᛁ ᛊ ᛏ ᚨ"}
-/* skáld=the court poet who keeps the tally · kviða=the lay he recites */
-#page-skald .card::before{content:"ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ   ᛊ ᚲ ᚨ ᛚ ᛞ"}
-#page-skald .sk-feed::before{content:"ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ   ᚲ ᚹ ᛁ ᚦ ᚨ"}
+/* ============ CARD HEADER HIERARCHY ============
+   The rune-etched top strip and the per-card Old Norse strips are gone: they read
+   as noise on every card at once, and a name repeated eight times across a 400px
+   header is decoration, not information. The header/body split is carried by type
+   and space instead - an 11px 700-weight bone-white label over one hairline, with
+   the body staying bone-dim underneath. Ornament now lives in exactly three
+   places: the brand lockup in the title bar, the empty-state illustration, and
+   the flame on the server status card. */
+.card>.microlabel{padding-bottom:var(--s1);border-bottom:1px solid rgba(255,255,255,.06)}
+/* The Norse word for a card, right-aligned in its own header row. */
+.cnorse{margin-left:auto;flex:none;font-family:var(--serif);font-size:10px;font-weight:600;
+  letter-spacing:1.6px;text-transform:uppercase;color:var(--ember);white-space:nowrap}
+.cnorse+*{margin-left:var(--s2)}
+
+/* ---------- PLAIN TERMINOLOGY ----------
+   "Show Norse names" off: every Norse caption disappears and the plain label is all
+   that is left. The label itself never moves, so nothing shifts about but the caption.
+   TERM_PAIRS still runs underneath for the Norse wording that is not a caption
+   (toasts, log dividers, the launch-guard copy). */
+.plain-terms .navitem .norse,
+.plain-terms .hnorse,
+.plain-terms .cnorse{display:none}
 .card.hov:hover{border-color:rgba(255,122,26,.55);transform:translateY(-2px);
   box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 22px rgba(255,122,26,.15),inset 0 1px 0 rgba(255,255,255,.04)}
-.microlabel{font-size:9.5px;letter-spacing:2.6px;text-transform:uppercase;font-weight:600;
-  color:var(--bone-dim);margin:6px 0 10px;display:flex;align-items:center;gap:8px}
+.microlabel{flex:none;font-size:var(--t11);letter-spacing:2px;text-transform:uppercase;font-weight:700;line-height:1.35;
+  color:var(--bone);margin:0 0 var(--s2);display:flex;align-items:center;gap:var(--s2)}
 .microlabel .r{color:var(--bronze-hi);font-size:11px}
-.bigval{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:22px;font-weight:700;color:var(--bone)}
-.subval{font-family:var(--mono);font-size:11px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+.bigval{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:22px;font-weight:700;
+  line-height:1.15;color:var(--bone)}
+.subval{font-family:var(--mono);font-size:11px;line-height:1.35;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+
+/* ============ EMPTY STATES ============
+   One component for every "nothing here yet": a mark, a six-word title, one sentence
+   of reason and at most one button. The mark is the empty panel's ornament slot, and
+   the only decoration outside the title-bar lockup and the hearth flame. */
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:var(--s2);padding:var(--s6) var(--s4);text-align:center;line-height:var(--lh)}
+.empty-state .es-mark{font-size:24px;line-height:1;color:var(--bronze-hi)}
+.empty-state .es-title{font-size:var(--t13);font-weight:600;letter-spacing:.3px;color:var(--bone)}
+.empty-state .es-reason{font-size:var(--t11);color:var(--bone-dim);max-width:46ch}
+.empty-state .btn{margin-top:var(--s1);flex:none}
+/* inside a small card or a list pane there is no room for the full stack */
+.empty-state.es-compact{padding:var(--s3) var(--s2);gap:var(--s1)}
+.empty-state.es-compact .es-mark{font-size:17px}
+.empty-state.es-compact .es-title{font-size:var(--t11)}
+.empty-state.es-compact .es-reason{font-size:10px;max-width:40ch}
+/* a table's empty state owns the whole row, with no cell borders under it */
+tbody td:has(>.empty-state){border-bottom:none;padding:0}
+#term .empty-state{color:var(--bone-dim)}
 
 /* ============ HEARTH BENTO ============
    The hall is a flex column, so the bento is handed the pane's real leftover
@@ -244,13 +272,15 @@ body{
    exactly what is left and the Recent log renders only the lines that fit. */
 #page-hearth{flex-direction:column}
 .bento{display:grid;grid-template-columns:repeat(6,1fr);
-  grid-template-rows:repeat(2,minmax(178px,240px)) minmax(178px,1fr);
-  grid-auto-rows:minmax(178px,auto);
+  grid-template-rows:repeat(2,minmax(172px,232px)) minmax(160px,1fr);
+  grid-auto-rows:minmax(160px,auto);
   gap:12px;flex:1 1 auto;min-height:0}
-/* Rows 1 and 2 stop growing at 240px so the Vikings / Network / Mods cards never
+/* Rows 1 and 2 stop growing at 232px so the Vikings / Network / Mods cards never
    hollow out on a tall window; the leftover height goes to the last row, where
-   the Recent log card turns it into more lines. */
-.bento.upkeep-open{grid-template-rows:repeat(2,minmax(178px,240px)) minmax(min-content,1fr)}
+   the Recent log card turns it into more lines. The floors came down from 178/178
+   to 172/160 when the persistent header took 48px off the pane, so the collapsed
+   dashboard still fits without scrolling at the default 1408x800. */
+.bento.upkeep-open{grid-template-rows:repeat(2,minmax(172px,232px)) minmax(min-content,1fr)}
 .b-hearth{grid-column:span 2;grid-row:span 2}
 .b-vikings{grid-column:span 2;display:flex;flex-direction:column}
 .b-saves{grid-column:span 2;display:flex;flex-direction:column}
@@ -263,8 +293,8 @@ body{
 .upkeep-head{cursor:pointer;user-select:none}
 @media (max-width:1264px){
   .bento{grid-template-columns:repeat(4,1fr);
-    grid-template-rows:repeat(3,minmax(190px,auto)) minmax(168px,1fr)}
-  .bento.upkeep-open{grid-template-rows:repeat(3,minmax(190px,auto)) minmax(min-content,1fr)}
+    grid-template-rows:repeat(3,minmax(180px,auto)) minmax(160px,1fr)}
+  .bento.upkeep-open{grid-template-rows:repeat(3,minmax(180px,auto)) minmax(min-content,1fr)}
   .b-log{grid-column:span 2}
 }
 /* The card's leading Othala smoulders like the mead link (emberW) and rotates
@@ -303,7 +333,11 @@ body{
 /* ============ SKALD (local analytics) ============
    The five stat cards keep a readable floor and wrap 3+2 rather than squeezing
    their subtitles onto two lines at the minimum width. */
-.skald-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:12px}
+.skald-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:var(--s2)}
+/* the five tallies are one line of numbers each: they do not need a card's full
+   padding, and the 12px they give back is what keeps the hall off a scrollbar at
+   the default window size */
+.skald-stats .card{padding:var(--s3) var(--s4)}
 .skald-stats .subval{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .skald-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;align-items:start}
 .skald-grid .sk-players{grid-row:span 2}
@@ -326,41 +360,21 @@ body{
 .skrow .skk.crash{color:#E85B4B}
 .skempty{font-family:var(--mono);font-size:11px;color:var(--bone-dim);padding:8px 0}
 
-/* Hearth flame */
+/* ---------- HEARTH FLAME ----------
+   One canvas, one particle system, five states. The CSS tongues it replaced could
+   only ever be two colours on a timer; this reads the real server state and is the
+   one piece of ornament the dashboard keeps. app.js owns the loop and only runs it
+   while the Dashboard is the visible hall. */
 .hearth-card{display:flex;flex-direction:column}
 .flamebox{flex:1;display:flex;align-items:center;justify-content:center;position:relative;min-height:0}
-.flame{position:relative;width:120px;height:150px;display:flex;align-items:flex-end;justify-content:center}
-.flame .glow{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
-  width:130px;height:80px;border-radius:50%;
-  background:radial-gradient(closest-side,rgba(255,122,26,.5),rgba(255,122,26,.12) 55%,transparent);
-  filter:blur(14px);animation:glowPulse 2.6s ease-in-out infinite}
-@keyframes glowPulse{0%,100%{opacity:.85;transform:translateX(-50%) scale(1)}50%{opacity:1;transform:translateX(-50%) scale(1.12)}}
-.tongue{position:absolute;bottom:14px;border-radius:50% 50% 42% 42%/62% 62% 34% 34%;transform-origin:50% 100%}
-.t1{width:56px;height:88px;background:linear-gradient(180deg,#FF9A3C,#E8560F 70%,#96300A);
-  filter:blur(1px);animation:flick 1.05s ease-in-out infinite alternate}
-.t2{width:36px;height:62px;background:linear-gradient(180deg,#FFCE7A,#FF7A1A 75%);
-  filter:blur(.6px);animation:flick .8s .15s ease-in-out infinite alternate}
-.t3{width:17px;height:34px;background:linear-gradient(180deg,#FFF3D6,#FFB35C);
-  animation:flick .62s .3s ease-in-out infinite alternate}
-@keyframes flick{
-  0%{transform:scaleY(1) scaleX(1) rotate(-1.6deg)}
-  45%{transform:scaleY(1.1) scaleX(.93) rotate(1.4deg)}
-  100%{transform:scaleY(.94) scaleX(1.05) rotate(-.8deg)}
-}
-.logs-svg{position:absolute;bottom:0;left:50%;transform:translateX(-50%)}
-.spark{position:absolute;bottom:40px;width:3px;height:3px;border-radius:50%;
-  background:var(--ember-hi);box-shadow:0 0 6px var(--ember);opacity:0;
-  animation:sparkUp 2.4s linear infinite}
-@keyframes sparkUp{
-  0%{opacity:0;transform:translate(0,0) scale(1)}
-  12%{opacity:1}
-  100%{opacity:0;transform:translate(var(--dx,8px),-96px) scale(.3)}
-}
-.hearth-card.cold .glow{background:radial-gradient(closest-side,rgba(91,122,140,.35),rgba(91,122,140,.08) 55%,transparent);animation:none;opacity:.7}
-.hearth-card.cold .t1{background:linear-gradient(180deg,#3A5361,#22323B 70%,#161F25);animation-duration:3.4s;height:40px}
-.hearth-card.cold .t2{background:linear-gradient(180deg,#5B7A8C,#2C4450);animation-duration:2.8s;height:26px}
-.hearth-card.cold .t3{background:linear-gradient(180deg,#8FB4C9,#4A6675);animation-duration:2.4s;height:12px}
-.hearth-card.cold .spark{display:none}
+/* aspect-ratio + max-height keeps the fire square-on when a short window squeezes
+   the card, instead of stretching the particles sideways */
+.flame{position:relative;width:130px;height:160px;max-height:100%;aspect-ratio:130/160}
+#hearthFlame{position:absolute;inset:0;width:100%;height:100%;display:block}
+.logs-svg{position:absolute;bottom:0;left:50%;width:84%;height:auto;transform:translateX(-50%)}
+/* a crashed hearth has cold soot where the logs were burning */
+.hearth-card.crashed .logs-svg .log-back{fill:#26262A;stroke:#3A3A3E80}
+.hearth-card.crashed .logs-svg .log-front{fill:#33333A;stroke:#4A4A5280}
 /* Status text and the two buttons share one row while there is room; below that
    the buttons wrap onto their own line rather than being clipped off the card. */
 .hearth-meta{display:flex;align-items:flex-end;justify-content:flex-end;gap:8px;flex-wrap:wrap}
@@ -369,15 +383,15 @@ body{
 .hstate{font-family:var(--serif);font-size:17px;font-weight:700;letter-spacing:3px;color:var(--ember-hi);
   text-shadow:0 0 14px rgba(255,122,26,.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hearth-card.cold .hstate{color:var(--cold-hi);text-shadow:0 0 12px rgba(91,122,140,.5)}
-.hpid{font-family:var(--mono);font-size:10.5px;color:var(--bone-dim);font-variant-numeric:tabular-nums;
+.hpid{font-family:var(--mono);font-size:10.5px;line-height:1.35;color:var(--bone-dim);font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Game + network version, straight off the server's startup banner. */
-.hver{font-family:var(--mono);font-size:10px;color:var(--bone-faint);font-variant-numeric:tabular-nums;
+.hver{font-family:var(--mono);font-size:10px;line-height:1.35;color:var(--bone-faint);font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* buttons */
-.btn{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 16px;border-radius:7px;
-  font-family:var(--sans);font-size:11px;font-weight:600;letter-spacing:1.6px;text-transform:uppercase;
+.btn{display:inline-flex;align-items:center;gap:var(--s2);height:32px;padding:0 var(--s4);border-radius:var(--r2);
+  font-family:var(--sans);font-size:var(--t11);font-weight:600;letter-spacing:1.6px;text-transform:uppercase;line-height:1;
   border:1px solid transparent;cursor:pointer;transition:all .18s var(--ease);white-space:nowrap}
 .btn-ember{background:linear-gradient(180deg,#FF9234,#E8560F);color:#1A0E04;
   box-shadow:0 0 18px rgba(255,122,26,.35),0 2px 8px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.35)}
@@ -389,7 +403,7 @@ body{
 .btn-sm{height:26px;padding:0 11px;font-size:10px}
 
 /* Vikings mini card */
-.vrow{display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12px}
+.vrow{display:flex;align-items:center;gap:9px;padding:4px 0;font-size:12px;line-height:1.35}
 .vdot{width:7px;height:7px;border-radius:50%;flex:none}
 .vdot.on{background:var(--moss);box-shadow:0 0 8px rgba(111,160,92,.8)}
 .vdot.off{background:var(--cold);opacity:.5}
@@ -399,7 +413,7 @@ body{
 /* Saves - the bar chart takes whatever height the card is given */
 #homeVik{flex:1;min-height:0;overflow:hidden}
 .savebars{display:flex;align-items:flex-end;gap:3px;flex:1;min-height:26px;max-height:120px;margin-top:10px}
-.savecap{font-size:9px;letter-spacing:.6px;color:var(--bone-faint);margin-top:5px;
+.savecap{flex:none;font-size:9px;letter-spacing:.6px;color:var(--bone-faint);margin-top:5px;line-height:1.35;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .savebars .empty{align-self:center;font-size:11.5px;color:var(--bone-faint);font-family:var(--sans)}
 .savebars i{flex:1;background:linear-gradient(180deg,var(--bronze-hi),rgba(140,109,63,.25));border-radius:2px 2px 0 0}
@@ -414,11 +428,11 @@ body{
 .b-log .hlog{flex:1 1 0;min-height:72px;padding:4px 2px;font-size:10.5px;line-height:16px;
   overflow:hidden}
 .b-log .hlog .ln{height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:none}
-.b-log .microlabel{margin:2px 0 4px}
+.b-log .microlabel{margin:0 0 var(--s1);padding-bottom:2px}
 .b-log .copychip{flex:none}
 
 /* Forge sparklines */
-.sparkrow{display:flex;align-items:center;gap:10px;margin-top:4px}
+.sparkrow{display:flex;align-items:center;gap:10px;margin-top:4px;line-height:1.3}
 .sparkrow .k{font-size:9.5px;letter-spacing:2px;color:var(--bone-dim);width:32px;font-weight:600}
 .sparkrow svg{flex:1;height:30px}
 .sparkrow .v{font-family:var(--mono);font-size:12.5px;font-weight:700;width:48px;text-align:right;
@@ -426,13 +440,16 @@ body{
 .sparkrow .v.blue{color:var(--cold-hi)}
 polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
 
-/* Net card */
-.netline{display:flex;align-items:center;gap:7px;margin-top:7px;font-family:var(--mono);
-  font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+/* Net card. Six address lines plus the rcon/waystone row is more than the bento row
+   can hold once a custom domain and a crossplay invite are both in play, so the card
+   itself scrolls (app.js registers it for the edge-fade cue) instead of hiding them. */
+.b-net{overflow-y:auto}
+.netline{display:flex;align-items:center;gap:7px;margin-top:var(--s1);font-family:var(--mono);
+  font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums;line-height:1.4}
 .copychip{margin-left:auto;font-size:9px;padding:2px 7px;border:1px solid var(--bronze);border-radius:4px;
   cursor:pointer;color:var(--bone-dim);transition:all .15s var(--ease);letter-spacing:1px}
 .copychip:hover{color:var(--ember-hi);border-color:var(--ember)}
-.pill{font-size:8.5px;letter-spacing:1.2px;font-weight:700;padding:2px 7px;border-radius:20px;text-transform:uppercase}
+.pill{font-size:8.5px;letter-spacing:1.2px;font-weight:700;line-height:1.5;padding:2px 7px;border-radius:20px;text-transform:uppercase}
 .pill.green{background:rgba(111,160,92,.15);color:var(--moss);border:1px solid rgba(111,160,92,.4)}
 .pill.amber{background:rgba(232,169,60,.13);color:var(--amber);border:1px solid rgba(232,169,60,.4)}
 .pill.blue{background:rgba(91,122,140,.15);color:var(--cold-hi);border:1px solid rgba(91,122,140,.4)}
@@ -440,23 +457,50 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
 
 /* ============ TABLES (Vikings / Mods) ============ */
 table{width:100%;border-collapse:collapse;font-size:12px}
-thead th{font-size:9.5px;letter-spacing:2.2px;text-transform:uppercase;color:var(--bone-dim);
-  text-align:left;padding:9px 12px;border-bottom:1px solid var(--bronze);font-weight:600}
+thead th{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-dim);
+  text-align:left;padding:9px var(--s3);border-bottom:1px solid var(--bronze);font-weight:700;line-height:1.3}
 thead th.sortable{cursor:pointer;user-select:none;transition:color .15s var(--ease)}
+thead th.sortable:focus-visible{outline:1px solid var(--ember);outline-offset:-2px}
 thead th.sortable:hover{color:var(--bone)}
 thead th.sortable.sorted{color:var(--ember-hi)}
 thead th.sortable .sortmark{display:inline-block;margin-left:5px;font-size:8px;color:var(--ember);letter-spacing:0}
-tbody td{padding:10px 12px;border-bottom:1px solid rgba(140,109,63,.16);font-variant-numeric:tabular-nums}
+tbody td{padding:var(--s2) var(--s3);border-bottom:1px solid rgba(140,109,63,.16);font-variant-numeric:tabular-nums;line-height:1.35}
 tbody tr{transition:background .15s var(--ease)}
 tbody tr:hover{background:rgba(255,122,26,.045)}
 tbody tr.dim{opacity:.42}
 td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 
+/* ---------- PLAYER ROSTER ----------
+   Eight facts per player on a 34px row, with the header pinned so the column names
+   stay put while the list scrolls. Every action is still on the right-click menu;
+   the "..." button at the row end opens the same menu, so a trackpad and a keyboard
+   reach it too. */
+#page-vikings .ctxwrap{overflow:visible}   /* an overflow:hidden ancestor kills position:sticky */
+.viktable thead th{position:sticky;top:0;z-index:2;
+  background:var(--surface-2);box-shadow:0 1px 0 var(--bronze)}
+.viktable tbody td{height:34px;padding:var(--s1) var(--s3);line-height:1.3}
+.viktable td.num{text-align:right;font-variant-numeric:tabular-nums}
+.viktable th.vik-pos,.viktable td.vik-pos{text-align:right}
+/* a dash here means "not reported", never "zero": it always says which on hover */
+.viktable .vdash{color:var(--bone-faint);cursor:help}
+.rowmenu-cell{text-align:right;padding-right:var(--s2)}
+.rowmenu{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid transparent;border-radius:var(--r2);background:transparent;color:var(--ember);
+  font-size:14px;line-height:1;cursor:pointer;transition:all .13s var(--ease)}
+.rowmenu:hover{border-color:var(--ember);background:var(--ember-dim);color:var(--ember-hi)}
+.rowmenu:focus-visible{outline:1px solid var(--ember);outline-offset:1px}
+#vikColsNote{color:var(--amber)}
+#vikColsNote:empty{display:none}
+/* Below roughly 1200px of content width the two widest optional columns fold away,
+   position first. app.js reads the live layout to say which ones went. */
+@media (max-width:1292px){#page-vikings .vik-pos{display:none}}
+@media (max-width:1160px){#page-vikings .vik-deaths{display:none}}
+
 /* context menu mock */
 .ctxwrap{position:relative}
 .ctxmenu{
   position:absolute;top:52px;right:36px;width:212px;z-index:20;
-  background:linear-gradient(180deg,#22262C,#1B1E23);
+  background:linear-gradient(180deg,var(--surface-3),var(--surface-1));
   border:1px solid var(--bronze-hi);border-radius:9px;padding:6px;
   box-shadow:0 14px 40px rgba(0,0,0,.7),0 0 24px rgba(255,122,26,.08);
   animation:pageIn .2s var(--ease);
@@ -477,8 +521,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .field label{display:block;font-size:9.5px;letter-spacing:2.2px;text-transform:uppercase;
   color:var(--bone-dim);font-weight:600;margin-bottom:6px}
 .field input[type=text],.field input[type=password],.field select{
-  width:100%;height:34px;padding:0 12px;background:var(--iron-deeper);
-  border:1px solid var(--bronze);border-radius:7px;color:var(--bone);
+  width:100%;height:34px;padding:0 var(--s3);background:var(--iron-deeper);
+  border:1px solid var(--bronze);border-radius:var(--r2);color:var(--bone);
   font-family:var(--mono);font-size:12px;outline:none;transition:all .18s var(--ease);
 }
 .field input:focus,.field select:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(255,122,26,.12),0 0 14px rgba(255,122,26,.15)}
@@ -486,7 +530,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   background-image:linear-gradient(45deg,transparent 50%,var(--bone-dim) 50%),linear-gradient(135deg,var(--bone-dim) 50%,transparent 50%);
   background-position:calc(100% - 16px) 15px,calc(100% - 11px) 15px;background-size:5px 5px;background-repeat:no-repeat}
 .togglerow{display:flex;align-items:center;justify-content:space-between;height:34px;
-  padding:0 12px;background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:7px}
+  padding:0 var(--s3);background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:var(--r2)}
 .togglerow .tl{font-size:11.5px;color:var(--bone)}
 .toggle{width:38px;height:20px;border-radius:20px;background:#2A2E34;border:1px solid #3A3F46;
   position:relative;cursor:pointer;transition:all .2s var(--ease);flex:none}
@@ -581,7 +625,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   display:none;align-items:flex-start;justify-content:center;padding-top:110px;animation:fadeIn .16s var(--ease)}
 .palette-bg.open{display:flex}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
-.palette{width:520px;background:linear-gradient(180deg,#23272D,#1A1D21);
+.palette{width:520px;background:linear-gradient(180deg,var(--surface-3),var(--surface-1));
   border:1px solid var(--bronze-hi);border-radius:12px;overflow:hidden;
   box-shadow:0 30px 80px rgba(0,0,0,.8),0 0 40px rgba(255,122,26,.12);
   animation:palIn .2s var(--ease)}
@@ -615,11 +659,11 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
    Bottom-centre of the content pane (clear of the sidebar), lifted above the
    status bar and, on the Saga hall, above the console input row via
    --toast-lift, which app.js measures when that hall opens. */
-.toasts{position:absolute;left:84px;right:0;bottom:calc(42px + var(--toast-lift,0px));z-index:88;
+.toasts{position:absolute;left:92px;right:0;bottom:calc(42px + var(--toast-lift,0px));z-index:88;
   display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;
   transition:bottom .2s var(--ease)}
 .toast{pointer-events:auto;display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:240px;
-  background:linear-gradient(180deg,#23272D,#1B1E23);border:1px solid var(--bronze-hi);border-radius:9px;
+  background:linear-gradient(180deg,var(--surface-3),var(--surface-1));border:1px solid var(--bronze-hi);border-radius:9px;
   box-shadow:0 12px 32px rgba(0,0,0,.6),0 0 18px rgba(255,122,26,.08);
   font-size:11.5px;color:var(--bone);animation:toastIn .3s var(--ease);position:relative;overflow:hidden}
 .toast::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ember);
@@ -650,16 +694,16 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   display:none;align-items:center;justify-content:center;animation:fadeIn .16s var(--ease)}
 .modal-bg.open{display:flex}
 .modal{width:460px;max-height:72vh;overflow:hidden;display:flex;flex-direction:column;gap:12px;
-  background:linear-gradient(180deg,#23272D,#1A1D21);
-  border:1px solid var(--bronze-hi);border-radius:12px;padding:16px;
+  background:linear-gradient(180deg,var(--surface-3),var(--surface-1));
+  border:1px solid var(--bronze-hi);border-radius:var(--r3);padding:var(--s4);
   box-shadow:0 30px 80px rgba(0,0,0,.8),0 0 40px rgba(255,122,26,.12);
   animation:palIn .2s var(--ease)}
 .modal .mtitle{font-family:var(--serif);font-size:13px;font-weight:700;letter-spacing:2.5px;
   text-transform:uppercase;color:var(--bone);display:flex;align-items:center;gap:9px}
 .modal .mtitle::before{content:"ᛒ";color:var(--ember);text-shadow:0 0 8px rgba(255,122,26,.6)}
 .modal input[type=text],.modal input[type=number],.modal select{
-  width:100%;height:34px;padding:0 12px;background:var(--iron-deeper);
-  border:1px solid var(--bronze);border-radius:7px;color:var(--bone);
+  width:100%;height:34px;padding:0 var(--s3);background:var(--iron-deeper);
+  border:1px solid var(--bronze);border-radius:var(--r2);color:var(--bone);
   font-family:var(--mono);font-size:12px;outline:none;transition:all .18s var(--ease)}
 .modal input:focus,.modal select:focus{border-color:var(--ember);
   box-shadow:0 0 0 3px rgba(255,122,26,.12),0 0 14px rgba(255,122,26,.15)}
@@ -671,6 +715,11 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .modal .mbtns{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .modal .mbtns .btn{flex:none;white-space:nowrap}
 .modal .mbody{font-size:11.5px;color:var(--bone-dim);line-height:1.6;overflow-y:auto;min-height:0}
+/* On a short window the modal is a flex column with a 72vh cap: only the scrolling
+   regions may give up height. Everything else keeps the size it is drawn at, so no
+   input or button row is ever squeezed below its hit target. */
+.modal>.mtitle,.modal>input,.modal>select,.modal>.mrow,.modal>.mbtns,.modal>.wiz-steps,.modal>.fieldnote{flex:none}
+.modal>.clist,.modal>.pick-list,.modal>.mono-list,.modal>.wiz-found{flex:1 1 auto;min-height:64px}
 .modal .mono-list{font-family:var(--mono);font-size:10.5px;color:var(--bone-dim);line-height:1.8;
   background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:7px;
   padding:8px 12px;margin-top:8px;max-height:150px;overflow-y:auto}
@@ -847,14 +896,16 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
    2-server realm (2 chips + add + restore = 4 chips = 181px) still fits whole. */
 @media (max-height:1000px){
   .side{padding:12px 0 10px;gap:3px}
-  .navitem{height:52px;gap:4px}
+  .navitem{height:54px;gap:2px}
+  .navitem .norse{font-size:9.5px}
   .side-foot{gap:4px}
 }
 @media (max-height:900px){
   .side{padding:10px 0 8px;gap:2px}
   .navitem{height:45px;gap:3px}
   .navitem .rune{font-size:17px}
-  .navitem .lbl{font-size:8px;letter-spacing:1.5px}
+  .navitem .lbl{font-size:8px;letter-spacing:1.1px}
+  .navitem .norse{font-size:9px}
   .side-foot{gap:3px}
   .side-foot .moon{font-size:12px}
   .side-foot .mead{padding-top:5px;margin-top:1px}
@@ -863,12 +914,34 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   .side{padding:8px 0 6px;gap:0}
   .navitem{height:36px;gap:1px}
   .navitem .rune{font-size:16px}
-  .navitem .lbl{font-size:7.5px;letter-spacing:1.1px}
+  .navitem .lbl{font-size:7.5px;letter-spacing:.9px}
+  /* shortest tier: the Norse caption folds away, the plain label always stays */
+  .navitem .norse{display:none}
   .navitem::before{top:7px;bottom:7px}
   .side-foot{gap:2px;font-size:9px}
   .side-foot .moon{font-size:11px}
   .side-foot .mead{padding-top:4px;margin-top:0;font-size:8.5px;line-height:1.25}
 }
+
+/* ---------- PERSISTENT HEADER ----------
+   48px under the title bar on every hall: which server, what state it is in, how long
+   it has been up, who is on it, and the one lifecycle button. It is additive - the
+   dashboard status card keeps its own Start/Stop/Restart. */
+.appbar{flex:none;height:48px;display:flex;align-items:center;gap:var(--s3);
+  padding:0 var(--s4);background:linear-gradient(180deg,var(--surface-1),var(--iron-deep));
+  border-bottom:1px solid var(--bronze)}
+.appbar .grow{flex:1}
+.ab-name{font-family:var(--serif);font-size:var(--t13);font-weight:600;letter-spacing:1.6px;
+  color:var(--bone);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34%}
+.ab-pill{display:inline-flex;align-items:center;gap:6px;flex:none}
+.abdot{width:7px;height:7px;border-radius:50%;background:var(--cold);flex:none}
+.ab-pill.green .abdot{background:var(--moss);box-shadow:0 0 8px rgba(111,160,92,.8)}
+.ab-pill.amber .abdot{background:var(--amber);box-shadow:0 0 8px rgba(232,169,60,.7)}
+.ab-pill.blue .abdot{background:var(--cold);opacity:.85}
+.ab-meta{font-family:var(--mono);font-size:var(--t11);color:var(--bone-dim);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.ab-meta:empty{display:none}
+@media (max-width:1100px){.ab-name{max-width:26%}}
 
 /* ---------- EDIT BAR: which realm every hall is editing + live conflict warnings ---------- */
 .editbar{display:flex;align-items:center;gap:9px;padding:5px 16px;font-family:var(--sans);
@@ -883,19 +956,28 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   padding:2px 8px;border:1px solid rgba(232,169,60,.4);border-radius:6px;
   background:rgba(232,169,60,.08)}
 
-/* A start BakaLoader held back. Amber, because nothing is broken - it is waiting on a person. */
-.holdbar{background:rgba(232,169,60,.08);border-bottom:1px solid rgba(232,169,60,.4);
-  color:var(--bone);flex-wrap:wrap;padding:7px 16px}
+/* ---------- CONDITION BAR ----------
+   One standing condition at a time, on a 3px severity edge: ember for something worth
+   knowing, amber for something waiting on a person, red for something that broke. It
+   takes layout space above the hall header, so it never covers a control. */
+.holdbar{position:relative;background:rgba(232,169,60,.08);border-bottom:1px solid rgba(232,169,60,.4);
+  color:var(--bone);flex-wrap:wrap;padding:7px 16px 7px 19px;row-gap:6px}
+.holdbar::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--amber)}
+.holdbar[data-sev=info]{background:var(--ember-dim);border-bottom-color:rgba(255,122,26,.4)}
+.holdbar[data-sev=info]::before{background:var(--ember)}
+.holdbar[data-sev=info] .hbtitle{color:var(--ember-hi)}
+.holdbar[data-sev=err]{background:rgba(213,69,60,.10);border-bottom-color:rgba(213,69,60,.45)}
+.holdbar[data-sev=err]::before{background:var(--blood)}
+.holdbar[data-sev=err] .hbtitle{color:#F08078}
 .holdbar .hbrune{color:var(--amber);font-size:13px;line-height:1}
-.holdbar .hbtitle{font-family:var(--serif);letter-spacing:.14em;text-transform:uppercase;
+.holdbar .hbtitle{flex:none;font-family:var(--serif);letter-spacing:.14em;text-transform:uppercase;
   font-size:9px;color:var(--amber)}
 .holdbar .hbmsg{color:var(--bone-dim);min-width:0;flex:1 1 260px}
-.holdbar .hbacts{display:flex;align-items:center;gap:7px;margin-left:auto;flex:none}
+.holdbar .hbacts{display:flex;align-items:center;gap:7px;margin-left:auto;flex:none;flex-wrap:wrap}
 
 /* ---------- ATLAS (webmap + skies) ---------- */
 #page-atlas{display:none;flex-direction:column;height:100%}
 #page-atlas.active{display:flex}
-#page-atlas .card::before{content:"ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ   ᚹ ᛖ ᚷ ᚹ ᛁ ᛊ ᛁ ᚱ"}
 .atlas-grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:14px}
 .atlas-mapcard{display:flex;flex-direction:column;min-height:0;padding:12px}
 .atlas-bar{flex:none;display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:2px 2px 10px}
@@ -923,7 +1005,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
    min-height was 6px short of the header plus the four-row list and clipped it. */
 .atlas-side .atlas-waycard{flex:1 0 auto;min-height:0;display:flex;flex-direction:column}
 .atlas-facts{display:flex;flex-direction:column;gap:4px;margin-top:10px}
-.afact{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;font-family:var(--sans)}
+.afact{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;line-height:1.4;font-family:var(--sans)}
 .afact .ak{color:var(--bone-faint);letter-spacing:.04em}
 .afact .av{color:var(--bone);font-variant-numeric:tabular-nums;text-align:right}
 .atlas-roster{display:flex;flex-direction:column;gap:6px;margin-top:8px}
@@ -977,6 +1059,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .toggle::before{content:"";position:absolute;inset:-2px 0;background:transparent;border-radius:20px}
 .termsearch{min-height:24px}
 .termin input{min-height:24px}
+.palette .pin input{min-height:24px}
+.modal input[type=text],.modal input[type=number]{min-height:24px}
 /* the scroll row keeps its 28px height: 24px of name plus tighter padding */
 .cfg-item{padding:2px 10px}
 .cfg-item .cfgname{min-height:24px;line-height:24px}

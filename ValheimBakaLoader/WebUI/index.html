@@ -29,56 +29,65 @@
       <div class="srvstrip" id="srvStrip"></div>
       <div class="srvmore" id="srvMore" style="display:none" title="More realms below. Scroll the strip to reach them.">▾</div>
       <div class="srvsep" id="srvSep"></div>
-      <div class="navitem active" data-page="hearth"><span class="rune">ᚠ</span><span class="lbl">Hearth</span></div>
-      <div class="navitem" data-page="vikings"><span class="rune">ᛗ</span><span class="lbl">Vikings</span></div>
+      <div class="navitem active" data-page="hearth"><span class="rune">ᚠ</span><span class="lbl">Dashboard</span><span class="norse">Hearth</span></div>
+      <div class="navitem" data-page="vikings"><span class="rune">ᛗ</span><span class="lbl">Players</span><span class="norse">Vikings</span></div>
       <div class="navitem" data-page="mods"><span class="rune">ᚱ</span><span class="lbl">Mods</span></div>
-      <div class="navitem" data-page="world"><span class="rune">ᛃ</span><span class="lbl">World</span></div>
-      <div class="navitem" data-page="atlas"><span class="rune">ᛞ</span><span class="lbl">Atlas</span></div>
-      <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl">Runes</span></div>
-      <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl">Saga</span></div>
-      <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Herald</span></div>
-      <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Skald</span></div>
+      <div class="navitem" data-page="world"><span class="rune">ᛃ</span><span class="lbl">Settings</span><span class="norse">World</span></div>
+      <div class="navitem" data-page="atlas"><span class="rune">ᛞ</span><span class="lbl">Map</span><span class="norse">Atlas</span></div>
+      <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl">Configs</span><span class="norse">Runes</span></div>
+      <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl">Log</span><span class="norse">Saga</span></div>
+      <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Discord</span><span class="norse">Herald</span></div>
+      <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Statistics</span><span class="norse">Skald</span></div>
       <div class="side-foot">
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v0.10.0</span></span>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.0</span></span>
         <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
 
     <!-- MAIN -->
     <div class="main">
+      <!-- Persistent header: the same server identity, state and one lifecycle button on
+           every hall, so nobody has to walk back to the dashboard to see whether the
+           server is up or to stop it. Restart stays on the dashboard and in the palette. -->
+      <div class="appbar" id="appBar">
+        <span class="ab-name" id="abName">Baka Gaijin</span>
+        <span class="pill green ab-pill" id="abState"><span class="abdot" id="abDot"></span>Running</span>
+        <span class="ab-meta" id="abUptime">4h 32m</span>
+        <span class="ab-meta" id="abPlayers">2 online</span>
+        <div class="grow"></div>
+        <button class="btn btn-cold btn-sm" id="abLifecycle" title="Douse the hearth: stops the server">Stop</button>
+      </div>
       <!-- Persistent banner: which realm every hall is editing + live conflict warnings -->
       <div class="editbar" id="editBar" style="display:none"></div>
-      <!-- Persistent banner: a start BakaLoader held back because the server build changed
-           or Steam has an update waiting. Offers the same three answers as the start prompt. -->
-      <div class="editbar holdbar" id="launchHold" style="display:none"></div>
+      <!-- The condition bar. One standing condition at a time, worst first: a held start,
+           a failed world save or backup, a crash waiting to relaunch, an app update, mods
+           with updates waiting. Toasts are left to confirm what the host just did.
+           Keeps the id launchHold: the held-start banner is one of its conditions. -->
+      <div class="editbar holdbar" id="launchHold" role="status" aria-live="polite" style="display:none"></div>
       <div class="pages">
 
         <!-- ============ PAGE: HEARTH ============ -->
         <section class="page active" id="page-hearth">
           <div class="pagehead">
-            <h1><span class="r">ᚠ</span>HEARTH</h1>
+            <h1><span class="r">ᚠ</span>DASHBOARD</h1>
+            <span class="hnorse">Hearth</span>
             <span class="sub" id="hearthSub">Final Sunset · dedicated server ops</span>
             <div class="grow"></div>
-            <button class="btn btn-ember btn-sm" id="sailBtn">ᛟ&nbsp; Sail Forth</button>
+            <button class="btn btn-ember btn-sm" id="sailBtn" title="Sail forth: copies everything a friend needs to join">ᛟ&nbsp; Copy join info</button>
           </div>
 
           <div class="bento">
             <!-- HEARTH FLAME -->
             <div class="card hov b-hearth hearth-card" id="hearthCard">
-              <div class="microlabel"><span class="r">ᚠ</span>Hearth Status</div>
+              <div class="microlabel">Server<span class="cnorse">Hearth</span></div>
               <div class="flamebox">
                 <div class="flame">
-                  <div class="glow"></div>
-                  <div class="tongue t1"></div>
-                  <div class="tongue t2"></div>
-                  <div class="tongue t3"></div>
-                  <span class="spark" style="left:44%;--dx:-14px;animation-delay:0s"></span>
-                  <span class="spark" style="left:52%;--dx:10px;animation-delay:.7s"></span>
-                  <span class="spark" style="left:48%;--dx:-6px;animation-delay:1.3s"></span>
-                  <span class="spark" style="left:56%;--dx:16px;animation-delay:1.9s"></span>
+                  <!-- One canvas particle fire, driven by app.js. It reads the server
+                       state: cold, kindling, burning, smoldering or crashed. -->
+                  <canvas id="hearthFlame" aria-hidden="true"></canvas>
                   <svg class="logs-svg" width="110" height="22" viewBox="0 0 110 22">
-                    <rect x="8" y="10" width="94" height="8" rx="4" fill="#3A2A18" stroke="#57402280" stroke-width="1" transform="rotate(-4 55 14)"/>
-                    <rect x="14" y="6" width="82" height="8" rx="4" fill="#4A3620" stroke="#6B4E2A80" stroke-width="1" transform="rotate(5 55 10)"/>
+                    <rect class="log log-back" x="8" y="10" width="94" height="8" rx="4" fill="#3A2A18" stroke="#57402280" stroke-width="1" transform="rotate(-4 55 14)"/>
+                    <rect class="log log-front" x="14" y="6" width="82" height="8" rx="4" fill="#4A3620" stroke="#6B4E2A80" stroke-width="1" transform="rotate(5 55 10)"/>
                   </svg>
                 </div>
               </div>
@@ -89,20 +98,20 @@
                   <!-- Game + network version, read from the server's own startup banner. -->
                   <span class="hver" id="hVer" style="display:none"></span>
                 </div>
-                <button class="btn btn-ghost btn-sm" id="stokeBtn" title="Restart the server · warns players in-game first">Stoke</button>
-                <button class="btn btn-cold btn-sm" id="douseBtn">Douse</button>
+                <button class="btn btn-ghost btn-sm" id="stokeBtn" title="Stoke the hearth: restarts the server, warning players in-game first">Restart</button>
+                <button class="btn btn-cold btn-sm" id="douseBtn" title="Douse the hearth: stops the server">Stop</button>
               </div>
             </div>
 
             <!-- VIKINGS -->
             <div class="card hov b-vikings" data-goto="vikings">
-              <div class="microlabel"><span class="r">ᛗ</span>Vikings <span style="margin-left:auto" class="pill green" id="homeVikPill">2 / 10 online</span></div>
+              <div class="microlabel">Players<span class="cnorse">Vikings</span><span class="pill green" id="homeVikPill">2 / 10 online</span></div>
               <div id="homeVik"></div>
             </div>
 
             <!-- SAVES -->
             <div class="card hov b-saves" id="savesCard" title="Click for save details">
-              <div class="microlabel"><span class="r">ᛉ</span>World Saves<span style="margin-left:auto" class="copychip" id="openWorlds" title="Open the worlds save folder">OPEN</span></div>
+              <div class="microlabel">World saves<span style="margin-left:auto" class="copychip" id="openWorlds" title="Open the worlds save folder">OPEN</span></div>
               <div style="display:flex;align-items:baseline;gap:14px">
                 <div><div class="bigval" id="saveCountdown">04:12</div><div class="subval">until next save</div></div>
                 <div style="margin-left:auto;text-align:right"><div class="subval" id="lastSaveLbl">last rune-check</div><div class="subval" style="color:var(--bone)" id="lastSave">22:05 · 8.4 MB</div><div class="subval" id="saveAvg">avg -</div></div>
@@ -117,19 +126,19 @@
 
             <!-- NETWORK -->
             <div class="card hov b-net" id="netCard" title="Click for network details">
-              <div class="microlabel"><span class="r">ᚾ</span>Network</div>
+              <div class="microlabel">Network</div>
               <div class="netline" id="netDomainLine" style="display:none"><span id="netDomain">-</span><span class="copychip" id="copyDomain">COPY</span></div>
               <div class="netline"><span id="netAddr">203.0.113.42:2456</span><span class="copychip" id="copyIp">COPY</span></div>
               <div class="netline"><span id="netLan">LAN 192.168.1.34:2456</span><span class="copychip" id="copyLan">COPY</span></div>
               <div class="netline"><span id="netLoc">127.0.0.1:2456</span><span class="copychip" id="copyLoc">COPY</span></div>
               <div class="netline" id="netInviteLine" style="display:none"><span id="netInvite">invite -</span><span class="copychip" id="copyInv">COPY</span></div>
               <div class="netline" id="netRconLine"><span id="netRcon">RCON 127.0.0.1:25575</span></div>
-              <div style="margin-top:8px;display:flex;align-items:center;gap:8px"><span class="pill green" id="netPill">rcon bound</span><span class="copychip" id="waystoneBtn" title="Raise a Waystone - give the server a name (like valheim.your-domain.com) so friends join by name instead of a raw IP. Guided setup with per-step DNS instructions. Needs a domain you own, or a free dynamic-DNS name.">WAYSTONE</span></div>
+              <div style="margin-top:8px;display:flex;align-items:center;gap:8px"><span class="pill green" id="netPill">rcon bound</span><span class="copychip" id="waystoneBtn" title="Raise a Waystone - give the server a name (like valheim.your-domain.com) so friends join by name instead of a raw IP. Guided setup with per-step DNS instructions. Needs a domain you own, or a free dynamic-DNS name.">DOMAIN</span></div>
             </div>
 
             <!-- MODS -->
             <div class="card hov b-mods" data-goto="mods">
-              <div class="microlabel"><span class="r">ᚱ</span>Mods</div>
+              <div class="microlabel">Mods</div>
               <div class="bigval" id="modCount">63</div>
               <div class="subval">loaded via BepInEx</div>
               <div style="margin-top:9px" id="modUpdWrap"><span class="pill amber">2 updates</span></div>
@@ -137,7 +146,7 @@
 
             <!-- FORGE LOAD -->
             <div class="card hov b-forge">
-              <div class="microlabel"><span class="r">ᚲ</span>Forge Load</div>
+              <div class="microlabel">CPU and RAM<span class="cnorse">Forge</span></div>
               <div class="sparkrow">
                 <span class="k">CPU</span>
                 <svg viewBox="0 0 200 30" preserveAspectRatio="none"><polyline class="sl" id="cpuLine" stroke="#FF7A1A" points=""/></svg>
@@ -158,14 +167,14 @@
                 <div class="subval" id="upkeepMsg" style="margin:2px 0 4px">Fetches new releases at launch and on restarts.</div>
                 <div class="togglerow"><span class="tl">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
                 <div class="togglerow"><span class="tl">Share anonymous usage stats</span><span class="toggle" id="tShareStats" data-t></span></div>
-                <div class="togglerow"><span class="tl">Plain terminology</span><span class="toggle" id="tPlainTerms" data-t></span></div>
-                <div class="subval" style="margin:2px 0 0">Swaps the Norse names for plain English.</div>
+                <div class="togglerow"><span class="tl">Show Norse names</span><span class="toggle on" id="tPlainTerms" data-t title="On: every plain label keeps its Norse name as a caption. Off: plain English only."></span></div>
+                <div class="subval" style="margin:2px 0 0">Keeps Hearth, Vikings and Saga beside their plain names.</div>
               </div>
             </div>
 
             <!-- RECENT LOG (tail of the Saga chronicle, live) -->
             <div class="card b-log" id="logCard">
-              <div class="microlabel"><span class="r">ᛋ</span>Recent log<span style="margin-left:auto" class="copychip" id="openSagaChip" title="Open the Saga hall for the full chronicle">Open Saga</span></div>
+              <div class="microlabel">Recent log<span class="cnorse">Saga</span><span class="copychip" id="openSagaChip" title="Open the Log hall for the full server log">Open log</span></div>
               <div class="term hlog" id="hearthLog"></div>
             </div>
           </div>
@@ -174,12 +183,14 @@
         <!-- ============ PAGE: VIKINGS ============ -->
         <section class="page" id="page-vikings">
           <div class="pagehead">
-            <h1><span class="r">ᛗ</span>VIKINGS</h1>
-            <span class="sub" id="vikSub">2 of 10 raiding · right-click a viking for deeds</span>
+            <h1><span class="r">ᛗ</span>PLAYERS</h1>
+            <span class="hnorse">Vikings</span>
+            <span class="sub" id="vikSub">2 of 10 online · right-click a player for actions</span>
+            <span class="sub" id="vikColsNote"></span>
           </div>
           <!-- missing required-mods banner (native only; hidden when all mods present) -->
           <div class="capsbanner" id="capsBanner" style="display:none">
-            <div class="capshead"><span class="r">ᚦ</span>Some deeds are sleeping - the server is missing required mods</div>
+            <div class="capshead"><span class="r">ᚦ</span>Some actions are unavailable - the server is missing required mods</div>
             <div class="capslist" id="capsList"></div>
             <div class="capsact">
               <button class="btn btn-ember btn-sm" id="capsInstallBtn">ᚠ&nbsp; Install missing mods</button>
@@ -187,9 +198,19 @@
             </div>
           </div>
           <div class="card ctxwrap" style="padding:0">
-            <div style="height:14px"></div>
-            <table>
-              <thead><tr><th style="width:30%">Viking</th><th>Status</th><th title="Which store or console the account comes from">Platform</th><th>Joined</th><th>Position</th><th style="width:44px"></th></tr></thead>
+            <div style="height:6px"></div>
+            <table class="viktable">
+              <thead><tr>
+                <th style="width:22%" class="sortable" data-sort="name" title="Sort by name">Player<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="status" title="Sort by status">Status<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="platform" title="Which store or console the account comes from">Platform<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="session" title="How long this player has been online in the current session">Session<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="playtime" title="Total time on this server, from the statistics journal kept on this machine">Playtime<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="seen" title="Sort by when they were last seen">Last seen<span class="sortmark"></span></th>
+                <th class="sortable vik-deaths" data-sort="deaths" title="Deaths on this server, from the statistics journal">Deaths<span class="sortmark"></span></th>
+                <th class="sortable vik-pos" data-sort="pos" title="Last reported position">Position<span class="sortmark"></span></th>
+                <th style="width:44px"></th>
+              </tr></thead>
               <tbody id="vikTable"></tbody>
             </table>
           </div>
@@ -205,7 +226,7 @@
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>
             <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
           </div>
-          <div class="card" style="padding:0"><div style="height:14px"></div>
+          <div class="card" style="padding:0"><div style="height:6px"></div>
             <table>
               <thead><tr>
                 <th style="width:36%" class="sortable" data-sort="name" title="Sort by name">Name<span class="sortmark"></span></th>
@@ -221,13 +242,14 @@
         <!-- ============ PAGE: WORLD ============ -->
         <section class="page" id="page-world">
           <div class="pagehead">
-            <h1><span class="r">ᛃ</span>WORLD</h1>
-            <span class="sub">server &amp; realm configuration</span>
+            <h1><span class="r">ᛃ</span>SETTINGS</h1>
+            <span class="hnorse">World</span>
+            <span class="sub">server and world configuration</span>
             <div class="grow"></div>
             <button class="btn btn-ember btn-sm" id="saveCfgBtn">ᛉ&nbsp; Save Config</button>
           </div>
           <div class="card">
-            <div class="microlabel"><span class="r glowr">ᛃ</span>Server</div>
+            <div class="microlabel">Server<span class="cnorse">Heimr</span></div>
             <div class="formgrid">
               <div class="field"><label>Server Name</label><input type="text" id="fName" value="Baka Gaijin"></div>
               <div class="field"><label>World</label><select id="fWorld"></select></div>
@@ -323,7 +345,8 @@
         <!-- ============ PAGE: ATLAS (webmap + skies) ============ -->
         <section class="page" id="page-atlas">
           <div class="pagehead">
-            <h1><span class="r">ᛞ</span>ATLAS</h1>
+            <h1><span class="r">ᛞ</span>MAP</h1>
+            <span class="hnorse">Atlas</span>
             <span class="sub" id="atlasSub">the known world</span>
             <div class="grow"></div>
             <span class="pill amber" id="atlasModWarn" style="display:none" title=""></span>
@@ -375,7 +398,7 @@
               </div>
 
               <div class="card" title="Mod-free maps cannot track live positions, so this card lists who is online instead.">
-                <div class="microlabel">Vikings ashore</div>
+                <div class="microlabel">Players online<span class="cnorse">Vikings ashore</span></div>
                 <div id="atlasRoster" class="atlas-roster"></div>
               </div>
 
@@ -391,8 +414,9 @@
         <section class="page" id="page-runes">
           <div class="runes" style="height:100%">
             <div class="pagehead">
-              <h1><span class="r">ᚲ</span>RUNES</h1>
-              <span class="sub" id="runesSub">BepInEx config scrolls</span>
+              <h1><span class="r">ᚲ</span>CONFIGS</h1>
+              <span class="hnorse">Runes</span>
+              <span class="sub" id="runesSub">BepInEx config files</span>
               <div class="grow"></div>
               <button class="btn btn-ghost btn-sm" id="cfgOpenBtn">ᛃ&nbsp; Open folder</button>
               <button class="btn btn-ghost btn-sm" id="cfgReloadBtn" style="margin-left:8px">ᛋ&nbsp; Reload</button>
@@ -400,7 +424,7 @@
             </div>
             <div class="runes-grid">
               <div class="card cfg-listcard">
-                <div class="microlabel"><span class="r">ᚲ</span>Scrolls</div>
+                <div class="microlabel">Config files<span class="cnorse">Scrolls</span></div>
                 <div class="cfg-list" id="cfgList"></div>
               </div>
               <div class="card cfg-edcard">
@@ -414,10 +438,11 @@
         <section class="page" id="page-saga" style="display:none">
           <div class="saga" style="height:100%">
             <div class="pagehead">
-              <h1><span class="r">ᛋ</span>SAGA</h1>
-              <span class="sub">live chronicle of the realm</span>
+              <h1><span class="r">ᛋ</span>LOG</h1>
+              <span class="hnorse">Saga</span>
+              <span class="sub">live server log</span>
               <div class="grow"></div>
-              <button class="btn btn-ghost btn-sm" id="vellumBtn" title="Log settings: where the scrolls are kept, and what gets written">ᚹ&nbsp; Vellum</button>
+              <button class="btn btn-ghost btn-sm" id="vellumBtn" title="The Vellum: where the log files are kept, and what gets written">ᚹ&nbsp; Log settings</button>
               <button class="btn btn-ghost btn-sm" id="openLogs">ᛃ&nbsp; Logs folder</button>
             </div>
             <div class="termwrap">
@@ -445,7 +470,8 @@
         <!-- ============ PAGE: HERALD (Discord sharing · one self-editing status post) ============ -->
         <section class="page" id="page-herald" style="display:none">
           <div class="pagehead">
-            <h1><span class="r">ᚺ</span>HERALD</h1>
+            <h1><span class="r">ᚺ</span>DISCORD</h1>
+            <span class="hnorse">Herald</span>
             <span class="sub">one Discord post · edits itself · never floods the channel</span>
             <div class="grow"></div>
             <button class="btn btn-ember btn-sm" id="heraldWizBtn" title="Guided setup: create a webhook in Discord, paste it here, choose what to share, publish the first post">ᚺ&nbsp; Setup wizard</button>
@@ -453,7 +479,7 @@
           <div class="herald-grid">
             <!-- THE HERALD: master switch + webhook -->
             <div class="card b-herald">
-              <div class="microlabel"><span class="r">ᚺ</span>The Herald</div>
+              <div class="microlabel">Discord sharing<span class="cnorse">Herald</span></div>
               <div class="subval" style="margin:2px 0 10px">BakaLoader keeps <strong>one</strong> status post in your Discord channel and quietly edits it whenever the realm changes - players joining, mods updating, the next restart drawing near. One post, forever fresh. No spam.</div>
               <div class="togglerow"><span class="tl">Share this server on Discord</span><span class="toggle" id="tHerald" data-t title="Master switch. On: the status post keeps itself up to date. Off: nothing is ever sent."></span></div>
               <div class="field" style="margin-top:10px"><label>Webhook URL <span class="r" title="In Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL. The setup wizard walks you through it.">ᛟ</span></label>
@@ -464,7 +490,7 @@
             </div>
             <!-- WHAT THE POST CARRIES -->
             <div class="card b-heraldshare">
-              <div class="microlabel"><span class="r">ᛜ</span>What the post carries</div>
+              <div class="microlabel">What the post carries</div>
               <div class="subval" style="margin:2px 0 8px">Always: server name, status, players online, world, mod count, last mod update, next restart. Optional extras:</div>
               <div class="togglerow"><span class="tl">Join address (IP:port)</span><span class="toggle" id="tHeraldAddr" data-t title="Include the server's public IP and port so friends copy it straight from Discord."></span></div>
               <div class="togglerow"><span class="tl">Server password</span><span class="toggle" id="tHeraldPass" data-t title="Include the password in the post. Anyone who can read the channel sees it - only for private channels."></span></div>
@@ -474,7 +500,7 @@
             </div>
             <!-- THE POST -->
             <div class="card b-heraldpost">
-              <div class="microlabel"><span class="r">ᛒ</span>The post</div>
+              <div class="microlabel">The post</div>
               <div class="subval" id="heraldPostStat" style="margin:2px 0 12px">no post yet · publish to place the Herald in your channel</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button class="btn btn-ember btn-sm" id="heraldPublish" title="Create the status post now - or refresh it immediately if it already exists">ᛒ&nbsp; Publish now</button>
@@ -487,52 +513,53 @@
         <!-- ============ PAGE: SKALD (analytics · the realm's story in numbers) ============ -->
         <section class="page" id="page-skald" style="display:none">
           <div class="pagehead">
-            <h1><span class="r">ᛏ</span>SKALD</h1>
+            <h1><span class="r">ᛏ</span>STATISTICS</h1>
+            <span class="hnorse">Skald</span>
             <span class="sub" id="skaldSub">the realm's story in numbers · counted on this machine only, nothing leaves it</span>
           </div>
           <div class="skald-stats">
             <div class="card">
-              <div class="microlabel"><span class="r">ᚠ</span>Hearth burned</div>
+              <div class="microlabel">Uptime<span class="cnorse">Hearth burned</span></div>
               <div class="bigval" id="skUptime">-</div>
               <div class="subval">total across 180 days</div>
-              <div style="margin-top:9px"><span class="pill green" id="skNowPill" style="display:none">alight -</span></div>
+              <div style="margin-top:6px"><span class="pill green" id="skNowPill" style="display:none">alight -</span></div>
             </div>
             <div class="card">
-              <div class="microlabel"><span class="r">ᚱ</span>Kindlings</div>
+              <div class="microlabel">Starts<span class="cnorse">Kindlings</span></div>
               <div class="bigval" id="skStarts">-</div>
               <div class="subval">server starts</div>
-              <div style="margin-top:9px"><span class="pill amber" id="skCrashPill" style="display:none">- crashes</span></div>
+              <div style="margin-top:6px"><span class="pill amber" id="skCrashPill" style="display:none">- crashes</span></div>
             </div>
             <div class="card">
-              <div class="microlabel"><span class="r">ᛗ</span>Vikings</div>
+              <div class="microlabel">Players<span class="cnorse">Vikings</span></div>
               <div class="bigval" id="skVikings">-</div>
               <div class="subval" id="skVikingsSub">unique souls · - visits</div>
             </div>
             <div class="card">
-              <div class="microlabel"><span class="r">ᚦ</span>Deaths</div>
+              <div class="microlabel">Deaths</div>
               <div class="bigval" id="skDeaths">-</div>
               <div class="subval" id="skDeathsSub">valkyries dispatched</div>
             </div>
             <div class="card">
-              <div class="microlabel"><span class="r">ᚷ</span>Mod chronicle</div>
+              <div class="microlabel">Mod history<span class="cnorse">Chronicle</span></div>
               <div class="bigval" id="skModUps">-</div>
               <div class="subval" id="skModUpsSub">updates · - installs</div>
             </div>
           </div>
           <div class="skald-grid">
             <div class="card sk-players" style="padding:0">
-              <div style="height:14px"></div>
+              <div style="height:6px"></div>
               <table>
-                <thead><tr><th style="width:30%">Viking</th><th style="width:16%">Playtime</th><th style="width:12%">Visits</th><th style="width:12%">Deaths</th><th>Last seen</th></tr></thead>
+                <thead><tr><th style="width:30%">Player</th><th style="width:16%">Playtime</th><th style="width:12%">Sessions</th><th style="width:12%">Deaths</th><th>Last seen</th></tr></thead>
                 <tbody id="skPlayerTable"></tbody>
               </table>
             </div>
             <div class="card sk-feed">
-              <div class="microlabel"><span class="r">ᛋ</span>Happenings</div>
+              <div class="microlabel">Recent events<span class="cnorse">Happenings</span></div>
               <div class="skfeed" id="skFeed"></div>
             </div>
             <div class="card sk-mods">
-              <div class="microlabel"><span class="r">ᚱ</span>Mod chronicle</div>
+              <div class="microlabel">Mod history<span class="cnorse">Chronicle</span></div>
               <div class="skfeed" id="skModFeed"></div>
             </div>
           </div>
@@ -542,7 +569,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v0.10.0</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.0</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>

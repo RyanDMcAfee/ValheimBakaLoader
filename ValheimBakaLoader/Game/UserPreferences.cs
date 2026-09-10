@@ -48,6 +48,16 @@ namespace ValheimBakaLoader.Game
         // True once the first-launch setup wizard has been finished (or skipped).
         public bool SetupCompleted { get; set; }
 
+        // Last window size the host was left at, written as "WIDTHxHEIGHT" in
+        // device-independent pixels (96 dpi). Storing it DPI-free means moving the
+        // window to a display with different scaling restores the same amount of
+        // interface rather than the same count of physical pixels. Null = the
+        // designed default. See BlendWindow.ApplyDpiSizing.
+        public string WindowBounds { get; set; }
+
+        // True when the window was left maximized.
+        public bool WindowMaximized { get; set; }
+
         public string DiscordWebhookUrl { get; set; }
 
         public string DiscordWebhookThreadId { get; set; }
@@ -102,6 +112,8 @@ namespace ValheimBakaLoader.Game
                 DarkMode = file.DarkMode ?? defaults.DarkMode,
                 PlainTerminology = file.PlainTerminology ?? defaults.PlainTerminology,
                 SetupCompleted = file.SetupCompleted ?? defaults.SetupCompleted,
+                WindowBounds = file.WindowBounds ?? defaults.WindowBounds,
+                WindowMaximized = file.WindowMaximized ?? defaults.WindowMaximized,
                 DiscordWebhookUrl = file.DiscordWebhookUrl ?? defaults.DiscordWebhookUrl,
                 DiscordWebhookThreadId = file.DiscordWebhookThreadId ?? defaults.DiscordWebhookThreadId,
                 DiscordSharingEnabled = file.DiscordSharingEnabled ?? defaults.DiscordSharingEnabled,
@@ -146,6 +158,8 @@ namespace ValheimBakaLoader.Game
             DarkMode = DarkMode,
             PlainTerminology = PlainTerminology,
             SetupCompleted = SetupCompleted,
+            WindowBounds = WindowBounds,
+            WindowMaximized = WindowMaximized,
             DiscordWebhookUrl = DiscordWebhookUrl,
             DiscordWebhookThreadId = DiscordWebhookThreadId,
             DiscordSharingEnabled = DiscordSharingEnabled,

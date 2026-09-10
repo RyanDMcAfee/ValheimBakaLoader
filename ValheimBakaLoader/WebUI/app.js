@@ -59,6 +59,9 @@ const S={
   lastSaveAt:null,        // Date of the last observed world save
   net:{conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]}, // parsed "Connections N ZDOS:… sent:… recv:…" server stats
   servers:[],             // multi-server chip strip: [{name,status,running,playersOnline,active}]
+  crashed:false,          // the last stop was a crash, and nothing has started since
+  journal:{},             // player key -> {playSec,deaths,sessions} from the Skald journal
+  vikSort:{col:null,dir:0}, // roster sort: name|status|platform|session|playtime|seen|deaths|pos
 };
 
 /* True when an event's profile tag belongs to the profile shown in the UI.
@@ -254,6 +257,10 @@ const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,#saveC
 const TERM_ORIG=new Map();
 const TERM_TITLE_ORIG=new Map();
 function applyTerms(){
+  /* Plain labels are the default now, so the toggle's job is the Norse CAPTIONS:
+     off hides every one of them. TERM_PAIRS still runs underneath for the Norse
+     wording that is not a caption (toasts, log dividers, the launch guard). */
+  document.documentElement.classList.toggle("plain-terms",PLAIN);
   $$(TERM_STATIC_SEL).forEach(el=>{
     [...el.childNodes].forEach(n=>{
       if(n.nodeType!==3||!n.nodeValue.trim()) return;
@@ -276,6 +283,8 @@ function applyTerms(){
   });
   /* refresh the lore-bearing dynamic surfaces so the swap is immediate */
   try{renderHearth();}catch{}
+  try{renderAppBar();}catch{}
+  try{renderConditionBar();}catch{}
   try{renderCaps();}catch{}
   try{syncCollapsibleTerms();}catch{}
   try{renderHearthLog();}catch{}
@@ -284,12 +293,47 @@ function applyTerms(){
   try{if(SKALD)renderSkald();}catch{}
 }
 
+/* ---------- EMPTY STATES ----------
+   One shape for every "there is nothing here yet": a mark, a sentence-case title of
+   at most six words, one sentence saying why it is empty, and at most one button
+   that does the thing which would fill it. Nothing here ever says just "-".
+   The mark is the one piece of ornament an empty panel is allowed (see the card
+   header note in app.css). */
+function emptyState(o){
+  o=o||{};
+  const a=o.action;
+  return `<div class="empty-state${o.compact?" es-compact":""}">`+
+    `<div class="es-mark" aria-hidden="true">${o.mark||"ᛜ"}</div>`+
+    `<div class="es-title">${esc(TT(o.title||"Nothing here yet"))}</div>`+
+    (o.reason?`<div class="es-reason">${esc(TT(o.reason))}</div>`:"")+
+    (a?`<button class="btn btn-ghost btn-sm" data-es-action="${esc(a.name)}">${esc(TT(a.label))}</button>`:"")+
+    `</div>`;
+}
+/* Named actions, so an empty state can offer the same command the toolbar offers
+   without every caller re-wiring a click handler. */
+const ES_ACTIONS={};
+/* Attaches the buttons inside a container that was just filled with emptyState()
+   HTML. stopPropagation matters: several of these sit inside cards that are
+   themselves clickable (the saves card opens its drill-down). */
+function esWire(root){
+  if(!root) return;
+  root.querySelectorAll("[data-es-action]").forEach(b=>{
+    if(b._esWired) return;
+    b._esWired=true;
+    b.addEventListener("click",e=>{
+      e.stopPropagation();
+      const fn=ES_ACTIONS[b.dataset.esAction];
+      if(fn) fn();
+    });
+  });
+}
+
 /* ---------- SCROLL CUES ----------
    Every scrollable pane says so out loud. .can-scroll-down / .can-scroll-up ride
    the pane itself; the halls also mirror theirs onto .pages, which paints the
    fade, so a hall's own animation is never re-rasterised behind a mask. Cheap:
    one passive scroll listener plus a shared ResizeObserver per pane, no polling. */
-const SCROLLCUE_SEL=".page,.atlas-side,.atlas-list,.srvstrip,.modal .mbody,.modal .mono-list,.modal .clist";
+const SCROLLCUE_SEL=".page,.atlas-side,.atlas-list,.srvstrip,.b-net,.modal .mbody,.modal .mono-list,.modal .clist,.modal .pick-list,.modal .wiz-found";
 const _cueSeen=new WeakSet();
 function updateScrollCue(el){
   if(!el||!el.isConnected||!el.clientHeight) return;   // a hidden pane never speaks for its host
@@ -374,7 +418,9 @@ function renderHearthLog(){
   const rows=hlogBuf.slice(-HLOG_MAX);
   el.innerHTML=rows.length
     ?rows.map(l=>`<div class="ln ${l.kind}" title="${esc(l.time+"  "+l.text)}"><span class="t">${esc(l.time)}</span>  <span class="${l.kind}">${esc(l.text)}</span></div>`).join("")
-    :`<div class="ln info">${esc(TT("Nothing written yet."))}</div>`;
+    :emptyState({compact:true,mark:"ᛋ",title:"No log lines yet",
+        reason:"Lines appear here the moment the server writes any."});
+  esWire(el);
 }
 /* how many whole lines the card can actually show right now */
 function hlogFit(){
@@ -453,14 +499,15 @@ function goPage(name){
   });
   currentPage=name;
   setToastLift(name);
-  if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();}
+  if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();flameResize();}
+  flameTick();   // the fire only burns while the Dashboard is on screen
   refreshScrollCues();
   try{renderEditBar();}catch(_){}
   if(name==="atlas"){try{atlasEnter();}catch(_){}} // also drives the mock preview
   if(name==="skald"){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
   if(Native.available){
     if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods();
-    if(name==="vikings") refreshPlayers();
+    if(name==="vikings"){refreshPlayers();refreshJournal(true);}
     if(name==="runes") refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
     if(name==="herald") refreshHerald();      // re-read prefs so the hall always shows the saved truth
   }
@@ -715,6 +762,9 @@ async function switchServer(name){
   S.players=[]; S.invite=null; S.net={conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]};
   S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
   S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
+  /* conditions belong to the realm that raised them */
+  ["saveFailed","backupFailed","crashRelaunch","modUpdates"].forEach(clearCondition);
+  S.journal={}; S.vikSort={col:null,dir:0}; S.crashed=false;
   /* the previous realm's write times belong to the previous realm */
   $("#saveAvg").textContent="avg -";
   try{atlasReset();}catch{}
@@ -844,52 +894,314 @@ $("#srvStrip").addEventListener("contextmenu",e=>{
   serverChipMenu(chip.dataset.srv,e.clientX,e.clientY);
 });
 
+/* ---------- HEARTH FLAME (canvas particle fire) ----------
+   Five states, one canvas, one requestAnimationFrame loop.
+
+     cold        the server is stopped: slow blue-grey glints, no embers
+     kindling    starting: spawn rate breathes up and down, sparks in bursts
+     burning     running: full spawn on the warm palette
+     smoldering  stopping: low spawn, red coals, grey smoke
+     crashed     stopped after a crash: ash drifting, one coal pulsing red
+
+   The particle geometry is written in a fixed 260x320 space, and the context is
+   transformed to whatever the card gives it multiplied by devicePixelRatio, so the
+   fire is the same shape at 100% and at 150% Windows scaling and never renders
+   soft. The loop runs only while the Dashboard is the visible hall and the window
+   is not hidden; prefers-reduced-motion gets one still frame and no loop. Every
+   entry point is a no-op if the canvas is not in the document. */
+/* var, not const: goPage() runs once while this file is still being evaluated, and a
+   const would still be in its temporal dead zone when it calls flameTick(). */
+var FLAME_READY=false;
+const FLAME_VW=260, FLAME_VH=320;
+const FLAME_PAL={
+  burning:{rate:34,lift:[1.1,2.2],life:[38,70],size:[3,7],wobble:.9,
+    colors:["#FFF0C8","#FFB35C","#FF7A1A","#C7420C"],glow:"rgba(255,122,26,.35)",smoke:0,ember:1},
+  kindling:{rate:14,lift:[.7,1.8],life:[26,52],size:[2,5],wobble:.7,
+    colors:["#FFD08A","#FF9A3C","#E8560F"],glow:"rgba(255,122,26,.22)",smoke:.08,ember:1,pulse:true},
+  smoldering:{rate:9,lift:[.3,.9],life:[40,90],size:[2,5],wobble:.4,
+    colors:["#FF8B2A","#B0380C","#7A2409"],glow:"rgba(217,67,47,.3)",smoke:.5,ember:1},
+  cold:{rate:3,lift:[.25,.6],life:[80,140],size:[1.5,3],wobble:.3,
+    colors:["#CFE3EE","#8FB4C9","#5B7A8C"],glow:"rgba(91,122,140,.16)",smoke:.15,ember:0},
+  crashed:{rate:2,lift:[.2,.5],life:[90,160],size:[2,4],wobble:.5,
+    colors:["#5A5A60","#3A3A3E"],glow:"rgba(217,67,47,.18)",smoke:1,ember:0,coal:true},
+};
+const FLAME={cv:null,ctx:null,state:"cold",ps:[],t:0,raf:0,reduced:false,ro:null};
+function flamePal(){return FLAME_PAL[FLAME.state]||FLAME_PAL.burning;}
+function flameSpawn(){
+  const s=flamePal();
+  const x=FLAME_VW/2+(Math.random()-.5)*(s.rate>20?70:44);
+  FLAME.ps.push({
+    x,y:FLAME_VH-46-Math.random()*8,
+    vx:(Math.random()-.5)*s.wobble,
+    vy:-(s.lift[0]+Math.random()*(s.lift[1]-s.lift[0]))*2,
+    life:0,max:s.life[0]+Math.random()*(s.life[1]-s.life[0]),
+    r:s.size[0]+Math.random()*(s.size[1]-s.size[0]),
+    c:s.colors[Math.floor(Math.random()*s.colors.length)],
+    smoke:Math.random()<s.smoke,
+  });
+}
+/* Match the backing store to the drawn size at this display's pixel ratio, then
+   scale the context so every number below is in the fixed 260x320 space. */
+function flameResize(){
+  if(!FLAME_READY) return;
+  const cv=FLAME.cv, ctx=FLAME.ctx;
+  if(!cv||!ctx||!cv.isConnected) return;
+  const r=cv.getBoundingClientRect();
+  if(r.width<1||r.height<1) return;
+  const dpr=Math.min(3,Math.max(1,window.devicePixelRatio||1));
+  const w=Math.max(1,Math.round(r.width*dpr)), h=Math.max(1,Math.round(r.height*dpr));
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
+  ctx.setTransform(cv.width/FLAME_VW,0,0,cv.height/FLAME_VH,0,0);
+}
+function flameFrame(){
+  FLAME.raf=0;
+  const ctx=FLAME.ctx, cv=FLAME.cv;
+  if(!ctx||!cv||!cv.isConnected) return;
+  const s=flamePal();
+  FLAME.t++;
+  ctx.clearRect(0,0,FLAME_VW,FLAME_VH);
+  /* ground glow under the logs */
+  const g=ctx.createRadialGradient(FLAME_VW/2,FLAME_VH-40,4,FLAME_VW/2,FLAME_VH-40,110);
+  g.addColorStop(0,s.glow); g.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,FLAME_VW,FLAME_VH);
+  let rate=s.rate;
+  if(s.pulse) rate=s.rate*(.4+.6*(.5+.5*Math.sin(FLAME.t/38)));
+  for(let i=0;i<rate*.12;i++){ if(Math.random()<rate*.12-i) flameSpawn(); }
+  ctx.globalCompositeOperation="lighter";
+  for(let i=FLAME.ps.length-1;i>=0;i--){
+    const p=FLAME.ps[i];
+    p.life++;
+    p.x+=p.vx+Math.sin((FLAME.t+p.y)/9)*s.wobble*.35;
+    p.y+=p.vy; p.vy*=.995;
+    const k=p.life/p.max;
+    if(k>=1){FLAME.ps.splice(i,1);continue;}
+    const a=(1-k)*(p.smoke?.35:.95);
+    const r=p.r*(p.smoke?1+k*2.2:1-k*.55);
+    ctx.beginPath(); ctx.arc(p.x,p.y,Math.max(.5,r),0,Math.PI*2);
+    ctx.fillStyle=p.smoke?`rgba(120,124,132,${a})`:p.c;
+    ctx.globalAlpha=a; ctx.fill();
+  }
+  ctx.globalAlpha=1; ctx.globalCompositeOperation="source-over";
+  if(s.coal){
+    const b=.35+.65*(.5+.5*Math.sin(FLAME.t/22));
+    ctx.beginPath(); ctx.arc(FLAME_VW/2+18,FLAME_VH-44,5,0,Math.PI*2);
+    ctx.fillStyle=`rgba(255,123,107,${b})`;
+    ctx.shadowColor="#D9432F"; ctx.shadowBlur=14*b; ctx.fill(); ctx.shadowBlur=0;
+  }
+  if(s.ember){
+    for(let i=0;i<3;i++){
+      const b=.4+.6*(.5+.5*Math.sin(FLAME.t/17+i*2));
+      ctx.beginPath(); ctx.arc(FLAME_VW/2-24+i*24,FLAME_VH-42+((i%2)*3),3,0,Math.PI*2);
+      ctx.fillStyle=`rgba(255,179,92,${b})`; ctx.fill();
+    }
+  }
+  if(flameShouldRun()) FLAME.raf=requestAnimationFrame(flameFrame);
+}
+/* The fire costs nothing while nobody is looking at it. */
+function flameShouldRun(){
+  return !!FLAME.ctx && !FLAME.reduced && !document.hidden
+    && currentPage==="hearth" && FLAME.cv && FLAME.cv.isConnected;
+}
+function flameTick(){
+  if(!FLAME_READY||!FLAME.ctx) return;
+  if(flameShouldRun()){
+    if(!FLAME.raf) FLAME.raf=requestAnimationFrame(flameFrame);
+  }else if(FLAME.raf){
+    cancelAnimationFrame(FLAME.raf); FLAME.raf=0;
+  }
+}
+function flameSetState(state){
+  if(!FLAME_READY) return;
+  if(!FLAME_PAL[state]) state="cold";
+  if(FLAME.state===state) return;
+  FLAME.state=state;
+  FLAME.ps.length=0;
+  for(let i=0;i<40;i++) flameSpawn();
+  if(FLAME.reduced) flameStill(); else flameTick();
+}
+/* prefers-reduced-motion: one settled frame, no loop. */
+function flameStill(){
+  if(!FLAME.ctx) return;
+  flameResize();
+  /* run the simulation forward without painting, so the one frame shows a settled
+     fire rather than a puff of fresh particles sitting on the logs */
+  for(let i=0;i<70;i++){
+    FLAME.t++;
+    const s=flamePal();
+    for(let j=0;j<s.rate*.12;j++) flameSpawn();
+    FLAME.ps.forEach(p=>{p.life++;p.y+=p.vy;p.vy*=.995;p.x+=p.vx;});
+    FLAME.ps=FLAME.ps.filter(p=>p.life<p.max);
+  }
+  flameFrame();   // paints once: flameShouldRun() is false under reduced motion
+}
+function flameInit(){
+  const cv=document.getElementById("hearthFlame");
+  if(!cv||!cv.getContext) return;             // no canvas, no fire, no error
+  let ctx=null;
+  try{ ctx=cv.getContext("2d"); }catch(_){ return; }
+  if(!ctx) return;
+  FLAME.cv=cv; FLAME.ctx=ctx; FLAME_READY=true;
+  try{ FLAME.reduced=!!(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches); }catch(_){}
+  flameResize();
+  for(let i=0;i<40;i++) flameSpawn();
+  if(typeof ResizeObserver!=="undefined"){
+    FLAME.ro=new ResizeObserver(()=>flameResize());
+    FLAME.ro.observe(cv);
+  }
+  window.addEventListener("resize",flameResize);
+  document.addEventListener("visibilitychange",flameTick);
+  if(FLAME.reduced) flameStill(); else flameTick();
+}
+flameInit();
+
 /* ---------- HEARTH: uptime + douse ---------- */
 let running=true, upMin=272; // 4h 32m (mock only)
 const hCard=$("#hearthCard"), hState=$("#hState"), hPid=$("#hPid"),
       douseBtn=$("#douseBtn"), stokeBtn=$("#stokeBtn"), sailBtn=$("#sailBtn");
+
+/* ---------- PERSISTENT HEADER ----------
+   Every hall shows the same four facts and the same single lifecycle button, so the
+   answer to "is it up, and can I stop it" is never a page away. Restart is not here
+   on purpose: it belongs with the dashboard card and the command palette, where the
+   in-game countdown it triggers is explained. */
+const AB_PILL={Running:"green",Starting:"amber",Stopping:"amber",Stopped:"blue"};
+function abStatus(){
+  if(Native.available) return (S.state&&S.state.status)||"Stopped";
+  return running?"Running":"Stopped";
+}
+function abUptime(){
+  if(!Native.available) return running?(Math.floor(upMin/60)+"h "+pad(upMin%60)+"m"):"";
+  if(!S.upSince||abStatus()!=="Running") return "";
+  const up=Date.now()-S.upSince;
+  return Math.floor(up/3600000)+"h "+pad(Math.floor(up/60000)%60)+"m";
+}
+function abOnline(){
+  const list=S.players||[];
+  if(Native.available) return list.filter(p=>p.status==="Online").length;
+  if(!running) return 0;
+  return list.length?list.filter(p=>p.status==="Online").length:$$("#homeVik .vdot.on").length;
+}
+function renderAppBar(){
+  const pill=$("#abState"), dot=$("#abDot"); if(!pill||!dot) return;
+  const st=abStatus();
+  const name=(Native.available?(S.prefs&&S.prefs.Name)||S.profileName:null)
+    ||($("#tbSrv")&&$("#tbSrv").textContent)||"server";
+  const nameEl=$("#abName");
+  nameEl.textContent=name; nameEl.title=name;
+
+  pill.className="pill "+(AB_PILL[st]||"blue")+" ab-pill";
+  /* keep the dot element (and its id) and swap only the label text node beside it */
+  let lbl=pill.lastChild;
+  if(!lbl||lbl.nodeType!==3){lbl=document.createTextNode("");pill.appendChild(lbl);}
+  lbl.nodeValue=TT(st);
+
+  const up=abUptime();
+  const upEl=$("#abUptime");
+  upEl.textContent=up?"up "+up:"";
+  upEl.title=up?TT("How long this server has been running"):"";
+
+  const online=abOnline();
+  const max=Native.available?(S.prefs&&S.prefs.MaxPlayers):10;
+  const pEl=$("#abPlayers");
+  pEl.textContent=max?online+" / "+max+TT(" online"):online+TT(" online");
+  pEl.title=TT("Players connected right now");
+
+  const b=$("#abLifecycle"); if(!b) return;
+  const canStop=Native.available?!!(S.state&&S.state.canStop):running;
+  const canStart=Native.available?!!(S.state&&S.state.canStart):!running;
+  b.textContent=canStop?TT("Stop"):TT("Start");
+  b.title=canStop?TT("Douse the hearth: stops the server"):TT("Kindle the hearth: starts the server");
+  b.disabled=Native.available?!(canStart||canStop):false;
+  b.classList.toggle("btn-cold",canStop);
+  b.classList.toggle("btn-ember",!canStop);
+}
+
+/* The one guarded start/stop path. The dashboard button and the header button are the
+   same action; neither may grow its own copy of the launch guard. */
+async function lifecycleToggle(){
+  if(Native.available){
+    const st=S.state||{};
+    if(st.canStop){
+      const r=await rpc("server.stop");
+      if(r!==FAIL){applyState(r);toast("ᛪ Hearth doused · server stopping");logLine("warn","[BakaLoader] stop requested - dousing the embers");}
+    }else if(st.canStart){
+      if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
+      // Nothing changed -> straight to the same start call as before. A changed build or a
+      // waiting Steam update puts the choice to the host first, and only then starts.
+      withLaunchGuard(async answer=>{
+        if(answer){startWithAnswer(answer);return;}
+        const r=await rpc("server.start",{prefs:S.prefs});
+        if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
+      });
+    }
+    return;
+  }
+  running=!running; if(running) upMin=0;
+  renderHearth();
+  toast(running?"ᚠ Hearth kindled · server starting":"ᛪ Hearth doused · server stopped");
+  logLine(running?"ok":"warn",running?"[BakaLoader] server process launched (PID 150428)":"[BakaLoader] graceful shutdown - world saved, embers doused");
+}
 function renderHearth(){
   if(Native.available){renderHearthNative();return;}
+  hCard.classList.toggle("crashed",false);
+  flameSetState(running?"burning":"cold");
   if(running){
     hCard.classList.remove("cold");
-    hState.innerHTML=`BURNING · ${Math.floor(upMin/60)}h ${String(upMin%60).padStart(2,"0")}m`;
+    hState.innerHTML=`RUNNING · ${Math.floor(upMin/60)}h ${String(upMin%60).padStart(2,"0")}m`;
     hPid.textContent="RUNNING · PID 150428 · valheim_server.x86_64";
-    douseBtn.textContent="Douse";
+    douseBtn.textContent="Stop";
+    douseBtn.title="Douse the hearth: stops the server";
   }else{
     hCard.classList.add("cold");
-    hState.textContent="COLD";
+    hState.textContent="STOPPED";
     hPid.textContent="STOPPED · embers doused · world saved";
-    douseBtn.textContent="Kindle";
+    douseBtn.textContent="Start";
+    douseBtn.title="Kindle the hearth: starts the server";
   }
+  hState.title=hState.textContent;
   hPid.title=hPid.textContent;
   stokeBtn.disabled=!running;
+  renderAppBar();
 }
 function renderHearthNative(){
   const st=S.state||{status:"Stopped",canStart:false,canStop:false};
   hCard.classList.toggle("cold",st.status!=="Running");
+  /* the fire says what the server is doing: crashed outranks stopped, because the
+     difference between "you stopped it" and "it fell over" is the whole point */
+  const crashed=st.status==="Stopped"&&S.crashed;
+  hCard.classList.toggle("crashed",!!crashed);
+  flameSetState(crashed?"crashed"
+    :st.status==="Running"?"burning"
+    :st.status==="Starting"?"kindling"
+    :st.status==="Stopping"?"smoldering"
+    :"cold");
   if(st.status==="Running"){
     const up=S.upSince?Date.now()-S.upSince:0;
-    hState.textContent=TT(`BURNING · ${Math.floor(up/3600000)}h ${pad(Math.floor(up/60000)%60)}m`);
+    hState.textContent=`RUNNING · ${Math.floor(up/3600000)}h ${pad(Math.floor(up/60000)%60)}m`;
     hPid.textContent="RUNNING · "+(S.prefs?.WorldName||"world")+" · valheim_server"+(st.adopted?" · adopted":"");
   }else if(st.status==="Starting"){
-    hState.textContent=TT("KINDLING…");
+    hState.textContent="STARTING…";
     hPid.textContent=TT("STARTING · raising the server");
   }else if(st.status==="Stopping"){
-    hState.textContent=TT("FADING…");
+    hState.textContent="STOPPING…";
     hPid.textContent=TT("STOPPING · dousing the embers");
   }else{
-    hState.textContent=TT("COLD");
+    hState.textContent="STOPPED";
     hPid.textContent=TT("STOPPED · embers doused");
   }
+  /* the state line is one nowrap line: say the whole of it on hover */
+  hState.title=hState.textContent;
   hPid.title=hPid.textContent;
   renderHearthVersion();
-  douseBtn.textContent=TT(st.canStop?"Douse":"Kindle");
+  douseBtn.textContent=st.canStop?"Stop":"Start";
+  douseBtn.title=st.canStop?"Douse the hearth: stops the server":"Kindle the hearth: starts the server";
   douseBtn.disabled=!(st.canStart||st.canStop);
-  stokeBtn.textContent=st.countdownActive?"Restart NOW":TT("Stoke");
-  stokeBtn.title=TT(st.countdownActive?"Skip the countdown and restart immediately":"Restart the server · warns players in-game first if any are online");
+  stokeBtn.textContent=st.countdownActive?"Restart now":"Restart";
+  stokeBtn.title=st.countdownActive?"Skip the countdown and restart immediately":"Stoke the hearth: restarts the server, warning players in-game first if any are online";
   stokeBtn.disabled=!(st.canStop||st.countdownActive);
   stokeBtn.classList.toggle("btn-ember",!!st.countdownActive);
   stokeBtn.classList.toggle("btn-ghost",!st.countdownActive);
+  renderAppBar();
 }
 /* "Valheim 1.0.7 (net 39)" on the status card - the numbers the running server printed
    itself, never a guess. Falls back to what this profile last ran while it is down, so a
@@ -914,6 +1226,9 @@ function applyState(st){
   if(!st) return;
   const prev=S.state?.status;
   S.state=st;
+  /* a crash is true until the server is running again: it drives both the condition
+     bar and the hearth fire */
+  if(st.status==="Starting"||st.status==="Running"){S.crashed=false;clearCondition("crashRelaunch");}
   if(st.status==="Starting"&&prev!=="Starting"){
     // each server session opens under its own rule in the chronicle
     logDivider(TT("session · ")+(S.profileName||"server")+" · "+new Date().toLocaleString());
@@ -934,30 +1249,8 @@ function applyState(st){
   if("launchHold" in st) setLaunchHold(st.launchHold);
   renderHearthNative();
 }
-douseBtn.addEventListener("click",async e=>{
-  e.stopPropagation();
-  if(Native.available){
-    const st=S.state||{};
-    if(st.canStop){
-      const r=await rpc("server.stop");
-      if(r!==FAIL){applyState(r);toast("ᛪ Hearth doused · server stopping");logLine("warn","[BakaLoader] stop requested - dousing the embers");}
-    }else if(st.canStart){
-      if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
-      // Nothing changed -> straight to the same start call as before. A changed build or a
-      // waiting Steam update puts the choice to the host first, and only then starts.
-      withLaunchGuard(async answer=>{
-        if(answer){startWithAnswer(answer);return;}
-        const r=await rpc("server.start",{prefs:S.prefs});
-        if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
-      });
-    }
-    return;
-  }
-  running=!running; if(running) upMin=0;
-  renderHearth();
-  toast(running?"ᚠ Hearth kindled · server starting":"ᛪ Hearth doused · server stopped");
-  logLine(running?"ok":"warn",running?"[BakaLoader] server process launched (PID 150428)":"[BakaLoader] graceful shutdown - world saved, embers doused");
-});
+douseBtn.addEventListener("click",e=>{e.stopPropagation();lifecycleToggle();});
+$("#abLifecycle").addEventListener("click",()=>lifecycleToggle());
 /* A restart stops the server and starts it again, so it meets the same guard as a start.
    Ask first, then send the answer along with the restart. */
 function smartRestart(){
@@ -1026,7 +1319,9 @@ function renderSaveBars(){
   if(!d.length){
     /* An empty chart, never the mock bars: a captioned chart of numbers nothing measured
        is a reading of save performance the host never had. */
-    box.innerHTML=`<div class="empty">${TT("no writes recorded yet")}</div>`;
+    box.innerHTML=emptyState({compact:true,mark:"ᛉ",title:"No saves timed yet",
+      reason:"Each world write is timed here once the server has saved at least once."});
+    esWire(box);
     if(cap) cap.style.display="none";
     return;
   }
@@ -1036,6 +1331,18 @@ function renderSaveBars(){
     `<i class="${i===d.length-1?"hot":""}" style="height:${Math.max(10,Math.round(ms/max*100))}%" title="${esc(ms+" ms")}"></i>`
   ).join("");
 }
+
+/* Named empty-state actions. Each one is a command the interface already offers,
+   so an empty panel can hand the host the same button the toolbar would. */
+Object.assign(ES_ACTIONS,{
+  scanMods:()=>{ if(Native.available) scanMods(); else toast("ᛋ Scan Thunderstore · preview only"); },
+  addMod:()=>addModFlow(),
+  openBackups:()=>barrowModal(),
+  redrawMap:()=>{ const b=$("#atlasRedraw"); if(b) b.click(); },
+  openLog:()=>goPage("saga"),
+  copyJoin:()=>{ if(sailBtn) sailBtn.click(); },
+  startServer:()=>lifecycleToggle(),
+});
 
 /* ---------- SPARKLINES (shared drawing; mock driver below) ---------- */
 const N=40, cpu=[], ram=[];
@@ -1172,22 +1479,40 @@ function sortedMods(mods){
   else if(col==="status") s.sort((a,b)=>m*((b.UpdateAvailable?1:0)-(a.UpdateAvailable?1:0)));
   return s;
 }
-function renderModSortMarks(){
-  document.querySelectorAll("#page-mods th.sortable").forEach(th=>{
-    const on=S.modSort.col===th.dataset.sort&&S.modSort.dir;
+/* ---------- SHARED TABLE SORT ----------
+   Click cycles a column: first click, reverse, then back to the table's own order.
+   descFirst names the columns whose first click reads high to low (versions, counts,
+   durations), which is what someone clicking "Playtime" or "Latest" actually wants.
+   The Mods table and the player roster both run through this. */
+function sortCycle(state,col){
+  if(state.col===col) state.dir=(state.dir+1)%3;
+  else{state.col=col;state.dir=1;}
+  if(!state.dir) state.col=null;
+}
+function renderSortMarks(sel,state,descFirst){
+  document.querySelectorAll(sel).forEach(th=>{
+    const key=th.dataset.sort;
+    const on=state.col===key&&state.dir;
     th.classList.toggle("sorted",!!on);
-    const ver=th.dataset.sort==="installed"||th.dataset.sort==="latest";
-    const up=(S.modSort.dir===1)!==ver;   // versions show hi→lo (▼) on first click
+    const up=(state.dir===1)!==descFirst.has(key);
+    th.setAttribute("aria-sort",on?(up?"ascending":"descending"):"none");
     th.querySelector(".sortmark").textContent=on?(up?"▲":"▼"):"";
   });
 }
-document.querySelectorAll("#page-mods th.sortable").forEach(th=>th.addEventListener("click",()=>{
-  const c=th.dataset.sort;
-  if(S.modSort.col===c) S.modSort.dir=(S.modSort.dir+1)%3;
-  else S.modSort={col:c,dir:1};
-  if(!S.modSort.dir) S.modSort.col=null;
-  renderMods();
-}));
+function wireSort(sel,state,onChange){
+  document.querySelectorAll(sel).forEach(th=>{
+    th.setAttribute("role","button");
+    th.setAttribute("tabindex","0");
+    const go=()=>{sortCycle(state,th.dataset.sort);onChange();};
+    th.addEventListener("click",go);
+    th.addEventListener("keydown",e=>{
+      if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();go();}
+    });
+  });
+}
+const MOD_DESC_FIRST=new Set(["installed","latest"]);
+function renderModSortMarks(){renderSortMarks("#page-mods th.sortable",S.modSort,MOD_DESC_FIRST);}
+wireSort("#page-mods th.sortable",S.modSort,()=>renderMods());
 function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
@@ -1201,7 +1526,12 @@ function renderMods(){
   $("#sbMods").textContent=(scanned?mods.length:"-")+" mods";
   renderModSortMarks();
   if(!scanned){
-    $("#modTable").innerHTML=`<tr><td colspan="4" class="mono" style="color:var(--bone-dim)">${S.modsScanning?"Scanning Thunderstore…":"Not yet scanned - press Scan Thunderstore."}</td></tr>`;
+    $("#modTable").innerHTML=`<tr><td colspan="4">${S.modsScanning
+      ?emptyState({mark:"ᛋ",title:"Scanning Thunderstore",reason:"Reading the community index and matching it against the installed plugins."})
+      :emptyState({mark:"ᚱ",title:"Mods have not been scanned",
+          reason:"A scan reads this server's BepInEx folder and checks Thunderstore for newer versions.",
+          action:{name:"scanMods",label:"Scan Thunderstore"}})}</td></tr>`;
+    esWire($("#modTable"));
     $("#modTable")._list=[];
     $("#modUpdWrap").innerHTML="";
     $("#modsSub").textContent="Thunderstore index · "+(S.modsScanning?"scanning…":"not yet scanned");
@@ -1215,11 +1545,16 @@ function renderMods(){
       `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
       `<td class="mono"${has?' style="color:var(--amber)"':""}>${esc(m.LatestVersion||"-")}</td>`+
       `<td>${pill}</td></tr>`;
-  }).join("")||`<tr><td colspan="4" class="mono" style="color:var(--bone-dim)">No mods found - check the server exe path.</td></tr>`;
+  }).join("")||`<tr><td colspan="4">${emptyState({mark:"ᚱ",title:"No mods installed",
+      reason:"Nothing was found in this server's BepInEx plugins folder. Check the server path in Settings, or add a mod from Thunderstore.",
+      action:{name:"addMod",label:"Add from Thunderstore"}})}</td></tr>`;
+  esWire($("#modTable"));
   $("#modTable")._list=mods;
   $("#modUpdWrap").innerHTML=upd.length
     ?`<span class="pill amber">${upd.length} update${upd.length===1?"":"s"}</span>`
     :`<span class="pill green">up to date</span>`;
+  /* waiting mod updates are a standing condition, not a toast that repeats forever */
+  conditionModUpdates(upd.length);
   $("#modsSub").textContent=mods.length+" loaded · Thunderstore index"+(S.lastScan?" · last scan "+S.lastScan:"");
 }
 async function scanMods(){
@@ -1415,7 +1750,7 @@ function invokePal(){
   if(sel.classList.contains("disabled")){toast("ᚦ "+(sel.title||"Unavailable right now"));return;}
   closePal();
   if(sel.dataset.cmd==="Discord sharing"){goPage("herald");return;} // works in preview too
-  if(sel.dataset.cmd==="Custom domain"){waystoneWizard();return;}   // works in preview too
+  if(sel.dataset.cmd==="Custom domain"){waystoneWizard();return;}   // works in preview too, the Waystone
   if(sel.dataset.cmd==="World backups"){barrowModal();return;}      // works in preview too
   if(sel.dataset.cmd==="Server analytics"){goPage("skald");return;} // works in preview too
   if(sel.dataset.cmd==="Log settings…"){vellumModal();return;}      // works in preview too
@@ -1526,6 +1861,7 @@ function lnVisible(el){
 }
 function applyTermVis(){
   $$("#term .ln").forEach(l=>{l.style.display=lnVisible(l)?"":"none";});
+  renderTermEmpty();
   if(termPin) term.scrollTop=term.scrollHeight;
 }
 function renderTermStream(){
@@ -1539,7 +1875,21 @@ function renderTermStream(){
     pill.textContent="paused"; pill.className="pill amber";
   }
 }
+/* The console starts empty on a cold launch, so say so rather than showing a blank
+   black panel that looks broken. */
+function renderTermEmpty(){
+  if(!term) return;
+  const has=term.querySelector(".ln");
+  const es=term.querySelector(".empty-state");
+  if(has&&es){es.remove();return;}
+  if(has||es) return;
+  term.insertAdjacentHTML("beforeend",emptyState({mark:"ᛋ",title:"No log lines yet",
+    reason:"BakaLoader and the server both write here. Start the server and the first lines arrive within seconds.",
+    action:{name:"startServer",label:"Start the server"}}));
+  esWire(term);
+}
 function termAppend(d){
+  const es=term.querySelector(".empty-state"); if(es) es.remove();
   term.appendChild(d);
   while(term.children.length>TERM_CAP) term.firstChild.remove();
   if(termPin) term.scrollTop=term.scrollHeight;
@@ -1588,6 +1938,8 @@ function classifyLog(line){
 }
 function logRaw(line){const c=classifyLog(line);logLine(c.kind,c.text,c.time);}
 
+renderTermEmpty();
+
 /* filter pills */
 $$(".fpill[data-f]").forEach(p=>p.addEventListener("click",()=>{
   $$(".fpill[data-f]").forEach(x=>x.classList.remove("active")); p.classList.add("active");
@@ -1625,7 +1977,7 @@ async function vellumModal(){
   let up=null;
   if(Native.available){const r=await rpc("userprefs.get");if(r!==FAIL)up=r;}
   const m=modalOpen(
-    `<div class="mtitle">ᚹ ${esc(TT("The Vellum"))} · ${esc(TT("where the chronicle is kept"))}</div>`+
+    `<div class="mtitle">${esc(TT("Log settings"))}<span class="cnorse">${esc(TT("The Vellum"))}</span></div>`+
     `<div class="mbody">`+
       `<div class="field"><label>${esc(TT("Logs folder"))}</label>`+
         `<input type="text" id="vlPath" value="${esc(up?.LogsFolderPath||"")}" placeholder="${esc(up?.DefaultLogsFolderPath||"the default folder")}" spellcheck="false" autocomplete="off">`+
@@ -1637,7 +1989,7 @@ async function vellumModal(){
       `<div class="fieldnote" id="vlStatus"></div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="vlCancel">Cancel</button>`+
-      `<button class="btn btn-ember btn-sm" id="vlOk">${esc(TT("Inscribe"))}</button></div>`);
+      `<button class="btn btn-ember btn-sm" id="vlOk" title="${esc(TT("Inscribe"))}">${esc(TT("Save"))}</button></div>`);
   const tApp=m.querySelector("#vlApp");
   tApp.addEventListener("click",()=>tApp.classList.toggle("on"));
   m.querySelector("#vlCancel").addEventListener("click",modalClose);
@@ -1734,20 +2086,23 @@ async function initUpkeep(){
     setT("tAutoUpdApp",up.AutoUpdateBakaLoader);
     setT("tStartWin",up.StartWithWindows);
     setT("tShareStats",up.ShareAnonymousStats);
-    setT("tPlainTerms",up.PlainTerminology);
+    /* The switch reads "Show Norse names", so it sits at the INVERSE of the stored
+       PlainTerminology flag. The pref keeps its original meaning and its original key,
+       so nothing on disk has to be migrated. */
+    setT("tPlainTerms",!up.PlainTerminology);
     PLAIN=!!up.PlainTerminology;
-    if(PLAIN) applyTerms();
+    applyTerms();
     if(up.AppVersion) $("#blVersion").textContent="v"+up.AppVersion;
     heraldApply(up); /* Herald hall shares the same DTO */
     S.domain=(up.CustomJoinDomain||"").trim()||null;
     renderWaystone();
   }
   /* the generic [data-t] handler already flipped .on before these fire, so just persist */
-  const save=()=>rpc("userprefs.save",{prefs:{AutoUpdateBakaLoader:T("tAutoUpdApp"),StartWithWindows:T("tStartWin"),ShareAnonymousStats:T("tShareStats"),PlainTerminology:T("tPlainTerms")}});
+  const save=()=>rpc("userprefs.save",{prefs:{AutoUpdateBakaLoader:T("tAutoUpdApp"),StartWithWindows:T("tStartWin"),ShareAnonymousStats:T("tShareStats"),PlainTerminology:!T("tPlainTerms")}});
   $("#tAutoUpdApp").addEventListener("click",save);
   $("#tStartWin").addEventListener("click",save);
   $("#tShareStats").addEventListener("click",save);
-  $("#tPlainTerms").addEventListener("click",()=>{PLAIN=T("tPlainTerms");save();applyTerms();});
+  $("#tPlainTerms").addEventListener("click",()=>{PLAIN=!T("tPlainTerms");save();applyTerms();});
 }
 
 /* ---------- HERALD (Discord sharing · one self-editing status post) ----------
@@ -1878,6 +2233,7 @@ modalBg.addEventListener("mousedown",e=>{if(e.target===modalBg)modalClose();});
 function modalOpen(html){
   modalBg.innerHTML=`<div class="modal">${html}</div>`;
   modalBg.classList.add("open");
+  esWire(modalBg);
   refreshScrollCues();
   return modalBg.firstElementChild;
 }
@@ -1907,7 +2263,12 @@ function confirmModal(title,bodyHtml,okLabel,onOk){
    has not run before is put to the host first, and an unattended start (auto-start,
    scheduled restart, empty-server restart, crash recovery) is HELD until they answer.
    The banner below is that question when nobody was at the keyboard to see the prompt. */
-function guardMb(bytes){const n=Number(bytes)||0;return Math.max(1,Math.round(n/1048576));}
+/* Size of a waiting Steam download, or "" when nothing is actually queued.
+   Steam can report a build mismatch with no bytes outstanding (the manifest buildid
+   differs from TargetBuildID but the download has not been staged), and rounding that
+   up to "1 MB" states a number nobody measured. */
+function guardMb(bytes){const n=Number(bytes)||0;return n>0?Math.max(1,Math.round(n/1048576)):0;}
+function guardSizeSuffix(bytes){const mb=guardMb(bytes);return mb>0?` (${mb} MB)`:"";}
 function guardBuildLabel(g){
   const to=g.currentBuildShort||"a new build";
   const from=g.lastBuildShort
@@ -1918,7 +2279,7 @@ function guardBuildLabel(g){
 /* The prompt body, shared by the modal and the banner tooltip. */
 function guardBody(g){
   if(g.outcome==="updatePending")
-    return TT(`Steam has a Valheim server update waiting (${guardMb(g.pendingBytes)} MB). `)+
+    return TT(`Steam has a Valheim server update waiting${guardSizeSuffix(g.pendingBytes)}. `)+
            TT("Starting now runs the old build, and players who already updated cannot join.");
   const b=guardBuildLabel(g);
   return TT(`The Valheim server changed from ${b.from} to build ${b.to}. `)+
@@ -1964,40 +2325,127 @@ function withLaunchGuard(go){
   });
 }
 
-/* The held-start banner: the same question, kept on screen because the start that
-   raised it happened with nobody watching. */
-let LAUNCH_HOLD=null;
-function renderLaunchHold(){
+/* ---------- CONDITION BAR ----------
+   One standing condition at a time, worst first, on a severity-coloured left edge.
+   A condition is something that is STILL TRUE and still wants an answer, so it stays
+   on screen until it is answered or dismissed. Toasts are left to confirm what the
+   host just did. The element keeps the id launchHold: the held start is one of the
+   conditions it carries, and the native side still addresses it by that name. */
+const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch","appUpdate","modUpdates"];
+const CONDITIONS=new Map();
+function setCondition(kind,cond){
+  if(!cond) CONDITIONS.delete(kind); else CONDITIONS.set(kind,cond);
+  renderConditionBar();
+}
+function clearCondition(kind){CONDITIONS.delete(kind);renderConditionBar();}
+function renderConditionBar(){
   const bar=$("#launchHold"); if(!bar) return;
-  const g=LAUNCH_HOLD;
-  if(!g||!isActiveProfile(g.profile)){bar.style.display="none";return;}
-  const pending=g.outcome==="updatePending";
+  let kind=null,c=null;
+  for(const k of CONDITION_ORDER){const v=CONDITIONS.get(k); if(v){kind=k;c=v;break;}}
+  if(!c){
+    bar.style.display="none"; bar.innerHTML="";
+    bar.removeAttribute("data-kind"); bar.removeAttribute("data-sev");
+    return;
+  }
+  bar.dataset.kind=kind;
+  bar.dataset.sev=c.sev||"info";
   bar.innerHTML=
-    `<span class="hbrune">ᛊ</span>`+
-    `<span class="hbtitle">${esc(pending?TT("Update waiting"):TT("Build changed"))}</span>`+
-    `<span class="hbmsg">${esc(guardBody(g))}</span>`+
-    `<span class="hbacts">`+
-    (pending?`<button class="btn btn-ghost btn-sm" id="lhSteam">${esc(TT("Open Steam"))}</button>`:"")+
-    (pending?"":`<button class="btn btn-ember btn-sm" id="lhBackup">${esc(TT("Back up worlds and start"))}</button>`)+
-    `<button class="btn btn-ghost btn-sm" id="lhAnyway">${esc(pending?TT("Start anyway"):TT("Start without backup"))}</button>`+
-    `<button class="btn btn-ghost btn-sm" id="lhLater">${esc(TT("Not now"))}</button>`+
+    `<span class="hbtitle">${esc(c.title)}</span>`+
+    `<span class="hbmsg">${esc(c.msg)}</span>`+
+    `<span class="hbacts">${c.actionsHtml||""}`+
+    `<button class="btn btn-ghost btn-sm" data-cond-dismiss>${esc(c.dismissLabel||TT("Dismiss"))}</button>`+
     `</span>`;
   bar.style.display="flex";
-  bar.querySelector("#lhSteam")?.addEventListener("click",()=>{
-    rpc("shell.openUrl",{target:"steam-downloads"});
-    toast("ᛊ Steam downloads opened · apply the update, then start again");
+  if(c.wire) c.wire(bar);
+  bar.querySelector("[data-cond-dismiss]").addEventListener("click",()=>{
+    if(c.onDismiss) c.onDismiss();
+    clearCondition(kind);
   });
-  bar.querySelector("#lhBackup")?.addEventListener("click",()=>startWithAnswer("backup"));
-  bar.querySelector("#lhAnyway")?.addEventListener("click",()=>startWithAnswer("proceed"));
-  bar.querySelector("#lhLater")?.addEventListener("click",()=>{
-    const profile=LAUNCH_HOLD?.profile;
-    clearLaunchHold();
-    rpc("server.dismissLaunchHold",{profile});
-    toast("ᛊ Left as it is · the server stays down until you start it");
+}
+
+/* The held-start condition: the same question the start prompt asks, kept on screen
+   because the start that raised it happened with nobody watching. */
+let LAUNCH_HOLD=null;
+function renderLaunchHold(){
+  const g=LAUNCH_HOLD;
+  if(!g||!isActiveProfile(g.profile)){clearCondition("launchHold");return;}
+  const pending=g.outcome==="updatePending";
+  setCondition("launchHold",{
+    sev:"warn",
+    title:pending?TT("Update waiting"):TT("Build changed"),
+    msg:guardBody(g),
+    dismissLabel:TT("Not now"),
+    actionsHtml:
+      (pending?`<button class="btn btn-ghost btn-sm" id="lhSteam">${esc(TT("Open Steam"))}</button>`:"")+
+      (pending?"":`<button class="btn btn-ember btn-sm" id="lhBackup">${esc(TT("Back up worlds and start"))}</button>`)+
+      `<button class="btn btn-ghost btn-sm" id="lhAnyway">${esc(pending?TT("Start anyway"):TT("Start without backup"))}</button>`,
+    wire:bar=>{
+      bar.querySelector("#lhSteam")?.addEventListener("click",()=>{
+        rpc("shell.openUrl",{target:"steam-downloads"});
+        toast("ᛊ Steam downloads opened · apply the update, then start again");
+      });
+      bar.querySelector("#lhBackup")?.addEventListener("click",()=>startWithAnswer("backup"));
+      bar.querySelector("#lhAnyway")?.addEventListener("click",()=>startWithAnswer("proceed"));
+    },
+    onDismiss:()=>{
+      const profile=LAUNCH_HOLD?.profile;
+      LAUNCH_HOLD=null;
+      rpc("server.dismissLaunchHold",{profile});
+      toast("ᛊ Left as it is · the server stays down until you start it");
+    },
   });
 }
 function setLaunchHold(g){LAUNCH_HOLD=g||null;renderLaunchHold();}
 function clearLaunchHold(){LAUNCH_HOLD=null;renderLaunchHold();}
+
+/* ---- the other conditions, each raised by a real signal ---- */
+function conditionSaveFailed(ms){
+  setCondition("saveFailed",{sev:"err",title:TT("World save failed"),
+    msg:TT("The server could not write the world to disk")+(ms?" ("+ms+"ms)":"")+". "+
+        TT("Everything played since the last good save is only in memory. Check free disk space, and whether anything else has the world files open."),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbSaga">${esc(TT("Open the log"))}</button>`,
+    wire:bar=>bar.querySelector("#cbSaga").addEventListener("click",()=>goPage("saga")),
+  });
+}
+function conditionBackupFailed(err){
+  setCondition("backupFailed",{sev:"err",title:TT("Backup failed"),
+    msg:TT("The worlds could not be copied aside, so the server was not started.")+(err?" "+err:""),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbBarrow">${esc(TT("Backups"))}</button>`,
+    wire:bar=>bar.querySelector("#cbBarrow").addEventListener("click",()=>barrowModal()),
+  });
+}
+function conditionCrashed(){
+  const relaunch=!!(S.prefs&&S.prefs.AutoRestart);   // "Relaunch after a crash" in the World hall
+  setCondition("crashRelaunch",{sev:"err",title:TT("Server crashed"),
+    msg:relaunch?TT("The server process stopped on its own. BakaLoader is relaunching it.")
+                :TT("The server process stopped on its own. It stays down until you start it."),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbCrashLog">${esc(TT("Open the log"))}</button>`,
+    wire:bar=>bar.querySelector("#cbCrashLog").addEventListener("click",()=>goPage("saga")),
+  });
+}
+function conditionModUpdates(n){
+  if(!n){clearCondition("modUpdates");return;}
+  setCondition("modUpdates",{sev:"info",title:TT("Mod updates"),
+    msg:n+TT(n===1?" mod has a newer version on Thunderstore."
+                  :" mods have newer versions on Thunderstore.")+
+        TT(" New versions load the next time the server starts."),
+    actionsHtml:`<button class="btn btn-ember btn-sm" id="cbMods">${esc(TT("Review in Mods"))}</button>`,
+    wire:bar=>bar.querySelector("#cbMods").addEventListener("click",()=>goPage("mods")),
+  });
+}
+function conditionAppUpdate(v){
+  setCondition("appUpdate",{sev:"info",title:TT("BakaLoader update"),
+    msg:(v?TT("BakaLoader ")+v+TT(" is available."):TT("A newer BakaLoader is available."))+" "+
+        TT("It installs the next time you close the app."),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbUpkeep">${esc(TT("Upkeep settings"))}</button>`,
+    wire:bar=>bar.querySelector("#cbUpkeep").addEventListener("click",()=>{
+      goPage("hearth");
+      const card=$("#upkeepCard");
+      if(card&&!card.classList.contains("open")) $("#upkeepHead").click();
+      requestAnimationFrame(()=>{try{card.scrollIntoView({block:"nearest"});}catch(_){}});
+    }),
+  });
+}
 /* Start the server carrying the host's answer to the guard. */
 function startWithAnswer(answer){
   if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
@@ -2118,7 +2566,9 @@ async function savesModal(){
   const bk=info?.backups||[];
   const bkRows=bk.length
     ?bk.slice(-5).reverse().map(frow).join("")+(bk.length>5?`<div class="subval" style="padding:2px 2px">…and ${bk.length-5} older</div>`:"")
-    :`<div class="subval" style="padding:4px 2px">no backups found</div>`;
+    :emptyState({compact:true,mark:"\u16DD",title:"No backups yet",
+        reason:"The game lays down a snapshot as it saves, and BakaLoader copies the worlds aside before a build change.",
+        action:{name:"openBackups",label:"Open backups"}});
   const avg=S.saveDur.length?Math.round(S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length):null;
   const m=modalOpen(
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᛉ</span>World Saves · ${esc(world||"-")}</div>`+
@@ -2134,7 +2584,7 @@ async function savesModal(){
     `<div class="dsec">Backups <span class="subval" style="text-transform:none;letter-spacing:0">· ${bk.length} on disk</span></div>`+bkRows+
     (info?.folder?`<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(info.folder)}</div>`:"")+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBarrow">${esc(TT("The Barrow"))}</button><button class="btn btn-ghost btn-sm" id="mOpenWorlds">Open folder</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBarrow" title="${esc(TT("The Barrow"))}">${esc(TT("Backups"))}</button><button class="btn btn-ghost btn-sm" id="mOpenWorlds">Open folder</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelector("#mBarrow").addEventListener("click",()=>barrowModal());
   m.querySelector("#mOpenWorlds").addEventListener("click",()=>{
@@ -2206,9 +2656,10 @@ async function barrowModal(){
     `<span class="dv mono">${(g.backups||[]).length} ${TT((g.backups||[]).length===1?"layer":"layers")} · ${fmtBytes((g.sizeBytes||0)+(g.backupBytes||0))}</span>`+
     `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span>`+
     `</div><div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(g))}${worldFormatLabel(g)?" · "+esc(worldFormatLabel(g)):""}${g.day!=null?" · day "+g.day:""}</div>`
-  ).join(""):`<div class="subval" style="padding:6px 2px">no worlds found on disk yet</div>`;
+  ).join(""):emptyState({mark:"\u16DD",title:"No worlds found on disk",
+    reason:"BakaLoader looks in each realm's save folder. Start a server once and its world appears here."});
   const m=modalOpen(
-    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛝ</span>${esc(TT("The Barrow"))}</div>`+
+    `<div class="mtitle">${esc(TT("Backups"))}<span class="cnorse">${esc(TT("The Barrow"))}</span></div>`+
     `<div class="mbody">`+
     `<div class="subval" style="margin-bottom:8px">${esc(TT("every realm's layers - automatic snapshots, the game's last-good pair, and the safety copies laid down before each restore"))}</div>`+
     rows+`</div>`+
@@ -2222,12 +2673,12 @@ function barrowWorldModal(g){
     `<span class="dv" style="flex:0 0 auto">${esc(TT(BARROW_KIND[b.kind]||"BACKUP"))}</span>`+
     `<span class="dv mono" style="flex:0 0 auto">${fmtBytes(b.sizeBytes)}${b.isDirectory?" · "+esc(TT("folder")):""}${b.day!=null?" · day "+b.day:""}</span>`+
     `<span class="dv" style="flex:0 0 auto">${agoAt(b.modifiedUtc)}</span>`+
-    `<span class="copychip bUnearth" data-i="${i}"${g.running?` style="opacity:.4;cursor:not-allowed" title="stop the server first"`:""}>${esc(TT("UNEARTH"))}</span>`+
+    `<span class="copychip bUnearth" data-i="${i}" title="${g.running?esc(TT("Stop the server first")):esc(TT("Unearth this layer: put this backup back"))}"${g.running?` style="opacity:.4;cursor:not-allowed"`:""}>${esc(TT("RESTORE"))}</span>`+
     `<span class="copychip bDrop" data-i="${i}" style="color:var(--warn,#e0a35c)">✕</span>`+
     `</div>`;
   const bks=g.backups||[];
   const m=modalOpen(
-    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛝ</span>${esc(TT("The Barrow"))} · ${esc(g.world)}</div>`+
+    `<div class="mtitle">${esc(TT("Backups"))} · ${esc(g.world)}<span class="cnorse">${esc(TT("The Barrow"))}</span></div>`+
     `<div class="mbody">`+
     `<div class="dsec">Live</div>`+
     `<div class="drow"><span class="dk mono">${esc(g.world)}${g.format==="chunked"?"/":".fwl + .db"}</span>`+
@@ -2235,7 +2686,8 @@ function barrowWorldModal(g){
     `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span></div>`+
     (g.running?`<div class="subval" style="padding:2px 2px 6px;color:var(--warn,#e0a35c)">${esc(TT("this realm is raiding right now - stop the server to unearth a layer"))}</div>`:"")+
     `<div class="dsec">${esc(TT("Layers"))} <span class="subval" style="text-transform:none;letter-spacing:0">· ${bks.length} on disk · ${fmtBytes(g.backupBytes||0)}</span></div>`+
-    (bks.length?bks.map(layerRow).join(""):`<div class="subval" style="padding:4px 2px">no backup layers yet - the game lays down automatic snapshots as it saves</div>`)+
+    (bks.length?bks.map(layerRow).join(""):emptyState({compact:true,mark:"\u16DD",title:"No backups for this world",
+      reason:"The game writes a snapshot each time it saves, and BakaLoader copies the world aside before a build change."}))+
     `<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(g.folder)}/${esc(g.sub)}</div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBack">Back</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
@@ -2249,9 +2701,9 @@ function barrowWorldModal(g){
   m.querySelectorAll(".bUnearth").forEach(c=>c.addEventListener("click",()=>{
     if(g.running){toast("ᚦ "+TT("Stop the server first - the live realm would clobber the restored files"));return;}
     const b=bks[+c.dataset.i];
-    confirmModal(TT("Unearth this layer?"),
+    confirmModal(TT("Restore this backup?"),
       `<div class="subval">${esc(TT("The live realm is copied to a fresh safety layer first, then"))} <span class="mono">${esc(b.file)}</span> ${esc(TT("replaces the live files. Every unearthing is reversible from the Barrow."))}${barrowUnearthNote(g,b)}</div>`,
-      TT("Unearth"),async()=>{
+      TT("Restore"),async()=>{
         if(!Native.available){
           const ts=new Date();
           const stamp=g.world+"_backup_restore-"+ts.getFullYear()+pad(ts.getMonth()+1)+pad(ts.getDate())+"-"+pad(ts.getHours())+pad(ts.getMinutes())+"00";
@@ -2364,8 +2816,8 @@ function renderSkald(){
   $("#skModUps").textContent=t.modUpdates??0;
   const msub="updates · "+(t.modInstalls??0)+" installs";
   $("#skModUpsSub").textContent=msub; $("#skModUpsSub").title=msub;
-  $("#skaldSub").textContent=TT((d.since?"chronicled since "+new Date(d.since).toLocaleDateString()+" · ":"")
-    +"counted on this machine only, nothing leaves it");
+  $("#skaldSub").textContent=(d.since?TT("chronicled since ")+new Date(d.since).toLocaleDateString()+" · ":"")
+    +TT("counted on this machine only, nothing leaves it");
   /* playtime per viking */
   const rows=(d.players||[]).map(p=>{
     const nm=p.name||p.character||p.key||"";
@@ -2378,7 +2830,9 @@ function renderSkald(){
     `<td class="mono" title="${p.online?"":esc(seen)}">${p.online?`<span style="color:var(--moss)">${esc(TT("raiding now"))}</span>`:seen}</td></tr>`;
   }).join("");
   $("#skPlayerTable").innerHTML=rows
-    ||`<tr><td colspan="5" style="padding:10px 12px" class="skempty">${esc(TT("No vikings have set sail for this realm yet."))}</td></tr>`;
+    ||`<tr><td colspan="5">${emptyState({mark:"ᛗ",title:"No players recorded yet",
+        reason:"Playtime, sessions and deaths are counted from the moment the first player joins."})}</td></tr>`;
+  esWire($("#skPlayerTable"));
   /* happenings feed */
   const feed=(d.feed||[]).map(e=>{
     const who=e.name||e.character;
@@ -2388,7 +2842,9 @@ function renderSkald(){
     return `<div class="skrow"><span class="skk ${e.kind}">${SKALD_ICON[e.kind]||"·"}</span><span>${what}</span><span class="skt">${agoAt(e.t)}</span></div>`;
   }).join("");
   $("#skFeed").innerHTML=feed
-    ||`<div class="skempty">${esc(TT("nothing chronicled yet - happenings appear as the realm lives"))}</div>`;
+    ||emptyState({compact:true,mark:"ᛋ",title:"No history yet",
+        reason:"Starts, stops, joins and deaths are listed here as they happen."});
+  esWire($("#skFeed"));
   /* mod chronicle */
   const mods=(d.mods||[]).map(e=>{
     const ver=e.kind==="modin"?(e.to?"v"+e.to:""):((e.from?e.from+" → ":"")+(e.to||""));
@@ -2397,10 +2853,14 @@ function renderSkald(){
       `<span class="skt">${agoAt(e.t)}</span></div>`;
   }).join("");
   $("#skModFeed").innerHTML=mods
-    ||`<div class="skempty">${esc(TT("no mod updates chronicled yet"))}</div>`;
+    ||emptyState({compact:true,mark:"ᚱ",title:"No mod changes yet",
+        reason:"Every install and update BakaLoader makes is listed here."});
+  esWire($("#skModFeed"));
 }
 
 /* ---------- VIKINGS (players) ---------- */
+/* Column count of the roster table, so the empty state always spans the whole row. */
+const VIK_COLS=9;
 /* Short platform tag off the id the roster already carries. Steam accounts are a
    bare 17-digit id; crossplay accounts arrive as "<Platform>_<id>". Anything that
    matches neither shape gets no guess, just a dash. */
@@ -2433,29 +2893,125 @@ function playerTarget(p){
   const m=/\(([^)]+)\)\s*$/.exec(p.displayName||"");
   return (m&&m[1])||p.PlayerName||p.PlayerId;
 }
+/* Seconds this player has been online in the CURRENT session. Their status last
+   flipped when they joined, so that timestamp is the session start. */
+function playerSessionSec(p){
+  if(!p||p.status!=="Online") return 0;
+  const t=new Date(p.lastStatusChange).getTime();
+  if(isNaN(t)) return 0;
+  return Math.max(0,(Date.now()-t)/1000);
+}
+/* Journal facts for a player: total playtime, deaths and visit count, read from the
+   local analytics journal (the same numbers the Statistics hall shows). */
+function playerJournal(p){return (p&&S.journal&&S.journal[p.key])||null;}
+
+const VIK_DESC_FIRST=new Set(["session","playtime","deaths"]);
+const VIK_RANK={Online:0,Joining:1,Leaving:1};
+function sortedPlayers(list){
+  const {col,dir}=S.vikSort;
+  if(!col||!dir) return list;
+  const m=(dir===1)!==VIK_DESC_FIRST.has(col)?1:-1;
+  const txt=(a,b,f)=>String(f(a)||"").localeCompare(String(f(b)||""),undefined,{sensitivity:"base"});
+  const num=(a,b,f)=>(f(a)||0)-(f(b)||0);
+  const out=[...list];
+  if(col==="name") out.sort((a,b)=>m*txt(a,b,p=>p.displayName));
+  else if(col==="status") out.sort((a,b)=>m*((VIK_RANK[a.status]??2)-(VIK_RANK[b.status]??2)||txt(a,b,p=>p.displayName)));
+  else if(col==="platform") out.sort((a,b)=>m*txt(a,b,playerPlatform));
+  else if(col==="session") out.sort((a,b)=>m*num(a,b,playerSessionSec));
+  else if(col==="playtime") out.sort((a,b)=>m*num(a,b,p=>(playerJournal(p)||{}).playSec));
+  else if(col==="deaths") out.sort((a,b)=>m*num(a,b,p=>(playerJournal(p)||{}).deaths));
+  else if(col==="seen") out.sort((a,b)=>m*num(a,b,p=>new Date(p.lastStatusChange).getTime()||0));
+  else if(col==="pos") out.sort((a,b)=>m*txt(a,b,p=>p.position));
+  return out;
+}
+/* Which columns the window is currently too narrow to carry. Read from the live
+   layout rather than re-deriving the breakpoints, so the note can never drift
+   from the CSS. */
+function renderVikCols(){
+  const note=$("#vikColsNote"); if(!note) return;
+  const gone=[];
+  const pos=document.querySelector("#page-vikings th.vik-pos");
+  const dea=document.querySelector("#page-vikings th.vik-deaths");
+  if(pos&&getComputedStyle(pos).display==="none") gone.push(TT("position"));
+  if(dea&&getComputedStyle(dea).display==="none") gone.push(TT("deaths"));
+  note.textContent=gone.length
+    ?"· "+gone.join(TT(" and "))+TT(" need a wider window · the right-click menu still carries every action")
+    :"";
+}
+window.addEventListener("resize",renderVikCols);
+
 function renderPlayers(){
-  if(!Native.available) return;
-  const rank=s=>({Online:0,Joining:1,Leaving:1}[s]??2);
-  const list=[...S.players].sort((a,b)=>rank(a.status)-rank(b.status)||(a.displayName||"").localeCompare(b.displayName||""));
-  const online=list.filter(p=>p.status==="Online").length;
-  $("#vikSub").textContent=TT(online+" of "+list.length+" raiding · right-click a viking for deeds");
-  $("#homeVikPill").textContent=online+" online";
-  $("#homeVik").innerHTML=list.slice(0,4).map(p=>{
+  const rank=s=>VIK_RANK[s]??2;
+  const base=[...S.players].sort((a,b)=>rank(a.status)-rank(b.status)||(a.displayName||"").localeCompare(b.displayName||""));
+  const list=sortedPlayers(base);
+  const online=base.filter(p=>p.status==="Online").length;
+  $("#vikSub").textContent=online+" of "+base.length+TT(" online · right-click a player for actions");
+  $("#homeVikPill").textContent=online+TT(" online");
+  renderSortMarks("#page-vikings th.sortable",S.vikSort,VIK_DESC_FIRST);
+  renderVikCols();
+  $("#homeVik").innerHTML=base.slice(0,4).map(p=>{
     const on=p.status==="Online";
     return `<div class="vrow"${on?"":' style="opacity:.4"'}><span class="vdot ${on?"on":"off"}"></span><span class="vname">${esc(p.displayName)}</span><span class="vsub">${on?"joined":"seen"} ${fmtT(p.lastStatusChange)}</span></div>`;
-  }).join("")||`<div class="vrow" style="opacity:.5"><span class="vdot off"></span><span class="vname">${TT("No vikings yet")}</span><span class="vsub">awaiting arrivals</span></div>`;
+  }).join("")||emptyState({compact:true,mark:"ᛗ",title:"Nobody has joined yet",
+      reason:"Players appear here as soon as they connect."});
+  esWire($("#homeVik"));
   const tb=$("#vikTable");
+  const noPos=TT("The server's player list carries no coordinates. Send 'playerlist' from the console for live positions.");
   tb.innerHTML=list.map((p,i)=>{
     const pill=p.status==="Online"?"green":(p.status==="Offline"?"blue":"amber");
+    const j=playerJournal(p);
+    const sess=playerSessionSec(p);
+    const who=p.displayName||p.PlayerId||"player";
     return `<tr data-i="${i}"${p.status==="Offline"?' class="dim"':""}>`+
-      `<td><span class="vdot ${p.status==="Online"?"on":"off"}" style="display:inline-block;margin-right:9px"></span><strong>${esc(p.displayName)}</strong></td>`+
+      `<td title="${esc(who)}"><span class="vdot ${p.status==="Online"?"on":"off"}" style="display:inline-block;margin-right:9px"></span><strong>${esc(who)}</strong></td>`+
       `<td><span class="pill ${pill}">${esc(p.status)}</span></td>`+
       `<td class="mono">${esc(playerPlatform(p))||"-"}</td>`+
-      `<td class="mono">${fmtT(p.lastStatusChange)}</td>`+
-      `<td class="mono">-</td>`+
-      `<td class="mono" style="color:var(--ember)">⋯</td></tr>`;
-  }).join("")||`<tr><td colspan="6" class="mono" style="color:var(--bone-dim)">${TT("No vikings have set sail for this realm yet.")}</td></tr>`;
+      `<td class="mono num">${sess?esc(skDur(sess)):`<span class="vdash" title="${esc(TT("Not online right now"))}">-</span>`}</td>`+
+      `<td class="mono num">${j&&j.playSec?esc(skDur(j.playSec)):`<span class="vdash" title="${esc(TT("Nothing recorded for this player yet"))}">-</span>`}</td>`+
+      `<td class="mono" title="${esc(agoAt(p.lastStatusChange))}">${p.status==="Online"?esc(TT("online now")):esc(agoAt(p.lastStatusChange))}</td>`+
+      `<td class="mono num vik-deaths">${j&&j.deaths!=null?j.deaths:`<span class="vdash" title="${esc(TT("Nothing recorded for this player yet"))}">-</span>`}</td>`+
+      `<td class="mono num vik-pos">${p.position?esc(p.position):`<span class="vdash" title="${esc(noPos)}">-</span>`}</td>`+
+      `<td class="rowmenu-cell"><button class="rowmenu" data-i="${i}" title="${esc(TT("Actions"))}" aria-label="${esc(TT("Actions for ")+who)}">⋯</button></td></tr>`;
+  }).join("")||`<tr><td colspan="${VIK_COLS}">${emptyState({mark:"ᛗ",title:"Nobody has joined yet",
+      reason:"Players appear here as soon as they connect. Share the join address and they will show up.",
+      action:{name:"copyJoin",label:"Copy join info"}})}</td></tr>`;
+  esWire(tb);
   tb._list=list;
+  renderAppBar();   // after #homeVik is filled: the preview counts its dots
+}
+wireSort("#page-vikings th.sortable",S.vikSort,()=>renderPlayers());
+/* The "..." button opens exactly the menu a right-click opens, so the roster's
+   actions are reachable from the keyboard and from a trackpad without a second
+   button. It is positioned off the button, not off the pointer. */
+$("#vikTable").addEventListener("click",e=>{
+  const b=e.target.closest(".rowmenu"); if(!b) return;
+  e.stopPropagation();
+  if(!Native.available){toast("ᛗ "+TT("Player actions · preview only"));return;}
+  const p=($("#vikTable")._list||[])[+b.dataset.i]; if(!p) return;
+  const r=b.getBoundingClientRect();
+  openPlayerMenu(r.left,r.bottom+4,p);
+});
+
+/* ---------- STATISTICS JOURNAL (roster playtime + deaths) ----------
+   The roster's Playtime and Deaths come from the same local journal the Statistics
+   hall reads. Pulled on a leash: once when the hall opens and at most every 20s
+   while it is on screen, so the 500ms roster poll never turns into a journal poll. */
+let _journalAt=0,_journalBusy=false;
+async function refreshJournal(force){
+  if(!Native.available||_journalBusy) return;
+  if(!force&&Date.now()-_journalAt<20000) return;
+  _journalBusy=true;
+  try{
+    /* quiet call: a journal hiccup must not toast over the hall */
+    const r=await Native.call("analytics.overview",{}).catch(()=>null);
+    if(r&&Array.isArray(r.players)){
+      const m={};
+      r.players.forEach(a=>{if(a&&a.key)m[a.key]={playSec:a.playSec,deaths:a.deaths,sessions:a.sessions};});
+      S.journal=m;
+      _journalAt=Date.now();
+      renderPlayers();
+    }
+  }finally{_journalBusy=false;}
 }
 async function refreshPlayers(){
   const r=await rpc("players.list");
@@ -3603,7 +4159,9 @@ function renderAtlasSide(){
     const online=(S.players||[]).filter(p=>p.status==="Online");
     roster.innerHTML=online.map(p=>
       `<div class="vrow"><span class="vdot on"></span><span class="vname">${esc(p.displayName)}</span></div>`
-    ).join("")||`<div class="empty">${TT("No vikings ashore right now.")}</div>`;
+    ).join("")||emptyState({compact:true,mark:"\u16D7",title:"Nobody is online",
+        reason:"Players are listed here while they are connected."});
+    esWire(roster);
   }
   /* waypoints: altars & traders, then portals, then table pins */
   const wp=$("#atlasWaypoints");
@@ -3616,7 +4174,10 @@ function renderAtlasSide(){
     }
     wp.innerHTML=rows.map((w,i)=>
       `<div class="wp" data-i="${i}"><span class="wr">${w.r}</span><span class="wn">${esc(w.n)}</span><span class="wc">${Math.round(w.x)}, ${Math.round(w.z)}</span></div>`
-    ).join("")||`<div class="empty">${TT("Waypoints appear once the world has been saved.")}</div>`;
+    ).join("")||emptyState({compact:true,mark:"\u16DE",title:"No map data yet",
+        reason:"Altars, portals and map-table pins are read out of the world file. They appear after the server has saved once.",
+        action:{name:"redrawMap",label:"Redraw map"}});
+    esWire(wp);
     wp._rows=rows;
   }
   renderWeather();
@@ -4105,6 +4666,7 @@ if(Native.available){
     if(!isActiveProfile(d?.profile)) return;
     const ms=Math.round(Number(d?.seconds)||0); // bridge param is named 'seconds' but carries milliseconds
     toast("ᛉ World saved · "+ms+"ms");
+    clearCondition("saveFailed");   // a good write answers the failed one
     $("#lastSave").textContent=clock()+" · "+ms+"ms";
     S.lastSaveAt=new Date();
     S.saveDur.push(ms); if(S.saveDur.length>12)S.saveDur.shift();
@@ -4119,6 +4681,7 @@ if(Native.available){
   Native.on("server.worldSaveFailed",d=>{
     if(!isActiveProfile(d?.profile)) return;
     const ms=Math.round(Number(d?.durationMs)||0);
+    conditionSaveFailed(ms);
     toast("ᚦ World save FAILED after "+ms+"ms · check the Saga log");
     logLine("err","[BakaLoader] the server reported a FAILED world save after "+ms+
       "ms - everything since the last good save is only in memory. Check free disk space and "+
@@ -4162,10 +4725,12 @@ if(Native.available){
   Native.on("server.worldsBackedUp",d=>{
     if(!isActiveProfile(d?.profile)) return;
     if(d?.ok){
+      clearCondition("backupFailed");
       toast("ᛝ "+d.count+" "+TT(d.count===1?"world":"worlds")+" copied aside · "+fmtBytes(d.bytes));
       logLine("ok","[BakaLoader] copied "+d.count+" world(s) aside before starting ("+fmtBytes(d.bytes)+")");
       (d.skipped||[]).forEach(s=>logLine("warn","[BakaLoader] not copied aside: "+s));
     }else{
+      conditionBackupFailed(d&&d.error?String(d.error):"");
       toast("ᚦ "+TT("Could not copy the worlds aside · server not started"));
       logLine("err","[BakaLoader] the pre-update world copy failed, so the server was not started: "+(d?.error||"unknown error"));
     }
@@ -4184,8 +4749,17 @@ if(Native.available){
     // Crashes always toast, even for background servers - name the culprit.
     const who=d?.profile&&!isActiveProfile(d.profile)?" · "+d.profile:"";
     toast(TT("ᚦ Server crashed · consult the saga")+who);
-    if(isActiveProfile(d?.profile)) logLine("err","[BakaLoader] server process crashed");
+    if(isActiveProfile(d?.profile)){
+      S.crashed=true;
+      conditionCrashed();
+      renderHearthNative();
+      logLine("err","[BakaLoader] server process crashed");
+    }
   });
+  /* The host posts this when a newer BakaLoader release is staged and waiting to be
+     applied on the next close. Nothing raises it yet (see the report): the self-update
+     runs unattended at launch, so this is the seam it would arrive on. */
+  Native.on("app.updateAvailable",d=>conditionAppUpdate(d&&d.version));
   Native.on("server.countdown",d=>{if(d?.message&&isActiveProfile(d?.profile))toast("ᚨ "+d.message);});
   Native.on("player.updated",p=>{
     if(!p) return;
@@ -4193,6 +4767,7 @@ if(Native.available){
     const i=S.players.findIndex(x=>x.key===p.key);
     if(i>=0) S.players[i]=p; else S.players.push(p);
     renderPlayers();
+    if(currentPage==="vikings") refreshJournal();
   });
   Native.on("ip.external",d=>{S.extIp=d?.ip??null;renderNet();});
   Native.on("ip.internal",d=>{S.intIp=d?.ip??null;renderNet();});
@@ -4202,6 +4777,7 @@ if(Native.available){
   Native.on("server.status",()=>{if(currentPage==="skald")skaldRefresh();});
   Native.on("server.playerDied",d=>{
     if(currentPage==="skald"&&isActiveProfile(d?.profile))skaldRefresh();
+    if(currentPage==="vikings"&&isActiveProfile(d?.profile))refreshJournal(true);
   });
   Native.on("player.updated",p=>{
     if(currentPage==="skald"&&isActiveProfile(p?.serverKey))skaldRefresh();
@@ -4320,6 +4896,9 @@ if(!Native.available){
 
   /* upkeep card preview values (native fills these from userprefs.get) */
   $("#blVersion").textContent=$("#sideVer").textContent; // mirror the shipped version string
+  /* the terminology switch is wired in initUpkeep, which is native-only; wire it here
+     too so the browser preview can be walked in both states */
+  $("#tPlainTerms").addEventListener("click",()=>{PLAIN=!T("tPlainTerms");applyTerms();});
   setT("tHeraldAddr",true); // herald preview mirrors the C# default (address shared, rest off)
 
   /* multi-server chip strip preview */
@@ -4338,44 +4917,27 @@ if(!Native.available){
     }),150);
   }
 
-  /* mock DOM seeding (tables ship empty in index.html; native fills them from RPCs) */
-  $("#homeVik").innerHTML=
-    `<div class="vrow"><span class="vdot on"></span><span class="vname">Smithix</span><span class="vsub">joined 22:12</span></div>`+
-    `<div class="vrow"><span class="vdot on"></span><span class="vname">Van Hoenhiem</span><span class="vsub">joined 22:14</span></div>`+
-    `<div class="vrow" style="opacity:.4"><span class="vdot off"></span><span class="vname">Ragnhild</span><span class="vsub">last seen 19:40</span></div>`+
-    `<div class="vrow" style="opacity:.4"><span class="vdot off"></span><span class="vname">Bjornulf</span><span class="vsub">last seen Tue</span></div>`;
-  /* platform column preview: one Steam id, one crossplay Xbox id, one PlayStation */
-  $("#vikTable").innerHTML=
-    `<tr>
-      <td><span class="vdot on" style="display:inline-block;margin-right:9px"></span><strong>Smithix</strong></td>
-      <td><span class="pill green">Online</span></td>
-      <td class="mono">${platformTag("76561198012345678")||"-"}</td>
-      <td class="mono">22:12</td>
-      <td class="mono">3959, −1361, 35</td>
-      <td class="mono" style="color:var(--ember)">⋯</td>
-    </tr>
-    <tr style="background:var(--ember-dim)">
-      <td><span class="vdot on" style="display:inline-block;margin-right:9px"></span><strong>Van Hoenhiem</strong></td>
-      <td><span class="pill green">Online</span></td>
-      <td class="mono">${platformTag("Xbox_2814639011776000")||"-"}</td>
-      <td class="mono">22:14</td>
-      <td class="mono">−212, 887, 41</td>
-      <td class="mono" style="color:var(--ember)">⋯</td>
-    </tr>
-    <tr class="dim">
-      <td><span class="vdot off" style="display:inline-block;margin-right:9px"></span>Ragnhild</td>
-      <td><span class="pill blue">Offline</span></td>
-      <td class="mono">${platformTag("PlayStation_5001234567")||"-"}</td>
-      <td class="mono">-</td>
-      <td class="mono">last seen 19:40</td><td></td>
-    </tr>
-    <tr class="dim">
-      <td><span class="vdot off" style="display:inline-block;margin-right:9px"></span>Bjornulf</td>
-      <td><span class="pill blue">Offline</span></td>
-      <td class="mono">${platformTag("76561198087654321")||"-"}</td>
-      <td class="mono">-</td>
-      <td class="mono">last seen Tue</td><td></td>
-    </tr>`;
+  /* Preview roster: real player DTOs through the real renderer, so sorting, the
+     folding columns and the row menu are all exercised offline. One Steam id, one
+     crossplay Xbox id and one PlayStation id keep the Platform column honest. */
+  const ago=min=>new Date(Date.now()-min*60000).toISOString();
+  S.players=[
+    {key:"Steam:76561198012345678",platform:"Steam",PlayerId:"76561198012345678",PlayerName:"Smithix",
+     displayName:"Smithix",status:"Online",lastStatusChange:ago(272),position:"3959, −1361, 35"},
+    {key:"Xbox:Xbox_2814639011776000",platform:"Xbox",PlayerId:"Xbox_2814639011776000",PlayerName:"Van Hoenhiem",
+     displayName:"Van Hoenhiem",status:"Online",lastStatusChange:ago(126),position:"−212, 887, 41"},
+    {key:"PlayStation:PlayStation_5001234567",platform:"PlayStation",PlayerId:"PlayStation_5001234567",PlayerName:"Ragnhild",
+     displayName:"Ragnhild",status:"Offline",lastStatusChange:ago(185)},
+    {key:"Steam:76561198087654321",platform:"Steam",PlayerId:"76561198087654321",PlayerName:"Bjornulf",
+     displayName:"Bjornulf",status:"Offline",lastStatusChange:ago(2954)},
+  ];
+  S.journal={
+    "Steam:76561198012345678":{playSec:432600,deaths:23,sessions:64},
+    "Xbox:Xbox_2814639011776000":{playSec:301200,deaths:11,sessions:48},
+    "PlayStation:PlayStation_5001234567":{playSec:122400,deaths:19,sessions:31},
+    "Steam:76561198087654321":{playSec:56200,deaths:8,sessions:28},
+  };
+  renderPlayers();
   S.mods=[
     {ModName:"WorldEditCommands",Author:"JereKuusela",FullName:"JereKuusela-WorldEditCommands",InstalledVersion:"1.65.0",LatestVersion:"1.66.0",UpdateAvailable:true},
     {ModName:"ExtraSlots",Author:"shudnal",FullName:"shudnal-ExtraSlots",InstalledVersion:"1.0.20",LatestVersion:"1.0.22",UpdateAvailable:true},
@@ -4471,7 +5033,8 @@ maxPacketSize = 4096`,
 
   /* periodic mock toasts */
   setInterval(()=>{ if(running) toast("ᛉ World saved · "+clock()); },12000);
-  setTimeout(()=>toast("ᚱ 2 mod updates available · WorldEditCommands, ExtraSlots"),2500);
+  /* mod updates are a standing condition now (renderMods raises it), not a toast */
+  setTimeout(()=>renderAppBar(),300);
 
   /* saga seed + chatter */
   const seed=[
