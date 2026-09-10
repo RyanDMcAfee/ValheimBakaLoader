@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -123,6 +123,7 @@ namespace ValheimBakaLoader.Tools.Atlas
             try
             {
                 byte[] raw = Decompress(compressed);
+                if (raw == null) return null;
                 using (var ms = new MemoryStream(raw))
                 using (var br = new BinaryReader(ms))
                 {
@@ -189,13 +190,65 @@ namespace ValheimBakaLoader.Tools.Atlas
             return true;
         }
 
+        /// <summary>
+        /// Hard ceiling on what a cartography table's gzipped blob may expand
+        /// to. A vanilla 2048 by 2048 table is about four megabytes, and the
+        /// decoder above turns down anything past 64 million pixels anyway, so
+        /// this leaves every table the game can write plenty of room while
+        /// keeping a crafted one from eating the machine.
+        /// </summary>
+        private const long MaxDecompressedMapBytes = 128L * 1024 * 1024;
+
+        /// <summary>
+        /// Gunzips a cartography-table blob, or null when it expands past
+        /// <see cref="MaxDecompressedMapBytes"/>. The blob arrives from a world
+        /// save, and a save is a file anyone can hand the Atlas, so the size of
+        /// the compressed bytes bounds nothing on its own: gzip turns a few
+        /// megabytes of one repeated byte into gigabytes. The declared length in
+        /// the gzip trailer is checked first, for the price of reading four
+        /// bytes and with nothing allocated for the output, and the copy after
+        /// it counts what actually comes out in case the trailer lied.
+        /// </summary>
         private static byte[] Decompress(byte[] input)
         {
-            using (var src = new MemoryStream(input))
+            // A gzip member ends with ISIZE, the uncompressed length modulo
+            // 4 GB (RFC 1952, section 2.3.1).
+            if (input.Length >= 4)
+            {
+                long declared = BitConverter.ToUInt32(input, input.Length - 4);
+                if (declared > MaxDecompressedMapBytes)
+                {
+                    WorldDbReader.Report($"a map table says it expands to {declared} bytes, past the "
+                        + $"{MaxDecompressedMapBytes / (1024 * 1024)} MB ceiling, so it is left out of the map");
+                    return null;
+                }
+            }
+
+            using (var src = new MemoryStream(input, writable: false))
             using (var gz = new GZipStream(src, CompressionMode.Decompress))
             using (var dst = new MemoryStream())
             {
-                gz.CopyTo(dst);
+                byte[] buffer = new byte[81920];
+                long total = 0;
+                while (true)
+                {
+                    int read = gz.Read(buffer, 0, buffer.Length);
+                    if (read <= 0)
+                    {
+                        break;
+                    }
+
+                    total += read;
+                    if (total > MaxDecompressedMapBytes)
+                    {
+                        WorldDbReader.Report($"a map table expands past "
+                            + $"{MaxDecompressedMapBytes / (1024 * 1024)} MB, so it is left out of the map");
+                        return null;
+                    }
+
+                    dst.Write(buffer, 0, read);
+                }
+
                 return dst.ToArray();
             }
         }
@@ -258,7 +311,7 @@ namespace ValheimBakaLoader.Tools.Atlas
         /// </summary>
         public static Action<string> DiagnosticSink;
 
-        private static void Report(string message)
+        internal static void Report(string message)
         {
             System.Diagnostics.Debug.WriteLine("WorldDbReader: " + message);
             DiagnosticSink?.Invoke(message);

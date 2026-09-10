@@ -1,4 +1,4 @@
-// BakaLoader MaxPlayers v1.1.0 - compiled against SERVER assembly_valheim.
+// BakaLoader MaxPlayers v1.3.0 - compiled against SERVER assembly_valheim.
 // Raises Valheim's built-in 10-player cap so BakaLoader no longer depends on a
 // third-party mod for the World hall's Max Players setting.
 //
@@ -11,7 +11,9 @@
 //   3. ZPlayFabMatchmaking.CreateLobby / CreateAndJoinNetwork - the PlayFab/crossplay
 //      lobby caps (hardcoded 11 on dedicated servers: vanilla 10 + one reserved slot).
 // Points 2 and 3 only exist for their respective backend, so they are patched lazily
-// once the game has picked one (FejdStartup.Start postfix).
+// once the game has picked one (FejdStartup.Start postfix), and only when point 1
+// actually took: a server that advertises more slots than it will admit is worse off
+// than one that stayed at the vanilla number.
 //
 // Non-public game members (RPC_PeerInfo, FejdStartup.Start, the ZPlayFabMatchmaking
 // methods) are addressed by string name because this compiles against the raw,
@@ -37,11 +39,38 @@ namespace BakaLoaderMaxPlayers
     {
         public const string PluginGuid = "com.baka.maxplayers";
         public const string PluginName = "BakaLoader MaxPlayers";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.3.0";
+
+        /// <summary>
+        /// The constant RPC_PeerInfo compares GetNrOfPlayers() against in an unmodded game.
+        /// The transpiler below refuses to rewrite anything else, so a game update that puts
+        /// a different sbyte constant in that spot leaves the method exactly as it shipped
+        /// instead of quietly changing the wrong number.
+        /// </summary>
+        private const int VanillaAdmissionCap = 10;
+
+        /// <summary>
+        /// The one sentence an operator needs when a patch is refused. It goes on every refusal
+        /// line so the server log the interface shows says what the server will actually do,
+        /// rather than leaving the number in the settings screen looking like the truth.
+        /// </summary>
+        private const string CapStaysAtVanilla =
+            "BakaLoader Max Players: this server keeps the vanilla limit of 10 players for this start. "
+            + "The number saved in the settings is not in force.";
 
         private static ManualLogSource Log;
         private static ConfigEntry<int> MaxPlayers;
         private static Harmony Patcher;
+
+        /// <summary>
+        /// True once the admission check in ZNet.RPC_PeerInfo has actually been rewritten.
+        /// The backend advertisements are only allowed to go up once this is true. Raising the
+        /// advertised and lobby capacity while admission still rejects at the vanilla cap is the
+        /// worst of both worlds: the server offers slots it then refuses, and the players who
+        /// are bounced see an open server. Volatile because the transpiler and the FejdStartup
+        /// postfix do not have to run on the same thread.
+        /// </summary>
+        private static volatile bool AdmissionCapRaised;
 
         private void Awake()
         {
@@ -79,17 +108,47 @@ namespace BakaLoaderMaxPlayers
                     for (int j = i + 1; j < codes.Count; j++)
                     {
                         if (codes[j].opcode != OpCodes.Ldc_I4_S) continue;
-                        Log.LogInfo("ZNet.RPC_PeerInfo: admission cap " + codes[j].operand + " -> " + MaxPlayers.Value);
+
+                        // The first sbyte constant after the call is the admission cap only for
+                        // as long as the game keeps that shape. Check the value before touching
+                        // it: rewriting some other constant would report a clean patch while
+                        // changing something nobody asked to change.
+                        if (!IsVanillaAdmissionCap(codes[j].operand))
+                        {
+                            Log.LogWarning("ZNet.RPC_PeerInfo: expected the vanilla cap of "
+                                + VanillaAdmissionCap + " after GetNrOfPlayers() but found "
+                                + codes[j].operand + ". The admission cap was NOT raised and the method was left untouched. "
+                                + CapStaysAtVanilla);
+                            return codes;
+                        }
+
+                        Log.LogInfo("ZNet.RPC_PeerInfo: admission cap " + codes[j].operand + " to " + MaxPlayers.Value);
                         codes[j].opcode = OpCodes.Ldc_I4;
                         codes[j].operand = MaxPlayers.Value;
                         patched = true;
+                        AdmissionCapRaised = true;
                         break;
                     }
                 }
 
                 if (!patched)
-                    Log.LogWarning("ZNet.RPC_PeerInfo: expected IL pattern not found - admission cap NOT raised (game update may have changed the method).");
+                    Log.LogWarning("ZNet.RPC_PeerInfo: the expected IL pattern was not found, so the admission cap was NOT raised. "
+                        + "A game update may have changed the method. " + CapStaysAtVanilla);
                 return codes;
+            }
+
+            /// <summary>
+            /// True when an Ldc_I4_S operand carries the vanilla cap. Harmony hands the operand
+            /// over boxed, and the exact numeric type depends on how the instruction was read,
+            /// so every plausible integer form is accepted.
+            /// </summary>
+            private static bool IsVanillaAdmissionCap(object operand)
+            {
+                if (operand is sbyte sbyteValue) return sbyteValue == VanillaAdmissionCap;
+                if (operand is byte byteValue) return byteValue == VanillaAdmissionCap;
+                if (operand is short shortValue) return shortValue == VanillaAdmissionCap;
+                if (operand is int intValue) return intValue == VanillaAdmissionCap;
+                return false;
             }
         }
 
@@ -103,6 +162,18 @@ namespace BakaLoaderMaxPlayers
             [HarmonyPostfix]
             private static void Postfix()
             {
+                // Admission is the one that decides who actually gets in. If that rewrite was
+                // refused, raising what the browser and the lobby advertise would have the
+                // server offer slots it then turns away at the door, which is worse than simply
+                // staying at the vanilla number. So the backend caps follow admission or they
+                // do not move at all.
+                if (!AdmissionCapRaised)
+                {
+                    Log.LogWarning("The admission cap was not raised, so the advertised and lobby capacity "
+                        + "are left at the vanilla numbers as well. " + CapStaysAtVanilla);
+                    return;
+                }
+
                 Log.LogInfo("Backend: " + ZNet.m_onlineBackend);
                 switch (ZNet.m_onlineBackend)
                 {
@@ -127,10 +198,14 @@ namespace BakaLoaderMaxPlayers
                 if (MaxPlayers.Value >= 1) cPlayersMax = MaxPlayers.Value;
             }
 
-            // CreateLobby carries the cap itself; CreateAndJoinNetwork keeps the game's
-            // +1 reserved-slot convention (the 11 both embed is vanilla's 10 + 1).
+            // Both methods embed 11, and in both it is vanilla's 10 plus one: the server itself
+            // takes a lobby member slot in CreateLobbyRequest (its own entity is the owner and
+            // the first member), and CreateAndJoinNetwork keeps the same reserved slot on the
+            // network configuration. So both get MaxPlayers.Value + 1. Passing the bare value to
+            // CreateLobby left the lobby one seat short of the number the server admits, and the
+            // last player to try could not get in.
             private static IEnumerable<CodeInstruction> CreateLobbyTranspiler(IEnumerable<CodeInstruction> instructions)
-                => ReplaceLobbyCap(instructions, MaxPlayers.Value, "CreateLobby");
+                => ReplaceLobbyCap(instructions, MaxPlayers.Value + 1, "CreateLobby");
 
             private static IEnumerable<CodeInstruction> CreateAndJoinNetworkTranspiler(IEnumerable<CodeInstruction> instructions)
                 => ReplaceLobbyCap(instructions, MaxPlayers.Value + 1, "CreateAndJoinNetwork");

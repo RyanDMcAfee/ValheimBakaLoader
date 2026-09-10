@@ -1,8 +1,9 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using ValheimBakaLoader.Tools;
 using ValheimBakaLoader.Tools.Atlas;
 using Xunit;
@@ -15,6 +16,7 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
     /// game's save layout (world version 37) verified against the dedicated
     /// server assembly.
     /// </summary>
+    [Collection("DiagnosticSink")]
     public class WorldDbReaderTests : IDisposable
     {
         private readonly string _tempDir =
@@ -551,6 +553,170 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             Assert.Null(SharedMapData.TryDecode(bad));
         }
 
+        [Fact]
+        public void SharedMap_ThatSaysItExpandsPastTheCeilingIsTurnedDown()
+        {
+            // A gzip member ends with its uncompressed length. This one is a
+            // real, small blob with that trailer rewritten to claim 2 GB, which
+            // is exactly what a decompression bomb announces about itself. The
+            // blob comes out of a world save, and a save is a file anyone can
+            // hand the Atlas, so the reader has to turn it down before it
+            // reserves a byte for the output.
+            byte[] honest = GzipSharedMap(3, 4, new bool[16]);
+            byte[] lying = (byte[])honest.Clone();
+            BitConverter.GetBytes(2u * 1024u * 1024u * 1024u).CopyTo(lying, lying.Length - 4);
+
+            SharedMapData map = null;
+            long allocated = 0;
+            var notes = CaptureDiagnostics(() =>
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                map = SharedMapData.TryDecode(lying);
+                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            });
+
+            Assert.Null(map);
+            Assert.Contains(notes, n => n.Contains("expands to") && n.Contains("128 MB ceiling"));
+            Assert.True(allocated < 1024 * 1024, $"the rejected map table allocated {allocated} bytes");
+        }
+
+        [Fact]
+        public void SharedMap_ThatReallyExpandsPastTheCeilingIsNeverAllocated()
+        {
+            // The honest version of the same thing: 129 MB of one repeated byte
+            // behind a valid map header, which gzip squeezes into a couple of
+            // hundred kilobytes. Before the ceiling this decoded into a
+            // perfectly good looking map and cost the machine a quarter of a
+            // gigabyte to find that out.
+            const int oneMeg = 1024 * 1024;
+            byte[] filler = new byte[oneMeg];
+            byte[] bomb;
+            using (var dst = new MemoryStream())
+            {
+                using (var gz = new GZipStream(dst, CompressionLevel.Fastest, leaveOpen: true))
+                {
+                    // Version 1 and a 2048 by 2048 explored bitmap, so the front
+                    // of this is a map the decoder would happily accept.
+                    using (var head = new MemoryStream())
+                    {
+                        using (var bw = new BinaryWriter(head, System.Text.Encoding.UTF8, leaveOpen: true))
+                        {
+                            bw.Write(1);
+                            bw.Write(2048 * 2048);
+                        }
+                        byte[] headBytes = head.ToArray();
+                        gz.Write(headBytes, 0, headBytes.Length);
+                    }
+                    for (int i = 0; i < 129; i++)
+                    {
+                        gz.Write(filler, 0, filler.Length);
+                    }
+                }
+                bomb = dst.ToArray();
+            }
+
+            SharedMapData map = null;
+            long allocated = 0;
+            var notes = CaptureDiagnostics(() =>
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                map = SharedMapData.TryDecode(bomb);
+                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            });
+
+            Assert.Null(map);
+            Assert.Contains(notes, n => n.Contains("expands to") && n.Contains("128 MB ceiling"));
+            Assert.True(allocated < 1024 * 1024,
+                $"the rejected map table allocated {allocated} bytes, so it decompressed the blob first");
+        }
+
+        [Fact]
+        public void SharedMap_BiggerThanOneCopyBufferStillDecodes()
+        {
+            // The counted copy replaced a straight CopyTo, so a table that takes
+            // more than one pass through the buffer has to still come out whole.
+            // A 512 by 512 bitmap is a quarter of a megabyte, several buffers.
+            var explored = new bool[512 * 512];
+            explored[0] = true;
+            explored[explored.Length - 1] = true;
+
+            var map = SharedMapData.TryDecode(GzipSharedMap(3, 512, explored));
+
+            Assert.NotNull(map);
+            Assert.Equal(512, map.TextureSize);
+            Assert.True(map.Explored[0]);
+            Assert.True(map.Explored[map.Explored.Length - 1]);
+            Assert.Equal(2, map.Explored.Count(e => e));
+        }
+
+        // ------------------------------------------------------------------
+        // The one static sink every reader test can trip
+        // ------------------------------------------------------------------
+
+        [Fact]
+        public void EveryTestFileThatTripsTheDiagnosticSinkSharesItsCollection()
+        {
+            // WorldDbReader.DiagnosticSink is one field for the whole process,
+            // and any read that turns a save down writes a line into whatever is
+            // installed there at that moment. xUnit runs test collections in
+            // parallel unless they share a name, so a class that swaps the sink
+            // while another class is reading a save gets the other class lines
+            // in its list, or loses its own. Sharing one collection name is what
+            // keeps them off each other.
+            string root = TestProjectRoot();
+            var offenders = new List<string>();
+            foreach (string file in Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
+            {
+                string relative = file.Substring(root.Length).Replace('\\', '/');
+                if (relative.Contains("/obj/") || relative.Contains("/bin/")) continue;
+
+                string text = File.ReadAllText(file);
+                bool trips = text.Contains("DiagnosticSink")
+                    || text.Contains("WorldDbReader.TryRead")
+                    || text.Contains("ChunkedWorldReader.TryRead")
+                    || text.Contains("ReadWorldSaveWithDiagnostics");
+                if (!trips) continue;
+                if (!text.Contains(CollectionAttributeSource))
+                {
+                    offenders.Add(relative.TrimStart('/'));
+                }
+            }
+
+            Assert.True(offenders.Count == 0,
+                "these test files can write or trip WorldDbReader.DiagnosticSink but do not share its "
+                + "collection, so they run in parallel with the ones that do: " + string.Join(", ", offenders));
+        }
+
+        /// <summary>
+        /// The attribute line the check above looks for, built at run time so
+        /// that this file does not contain it as one piece of text and pass
+        /// itself by accident.
+        /// </summary>
+        private static readonly string CollectionAttributeSource =
+            "[Collection(" + (char)34 + "DiagnosticSink" + (char)34 + ")]";
+
+        /// <summary>The test project folder, from this file compile time path.</summary>
+        private static string TestProjectRoot([CallerFilePath] string thisFile = "")
+        {
+            // <project>/Tools/Atlas/WorldDbReaderTests.cs
+            return Path.GetFullPath(Path.Combine(Path.GetDirectoryName(thisFile), "..", ".."));
+        }
+
+        private static List<string> CaptureDiagnostics(Action action)
+        {
+            var captured = new List<string>();
+            Action<string> previous = WorldDbReader.DiagnosticSink;
+            WorldDbReader.DiagnosticSink = message => captured.Add(message);
+            try
+            {
+                action();
+            }
+            finally
+            {
+                WorldDbReader.DiagnosticSink = previous;
+            }
+            return captured;
+        }
         private static bool[] MakeExplored(int count, params int[] setBits)
         {
             var arr = new bool[count];

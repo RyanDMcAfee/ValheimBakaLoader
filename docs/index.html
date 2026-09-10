@@ -145,14 +145,15 @@ footer .links a:hover{color:var(--ember-hi)}
 <section id="features">
   <div class="wrap">
     <h2><span class="rune">ᚱ</span>Everything a Valheim server host needs</h2>
-    <p class="lead">BakaLoader replaces the batch files, the console window nobody is allowed to close, and the mystery crash at 2am. Host a Valheim dedicated server, vanilla or heavily modded, and manage it like an app.</p>
+    <p class="lead">BakaLoader replaces the batch files, the console window nobody is allowed to close, and the mystery crash at 2am. Host a Valheim dedicated server, vanilla or heavily modded, and manage it like an app. Everything below is documented in the <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki">wiki</a>.</p>
     <div class="grid">
       <div class="card"><h3><span class="rune">ᚠ</span>One-click hosting</h3><p>Start and stop your self-hosted Valheim dedicated server from a live dashboard. A first-launch wizard handles setup, ports, and world creation.</p></div>
       <div class="card"><h3><span class="rune">ᚱ</span>Mod auto-updates</h3><p>Scans your BepInEx mods against Thunderstore and updates them on your schedule, or automatically while the server is empty. Paste a Thunderstore link to install.</p></div>
       <div class="card"><h3><span class="rune">ᛏ</span>Scheduled restarts</h3><p>Restart on a timer with in-game countdown warnings so players can reach a bed first. Auto-restart when the server sits empty.</p></div>
-      <div class="card"><h3><span class="rune">ᛞ</span>Live world map</h3><p>The Map screen renders your actual world from its seed with no map mods required. Fog of war follows what your players have explored, plus a deterministic weather forecast.</p></div>
-      <div class="card"><h3><span class="rune">ᛗ</span>Player management</h3><p>See who's online, when they joined, and right-click for admin, kick, ban, heal, teleport, or item spawning.</p></div>
-      <div class="card"><h3><span class="rune">ᚲ</span>Backups &amp; logs</h3><p>Layered world backups with one-click restore, a searchable color-coded live log, config file editing, and Discord status posting.</p></div>
+      <div class="card"><h3><span class="rune">ᛞ</span>Live world map</h3><p>The Map screen renders your actual world from its seed, with no map mods required. Fog of war follows what your players have recorded at cartography tables, and the Deep North and the Ashlands use the game's own terrain formulas. A weather forecast comes with it.</p></div>
+      <div class="card"><h3><span class="rune">ᛗ</span>Player management</h3><p>See who is online, where they are standing, how long they have played, and right-click for admin, whitelist, kick, ban, heal, teleport or item spawning.</p></div>
+      <div class="card"><h3><span class="rune">ᚲ</span>Backups and logs</h3><p>Every backup layer for every world, with one-click restore that copies the live world aside first. Plus a searchable live log, config file editing, and one Discord post that keeps itself up to date.</p></div>
+      <div class="card"><h3><span class="rune">ᛊ</span>Server updates</h3><p>When Steam has a Valheim server update waiting, BakaLoader offers to copy your worlds aside, run the update through Steam or steamcmd, and start the server. It never starts the old build behind your back.</p></div>
     </div>
   </div>
 </section>
@@ -160,12 +161,12 @@ footer .links a:hover{color:var(--ember-hi)}
 <section id="screens">
   <div class="wrap">
     <h2><span class="rune">ᛋ</span>A look inside</h2>
-    <p class="lead">Nine screens, one window: dashboard, players, mods, settings, map, configs, log, Discord status, and statistics. Plain names first, Norse names as captions, and a header with Start or Stop on every screen.</p>
+    <p class="lead">Nine screens, one window: dashboard, players, mods, settings, map, configs, log, Discord status and statistics. Plain names first, Norse names as captions, and a header with Start or Stop on every screen.</p>
     <div class="shots">
-      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-atlas.png" alt="Valheim world map rendered from seed with fog of war and weather forecast" loading="lazy"><figcaption><strong>ᛞ Map</strong> (Atlas): your world, mapped from the seed. No mods needed.</figcaption></figure>
-      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-mods.png" alt="Thunderstore mod manager with automatic update checking" loading="lazy"><figcaption><strong>ᚱ Mods</strong>: Thunderstore scan, one-click updates, paste-link installs.</figcaption></figure>
-      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-vikings.png" alt="Online player roster with right-click admin management" loading="lazy"><figcaption><strong>ᛗ Players</strong> (Vikings): the roster, with platform, session and playtime, and a menu for everything else.</figcaption></figure>
-      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-saga.png" alt="Live Valheim server log with search and level highlighting" loading="lazy"><figcaption><strong>ᛋ Log</strong> (Saga): live server log with search, levels, and per-session files.</figcaption></figure>
+      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-atlas.png" alt="Valheim world map rendered from seed with fog of war and weather forecast" loading="lazy"><figcaption><strong>ᛞ Map</strong> (Atlas): your world drawn from its seed, with fog of war, portals, builds and a forecast. No mods needed.</figcaption></figure>
+      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-mods.png" alt="Thunderstore mod manager with automatic update checking" loading="lazy"><figcaption><strong>ᚱ Mods</strong>: a Thunderstore scan of your BepInEx folder, update one or update all, or paste a link to install.</figcaption></figure>
+      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-vikings.png" alt="Online player roster with right-click admin management" loading="lazy"><figcaption><strong>ᛗ Players</strong> (Vikings): platform, session, playtime, deaths and live position, with a menu for everything else.</figcaption></figure>
+      <figure class="shot"><img src="https://raw.githubusercontent.com/RyanDMcAfee/ValheimBakaLoader/main/img/bl-saga.png" alt="Live Valheim server log with search and level highlighting" loading="lazy"><figcaption><strong>ᛋ Log</strong> (Saga): the live server log with levels, search and a console line, plus a file per session.</figcaption></figure>
     </div>
   </div>
 </section>
@@ -173,7 +174,7 @@ footer .links a:hover{color:var(--ember-hi)}
 <section id="start">
   <div class="wrap">
     <h2><span class="rune">ᛃ</span>Host a Valheim server in minutes</h2>
-    <p class="lead">No Docker, no SteamCMD scripts, no rented hardware. If your PC can run Valheim, it can host it.</p>
+    <p class="lead">No Docker, no SteamCMD scripts, no rented hardware. If your PC can run Valheim, it can host it. The <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Install-and-first-run">install guide</a> has the long version.</p>
     <div class="steps">
       <div class="step"><strong>Download and unzip.</strong><p>Grab the <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest">latest release</a>, unzip it anywhere, and run <code>ValheimBakaLoader.exe</code>. No installer.</p></div>
       <div class="step"><strong>Follow the wizard.</strong><p>The first-launch wizard finds (or helps you install) the Valheim dedicated server, names your world, and sets the password.</p></div>
@@ -186,11 +187,12 @@ footer .links a:hover{color:var(--ember-hi)}
   <div class="wrap">
     <h2><span class="rune">ᚺ</span>Questions</h2>
     <details><summary>Is this really free Valheim server hosting?</summary><div>Yes. BakaLoader is free software that runs the official Valheim dedicated server on your own Windows PC. You self-host, so there is no monthly fee and no rented server. Your only costs are the electricity and bandwidth you already pay for.</div></details>
-    <details><summary>Does it work with mods?</summary><div>That's the point. BakaLoader manages BepInEx mods, scans them against Thunderstore, updates them on a schedule or while the server is empty, and installs new mods from a pasted Thunderstore link. It was built running a ~50-mod server.</div></details>
+    <details><summary>Does it work with mods?</summary><div>That's the point. BakaLoader manages BepInEx mods, scans them against Thunderstore, updates them on a schedule or while the server is empty, and installs new mods from a pasted Thunderstore link. It was built running a 60-plus mod server. <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods">How that works</a>.</div></details>
     <details><summary>Do I need to know the command line?</summary><div>No. Install, world creation, ports, mods, restarts, backups and player admin all happen in the app. There is no console window to babysit.</div></details>
     <details><summary>What are the requirements?</summary><div>Windows 10 or 11, the .NET 6 desktop runtime, and enough headroom to run the Valheim dedicated server (it is light, a few GB of RAM). You do not need to own Valheim on the hosting machine; the dedicated server is a free Steam tool.</div></details>
-    <details><summary>Can my friends join from outside my network?</summary><div>Yes. Like any self-hosted Valheim server you forward one UDP port on your router, and BakaLoader's guide walks you through it with screenshots. Crossplay is supported, and you can point a custom domain at your server instead of sharing an IP.</div></details>
-    <details><summary>Does it work with Valheim 1.0?</summary><div>Yes. Valheim 1.0 stores each world as a folder, changed the id format in the admin, ban and allow lists, and added PlayStation and Switch players. BakaLoader lists and backs up both world formats, writes the new id form, shows console players in the roster, and asks before it starts a server on a new build so you can back up first.</div></details>
+    <details><summary>Can my friends join from outside my network?</summary><div>Yes. Like any self-hosted Valheim server you forward the game's two UDP ports on your router, 2456 and 2457 by default, and the <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Privacy-and-network">network guide</a> walks you through it with screenshots. Crossplay needs no forwarding at all, and you can <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Custom-domain">point a domain name</a> at your server instead of sharing an IP.</div></details>
+    <details><summary>Does it update Valheim itself?</summary><div>Yes, since 1.0.1, in two of three cases. A server installed by steamcmd is updated with steamcmd. A server in your Steam library is handed to Steam, and BakaLoader watches the download until it is whole. An install it cannot identify is not touched, and it says so and offers to open Steam. Your worlds are copied aside first either way. <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-the-server">The detail</a>.</div></details>
+    <details><summary>Does it work with Valheim 1.0?</summary><div>Yes. Valheim 1.0 stores each world as a folder, changed the id format in the admin, ban and allow lists, and added PlayStation and Switch players. BakaLoader lists and backs up both world formats, writes the new id form, shows console players in the roster, and asks before it starts a server on a new build so you can back up first. See <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-file-formats">world file formats</a>.</div></details>
     <details><summary>Is it open source?</summary><div>The source is available to read on GitHub under a source-available license: free to download and run, including for donation-supported community servers.</div></details>
   </div>
 </section>
@@ -200,6 +202,7 @@ footer .links a:hover{color:var(--ember-hi)}
     <div class="links">
       <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest">Download</a>
       <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader">GitHub</a>
+      <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki">Documentation</a>
       <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/discussions">Discussions</a>
       <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/blob/main/LICENSE">License</a>
       <a href="https://ko-fi.com/bakaloader">ᛥ A horn of mead</a>

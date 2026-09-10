@@ -39,7 +39,7 @@
       <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Discord</span><span class="norse">Herald</span></div>
       <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Statistics</span><span class="norse">Skald</span></div>
       <div class="side-foot">
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.0</span></span>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.1</span></span>
         <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
@@ -98,6 +98,9 @@
                   <!-- Game + network version, read from the server's own startup banner. -->
                   <span class="hver" id="hVer" style="display:none"></span>
                 </div>
+                <!-- Says once, where the state is said, that Steam has a server update
+                     waiting. Disabled while the server is up: an update needs it stopped. -->
+                <button type="button" class="pill amber updpill" id="hUpdPill" style="display:none">Update available</button>
                 <button class="btn btn-ghost btn-sm" id="stokeBtn" title="Stoke the hearth: restarts the server, warning players in-game first">Restart</button>
                 <button class="btn btn-cold btn-sm" id="douseBtn" title="Douse the hearth: stops the server">Stop</button>
               </div>
@@ -226,6 +229,7 @@
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>
             <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
           </div>
+          <div class="subval" id="modsPluginNote" style="display:none;margin:0 0 12px;font-family:inherit;font-size:11.5px;line-height:1.55;letter-spacing:.3px;color:var(--warn,#e0a35c)"></div>
           <div class="card" style="padding:0"><div style="height:6px"></div>
             <table>
               <thead><tr>
@@ -288,7 +292,7 @@
             <div class="setupreset-note" style="display:block;margin-top:8px">modifiers saved per world · max players above 10 installs a small bundled server plugin · applies the next time the server starts</div>
             </div>
 
-            <div class="formsec collapsible" id="secRites" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᚨ</span> ADVANCED RITES</div>
+            <div class="formsec collapsible" id="secRites" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᚨ</span> ADVANCED<span class="cnorse">Rites</span></div>
             <div class="formsec-body">
             <div class="formgrid">
               <div class="field"><label>Empty-Server Restart</label>
@@ -384,7 +388,7 @@
                   <div class="afact"><span class="ak">Event</span><span class="av" id="atlasEvent">-</span></div>
                 </div>
                 <div class="subval" id="atlasChunkNote" style="margin-top:6px;display:none"></div>
-                <div class="subval" id="atlasShapeNote" style="margin-top:6px">Ashlands shape is approximate</div>
+                <div class="subval" id="atlasShapeNote" style="margin-top:6px;display:none"></div>
                 <div id="wxBox" style="margin-top:8px;display:none">
                   <div class="atlas-facts">
                     <div class="afact"><span class="ak">Skies now</span><span class="av" id="wxNow">-</span></div>
@@ -397,8 +401,11 @@
                 </div>
               </div>
 
-              <div class="card" title="Mod-free maps cannot track live positions, so this card lists who is online instead.">
+              <div class="card">
                 <div class="microlabel">Players online<span class="cnorse">Vikings ashore</span></div>
+                <!-- Why this card lists names instead of pins. It was a hover-only title
+                     for one release, which no touch and no glance ever reached. -->
+                <div class="subval cardnote">A map drawn without mods cannot follow players, so this card names who is online instead.</div>
                 <div id="atlasRoster" class="atlas-roster"></div>
               </div>
 
@@ -569,7 +576,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.0</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.1</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>
@@ -592,6 +599,7 @@
         <div class="pitem" data-cmd="Broadcast message…"><span class="r">ᛒ</span>Broadcast message…<span class="k">saga</span></div>
         <div class="pitem" data-cmd="Send console command…"><span class="r">ᛊ</span>Send console command…<span class="k">rcon</span></div>
         <div class="pitem" data-cmd="Kick player…"><span class="r">ᚲ</span>Kick player…<span class="k">viking</span></div>
+        <div class="pitem" data-cmd="Update server"><span class="r">ᛊ</span>Update server<span class="k">steam</span></div>
         <div class="pitem" data-cmd="Update all mods"><span class="r">ᛟ</span>Update all mods<span class="k">forge</span></div>
         <div class="pitem" data-cmd="Copy join address"><span class="r">ᛜ</span>Copy join address<span class="k">net</span></div>
         <div class="pitem" data-cmd="Discord sharing"><span class="r">ᚺ</span>Discord sharing<span class="k">herald</span></div>

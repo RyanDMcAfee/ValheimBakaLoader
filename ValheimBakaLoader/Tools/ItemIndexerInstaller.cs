@@ -22,6 +22,9 @@ namespace ValheimBakaLoader.Tools
     /// </summary>
     public class ItemIndexerInstaller : IItemIndexerInstaller
     {
+        /// <summary>Label used when a failure is surfaced to the operator.</summary>
+        public const string CompanionPluginName = "Item indexer";
+
         private const string PluginFolderName = "BakaLoaderItemIndexer";
         private const string PluginDllName = "BakaLoaderItemIndexer.dll";
 
@@ -67,11 +70,16 @@ namespace ValheimBakaLoader.Tools
                     File.Copy(BundledDll, targetDll, overwrite: true);
                     Logger.Information("Installed/updated item indexer plugin in {dir}", targetDir);
                 }
+
+                CompanionPluginStatus.ReportSuccess(CompanionPluginName);
             }
             catch (Exception e)
             {
                 // Never block a server start because of the indexer; the vanilla catalog still works.
+                // The failure is recorded so the server log and the interface can say so, instead
+                // of leaving the operator with a picker that quietly never learns about their mods.
                 Logger.Warning("Could not install item indexer plugin: {message}", e.Message);
+                CompanionPluginStatus.ReportFailure(CompanionPluginName, e.Message);
             }
         }
 

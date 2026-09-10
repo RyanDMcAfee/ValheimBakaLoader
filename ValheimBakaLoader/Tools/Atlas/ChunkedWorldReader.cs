@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace ValheimBakaLoader.Tools.Atlas
 {
@@ -51,8 +52,53 @@ namespace ValheimBakaLoader.Tools.Atlas
         private const int PortalChunkIndex = 1;
         private const int PortalChunkSize = 0;
 
+        /// <summary>
+        /// Hard ceiling on the gzip block in a .db2. A real one is a few
+        /// hundred kilobytes; the biggest world anyone has is nowhere near
+        /// this, so anything above it is a corrupt length field.
+        /// </summary>
+        private const int MaxCompressedZoneBlockBytes = 256 * 1024 * 1024;
+
+        /// <summary>
+        /// Hard ceiling on what that block is allowed to expand to. Past this
+        /// the file is treated as corrupt, never as a valid save.
+        /// </summary>
+        private const int MaxDecompressedZoneBlockBytes = 1024 * 1024 * 1024;
+
+        /// <summary>Ceiling on a file read whole (.chunks, one .chunk), same reasoning.</summary>
+        private const int MaxWholeFileBytes = 256 * 1024 * 1024;
+
+        /// <summary>
+        /// Read buffer for the .db2, which a BinaryReader walks field by field.
+        /// The default 4 KB turns a 143 KB header into three dozen reads; 64 KB
+        /// takes that to three and still sits under the 85 KB line above which
+        /// an array goes to the large object heap, which matters because the
+        /// Atlas re-reads this file every time it refreshes.
+        /// </summary>
+        private const int Db2BufferBytes = 64 * 1024;
+
+        /// <summary>
+        /// How many chunk files may be read at once. A world with a large
+        /// explored area has thousands of small ones, and reading them one at a
+        /// time leaves the disk idle between opens; this is capped so a big
+        /// world cannot flood the thread pool the rest of the app shares.
+        /// </summary>
+        private static readonly int ChunkReadParallelism = Math.Min(Environment.ProcessorCount, 8);
+
         private static readonly Regex GenerationPattern =
             new Regex(@"^_main\.(\d+)\.fwl2$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// Runs once a generation has been picked and before any of its files
+        /// are opened. Null in the app, and the reader behaves exactly as it
+        /// would without it. It exists because the one situation the re-read
+        /// branch below is built for, a save landing while a read is already in
+        /// flight, cannot be arranged from outside the reader: by the time a
+        /// test has written the next generation, the reader would have picked
+        /// that one to begin with. A test hands in a hook here, lands the save
+        /// from inside it, and the real branch runs.
+        /// </summary>
+        internal static Action<string, int> GenerationPicked;
 
         /// <summary>
         /// Parses the highest committed generation of a chunked world folder.
@@ -65,6 +111,7 @@ namespace ValheimBakaLoader.Tools.Atlas
 
             for (int attempt = 0; ; attempt++)
             {
+                int generation = -1;
                 try
                 {
                     if (!Directory.Exists(worldDirectory))
@@ -73,22 +120,97 @@ namespace ValheimBakaLoader.Tools.Atlas
                         return null;
                     }
 
-                    int generation = FindCommittedGeneration(worldDirectory, report);
+                    generation = FindCommittedGeneration(worldDirectory, report);
                     if (generation < 0) return null;
+                    GenerationPicked?.Invoke(worldDirectory, generation);
 
-                    return ReadGeneration(worldDirectory, generation, report, canRescan: attempt == 0);
+                    var chunkNotes = new List<string>();
+                    WorldDbInfo info = ReadGeneration(
+                        worldDirectory, generation, report, chunkNotes, out IOException chunkVanished);
+                    if (info == null) return null;
+
+                    // A chunk file that would not open is either the commit of the
+                    // next generation deleting this one's files, or damage, and the
+                    // two want opposite answers. The game writes generation N+1's
+                    // .ok marker BEFORE it deletes generation N (ZNet.SaveWorldThread,
+                    // decomp_new :80502-80531), so re-scanning settles it with no
+                    // waiting and no guessing.
+                    if (chunkVanished != null
+                        && ShouldReadAgain(generation, CommittedGenerationOrNone(worldDirectory), attempt))
+                    {
+                        // A save landed while this read was running. Throw away the
+                        // half-old world, quietly, and read the one that is committed
+                        // now. This is the ONLY case that reads twice.
+                        continue;
+                    }
+
+                    if (chunkVanished != null)
+                    {
+                        report?.Invoke($"generation {generation} is still the newest committed save, so a chunk that "
+                            + $"would not open is damage and not a save landing mid-read "
+                            + $"({chunkVanished.GetType().Name}: {chunkVanished.Message})");
+                    }
+
+                    foreach (string note in chunkNotes)
+                    {
+                        report?.Invoke(note);
+                    }
+                    return info;
                 }
-                catch (IOException) when (attempt == 0)
+                catch (IOException ex) when (attempt == 0)
                 {
-                    // The commit of the next generation deletes this one's files.
-                    // Re-scan once and read whichever generation is committed now.
-                    Thread.Sleep(250);
+                    // The .db2 or the .chunks index itself would not open. There is
+                    // no partial world to salvage from that, so the same question
+                    // decides everything: a higher committed generation means a save
+                    // landed and the read is worth repeating, the same generation
+                    // means the save is corrupt and repeating it would only open the
+                    // same broken file and fail identically.
+                    if (!ShouldReadAgain(generation, CommittedGenerationOrNone(worldDirectory), attempt))
+                    {
+                        report?.Invoke($"chunked world read failed ({ex.GetType().Name}): {ex.Message}");
+                        return null;
+                    }
                 }
                 catch (Exception ex)
                 {
                     report?.Invoke($"chunked world read failed ({ex.GetType().Name}): {ex.Message}");
                     return null;
                 }
+            }
+        }
+
+        /// <summary>
+        /// The one rule that decides whether a file the committed index pointed
+        /// at, and which then would not open, is worth reading around a second
+        /// time. Reading again only helps when a save landed underneath this
+        /// one: the game writes generation N+1's .ok marker before it deletes
+        /// generation N (ZNet.SaveWorldThread, decomp_new :80502-80531), so a
+        /// higher committed generation than the one just read is proof of
+        /// exactly that. The same generation still being newest means the file
+        /// is damaged, and opening it again would fail in the same way; the
+        /// reader says so instead of waiting and pretending otherwise. One
+        /// re-read at most, so a folder that keeps rotating cannot spin here.
+        /// </summary>
+        internal static bool ShouldReadAgain(int generationRead, int committedNow, int attempt)
+        {
+            return attempt == 0 && committedNow > generationRead;
+        }
+
+        /// <summary>
+        /// The committed generation, or -1 when the folder cannot even be
+        /// listed. Used from the failure paths, where the folder being gone is
+        /// one of the things that can have just happened and must not turn into
+        /// a second exception thrown out of a catch block.
+        /// </summary>
+        private static int CommittedGenerationOrNone(string worldDirectory)
+        {
+            try
+            {
+                return FindCommittedGeneration(worldDirectory, null);
+            }
+            catch
+            {
+                return -1;
             }
         }
 
@@ -131,14 +253,25 @@ namespace ValheimBakaLoader.Tools.Atlas
                 "_main." + generation.ToString(CultureInfo.InvariantCulture) + extension);
         }
 
-        /// <param name="canRescan">
-        /// True while the caller still has a re-scan in hand. A chunk file that is missing or
-        /// busy then means "a save just landed", so the failure travels up and the newly
-        /// committed generation is read instead. False on the last pass, where the same failure
-        /// is a genuinely unreadable chunk and is counted rather than thrown.
+        /// <param name="chunkNotes">
+        /// Collects one line per chunk that could not be read, instead of reporting them as they
+        /// happen. The caller only knows whether this generation is still the newest one AFTER
+        /// the read, and a world it is about to throw away because a save landed underneath it
+        /// should not have filed complaints about it first.
         /// </param>
-        private static WorldDbInfo ReadGeneration(string worldDirectory, int generation, Action<string> report, bool canRescan)
+        /// <param name="chunkVanished">
+        /// The first IO failure a chunk file raised, or null. It says "a file that the committed
+        /// index points at would not open", which is what both a save landing mid-read and a
+        /// damaged save look like from here; the caller tells them apart by re-scanning.
+        /// </param>
+        private static WorldDbInfo ReadGeneration(
+            string worldDirectory,
+            int generation,
+            Action<string> report,
+            List<string> chunkNotes,
+            out IOException chunkVanished)
         {
+            chunkVanished = null;
             var info = new WorldDbInfo();
             if (!ReadDb2(GenerationPath(worldDirectory, generation, ".db2"), info, report))
             {
@@ -151,14 +284,28 @@ namespace ValheimBakaLoader.Tools.Atlas
                 return null;
             }
 
-            var buildPieces = new List<(float X, float Z)>();
             int zdoCount = 0;
-            info.ChunksTotal = chunks.Count;
-
             foreach (ChunkRecord chunk in chunks)
             {
                 zdoCount += chunk.ZdoCount;
+            }
+            info.ChunksTotal = chunks.Count;
+
+            // Thousands of small files on a well explored world, so they are
+            // read a few at a time instead of one after another. Each read
+            // fills its own bucket and nothing touches the shared result until
+            // the loop is done, so the portals, map tables and build sites come
+            // out in chunk-index order no matter which thread finished first.
+            var buckets = new ChunkPayload[chunks.Count];
+            var failures = new string[chunks.Count];
+            IOException vanished = null;
+
+            var options = new ParallelOptions { MaxDegreeOfParallelism = ChunkReadParallelism };
+            Parallel.For(0, chunks.Count, options, i =>
+            {
+                ChunkRecord chunk = chunks[i];
                 string chunkPath = Path.Combine(worldDirectory, chunk.FileName);
+                var payload = new ChunkPayload();
 
                 try
                 {
@@ -167,23 +314,41 @@ namespace ValheimBakaLoader.Tools.Atlas
                         throw new FileNotFoundException("chunk file is not there", chunkPath);
                     }
 
-                    ReadChunkFile(chunkPath, chunk.IsPortalChunk, info, buildPieces);
-                }
-                catch (IOException) when (canRescan)
-                {
-                    // A chunk file that is missing or busy is what a save landing mid-read looks
-                    // like: committing the next generation deletes this one's files. Letting it
-                    // out is what makes the caller re-scan and read the generation that is
-                    // committed NOW, rather than quietly returning most of a world.
-                    throw;
+                    ReadChunkFile(chunkPath, chunk.IsPortalChunk, payload);
+                    buckets[i] = payload;
                 }
                 catch (Exception ex)
                 {
-                    // Past the re-scan this is a real unreadable chunk. The rest of the world is
-                    // still worth drawing, as long as the map says a piece of it is missing.
-                    info.ChunksSkipped++;
-                    report?.Invoke($"chunk {chunk.FileName} could not be read ({ex.GetType().Name}: {ex.Message}), skipping");
+                    // The rest of the world is still worth drawing, as long as the map says a
+                    // piece of it is missing. A missing or busy file is also what a save landing
+                    // mid-read looks like, so that one is handed back up as well and the caller
+                    // decides whether a newer generation has since been committed.
+                    if (ex is IOException io)
+                    {
+                        Interlocked.CompareExchange(ref vanished, io, null);
+                    }
+                    failures[i] = $"chunk {chunk.FileName} could not be read ({ex.GetType().Name}: {ex.Message}), skipping";
                 }
+            });
+
+            chunkVanished = vanished;
+
+            var buildPieces = new List<(float X, float Z)>();
+            for (int i = 0; i < buckets.Length; i++)
+            {
+                if (failures[i] != null)
+                {
+                    info.ChunksSkipped++;
+                    chunkNotes.Add(failures[i]);
+                    continue;
+                }
+
+                ChunkPayload payload = buckets[i];
+                if (payload == null) continue;
+
+                info.Portals.AddRange(payload.Portals);
+                info.MapTables.AddRange(payload.MapTables);
+                buildPieces.AddRange(payload.BuildPieces);
             }
 
             info.ZdoCount = zdoCount;
@@ -197,7 +362,8 @@ namespace ValheimBakaLoader.Tools.Atlas
 
         private static bool ReadDb2(string path, WorldDbInfo info, Action<string> report)
         {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var fs = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, Db2BufferBytes, FileOptions.SequentialScan);
             using var br = new BinaryReader(fs);
 
             info.WorldVersion = br.ReadInt32();
@@ -215,10 +381,23 @@ namespace ValheimBakaLoader.Tools.Atlas
                 return false;
             }
 
+            // One int32 off the disk decides how big an array to allocate, so it
+            // is checked against a hard ceiling AND against what is really left
+            // in the file before anything is allocated. A corrupt length field
+            // now costs nothing instead of half a gigabyte.
             int compressedLength = br.ReadInt32();
-            if (compressedLength < 0 || compressedLength > 512 * 1024 * 1024)
+            if (compressedLength < 0 || compressedLength > MaxCompressedZoneBlockBytes)
             {
-                report?.Invoke($"{Path.GetFileName(path)}: zone block length {compressedLength} is out of range");
+                report?.Invoke($"{Path.GetFileName(path)}: zone block length {compressedLength} is out of range "
+                    + $"(the ceiling is {MaxCompressedZoneBlockBytes / (1024 * 1024)} MB)");
+                return false;
+            }
+
+            long remaining = fs.Length - fs.Position;
+            if (compressedLength > remaining)
+            {
+                report?.Invoke($"{Path.GetFileName(path)}: zone block claims {compressedLength} bytes but only "
+                    + $"{remaining} are left in the file, so the save is truncated");
                 return false;
             }
 
@@ -229,7 +408,13 @@ namespace ValheimBakaLoader.Tools.Atlas
                 return false;
             }
 
-            if (!ReadZoneSystem(Decompress(compressed), info, report))
+            byte[] zoneBlock = Decompress(compressed, Path.GetFileName(path), report);
+            if (zoneBlock == null)
+            {
+                return false;
+            }
+
+            if (!ReadZoneSystem(zoneBlock, info, report))
             {
                 return false;
             }
@@ -293,12 +478,59 @@ namespace ValheimBakaLoader.Tools.Atlas
             return true;
         }
 
-        private static byte[] Decompress(byte[] input)
+        /// <summary>
+        /// Gunzips the zone block, or null (with a reason handed to
+        /// <paramref name="report"/>) when it expands past
+        /// <see cref="MaxDecompressedZoneBlockBytes"/>. The compressed size is
+        /// capped too, but that bounds nothing on its own: gzip will happily
+        /// turn a few megabytes of a repeating byte into gigabytes, so the
+        /// output is counted as it comes out and the read is abandoned the
+        /// moment it goes past the ceiling. A block that big is not a Valheim
+        /// save, so it is reported as corrupt rather than parsed.
+        /// </summary>
+        private static byte[] Decompress(byte[] input, string fileName, Action<string> report)
         {
+            // A gzip member ends with ISIZE, the uncompressed length modulo 4 GB
+            // (RFC 1952, section 2.3.1). A crafted file can lie about it, which
+            // is what the counted copy below is for, but an honestly oversized
+            // block is turned away here for the price of reading four bytes and
+            // never gets a byte allocated for it.
+            if (input.Length >= 4)
+            {
+                long declared = BitConverter.ToUInt32(input, input.Length - 4);
+                if (declared > MaxDecompressedZoneBlockBytes)
+                {
+                    report?.Invoke($"{fileName}: the zone block says it expands to {declared} bytes, past the "
+                        + $"{MaxDecompressedZoneBlockBytes / (1024 * 1024)} MB ceiling, so the save is corrupt");
+                    return null;
+                }
+            }
+
             using var src = new MemoryStream(input, writable: false);
             using var gz = new GZipStream(src, CompressionMode.Decompress);
             using var dst = new MemoryStream();
-            gz.CopyTo(dst);
+
+            byte[] buffer = new byte[81920];
+            long total = 0;
+            while (true)
+            {
+                int read = gz.Read(buffer, 0, buffer.Length);
+                if (read <= 0)
+                {
+                    break;
+                }
+
+                total += read;
+                if (total > MaxDecompressedZoneBlockBytes)
+                {
+                    report?.Invoke($"{fileName}: the zone block expands past "
+                        + $"{MaxDecompressedZoneBlockBytes / (1024 * 1024)} MB, so the save is corrupt");
+                    return null;
+                }
+
+                dst.Write(buffer, 0, read);
+            }
+
             return dst.ToArray();
         }
 
@@ -360,8 +592,7 @@ namespace ValheimBakaLoader.Tools.Atlas
 
         private static List<ChunkRecord> ReadChunkIndex(string path, Action<string> report)
         {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var br = new BinaryReader(fs);
+            using var br = new BinaryReader(new MemoryStream(ReadWholeFile(path), writable: false));
 
             int version = br.ReadUInt16();
             if (version < WorldDbReader.ChunkedSaveVersion || version > WorldDbReader.MaxWorldVersion)
@@ -400,10 +631,20 @@ namespace ValheimBakaLoader.Tools.Atlas
         // <yy>_<xx>__<size>_<version>.chunk
         // ------------------------------------------------------------------
 
-        private static void ReadChunkFile(string path, bool isPortalChunk, WorldDbInfo info, List<(float X, float Z)> buildPieces)
+        /// <summary>
+        /// What one chunk file contributed. Kept per chunk so the files can be
+        /// read in parallel and merged afterwards in a fixed order.
+        /// </summary>
+        private sealed class ChunkPayload
         {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var br = new BinaryReader(fs);
+            public readonly List<DbPortal> Portals = new List<DbPortal>();
+            public readonly List<DbMapTable> MapTables = new List<DbMapTable>();
+            public readonly List<(float X, float Z)> BuildPieces = new List<(float X, float Z)>();
+        }
+
+        private static void ReadChunkFile(string path, bool isPortalChunk, ChunkPayload payload)
+        {
+            using var br = new BinaryReader(new MemoryStream(ReadWholeFile(path), writable: false));
 
             int version = br.ReadInt16();
             if (version < WorldDbReader.ChunkedSaveVersion || version > WorldDbReader.MaxWorldVersion)
@@ -419,8 +660,48 @@ namespace ValheimBakaLoader.Tools.Atlas
 
             for (int i = 0; i < count; i++)
             {
-                ReadZdo(br, isPortalChunk, info, buildPieces);
+                ReadZdo(br, isPortalChunk, payload);
             }
+        }
+
+        /// <summary>
+        /// One open and one read per chunk file. The old shape used a
+        /// BinaryReader straight off a default FileStream, which pulls a
+        /// thousand-byte file through a 4 KB buffer in several syscalls; a
+        /// chunk is small and is walked front to back exactly once, so it is
+        /// cheaper to take the whole thing in one go and parse out of memory.
+        /// FileShare.ReadWrite is kept because the game may be writing the
+        /// generation next door while this runs.
+        /// </summary>
+        private static byte[] ReadWholeFile(string path)
+        {
+            // 4096 is deliberate, not a leftover default: the one Read below
+            // asks for the whole file at once, and a request at least as big as
+            // the buffer goes straight to the caller's array without touching
+            // it. A megabyte-sized buffer here would only be an allocation per
+            // file, and there are thousands of files.
+            using var fs = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.SequentialScan);
+
+            long length = fs.Length;
+            if (length > MaxWholeFileBytes)
+            {
+                throw new InvalidDataException(
+                    $"{Path.GetFileName(path)} is {length} bytes, past the {MaxWholeFileBytes / (1024 * 1024)} MB ceiling");
+            }
+
+            byte[] raw = new byte[length];
+            int offset = 0;
+            while (offset < raw.Length)
+            {
+                int read = fs.Read(raw, offset, raw.Length - offset);
+                if (read <= 0)
+                {
+                    throw new EndOfStreamException($"file ended after {offset} of {raw.Length} bytes");
+                }
+                offset += read;
+            }
+            return raw;
         }
 
         /// <summary>
@@ -429,7 +710,7 @@ namespace ValheimBakaLoader.Tools.Atlas
         /// the rotation is a packed 2 or 4 byte value instead of three floats
         /// (ZDO.Load, decomp_new :74443).
         /// </summary>
-        private static void ReadZdo(BinaryReader br, bool isPortalChunk, WorldDbInfo info, List<(float X, float Z)> buildPieces)
+        private static void ReadZdo(BinaryReader br, bool isPortalChunk, ChunkPayload payload)
         {
             ushort flags = br.ReadUInt16();
 
@@ -470,7 +751,7 @@ namespace ValheimBakaLoader.Tools.Atlas
             {
                 if (isPortal)
                 {
-                    info.Portals.Add(new DbPortal { Tag = "", X = posX, Y = posY, Z = posZ });
+                    payload.Portals.Add(new DbPortal { Tag = "", X = posX, Y = posY, Z = posZ });
                 }
                 return;
             }
@@ -559,15 +840,15 @@ namespace ValheimBakaLoader.Tools.Atlas
 
             if (isPortal)
             {
-                info.Portals.Add(new DbPortal { Tag = portalTag ?? "", X = posX, Y = posY, Z = posZ });
+                payload.Portals.Add(new DbPortal { Tag = portalTag ?? "", X = posX, Y = posY, Z = posZ });
             }
             else if (isMapTable)
             {
-                info.MapTables.Add(new DbMapTable { X = posX, Y = posY, Z = posZ, Data = mapData });
+                payload.MapTables.Add(new DbMapTable { X = posX, Y = posY, Z = posZ, Data = mapData });
             }
             else if (isBuildPiece)
             {
-                buildPieces.Add((posX, posZ));
+                payload.BuildPieces.Add((posX, posZ));
             }
         }
     }

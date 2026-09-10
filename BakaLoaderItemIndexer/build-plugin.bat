@@ -1,16 +1,22 @@
 @echo off
 REM ============================================================================
-REM  Build the BakaLoaderItemIndexer companion plugin and copy the DLL into the
-REM  main BakaLoader app's bundled Resources so it can auto-install it onto the
-REM  Valheim server's BepInEx/plugins folder.
+REM  Shim. The item indexer used to have a build recipe of its own here (an
+REM  MSBuild project with its own reference list) alongside the one in
+REM  ValheimBakaLoader\Resources\build-plugins.ps1. Two recipes for one DLL meant
+REM  whichever ran last silently decided what shipped, and the two did not
+REM  reference the same assemblies. There is now one recipe, and this file
+REM  forwards to it.
 REM
-REM  Requires: .NET SDK + a Valheim Dedicated Server install that already has
-REM            BepInEx installed (the plugin references the game + BepInEx DLLs).
+REM  build-plugins.ps1 builds all five bundled plugins, the item indexer
+REM  included, straight into ValheimBakaLoader\Resources\<plugin>\, so no copy
+REM  step is needed afterwards.
+REM
+REM  Requires: a Valheim Dedicated Server install that already has BepInEx, plus
+REM            the Roslyn csc.exe from Visual Studio Build Tools.
 REM
 REM  Usage:
 REM     build-plugin.bat "D:\SteamLibrary\steamapps\common\Valheim dedicated server"
-REM
-REM  If you omit the path, set VALHEIM_INSTALL below to your server folder.
+REM     build-plugin.bat "<server folder>" "<full path to csc.exe>"
 REM ============================================================================
 
 setlocal
@@ -18,7 +24,16 @@ setlocal
 set "VALHEIM_INSTALL=%~1"
 if "%VALHEIM_INSTALL%"=="" set "VALHEIM_INSTALL=C:\SteamLibrary\steamapps\common\Valheim dedicated server"
 
+set "BUILDER=%~dp0..\ValheimBakaLoader\Resources\build-plugins.ps1"
+
 echo Using Valheim install: "%VALHEIM_INSTALL%"
+echo Forwarding to: "%BUILDER%"
+
+if not exist "%BUILDER%" (
+  echo.
+  echo ERROR: build-plugins.ps1 not found at "%BUILDER%".
+  exit /b 1
+)
 
 if not exist "%VALHEIM_INSTALL%\valheim_server_Data\Managed\assembly_valheim.dll" (
   echo.
@@ -35,25 +50,19 @@ if not exist "%VALHEIM_INSTALL%\BepInEx\core\BepInEx.dll" (
   exit /b 1
 )
 
-dotnet build "%~dp0BakaLoaderItemIndexer.csproj" -c Release -p:VALHEIM_INSTALL="%VALHEIM_INSTALL%"
+if "%~2"=="" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%BUILDER%" -ManagedDir "%VALHEIM_INSTALL%\valheim_server_Data\Managed" -CoreDir "%VALHEIM_INSTALL%\BepInEx\core"
+) else (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%BUILDER%" -ManagedDir "%VALHEIM_INSTALL%\valheim_server_Data\Managed" -CoreDir "%VALHEIM_INSTALL%\BepInEx\core" -Csc "%~2"
+)
+
 if errorlevel 1 (
   echo Build failed.
   exit /b 1
 )
 
-set "OUTDLL=%~dp0bin\Release\BakaLoaderItemIndexer.dll"
-set "DESTDIR=%~dp0..\ValheimBakaLoader\Resources\ItemIndexer"
-
-if not exist "%OUTDLL%" (
-  echo ERROR: expected output not found: "%OUTDLL%"
-  exit /b 1
-)
-
-if not exist "%DESTDIR%" mkdir "%DESTDIR%"
-copy /Y "%OUTDLL%" "%DESTDIR%\BakaLoaderItemIndexer.dll"
-
 echo.
-echo Done. Plugin copied to: %DESTDIR%\BakaLoaderItemIndexer.dll
-echo Rebuild BakaLoader so the DLL is bundled, then start your server once to
-echo generate BepInEx\items.json.
+echo Done. The plugins are in ValheimBakaLoader\Resources\.
+echo Now run ValheimBakaLoader\Resources\verify-plugins.ps1 against the same
+echo server folder, then rebuild BakaLoader so the DLLs are bundled.
 endlocal

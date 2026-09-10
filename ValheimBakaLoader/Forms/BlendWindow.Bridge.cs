@@ -1,10 +1,11 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using ValheimBakaLoader.Game;
@@ -45,7 +46,29 @@ namespace ValheimBakaLoader.Forms
         private IDiscordStatusService DiscordStatus;
         private IDiscordWebhookService DiscordWebhooks;
         private IAnalyticsService Analytics;
+        private ISoftwareUpdateProvider SoftwareUpdates;
+        private IServerUpdateService ServerUpdates;
         private IApplicationLogger AppLogger;
+
+        // One cancellation source per profile with an update in flight. It is the app's own
+        // shutdown handle and NOTHING else: cancelling it used to be how "Stop waiting for Steam"
+        // worked, and because the service links it into the steamcmd run, that stopped BakaLoader
+        // awaiting steamcmd without stopping steamcmd, which kept rewriting the install while the
+        // per install lock came off. A cancel now only ever goes through ServerUpdates.Cancel.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> ServerUpdateCts =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // The server executable each in flight update is rewriting, per profile. Kept so the
+        // Start button, the Restart button and the window's close guard can all ask the update
+        // service the one question that matters without loading preferences on every render.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> ServerUpdateExe =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // The last phase each in flight update reported. The service decides whether a cancel is
+        // honoured; this is how the bridge learns what it decided, without matching on a sentence:
+        // a cancel that was taken is reported as phase Cancelled before the operation completes.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ServerUpdatePhase> ServerUpdatePhaseSeen =
+            new(StringComparer.OrdinalIgnoreCase);
 
         // Last status the Skald recorded per player key, so the analytics journal only
         // gets real join/leave transitions (PlayerStatusChanged also fires on plain
@@ -151,6 +174,8 @@ namespace ValheimBakaLoader.Forms
             DiscordStatus = serviceProvider.GetRequiredService<IDiscordStatusService>();
             DiscordWebhooks = serviceProvider.GetRequiredService<IDiscordWebhookService>();
             Analytics = serviceProvider.GetRequiredService<IAnalyticsService>();
+            SoftwareUpdates = serviceProvider.GetRequiredService<ISoftwareUpdateProvider>();
+            ServerUpdates = serviceProvider.GetRequiredService<IServerUpdateService>();
             AppLogger = appLogger;
 
             // The Herald: single self-editing Discord status post (gated on prefs inside the service).
@@ -613,6 +638,52 @@ namespace ValheimBakaLoader.Forms
         private void OnCloseRequested(object sender, FormClosingEventArgs e)
         {
             if (_closeGuardPassed) return;
+
+            // An update comes first, and it refuses harder than a running server does. Closing
+            // takes the app's child processes with it, so a close during a steamcmd run kills
+            // steamcmd mid file and leaves an install that is neither the old build nor the new
+            // one. There is no dialog to answer here either: the wait is measured in minutes and
+            // the window closes itself the moment the update is done.
+            var choice = DecideUpdateClose(
+                AnyServerUpdateRunning(), AnyServerUpdateInSteamCmd(), CloseFirstAskedUtc, DateTime.UtcNow);
+
+            if (choice == UpdateCloseChoice.Wait)
+            {
+                e.Cancel = true;
+                CloseWhenUpdatesFinish = true;
+
+                Logger.Information("Close held: an update is running. The window will close when it finishes.");
+                try
+                {
+                    TaskDialog.ShowDialog(this, new TaskDialogPage
+                    {
+                        Caption = Resources.ApplicationTitle,
+                        Heading = "An update is running",
+                        Text = UpdateCloseMessage,
+                        Icon = TaskDialogIcon.Information,
+                        AllowCancel = true,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Could not show the update close notice");
+                }
+
+                // Timed from the moment the host can click again, not from the click that put
+                // this notice up: the notice is modal, so anything measured from before it would
+                // be spending the host's ten seconds on a dialog they cannot click past yet.
+                CloseFirstAskedUtc = DateTime.UtcNow;
+                return;
+            }
+
+            if (choice == UpdateCloseChoice.Force)
+            {
+                // The host asked twice and nothing is mid write, so the promise is off.
+                CloseWhenUpdatesFinish = false;
+                CloseFirstAskedUtc = null;
+                Logger.Warning("Closing while an update is running: the host asked a second time.");
+            }
+
             if (Sessions.Values.All(s => s.Server.Status == ServerStatus.Stopped)) return;
 
             e.Cancel = true;
@@ -813,7 +884,8 @@ namespace ValheimBakaLoader.Forms
                         : LaunchDecision.Go("the host chose to start anyway"));
                 }
 
-                var outcome = LaunchGuard.Decide(context.Current, context.LastLaunchedBuild, context.HasWorlds);
+                var outcome = LaunchGuard.Decide(
+                    context.Current, context.LastLaunchedBuild, context.LastLaunchedFingerprint, context.HasWorlds);
                 if (outcome == LaunchGuardOutcome.Proceed)
                 {
                     ClearLaunchHold(profile);
@@ -823,6 +895,12 @@ namespace ValheimBakaLoader.Forms
                 HoldLaunch(profile, context, outcome);
                 return Task.FromResult(LaunchDecision.Hold(HoldReason(outcome, context)));
             };
+
+            // Every path into a launch asks this first, including the ones no RPC can guard: the
+            // crash relaunch, the scheduled restart, the empty server restart, the auto start and
+            // the held launch retry timer. An update rewriting the install means there is no build
+            // on disk to start, so they all stand down together.
+            server.LaunchBlocked = () => IsServerUpdateRunning(ResolveUpdateExePath(profile));
 
             server.RecordLaunchedBuild = (build, version) => StoreLaunchedBuild(profile, build, version);
 
@@ -891,7 +969,14 @@ namespace ValheimBakaLoader.Forms
             return null;
         }
 
-        /// <summary>Writes what a launched server actually ran into its profile.</summary>
+        /// <summary>
+        /// Writes what a launched server actually ran into its profile: the identity the guard
+        /// was given, and the binaries' own fingerprint taken at the same moment. Two fields
+        /// because they answer different questions. The identity is whatever could be read
+        /// (the Steam build id when the manifest was readable), while the fingerprint is always
+        /// available, so a start where the manifest has gone quiet still has something to
+        /// compare against instead of having to assume nothing changed.
+        /// </summary>
         private void StoreLaunchedBuild(string profile, string build, string gameVersion)
         {
             if (string.IsNullOrWhiteSpace(build) && string.IsNullOrWhiteSpace(gameVersion)) return;
@@ -905,6 +990,15 @@ namespace ValheimBakaLoader.Forms
                 if (!string.IsNullOrWhiteSpace(build) && prefs.LastLaunchedServerBuild != build)
                 {
                     prefs.LastLaunchedServerBuild = build;
+                    changed = true;
+                }
+
+                var fingerprint = LaunchedFingerprint(
+                    prefs.ServerExePath,
+                    message => Logger.Warning("Could not fingerprint the launched server: {message}", message));
+                if (!string.IsNullOrWhiteSpace(fingerprint) && prefs.LastLaunchedServerFingerprint != fingerprint)
+                {
+                    prefs.LastLaunchedServerFingerprint = fingerprint;
                     changed = true;
                 }
                 if (!string.IsNullOrWhiteSpace(gameVersion) && prefs.LastLaunchedGameVersion != gameVersion)
@@ -922,6 +1016,26 @@ namespace ValheimBakaLoader.Forms
             catch (Exception ex)
             {
                 Logger.Warning(ex, "Could not record the launched build for profile {profile}", profile);
+            }
+        }
+
+        /// <summary>
+        /// The binaries' own identity for an install, asked for even when the Steam manifest
+        /// answered. Never throws and never blocks the record: a fingerprint that cannot be
+        /// taken simply leaves the profile with the one identity it always had.
+        /// </summary>
+        public static string LaunchedFingerprint(string serverExePath, Action<string> onFailure = null)
+        {
+            if (string.IsNullOrWhiteSpace(serverExePath)) return null;
+
+            try
+            {
+                return ServerBuildTracker.Probe(serverExePath, alwaysFingerprint: true).Fingerprint;
+            }
+            catch (Exception ex)
+            {
+                onFailure?.Invoke(ex.Message);
+                return null;
             }
         }
 
@@ -950,7 +1064,11 @@ namespace ValheimBakaLoader.Forms
 
             try
             {
-                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                // The Discord post exists to reach somebody who is not at the keyboard. A hold
+                // on a launch the app decided to make on its own is exactly that; a hold on a
+                // start the host just pressed is not, and they are already looking at the
+                // banner this method put on screen. The in-app record above happens either way.
+                if (ShouldAnnounceHold(context.Automatic, UserPrefsProvider.LoadPreferences().DiscordEventPosts))
                 {
                     var name = ServerPrefsProvider.LoadPreferences(profile)?.Name;
                     DiscordWebhooks.SendLaunchHeld(
@@ -979,25 +1097,119 @@ namespace ValheimBakaLoader.Forms
         /// The WebUI builds its prefs payload out of form fields, which do not include the
         /// launch history - so a plain round-trip would erase it and make every start look
         /// like the first one. Fill those two fields back in from what is on disk.
+        /// <para>
+        /// Disk wins whenever it has a value. StoreLaunchedBuild is the only thing that ever
+        /// writes these two fields, so a value the browser sent is at best a copy of an older
+        /// disk read: the page could have been loaded before the last launch recorded its
+        /// build. Taking the browser's word for it whenever both fields happened to be filled
+        /// in is how a start gets checked against a build the server has already moved past.
+        /// </para>
         /// </summary>
         private ServerPreferences MergeLaunchHistory(ServerPreferences prefs)
         {
             if (prefs == null) return null;
-            if (!string.IsNullOrWhiteSpace(prefs.LastLaunchedServerBuild)
-                && !string.IsNullOrWhiteSpace(prefs.LastLaunchedGameVersion)) return prefs;
 
             try
             {
                 var stored = ServerPrefsProvider.LoadPreferences(
                     string.IsNullOrWhiteSpace(prefs.ProfileName) ? ActiveProfileName : prefs.ProfileName);
-                if (stored == null) return prefs;
-
-                prefs.LastLaunchedServerBuild ??= stored.LastLaunchedServerBuild;
-                prefs.LastLaunchedGameVersion ??= stored.LastLaunchedGameVersion;
+                return MergeLaunchHistory(prefs, stored);
             }
             catch { /* an unreadable profile just means the guard asks again */ }
 
             return prefs;
+        }
+
+        /// <summary>
+        /// The rule itself, with the disk read already done, so it can be exercised on its own:
+        /// what is stored wins whenever it has a value, and the payload only fills the gaps.
+        /// </summary>
+        public static ServerPreferences MergeLaunchHistory(ServerPreferences prefs, ServerPreferences stored)
+        {
+            if (prefs == null) return null;
+            if (stored == null) return prefs;
+
+            if (!string.IsNullOrWhiteSpace(stored.LastLaunchedServerBuild))
+                prefs.LastLaunchedServerBuild = stored.LastLaunchedServerBuild;
+            if (!string.IsNullOrWhiteSpace(stored.LastLaunchedServerFingerprint))
+                prefs.LastLaunchedServerFingerprint = stored.LastLaunchedServerFingerprint;
+            if (!string.IsNullOrWhiteSpace(stored.LastLaunchedGameVersion))
+                prefs.LastLaunchedGameVersion = stored.LastLaunchedGameVersion;
+
+            return prefs;
+        }
+
+        /// <summary>
+        /// Whether a held launch is worth a Discord post. The post exists to reach somebody who
+        /// is not at the keyboard, so only a launch BakaLoader decided to make on its own earns
+        /// one; a start the host just pressed is answered by the banner in front of them.
+        /// </summary>
+        public static bool ShouldAnnounceHold(bool automatic, bool discordEventPosts)
+            => automatic && discordEventPosts;
+
+        /// <summary>
+        /// The other profile keeping its worlds in <paramref name="saveFolder"/>, or null when
+        /// this one has it to itself. Deleting a profile's files has to stop when the answer is
+        /// not null, or another realm's worlds go with them.
+        /// </summary>
+        public static ServerPreferences ProfileSharingSaveFolder(
+            IEnumerable<ServerPreferences> all, string profileName, string saveFolder)
+        {
+            if (all == null || string.IsNullOrWhiteSpace(saveFolder)) return null;
+
+            return all.FirstOrDefault(other =>
+                other != null
+                && !string.Equals(other.ProfileName, profileName, StringComparison.OrdinalIgnoreCase)
+                && SameFolder(other.SaveDataFolderPath, saveFolder));
+        }
+
+        /// <summary>
+        /// The allowlist every caller-supplied world reference goes through before it reaches
+        /// disk: a plain world name, one of the two subfolders the game uses, and a save folder
+        /// BakaLoader already knows about. Throws with the reason; returns nothing on success.
+        /// </summary>
+        public static void ValidateWorldSourceRef(
+            string world, string folder, string sub, IEnumerable<string> knownSaveFolders)
+        {
+            if (!WorldStore.IsSafeReferenceToken(world))
+                throw new ArgumentException("Invalid characters in the world name.");
+
+            if (!WorldStore.WorldSubfolders.Contains(sub, StringComparer.Ordinal))
+                throw new ArgumentException("Invalid save subfolder.");
+
+            if (string.IsNullOrWhiteSpace(folder)
+                || knownSaveFolders == null
+                || !knownSaveFolders.Any(k => SameFolder(k, folder)))
+                throw new ArgumentException("Unknown save folder.");
+        }
+
+        /// <summary>
+        /// Whether a name may be used as a backup reference at all. The live world exists on
+        /// disk under its own name, so "it is there" is not the question: only a name shaped
+        /// like a backup layer of that world can ever be one.
+        /// </summary>
+        public static bool IsUsableBackupReference(string file, string world)
+            => WorldStore.IsBackupShapedFor(file, world);
+
+        /// <summary>
+        /// The restore safety layer's name. Local time on purpose: the game names its own
+        /// restore layers with the local clock, BakaLoader's pre-update layers are local, and
+        /// the Barrow reads all of them back as a wall clock.
+        /// </summary>
+        public static string RestoreLayerName(string world) => RestoreLayerName(world, DateTime.Now);
+
+        public static string RestoreLayerName(string world, DateTime whenLocal)
+            => $"{world}_backup_restore-{whenLocal:yyyyMMdd-HHmmss}";
+
+        /// <summary>
+        /// Whether a pre-update snapshot actually protected anything. A pass that finished
+        /// cleanly but copied nothing is only good news when there was nothing to copy; with
+        /// worlds on disk it means zero bytes were protected, which is a failure (LG-10).
+        /// </summary>
+        public static bool SnapshotProtectedTheWorlds(WorldStore.WorldSnapshotResult result, bool hadWorlds)
+        {
+            if (result == null || !result.Ok) return false;
+            return result.Copied.Count > 0 || !hadWorlds;
         }
 
         /// <summary>
@@ -1106,13 +1318,15 @@ namespace ValheimBakaLoader.Forms
                 Reason = LaunchReasons.Manual,
                 Current = current,
                 LastLaunchedBuild = prefs.LastLaunchedServerBuild,
+                LastLaunchedFingerprint = prefs.LastLaunchedServerFingerprint,
                 LastLaunchedGameVersion = prefs.LastLaunchedGameVersion,
                 HasWorlds = hasWorlds,
                 ProfileName = profile,
                 Options = options,
             };
 
-            var outcome = LaunchGuard.Decide(current, context.LastLaunchedBuild, hasWorlds);
+            var outcome = LaunchGuard.Decide(
+                current, context.LastLaunchedBuild, context.LastLaunchedFingerprint, hasWorlds);
             return BuildLaunchGuardDto(profile, context, outcome);
         }
 
@@ -1246,8 +1460,530 @@ namespace ValheimBakaLoader.Forms
             ServerPrefsProvider.PreferencesSaved += (s, all) =>
                 PostEvent("profiles.changed", all.Select(p => new { p.ProfileName, p.LastSaved }).ToList());
 
+            // A newer BakaLoader release. Every open window wants its own banner, and this
+            // method already runs once per window, so the subscription belongs here.
+            SoftwareUpdates.UpdateAvailable += (s, found) => PostAppUpdateAvailable(found);
+
+            // The server update the host started from this app. Progress is a push rather
+            // than a poll: a steamcmd run prints for minutes and the bar follows it live.
+            ServerUpdates.Progress += (s, progress) =>
+            {
+                if (!string.IsNullOrWhiteSpace(progress?.ProfileName))
+                    ServerUpdatePhaseSeen[progress.ProfileName] = progress.Phase;
+
+                PostEvent("server.updateProgress", new
+                {
+                    profile = progress.ProfileName,
+                    phase = progress.Phase.ToString(),
+                    percent = progress.Percent,
+                    bytesDone = progress.BytesDone,
+                    bytesTotal = progress.BytesTotal,
+                    line = progress.Line,
+                    message = progress.Message,
+                });
+            };
+
+            ServerUpdates.Completed += (s, result) => OnServerUpdateCompleted(result);
+
             AppLogger.LogReceived += line => PostEvent("log.app", new { line });
         }
+
+        /// <summary>
+        /// Tells this window's UI that a newer BakaLoader release exists. Used both by the
+        /// live event and by the replay on load.
+        /// </summary>
+        private void PostAppUpdateAvailable(AppUpdateAvailability found)
+        {
+            if (found == null || string.IsNullOrWhiteSpace(found.Version)) return;
+
+            PostEvent("app.updateAvailable", new
+            {
+                version = found.Version,
+                notesUrl = found.NotesUrl,
+            });
+        }
+
+        /// <summary>
+        /// The update check runs as a launch step, which finishes before any window is on
+        /// screen - and a push made before a window has its handle is dropped with no second
+        /// chance. The WebUI calls app.info first on every load, so that call replays whatever
+        /// the check found. A window opened later, or a page reload, gets it the same way.
+        /// </summary>
+        private void ReplayAppUpdateAvailable()
+        {
+            try { PostAppUpdateAvailable(SoftwareUpdates?.LatestAvailable); }
+            catch (Exception ex) { Logger.Warning(ex, "Could not replay the available app update"); }
+        }
+
+        #endregion
+
+        #region Server update (Steam or steamcmd, driven from the app)
+
+        /// <summary>
+        /// What BakaLoader says when it cannot tell how an install was made. Kept here so the
+        /// refusal reads the same whether the service or the bridge produced it.
+        /// </summary>
+        private const string UnknownInstallMessage =
+            "BakaLoader cannot tell how this server was installed, so it cannot update it for you. "
+            + "Open Steam and update Valheim Dedicated Server there.";
+
+        /// <summary>The wire word for an install kind. Matches the tokens the WebUI switches on.</summary>
+        private static string InstallKindToken(ServerInstallKind kind) => kind switch
+        {
+            ServerInstallKind.SteamLibrary => "steamLibrary",
+            ServerInstallKind.Standalone => "standalone",
+            _ => "unknown",
+        };
+
+        /// <summary>Classify, never throwing: an unreadable install is an Unknown one.</summary>
+        private ServerInstallInfo ClassifyInstall(string serverExePath)
+        {
+            if (string.IsNullOrWhiteSpace(serverExePath)) return null;
+            try { return ServerUpdates.Classify(serverExePath); }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not work out how the server at {path} was installed", serverExePath);
+                return null;
+            }
+        }
+
+        private bool IsServerUpdateRunning(string serverExePath)
+        {
+            if (string.IsNullOrWhiteSpace(serverExePath)) return false;
+            try { return ServerUpdates.IsRunning(serverExePath); }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// What an RPC answers when it will not do the thing it was asked to do. The page shows
+        /// the sentence exactly as it arrives, so the wording lives on this side.
+        /// </summary>
+        private static object RefusedRpc(string error) => new { ok = false, error };
+
+        /// <summary>
+        /// The executable an update for this profile is rewriting. Taken from the operation this
+        /// window started when there is one, so the Start button costs a dictionary read; falling
+        /// back to the profile's own preferences for anything that never went through here.
+        /// </summary>
+        private string ResolveUpdateExePath(string profile)
+        {
+            if (string.IsNullOrWhiteSpace(profile)) return null;
+            if (ServerUpdateExe.TryGetValue(profile, out var known) && !string.IsNullOrWhiteSpace(known))
+                return known;
+
+            try
+            {
+                var prefs = ServerPrefsProvider.LoadPreferences(profile);
+                return prefs == null ? null : BuildServerOptions(prefs)?.ServerExePath;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not work out which server executable profile {profile} uses", profile);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// True while any install is being rewritten right now. The updates this window started
+        /// answer from a dictionary; every other profile is asked properly, because the update
+        /// service is one singleton shared by every open window and a close here would take a
+        /// steamcmd run started over there down with it.
+        /// </summary>
+        private bool AnyServerUpdateRunning()
+        {
+            if (ServerUpdateExe.Any(pair => IsServerUpdateRunning(pair.Value))) return true;
+
+            try
+            {
+                foreach (var pr in ServerPrefsProvider.LoadPreferences())
+                {
+                    if (IsServerUpdateRunning(BuildServerOptions(pr)?.ServerExePath)) return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not check whether an update is running for every profile");
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// True while an update is in the one phase that must never be cut short. Everything else
+        /// can be abandoned; a half written install cannot be undone.
+        /// <para>
+        /// An update this window did not start has no phase recorded here, and an unknown phase
+        /// counts as the dangerous one. Guessing wrong the other way means force closing on top
+        /// of somebody else's steamcmd run, and the cost of guessing this way is only that the
+        /// host waits.
+        /// </para>
+        /// </summary>
+        private bool AnyServerUpdateInSteamCmd()
+        {
+            foreach (var pair in ServerUpdateExe)
+            {
+                if (!IsServerUpdateRunning(pair.Value)) continue;
+                if (!ServerUpdatePhaseSeen.TryGetValue(pair.Key, out var phase)) return true;
+                if (phase == ServerUpdatePhase.RunningSteamCmd) return true;
+            }
+
+            try
+            {
+                foreach (var pr in ServerPrefsProvider.LoadPreferences())
+                {
+                    if (pr?.ProfileName == null || ServerUpdateExe.ContainsKey(pr.ProfileName)) continue;
+                    if (IsServerUpdateRunning(BuildServerOptions(pr)?.ServerExePath)) return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not check how far along another profile's update is");
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>What the window does about a close click while an update is running.</summary>
+        public enum UpdateCloseChoice
+        {
+            /// <summary>Nothing is being rewritten: close as normal.</summary>
+            Close,
+
+            /// <summary>Refuse, say so, and close by itself when the update finishes.</summary>
+            Wait,
+
+            /// <summary>The host asked twice and no steamcmd run is mid write: let it go.</summary>
+            Force,
+        }
+
+        /// <summary>How long a second close click still counts as "yes, I meant it".</summary>
+        public static readonly TimeSpan UpdateCloseInsistWindow = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// The close decision on its own, so it can be driven without a window. First click while
+        /// an update runs always waits: the update finishes in seconds to minutes and the window
+        /// closes itself when it does. A second click inside ten seconds is the host insisting,
+        /// and is honoured unless steamcmd is mid write, where killing the app mid file leaves an
+        /// install that is neither the old build nor the new one.
+        /// </summary>
+        public static UpdateCloseChoice DecideUpdateClose(
+            bool updateRunning, bool steamCmdRunning, DateTime? firstAskedUtc, DateTime nowUtc)
+        {
+            if (!updateRunning) return UpdateCloseChoice.Close;
+            if (firstAskedUtc == null) return UpdateCloseChoice.Wait;
+            if (nowUtc - firstAskedUtc.Value > UpdateCloseInsistWindow) return UpdateCloseChoice.Wait;
+
+            return steamCmdRunning ? UpdateCloseChoice.Wait : UpdateCloseChoice.Force;
+        }
+
+        /// <summary>What the host is told when a close is refused because an update is running.</summary>
+        public const string UpdateCloseMessage =
+            "An update is running. BakaLoader will close when it finishes.";
+
+        // Whether a cancel will be honoured, and whether an update ended in one, used to be
+        // worked out here from the last phase this window happened to see. Both answers belong
+        // to the update service and both now come straight from it: ServerUpdates.Cancel says
+        // whether it took, and ServerUpdateResult.Cancelled says how the operation ended. Two
+        // copies of one rule cannot be kept in step, and the copy here read a phase that could
+        // already be out of date. The gate in BlendWindowUpdateGuardTests keeps them gone.
+
+        /// <summary>
+        /// Everything the update UI needs before it offers a button: the install kind, what
+        /// Steam has queued, and one plain sentence when the answer is no.
+        /// </summary>
+        private object BuildServerUpdateCheck(string profile, IValheimServerOptions options, bool serverStopped)
+        {
+            var exe = options?.ServerExePath;
+            var install = ClassifyInstall(exe);
+            var kind = install?.Kind ?? ServerInstallKind.Unknown;
+
+            // Every field this answer carries comes out of the Steam manifest, and the probe
+            // hashes the binaries whenever there is no manifest to read. A dashboard render
+            // calls this, so an install with no manifest is answered from what ClassifyInstall
+            // already found rather than by hashing tens of megabytes for fields that would all
+            // come back empty anyway.
+            Tools.ServerBuildInfo current = null;
+            if (install?.ManifestPath != null)
+            {
+                try { current = ServerBuildTracker.Probe(exe); }
+                catch (Exception ex) { Logger.Warning(ex, "Could not read the server build for profile {profile}", profile); }
+            }
+
+            var running = IsServerUpdateRunning(exe);
+
+            string reason = null;
+            var canUpdate = true;
+            if (kind == ServerInstallKind.Unknown)
+            {
+                canUpdate = false;
+                reason = string.IsNullOrWhiteSpace(install?.Reason) ? UnknownInstallMessage : install.Reason;
+            }
+            else if (running)
+            {
+                canUpdate = false;
+                reason = "An update is already running for this install.";
+            }
+            else if (!serverStopped)
+            {
+                canUpdate = false;
+                reason = "Stop the server to update it.";
+            }
+
+            return new
+            {
+                profile,
+                installKind = InstallKindToken(kind),
+                updatePending = current?.UpdatePending ?? false,
+                pendingBytes = current?.PendingBytes ?? 0,
+                buildId = current?.BuildId,
+                targetBuildId = current?.TargetBuildId,
+                canUpdate,
+                running,
+                reason,
+            };
+        }
+
+        /// <summary>
+        /// The worlds-aside step the update runs before it lets anything write to the install.
+        /// Wraps the same snapshot the launch guard uses, and answers the one question the
+        /// update service asks: are the worlds safe now?
+        /// <para>
+        /// A pass that copied nothing while worlds exist is NOT safe, however cleanly it
+        /// finished. That is the whole point of the step, so it returns false and the update
+        /// never starts (LG-10). A genuinely empty save folder has nothing to protect and
+        /// passes.
+        /// </para>
+        /// </summary>
+        private Task<bool> RunUpdateBackupAsync(string profile, IValheimServerOptions options)
+        {
+            return Task.Run(() =>
+            {
+                var hadWorlds = false;
+                try { hadWorlds = WorldStore.Enumerate(options.SaveDataFolderPath).Count > 0; }
+                catch { /* an unreadable save folder is reported by the snapshot itself */ }
+
+                WorldStore.WorldSnapshotResult result;
+                try
+                {
+                    result = WorldStore.SnapshotAllPreUpdate(
+                        options.SaveDataFolderPath, whenLocal: null, refuse: WorldInUseByRunningProfile);
+                }
+                catch (Exception e)
+                {
+                    result = new WorldStore.WorldSnapshotResult { Error = e.Message };
+                }
+
+                var ok = SnapshotProtectedTheWorlds(result, hadWorlds);
+                var protectedNothing = result.Ok && !ok;
+
+                var error = result.Error;
+                if (protectedNothing)
+                {
+                    error = "This save folder holds worlds, but none of them could be copied aside.";
+                    Logger.Error(
+                        "The pre-update snapshot for profile {profile} copied no worlds while worlds exist; the update was not started.",
+                        profile);
+                }
+
+                // Same event the launch path raises, so the WebUI's existing handler shows the
+                // real count or the real failure without knowing which flow asked for it.
+                PostEvent("server.worldsBackedUp", new
+                {
+                    profile,
+                    ok,
+                    error,
+                    count = result.Copied.Count,
+                    bytes = result.Bytes,
+                    skipped = result.Skipped,
+                });
+
+                if (ok)
+                {
+                    Analytics.Record(new AnalyticsEvent { Kind = "presnap", Server = profile });
+                    ServerUpdateBackedUp[profile] = true;
+                }
+
+                return ok;
+            });
+        }
+
+        /// <summary>
+        /// The end of an update, whichever way it went: tell the UI, tell Discord when event
+        /// posts are on, and start the server when that is what was asked for.
+        /// </summary>
+        private void OnServerUpdateCompleted(ServerUpdateResult result)
+        {
+            if (result == null || string.IsNullOrWhiteSpace(result.ProfileName)) return;
+
+            var profile = result.ProfileName;
+
+            // The update service is one singleton every open window listens to, so this fires
+            // in all of them. Only the window that started this update follows through: two
+            // Discord posts and two start attempts for one update is not a small mistake.
+            if (!ServerUpdateCts.TryRemove(profile, out var cts)) return;
+            try { cts.Dispose(); } catch { }
+
+            ServerUpdateExe.TryRemove(profile, out _);
+
+            // The service says so itself now. This used to be read off the last phase that
+            // reached this window, which is a copy of the truth rather than the truth: a
+            // progress event that never arrived, or one that arrived after the completion,
+            // would have turned a cancel into a red failure row.
+            var cancelled = result.Cancelled;
+            ServerUpdatePhaseSeen.TryRemove(profile, out _);
+
+            var name = ServerPrefsProvider.LoadPreferences(profile)?.Name;
+            var serverName = string.IsNullOrWhiteSpace(name) ? profile : name;
+
+            if (result.Ok)
+            {
+                Logger.Information("Profile {profile} finished updating (build {build})",
+                    profile, string.IsNullOrWhiteSpace(result.BuildId) ? "unknown" : result.BuildId);
+
+                PostEvent("server.updateDone", new
+                {
+                    profile,
+                    buildId = result.BuildId,
+                    startAfter = result.StartAfter,
+                });
+            }
+            else
+            {
+                Logger.Warning("Profile {profile} was not updated: {reason}", profile, result.Reason);
+
+                PostEvent("server.updateFailed", new
+                {
+                    profile,
+                    reason = result.Reason,
+                    // A cancel is not a failure the host needs a red row about: they asked for it,
+                    // and Steam carries on with the download by itself. The page reads this and
+                    // puts the launch hold back exactly as it was instead.
+                    cancelled,
+                });
+            }
+
+            // Mirrors the launch-hold post: same gate, same best-effort try/catch.
+            try
+            {
+                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                {
+                    if (result.Ok)
+                        DiscordWebhooks.SendServerUpdated(serverName, result.BuildId, result.StartAfter);
+                    else
+                        DiscordWebhooks.SendServerUpdateFailed(serverName, result.Reason);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not post the server update to Discord");
+            }
+
+            if (result.Ok && result.StartAfter)
+            {
+                try { BeginInvoke(new Action(() => StartAfterUpdate(profile))); }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Could not start profile {profile} after its update", profile);
+                }
+            }
+
+            // The host clicked the window X while this was running and was told the app would
+            // close when it finished. It has finished.
+            if (CloseWhenUpdatesFinish && !AnyServerUpdateRunning())
+            {
+                try { BeginInvoke(new Action(CloseAfterUpdate)); }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Could not close the window after the update finished");
+                }
+            }
+        }
+
+        // Set when a close was refused because an update was running: the window owes the host a
+        // close as soon as the last one finishes.
+        private bool CloseWhenUpdatesFinish;
+
+        // When the close was first refused, so a second click inside ten seconds can be read as
+        // the host insisting rather than as a fresh first click.
+        private DateTime? CloseFirstAskedUtc;
+
+        /// <summary>The close the window promised when it refused one during an update.</summary>
+        private void CloseAfterUpdate()
+        {
+            if (!CloseWhenUpdatesFinish) return;
+            CloseWhenUpdatesFinish = false;
+
+            try { Close(); }
+            catch (Exception ex) { Logger.Warning(ex, "Could not close the window after the update finished"); }
+        }
+
+        /// <summary>
+        /// Starts a profile the way the Start button does, once its update finished. It goes
+        /// through the same guarded start as everything else - the build genuinely changed, so
+        /// the guard has a real question to ask - with the answer already staged.
+        /// <para>
+        /// The staged answer is "proceed" only when this operation already copied the worlds
+        /// aside. When the host asked to update WITHOUT a backup, the answer staged is "backup",
+        /// so the guard still copies them before the new build converts them: skipping the
+        /// snapshot before a download is a different decision from skipping it before the one
+        /// launch that rewrites every world on disk.
+        /// </para>
+        /// </summary>
+        private void StartAfterUpdate(string profile)
+        {
+            // This runs on the UI thread from a background completion, so nothing may escape:
+            // a collision check that throws here would take the window with it rather than
+            // land in an RPC reply the way a Start button press would.
+            try
+            {
+                var prefs = ServerPrefsProvider.LoadPreferences(profile);
+                if (prefs == null)
+                {
+                    Logger.Warning("Profile {profile} vanished while it was updating, so nothing was started", profile);
+                    return;
+                }
+
+                var session = GetOrCreateSession(profile);
+                var options = BuildServerOptions(MergeLaunchHistory(prefs));
+
+                StageLaunchAnswer(profile, ServerUpdateBackedUp.TryRemove(profile, out var copied) && copied
+                    ? "proceed"
+                    : "backup");
+
+                if (!session.Server.CanStart)
+                {
+                    DropLaunchAnswer(profile);
+                    Logger.Warning("Profile {profile} could not be started after its update", profile);
+                    PostEvent("server.launchFailed", new
+                    {
+                        profile,
+                        reason = LaunchReasons.Manual,
+                        message = "The update finished, but the server could not be started. Start it yourself when you are ready.",
+                    });
+                    return;
+                }
+
+                EnsureNoServerCollisions(session, options);
+                session.Server.Start(options);
+            }
+            catch (Exception ex)
+            {
+                DropLaunchAnswer(profile);
+                Logger.Error(ex, "Profile {profile} could not be started after its update", profile);
+                PostEvent("server.launchFailed", new
+                {
+                    profile,
+                    reason = LaunchReasons.Manual,
+                    message = ex.Message,
+                });
+            }
+        }
+
+        // Whether the update that just finished copied the worlds aside, per profile. Read once
+        // by StartAfterUpdate to decide what to stage for the guard.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> ServerUpdateBackedUp =
+            new(StringComparer.OrdinalIgnoreCase);
 
         #endregion
 
@@ -1256,13 +1992,20 @@ namespace ValheimBakaLoader.Forms
         private void RegisterRpcHandlers()
         {
             // --- App ---
-            RegisterRpc("app.info", p => Task.FromResult<object>(new
+            RegisterRpc("app.info", p =>
             {
-                version = AssemblyHelper.GetApplicationVersion(),
-                // StartProfile fallback covers the (unlikely) case where the JS boots
-                // before OnBlendStartup has copied the splash-assigned profile over.
-                profile = CurrentProfile ?? StartProfile,
-            }));
+                // First call the WebUI makes on every load, so it is where anything the app
+                // learned before this window existed gets said again.
+                ReplayAppUpdateAvailable();
+
+                return Task.FromResult<object>(new
+                {
+                    version = AssemblyHelper.GetApplicationVersion(),
+                    // StartProfile fallback covers the (unlikely) case where the JS boots
+                    // before OnBlendStartup has copied the splash-assigned profile over.
+                    profile = CurrentProfile ?? StartProfile,
+                });
+            });
 
             // --- Profiles (ServerPreferences) ---
             RegisterRpc("profiles.list", p => Task.FromResult<object>(
@@ -1418,6 +2161,21 @@ namespace ValheimBakaLoader.Forms
                 {
                     var installDir = GetManagedInstallDir(prefs);
                     var saveFolder = GetIsolatedSaveFolder(prefs);
+
+                    // Two profiles may be pointed at one save folder, deliberately or by a
+                    // hand-edited prefs file. Deleting the files then takes the other realm's
+                    // worlds with them, and nothing would say so. Refuse instead, and name the
+                    // profile that is still using it so the host can decide.
+                    if (saveFolder != null)
+                    {
+                        var sharedWith = ProfileSharingSaveFolder(
+                            ServerPrefsProvider.LoadPreferences(), name, saveFolder);
+
+                        if (sharedWith != null)
+                            throw new InvalidOperationException(
+                                $"'{sharedWith.ProfileName}' keeps its worlds in the same folder, so the files were not deleted. "
+                                + "Point that server somewhere else first, or delete this one without its files.");
+                    }
 
                     // Slow file work off the UI thread; junction-safe delete never touches shared game data.
                     await Task.Run(() =>
@@ -1609,7 +2367,14 @@ namespace ValheimBakaLoader.Forms
 
                 var sourceFolder = p.Value<string>("folder");
                 var sub = p.Value<string>("sub");
-                if (string.IsNullOrWhiteSpace(sub)) sub = "worlds_local";
+                if (string.IsNullOrWhiteSpace(sub)) sub = WorldStore.WorldSubfolders[0];
+
+                // Same allowlist the Barrow's own references go through (ValidateBackupRef):
+                // the world name has to be a plain name, the subfolder one of the two the game
+                // uses, and the folder one BakaLoader already knows about. Without this the
+                // caller picks the path, and "sub" alone is enough to climb out of the save
+                // folder and read a directory that was never anybody's world.
+                ValidateWorldSourceRef(world, sourceFolder, sub, KnownSaveFolders());
 
                 // Fail loudly BEFORE creating anything: a missing source must never produce a
                 // profile that claims the world while zero files were actually copied. Either
@@ -1718,53 +2483,64 @@ namespace ValheimBakaLoader.Forms
 
             RegisterRpc("userprefs.save", p =>
             {
-                var prefs = UserPrefsProvider.LoadPreferences();
                 var dto = p["prefs"] as JObject ?? throw new ArgumentException("prefs is required");
 
-                // Only apply keys the client sent, so partial updates never clobber other settings.
-                void Apply(string key, Action<JToken> setter)
+                // userprefs.json is one document: this handler saves the WHOLE of it, servers and
+                // worlds included. Loading it here and writing it back after a Discord publish or a
+                // launch record had landed in between would put those back the way they were, so the
+                // load, the edits and the write all happen under the one gate.
+                UserPreferences prefs = null;
+                UserPrefsProvider.Mutate(current =>
                 {
-                    if (dto.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out var v)) setter(v);
-                }
+                    prefs = current;
 
-                Apply("ServerExePath", v => prefs.ServerExePath = v.Value<string>());
-                Apply("SaveDataFolderPath", v => prefs.SaveDataFolderPath = v.Value<string>());
-                Apply("CheckForUpdates", v => prefs.CheckForUpdates = v.Value<bool>());
-                Apply("AutoUpdateMods", v => prefs.AutoUpdateMods = v.Value<bool>());
-                Apply("AutoUpdateBakaLoader", v => prefs.AutoUpdateBakaLoader = v.Value<bool>());
-                Apply("StartWithWindows", v => prefs.StartWithWindows = v.Value<bool>());
-                Apply("ShareAnonymousStats", v => prefs.ShareAnonymousStats = v.Value<bool>());
-                Apply("StartMinimized", v => prefs.StartMinimized = v.Value<bool>());
-                Apply("SaveProfileOnStart", v => prefs.SaveProfileOnStart = v.Value<bool>());
-                Apply("WriteApplicationLogsToFile", v => prefs.WriteApplicationLogsToFile = v.Value<bool>());
-                Apply("LogsFolderPath", v =>
-                {
-                    // Blank = back to the default folder. A custom path must be
-                    // rooted (no relative surprises) and creatable, or the save fails loud.
-                    var path = v.Value<string>()?.Trim();
-                    if (string.IsNullOrWhiteSpace(path))
+                    // Only apply keys the client sent, so partial updates never clobber other settings.
+                    void Apply(string key, Action<JToken> setter)
                     {
-                        prefs.LogsFolderPath = null;
-                        return;
+                        if (dto.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out var v)) setter(v);
                     }
-                    var expanded = Environment.ExpandEnvironmentVariables(path);
-                    if (!Path.IsPathRooted(expanded))
-                        throw new ArgumentException("The logs folder must be a full path (e.g. D:\\ValheimLogs).");
-                    Directory.CreateDirectory(expanded); // throws if unusable
-                    prefs.LogsFolderPath = path;
-                });
-                Apply("EnablePasswordValidation", v => prefs.EnablePasswordValidation = v.Value<bool>());
-                Apply("DarkMode", v => prefs.DarkMode = v.Value<bool>());
-                Apply("PlainTerminology", v => prefs.PlainTerminology = v.Value<bool>());
-                Apply("DiscordWebhookUrl", v => prefs.DiscordWebhookUrl = v.Value<string>());
-                Apply("DiscordWebhookThreadId", v => prefs.DiscordWebhookThreadId = v.Value<string>());
-                Apply("DiscordSharingEnabled", v => prefs.DiscordSharingEnabled = v.Value<bool>());
-                Apply("DiscordShareAddress", v => prefs.DiscordShareAddress = v.Value<bool>());
-                Apply("DiscordSharePassword", v => prefs.DiscordSharePassword = v.Value<bool>());
-                Apply("DiscordEventPosts", v => prefs.DiscordEventPosts = v.Value<bool>());
-                Apply("CustomJoinDomain", v => prefs.CustomJoinDomain = v.Value<string>()?.Trim());
 
-                UserPrefsProvider.SavePreferences(prefs);
+                    Apply("ServerExePath", v => prefs.ServerExePath = v.Value<string>());
+                    Apply("SaveDataFolderPath", v => prefs.SaveDataFolderPath = v.Value<string>());
+                    Apply("CheckForUpdates", v => prefs.CheckForUpdates = v.Value<bool>());
+                    Apply("AutoUpdateMods", v => prefs.AutoUpdateMods = v.Value<bool>());
+                    Apply("AutoUpdateBakaLoader", v => prefs.AutoUpdateBakaLoader = v.Value<bool>());
+                    Apply("StartWithWindows", v => prefs.StartWithWindows = v.Value<bool>());
+                    Apply("ShareAnonymousStats", v => prefs.ShareAnonymousStats = v.Value<bool>());
+                    Apply("StartMinimized", v => prefs.StartMinimized = v.Value<bool>());
+                    Apply("SaveProfileOnStart", v => prefs.SaveProfileOnStart = v.Value<bool>());
+                    Apply("WriteApplicationLogsToFile", v => prefs.WriteApplicationLogsToFile = v.Value<bool>());
+                    Apply("LogsFolderPath", v =>
+                    {
+                        // Blank = back to the default folder. A custom path must be
+                        // rooted (no relative surprises) and creatable, or the save fails loud.
+                        var path = v.Value<string>()?.Trim();
+                        if (string.IsNullOrWhiteSpace(path))
+                        {
+                            prefs.LogsFolderPath = null;
+                            return;
+                        }
+                        var expanded = Environment.ExpandEnvironmentVariables(path);
+                        if (!Path.IsPathRooted(expanded))
+                            throw new ArgumentException("The logs folder must be a full path (e.g. D:\\ValheimLogs).");
+                        Directory.CreateDirectory(expanded); // throws if unusable
+                        prefs.LogsFolderPath = path;
+                    });
+                    Apply("EnablePasswordValidation", v => prefs.EnablePasswordValidation = v.Value<bool>());
+                    Apply("DarkMode", v => prefs.DarkMode = v.Value<bool>());
+                    Apply("PlainTerminology", v => prefs.PlainTerminology = v.Value<bool>());
+                    Apply("DiscordWebhookUrl", v => prefs.DiscordWebhookUrl = v.Value<string>());
+                    Apply("DiscordWebhookThreadId", v => prefs.DiscordWebhookThreadId = v.Value<string>());
+                    Apply("DiscordSharingEnabled", v => prefs.DiscordSharingEnabled = v.Value<bool>());
+                    Apply("DiscordShareAddress", v => prefs.DiscordShareAddress = v.Value<bool>());
+                    Apply("DiscordSharePassword", v => prefs.DiscordSharePassword = v.Value<bool>());
+                    Apply("DiscordEventPosts", v => prefs.DiscordEventPosts = v.Value<bool>());
+                    Apply("CustomJoinDomain", v => prefs.CustomJoinDomain = v.Value<string>()?.Trim());
+                });
+
+                // Only when the document could not be read at all, which the provider answers with
+                // defaults rather than null. Belt to that brace so the lines below cannot fault.
+                prefs ??= UserPrefsProvider.LoadPreferences();
 
                 // A Discord-affecting save should refresh the status post right away
                 // (e.g. share-password toggled -> the field appears/disappears; the
@@ -1933,8 +2709,36 @@ namespace ValheimBakaLoader.Forms
                 var profiles = ServerPrefsProvider.LoadPreferences();
                 var groups = new List<(DateTime modified, object dto)>();
 
+                // Layers whose world is gone. They live in the same folders and are the same
+                // shape, but the loop below asks for layers world by world from the LIVE worlds,
+                // so a set with no live owner is never asked for. Answered as its own array so a
+                // page that does not know about it still reads the world list exactly as before.
+                var orphans = new List<(DateTime modified, object dto)>();
+
                 foreach (var saveFolder in KnownSaveFolders())
                 {
+                    // One classifier, and it is WorldStore's: it knows which names are layers
+                    // rather than worlds (a rolling save belongs to the world it is named after)
+                    // and it looks for a live owner in BOTH worlds subfolders before calling a
+                    // set owner less, so a world kept in "worlds" still claims layers sitting in
+                    // "worlds_local". Reading the subfolders itself is why this sits outside the
+                    // loop below rather than inside it.
+                    foreach (var set in WorldStore.EnumerateOrphanBackups(saveFolder))
+                    {
+                        var layers = set.Layers
+                            .Select(layer => BuildBackupLayerDto(layer, TryReadWorldDay(layer.DbPath)))
+                            .ToList();
+
+                        orphans.Add((set.Layers.Max(layer => layer.LastWriteUtc), new
+                        {
+                            world = set.WorldName,
+                            folder = saveFolder,
+                            sub = set.Sub,
+                            layers,
+                            backupBytes = set.SizeBytes,
+                        }));
+                    }
+
                     foreach (var sub in WorldStore.WorldSubfolders)
                     {
                         // WorldStore returns worlds in BOTH formats and never returns a backup,
@@ -1955,18 +2759,7 @@ namespace ValheimBakaLoader.Forms
                             foreach (var layer in WorldStore.EnumerateBackups(saveFolder, sub, world))
                             {
                                 backupBytes += layer.SizeBytes;
-                                layers.Add(new
-                                {
-                                    file = layer.Name,
-                                    kind = WorldStore.KindToken(layer.Kind),
-                                    isDirectory = layer.IsDirectory,
-                                    sizeBytes = layer.SizeBytes,
-                                    modifiedUtc = layer.LastWriteUtc,
-                                    day = TryReadWorldDay(layer.DbPath),
-                                    hasDb = layer.HasDb,
-                                    committed = layer.IsCommitted,
-                                    saveNumber = layer.SaveNumber,
-                                });
+                                layers.Add(BuildBackupLayerDto(layer, TryReadWorldDay(layer.DbPath)));
                             }
 
                             groups.Add((live.LastWriteUtc, new
@@ -1990,10 +2783,11 @@ namespace ValheimBakaLoader.Forms
                     }
                 }
 
-                return Task.FromResult<object>(groups
-                    .OrderByDescending(g => g.modified)
-                    .Select(g => g.dto)
-                    .ToList());
+                return Task.FromResult<object>(new
+                {
+                    worlds = groups.OrderByDescending(g => g.modified).Select(g => g.dto).ToList(),
+                    orphans = orphans.OrderByDescending(g => g.modified).Select(g => g.dto).ToList(),
+                });
             });
 
             // Restores one backup layer over the live world pair - but FIRST lays down a
@@ -2004,7 +2798,6 @@ namespace ValheimBakaLoader.Forms
             {
                 var reference = ValidateBackupRef(p, requireBackupShape: true);
                 var saveFolder = reference.SaveFolder;
-                var dir = reference.Dir;
                 var world = reference.World;
                 var file = reference.File;
                 var layer = reference.Layer;
@@ -2018,78 +2811,10 @@ namespace ValheimBakaLoader.Forms
                             $"'{pr.ProfileName}' is running world '{world}' right now - stop it before restoring a backup.");
                 }
 
-                // A 1.0 layer is only safe to copy once its generation is committed: the .ok
-                // marker is written last, so a layer without it is a half-written save.
-                if (layer.IsDirectory && !layer.IsCommitted)
-                    throw new InvalidOperationException(
-                        $"'{layer.Name}' holds no finished save yet, so there is nothing to unearth from it.");
-
-                // Scoped to the layer's OWN subfolder. A name that exists in both worlds_local
-                // and worlds would otherwise resolve to whichever one comes first, and the
-                // safety copy would be taken of one world while the other is overwritten.
-                var live = WorldStore.FindIn(saveFolder, reference.Sub, world);
-                var liveFwl = Path.Combine(dir, world + ".fwl");
-                var liveDb = Path.Combine(dir, world + ".db");
-                var liveDir = Path.Combine(dir, world);
-
-                // Prove it before anything is written: the world being replaced has to be the
-                // one that sits beside the layer being unearthed.
-                if (live != null)
-                {
-                    var liveParent = live.Format == WorldFormat.Chunked
-                        ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(live.Folder))
-                        : live.Folder;
-
-                    if (!SameFolder(liveParent, dir))
-                        throw new InvalidOperationException(
-                            $"'{world}' resolved to a world in a different save subfolder, so nothing was restored.");
-                }
-
-                // Safety layer first: snapshot whatever is live right now, in its own format,
-                // so every unearthing stays reversible from the Barrow. A 1.0 world is a whole
-                // directory, so all of this runs off the UI thread.
-                string snapshot = live == null ? null : $"{world}_backup_restore-{DateTime.UtcNow:yyyyMMdd-HHmmss}";
-                var restoredDb = await Task.Run(() =>
-                {
-                    if (live != null)
-                    {
-                        if (live.Format == WorldFormat.Chunked)
-                        {
-                            WorldStore.CopyDirectory(live.Folder, Path.Combine(dir, snapshot));
-                        }
-                        else
-                        {
-                            File.Copy(liveFwl, Path.Combine(dir, snapshot + ".fwl"), overwrite: true);
-                            if (File.Exists(liveDb)) File.Copy(liveDb, Path.Combine(dir, snapshot + ".db"), overwrite: true);
-                        }
-                    }
-
-                    if (layer.IsDirectory)
-                    {
-                        // Chunked layer: the live directory keeps its place, its contents are
-                        // replaced wholesale so no stale chunk file from the newer save survives.
-                        if (live != null && live.Format == WorldFormat.Legacy)
-                        {
-                            foreach (var ext in new[] { ".fwl", ".db" })
-                            {
-                                var stale = Path.Combine(dir, world + ext);
-                                if (File.Exists(stale)) File.Delete(stale);
-                            }
-                        }
-                        WorldStore.ReplaceDirectoryContents(layer.Path, liveDir, snapshot);
-                        return true;
-                    }
-
-                    // Legacy layer. Onto a 1.0 world this means going back to the pre-conversion
-                    // files: the live directory goes away and the pair returns to the worlds root,
-                    // where the game converts it again on its next save.
-                    if (live != null && live.Format == WorldFormat.Chunked && Directory.Exists(live.Folder))
-                        Directory.Delete(live.Folder, recursive: true);
-
-                    File.Copy(layer.Path, liveFwl, overwrite: true);
-                    if (layer.HasDb) File.Copy(layer.DbPath, liveDb, overwrite: true);
-                    return layer.HasDb;
-                });
+                // Everything that touches the files, including the safety copy, in one place a
+                // test can drive: a 1.0 world is a whole directory, so it runs off the UI thread.
+                var (snapshot, restoredDb) = await Task.Run(
+                    () => RestoreBackupLayer(saveFolder, reference.Sub, world, layer));
 
                 var restored = WorldStore.FindIn(saveFolder, reference.Sub, world);
                 Logger.Information("Barrow restore: '{0}' <- '{1}' (kind: {2}; db: {3}; safety copy: {4}).",
@@ -2109,7 +2834,9 @@ namespace ValheimBakaLoader.Forms
             // resolves the reference against the world's actual backup layers only.
             RegisterRpc("backups.delete", async p =>
             {
-                var reference = ValidateBackupRef(p, requireBackupShape: true);
+                // The one path that may name a damaged layer: clearing it is the only thing
+                // left to do with one, and it can be as large as the world itself.
+                var reference = ValidateBackupRef(p, requireBackupShape: true, allowDamaged: true);
                 // A 1.0 layer is a directory tree, so the delete goes off the UI thread.
                 var deleted = await Task.Run(() => WorldStore.DeleteBackup(reference.Layer));
 
@@ -2480,16 +3207,27 @@ namespace ValheimBakaLoader.Forms
                     var stored = WorldStore.Find(ResolveSaveDataFolder(null), world);
                     var dbPath = stored?.DbPath;
                     if (dbPath == null || !File.Exists(dbPath))
-                        return (object)new { world, hasDb = false };
+                    {
+                        // "Nothing has been saved yet" and "something is there and it will not
+                        // open" want opposite advice, so the answer says which one this is. A
+                        // world whose newest generation was never committed has files on disk
+                        // even though there is no readable save to point the reader at.
+                        return WorldInfoWithNoSave(world, stored != null && !stored.IsCommitted, null);
+                    }
 
                     var savedAtUtc = File.GetLastWriteTimeUtc(dbPath);
 
                     // A 1.0 world keeps its ZDOs in sibling .chunk files, so the reader is
                     // handed the world DIRECTORY; a pre-1.0 world is handed its .db.
                     var readTarget = stored.Format == WorldFormat.Chunked ? stored.Folder : dbPath;
-                    var db = await Task.Run(() => ReadWorldSave(readTarget));
-                    if (db == null)
-                        return (object)new { world, hasDb = false };
+
+                    // Keep whatever the reader says about this one file, for this one call.
+                    List<string> diagnostics = null;
+                    var db = await Task.Run(() => ReadWorldSaveWithDiagnostics(readTarget, out diagnostics));
+
+                    // The save is right there, so "wait for the first save" is the wrong thing
+                    // to tell the host about it.
+                    if (db == null) return WorldInfoWithNoSave(world, saveExists: true, diagnostics);
 
                     // Combined fog of war: OR every cartography table's explored bitmap.
                     AtlasEngine.SharedMapData shared = null;
@@ -2603,8 +3341,11 @@ namespace ValheimBakaLoader.Forms
 
                     // Opportunistic legacy migration + DLL refresh. No-op while the server
                     // runs (the old DLL is file-locked); PrepareCompanionPlugins retries
-                    // at the next server start.
-                    MaxPlayersInstaller.EnsureCurrent(pluginsDir);
+                    // at the next server start. The installer reports its own failures into
+                    // the process-wide record, so the scope files them under the realm the
+                    // host is actually looking at rather than against every realm at once.
+                    using (Tools.CompanionPluginStatus.BeginProfile(ActiveProfileName))
+                        MaxPlayersInstaller.EnsureCurrent(pluginsDir);
 
                     var installed = MaxPlayersInstaller.IsInstalled(pluginsDir);
                     var legacy = MaxPlayersInstaller.IsLegacyInstalled(pluginsDir);
@@ -2619,7 +3360,11 @@ namespace ValheimBakaLoader.Forms
                         installed = true;
                     }
 
-                    if (installed)
+                    // Also while the legacy migration is still deferred (the old mod's folder is
+                    // locked until the server stops): writing our own cfg now means the count the
+                    // host just chose is already there when the migration finally runs, instead of
+                    // catching up a server start later.
+                    if (installed || legacy)
                         MaxPlayersInstaller.WriteConfiguredCount(GetConfigDirectory(), count);
 
                     // Legacy mod still on disk (migration deferred until the server stops):
@@ -2703,6 +3448,14 @@ namespace ValheimBakaLoader.Forms
                 var session = GetOrCreateSession(
                     string.IsNullOrWhiteSpace(prefs.ProfileName) ? CurrentProfile : prefs.ProfileName);
                 var options = BuildServerOptions(MergeLaunchHistory(prefs));
+
+                // Steam or steamcmd is rewriting this install folder right now, so valheim_server.exe
+                // and the managed assemblies beside it are mid write. The launch guard cannot catch
+                // this: it compares builds, and the build on disk during a rewrite is whatever the
+                // writer has got to. Nothing is staged and nothing is started.
+                if (IsServerUpdateRunning(options?.ServerExePath))
+                    return Task.FromResult(RefusedRpc(ValheimServer.LaunchBlockedMessage));
+
                 EnsureNoServerCollisions(session, options);
                 StageLaunchAnswer(session.ProfileName, p.Value<string>("guard"));
 
@@ -2712,6 +3465,150 @@ namespace ValheimBakaLoader.Forms
                 else session.Server.Start(options);
 
                 return Task.FromResult<object>(BuildServerState(session));
+            });
+
+            // What updating this server would mean right now: how it was installed, whether
+            // Steam has anything queued for it, and whether BakaLoader can do it from here.
+            // Classify is cheap, the build probe can hash binaries, so it goes off the UI thread.
+            RegisterRpc("server.updateCheck", async p =>
+            {
+                var prefs = ResolveStartPrefs(p);
+                var profile = string.IsNullOrWhiteSpace(prefs.ProfileName) ? ActiveProfileName : prefs.ProfileName;
+                var options = BuildServerOptions(prefs);
+                var stopped = !Sessions.TryGetValue(profile, out var session)
+                    || session.Server.Status == ServerStatus.Stopped;
+
+                return await Task.Run(() => BuildServerUpdateCheck(profile, options, stopped));
+            });
+
+            // Runs the update: worlds aside first when asked, then Steam or steamcmd depending
+            // on how the install was made, then (optionally) the normal guarded start. Answers
+            // immediately with whether it began; everything after that arrives as an event.
+            RegisterRpc("server.update", p =>
+            {
+                var prefs = ResolveStartPrefs(p);
+                var profile = string.IsNullOrWhiteSpace(prefs.ProfileName) ? ActiveProfileName : prefs.ProfileName;
+                var options = BuildServerOptions(prefs);
+                var backup = p.Value<bool?>("backup") ?? true;
+                var startAfter = p.Value<bool?>("startAfter") ?? false;
+
+                object Refuse(string reason) => new { started = false, reason };
+
+                // Never write into an install a running server has files open in.
+                if (Sessions.TryGetValue(profile, out var session)
+                    && session.Server.Status != ServerStatus.Stopped)
+                    return Task.FromResult(Refuse("Stop the server before updating it."));
+
+                var install = ClassifyInstall(options?.ServerExePath);
+                if (install == null || install.Kind == ServerInstallKind.Unknown)
+                {
+                    return Task.FromResult(Refuse(string.IsNullOrWhiteSpace(install?.Reason)
+                        ? UnknownInstallMessage
+                        : install.Reason));
+                }
+
+                if (IsServerUpdateRunning(options?.ServerExePath))
+                    return Task.FromResult(Refuse("An update is already running for this install."));
+
+                var cts = new CancellationTokenSource();
+
+                // A leftover entry is dropped, never cancelled. The service links this token
+                // into its own operation, and an entry that is still here belongs to an update
+                // that never completed: cancelling it is exactly the thing that used to stop
+                // BakaLoader awaiting steamcmd while steamcmd carried on writing the install.
+                // The refusal above is what stops a second update for the same install; this is
+                // only the bookkeeping catching up.
+                if (ServerUpdateCts.TryRemove(profile, out var stale))
+                {
+                    try { stale.Dispose(); } catch { }
+                }
+                ServerUpdateCts[profile] = cts;
+
+                // What the Start button, the Restart button and the close guard ask about.
+                ServerUpdateExe[profile] = options.ServerExePath;
+                ServerUpdatePhaseSeen[profile] = ServerUpdatePhase.Idle;
+
+                // Nothing has been copied yet. RunUpdateBackupAsync flips this when it does.
+                ServerUpdateBackedUp[profile] = false;
+
+                var request = new ServerUpdateRequest
+                {
+                    ProfileName = profile,
+                    ServerExePath = options.ServerExePath,
+                    SaveDataFolder = options.SaveDataFolderPath,
+                    BackupWorldsFirst = backup,
+                    StartAfter = startAfter,
+                };
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var outcome = await ServerUpdates.UpdateAsync(
+                            request, () => RunUpdateBackupAsync(profile, options), cts.Token);
+
+                        // A refusal answers on the return value and fires no Completed event,
+                        // because no operation began - so without this the bar would sit there
+                        // waiting for news that is never coming. OnServerUpdateCompleted takes
+                        // the profile's entry out of the map, so this is a no-op whenever the
+                        // event already handled the same outcome.
+                        if (outcome != null)
+                        {
+                            if (string.IsNullOrWhiteSpace(outcome.ProfileName)) outcome.ProfileName = profile;
+                            OnServerUpdateCompleted(outcome);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // UpdateAsync is documented never to throw, so this is the belt to that
+                        // brace: without it a surprise would leave the bar spinning forever.
+                        Logger.Error(ex, "The server update for profile {profile} failed outright", profile);
+                        OnServerUpdateCompleted(new ServerUpdateResult
+                        {
+                            Ok = false,
+                            ProfileName = profile,
+                            StartAfter = startAfter,
+                            Reason = ex.Message,
+                        });
+                    }
+                });
+
+                return Task.FromResult<object>(new { started = true, reason = (string)null });
+            });
+
+            // Only meaningful while BakaLoader is waiting on the Steam client. Steam carries on
+            // with the download either way; this just stops watching for it.
+            RegisterRpc("server.updateCancel", p =>
+            {
+                var profile = p.Value<string>("profile");
+                if (string.IsNullOrWhiteSpace(profile)) profile = ActiveProfileName;
+
+                // The bridge's own token is NEVER cancelled here. The service used to link it
+                // into the steamcmd run, so cancelling it stopped BakaLoader awaiting steamcmd
+                // without stopping steamcmd: the run carried on rewriting the install, the
+                // operation failed with a raw progress line, and the per install lock came off
+                // while files were still being written. The service no longer links it there at
+                // all, and only it decides what a cancel means. The token this window keeps is
+                // now only the per profile latch that says an update it started is in flight.
+                var cancelled = false;
+                try
+                {
+                    var exe = ResolveUpdateExePath(profile);
+
+                    // Whether a cancel means anything is the service's answer, not a guess made
+                    // from the last progress event that reached this window: only the Steam
+                    // waiting phases can be called off, and by the time a guess is made the run
+                    // may already have moved on to writing. Cancel answers false and does
+                    // nothing when it will not take, which is exactly what the page reads.
+                    if (!string.IsNullOrWhiteSpace(exe)) cancelled = ServerUpdates.Cancel(exe);
+                }
+                catch (Exception ex)
+                {
+                    cancelled = false;
+                    Logger.Warning(ex, "Could not ask the update service to stop for profile {profile}", profile);
+                }
+
+                return Task.FromResult<object>(new { cancelled });
             });
 
             // The host answered the launch guard from the Hearth banner without starting yet
@@ -2731,6 +3628,13 @@ namespace ValheimBakaLoader.Forms
 
             RegisterRpc("server.restart", async p =>
             {
+                // A restart is a stop and a start, so an update rewriting the install refuses it
+                // for the same reason a start refuses: the server would come back up out of files
+                // steamcmd is still writing. Refusing BEFORE the stop matters most here, because
+                // the alternative is an outage that lasts until somebody notices.
+                if (IsServerUpdateRunning(ResolveUpdateExePath(ActiveSession.ProfileName)))
+                    return RefusedRpc(ValheimServer.LaunchBlockedMessage);
+
                 // A restart stops the server and starts it again, so it meets the same guard.
                 // The host's answer is staged here, before anything goes down.
                 StageLaunchAnswer(ActiveSession.ProfileName, p.Value<string>("guard"));
@@ -2871,6 +3775,12 @@ namespace ValheimBakaLoader.Forms
                         {
                             var package = await ThunderstoreClient.GetLatestAsync(mod.Author, mod.ModName);
                             mod.LatestVersion = package?.LatestVersion;
+
+                            // Keep the identity the index answered with, not the folder name we
+                            // asked with: a row only offers its Thunderstore page when there is
+                            // a real package behind it.
+                            mod.ThunderstoreNamespace = package?.Namespace;
+                            mod.ThunderstoreName = package?.Name;
                         }
                         catch
                         {
@@ -3169,8 +4079,28 @@ namespace ValheimBakaLoader.Forms
                     "donate" => DonateUrl,
                     // Steam's own downloads page, where a waiting server update is applied.
                     "steam-downloads" => "steam://open/downloads",
+                    // The release the app update check itself reads, so the notes the host
+                    // opens are always the notes for the version they were just offered.
+                    "releases" => ReleasesUrl,
                     _ => throw new ArgumentException($"Unknown shell.openUrl target: {target}"),
                 };
+
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true,
+                });
+                return Task.FromResult<object>(true);
+            });
+
+            // Opens one mod's own page on Thunderstore, which is what the right-click on a mod
+            // row offers. The page sends the matched package identity and never a URL: the
+            // address is built here from two validated segments, so nothing the page says can
+            // send the shell anywhere else.
+            RegisterRpc("shell.openThunderstore", p =>
+            {
+                var url = ThunderstorePageUrl(p.Value<string>("namespace"), p.Value<string>("name"))
+                    ?? throw new ArgumentException("That mod has no Thunderstore page to open.");
 
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
@@ -3229,16 +4159,17 @@ namespace ValheimBakaLoader.Forms
             // Persists the wizard's answers. Either path may be null/blank to keep defaults.
             RegisterRpc("setup.complete", p =>
             {
-                var prefs = UserPrefsProvider.LoadPreferences();
-
                 var exe = p.Value<string>("serverExePath");
-                if (!string.IsNullOrWhiteSpace(exe)) prefs.ServerExePath = exe.Trim();
-
                 var save = p.Value<string>("saveDataFolderPath");
-                if (!string.IsNullOrWhiteSpace(save)) prefs.SaveDataFolderPath = save.Trim();
 
-                prefs.SetupCompleted = true;
-                UserPrefsProvider.SavePreferences(prefs);
+                // Whole document write, so it goes through the gate: see the note on Mutate.
+                UserPrefsProvider.Mutate(prefs =>
+                {
+                    if (!string.IsNullOrWhiteSpace(exe)) prefs.ServerExePath = exe.Trim();
+                    if (!string.IsNullOrWhiteSpace(save)) prefs.SaveDataFolderPath = save.Trim();
+                    prefs.SetupCompleted = true;
+                });
+
                 return Task.FromResult<object>(BuildSetupStatus());
             });
 
@@ -3247,11 +4178,12 @@ namespace ValheimBakaLoader.Forms
             // Server files on disk are never touched.
             RegisterRpc("setup.reset", p =>
             {
-                var prefs = UserPrefsProvider.LoadPreferences();
-                prefs.ServerExePath = Resources.DefaultServerPath;
-                prefs.SaveDataFolderPath = Resources.DefaultValheimSaveFolder;
-                prefs.SetupCompleted = false;
-                UserPrefsProvider.SavePreferences(prefs);
+                UserPrefsProvider.Mutate(prefs =>
+                {
+                    prefs.ServerExePath = Resources.DefaultServerPath;
+                    prefs.SaveDataFolderPath = Resources.DefaultValheimSaveFolder;
+                    prefs.SetupCompleted = false;
+                });
 
                 foreach (var profile in ServerPrefsProvider.LoadPreferences().ToList())
                 {
@@ -3273,20 +4205,95 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private const string DonateUrl = "https://ko-fi.com/bakaloader";
 
+        /// <summary>
+        /// The release page behind the "See what changed" action on the app update row. Same
+        /// repository the update check queries, so the two can never point at different notes.
+        /// </summary>
+        private const string ReleasesUrl = "https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest";
+
         #endregion
 
         #region DTO builders & helpers
+
+        /// <summary>
+        /// Collects the world reader's own explanation for the length of one read. The reader
+        /// posts its refusals to a single static sink, which is wired into the app log where no
+        /// host ever looks. AsyncLocal so the lines follow this read onto its worker thread and
+        /// a read somebody else starts meanwhile cannot land in them.
+        /// </summary>
+        private static readonly AsyncLocal<List<string>> AtlasReadDiagnostics = new();
+
+        /// <summary>
+        /// Reads a world save and keeps whatever the reader said about it. Same read as
+        /// <see cref="ReadWorldSave"/>; the sink is borrowed for the length of the call and
+        /// every line still reaches whoever had it, so the app log loses nothing.
+        /// <para>
+        /// atlas.worldInfo is single flight, so the swap here never nests.
+        /// </para>
+        /// </summary>
+        public static AtlasEngine.WorldDbInfo ReadWorldSaveWithDiagnostics(
+            string pathOrDirectory, out List<string> diagnostics)
+        {
+            var collected = new List<string>();
+            diagnostics = collected;
+
+            var previous = AtlasEngine.WorldDbReader.DiagnosticSink;
+            Action<string> mine = message =>
+            {
+                if (!string.IsNullOrWhiteSpace(message)) AtlasReadDiagnostics.Value?.Add(message);
+                previous?.Invoke(message);
+            };
+            AtlasEngine.WorldDbReader.DiagnosticSink = mine;
+            AtlasReadDiagnostics.Value = collected;
+
+            try
+            {
+                return ReadWorldSave(pathOrDirectory);
+            }
+            finally
+            {
+                AtlasReadDiagnostics.Value = null;
+
+                // Only hand the sink back when it is still the one this call put there. If
+                // something else has taken it since, restoring would quietly cut that owner out.
+                if (ReferenceEquals(AtlasEngine.WorldDbReader.DiagnosticSink, mine))
+                    AtlasEngine.WorldDbReader.DiagnosticSink = previous;
+            }
+        }
+
+        /// <summary>
+        /// What atlas.worldInfo answers when there is no readable world: whether a save is on
+        /// disk at all, so "wait for the first save" is not offered as advice about one that is
+        /// sitting right there, and the reader's own sentence for why it would not open.
+        /// </summary>
+        public static object WorldInfoWithNoSave(string world, bool saveExists, IReadOnlyList<string> diagnostics)
+            => new
+            {
+                world,
+                hasDb = false,
+                saveExists,
+                reason = diagnostics?.LastOrDefault(line => !string.IsNullOrWhiteSpace(line)),
+            };
 
         private object BuildServerState() => BuildServerState(ActiveSession);
 
         private object BuildServerState(ServerSession session)
         {
             var server = session.Server;
+
+            // An update rewriting this install is not a state the server itself can see: the exe
+            // and the assemblies beside it are mid write while Status still reads Stopped. Folding
+            // it into canStart here is what greys the Start button out on a page that has not seen
+            // the progress events, and the RPC refuses independently for a page that ignores both.
+            var updating = ServerUpdateExe.TryGetValue(session.ProfileName, out var updatingExe)
+                && IsServerUpdateRunning(updatingExe);
+
             return new
             {
                 profile = session.ProfileName,
                 status = server.Status.ToString(),
-                canStart = server.CanStart,
+                updating,
+                canStart = server.CanStart && !updating,
                 canStop = server.CanStop,
                 canRestart = server.CanRestart,
                 countdownActive = server.IsCountdownActive,
@@ -3297,6 +4304,11 @@ namespace ValheimBakaLoader.Forms
                 networkVersion = server.NetworkVersion,
                 // A launch the guard held, so the banner survives a page reload.
                 launchHold = LaunchHolds.TryGetValue(session.ProfileName, out var hold) ? hold : null,
+                // Companion plugins that could not be installed, so the interface can say the
+                // feature is off and why instead of leaving it quietly missing. Empty normally.
+                // Scoped to this session's profile: with two realms up, the other realm's
+                // plugin trouble must never appear on this one's bar.
+                pluginFailures = BuildPluginFailureDtos(session.ProfileName),
             };
         }
 
@@ -3546,9 +4558,15 @@ namespace ValheimBakaLoader.Forms
         /// layer the world ACTUALLY owns - a "{world}_backup_*.fwl"/".fwl.old" file or a
         /// "{world}_backup_*" DIRECTORY. The live world, pair or 1.0 directory, is never
         /// backup-shaped, so it can never be targeted through here.
+        /// <para>
+        /// A layer that has lost the world file it would be restored FROM resolves only when
+        /// <paramref name="allowDamaged"/> is set, which only the delete path does. The legacy
+        /// restore below copies the layer's own file over the live world's ".fwl", so a lone
+        /// ".db" taken for one would write database bytes into the world's metadata file.
+        /// </para>
         /// </summary>
         private (string SaveFolder, string Sub, string Dir, string World, string File, WorldBackupInfo Layer)
-            ValidateBackupRef(JObject p, bool requireBackupShape)
+            ValidateBackupRef(JObject p, bool requireBackupShape, bool allowDamaged = false)
         {
             var world = p.Value<string>("world");
             var folder = p.Value<string>("folder");
@@ -3579,21 +4597,191 @@ namespace ValheimBakaLoader.Forms
             WorldBackupInfo layer = null;
             if (requireBackupShape)
             {
-                layer = WorldStore.ResolveBackupLayer(saveFolder, sub, world, file);
-                if (layer == null)
-                    // Tell the two failures apart: a name that was never a layer of this world
-                    // is a bad reference; one that simply vanished is a stale UI.
-                    throw new ArgumentException(WorldStore.IsBackupShapedFor(file, world)
-                        ? "That backup no longer exists."
-                        : "Not a backup layer of that world.");
+                layer = ResolveBackupLayerOrRefuse(saveFolder, sub, world, file, allowDamaged);
             }
-            else if (!File.Exists(Path.Combine(dir, file)) && !Directory.Exists(Path.Combine(dir, file)))
+            else
             {
-                throw new ArgumentException("That backup no longer exists.");
+                if (!File.Exists(Path.Combine(dir, file)) && !Directory.Exists(Path.Combine(dir, file)))
+                    throw new ArgumentException("That backup no longer exists.");
+
+                // The doc comment above promises the live world can never be reached through
+                // here. Existence alone does not keep that promise: "{world}.fwl", "{world}.db"
+                // and a 1.0 "{world}" directory all exist and all pass the token check. Only a
+                // backup-shaped name is a backup, in this mode too.
+                if (!IsUsableBackupReference(file, world))
+                    throw new ArgumentException("Not a backup layer of that world.");
             }
 
             return (saveFolder, sub, dir, world, file, layer);
         }
+
+        /// <summary>
+        /// The layer a Barrow reference names, or a refusal that says which of the four things
+        /// went wrong: the name was never a layer of this world, the layer has since gone, the
+        /// layer is still there but has lost the world file it would be restored FROM, or the
+        /// reference resolved outside the world's own subfolder. A damaged layer is answered
+        /// only when <paramref name="allowDamaged"/> is set, which only the delete path does:
+        /// the legacy restore copies the layer's own file over the live world's ".fwl", so a
+        /// lone ".db" taken for one would write database bytes into the world's metadata file.
+        /// </summary>
+        public static WorldBackupInfo ResolveBackupLayerOrRefuse(
+            string saveFolder, string sub, string world, string file, bool allowDamaged)
+        {
+            var layer = WorldStore.ResolveBackupLayer(saveFolder, sub, world, file, allowDamaged);
+            if (layer != null) return layer;
+
+            // A damaged layer is sitting right there taking up as much room as the world, so
+            // "no longer exists" would send the host looking for a file that is not missing.
+            // Name it and say what it lost instead.
+            var damaged = allowDamaged
+                ? null
+                : WorldStore.ResolveBackupLayer(saveFolder, sub, world, file, allowDamaged: true);
+            if (damaged != null)
+                throw new ArgumentException(
+                    $"'{damaged.Name}' has lost the world file that went with it, so there is nothing to unearth from it.");
+
+            // Tell the two remaining failures apart: a name that was never a layer of this
+            // world is a bad reference; one that simply vanished is a stale UI.
+            throw new ArgumentException(WorldStore.IsBackupShapedFor(file, world)
+                ? "That backup no longer exists."
+                : "Not a backup layer of that world.");
+        }
+
+        /// <summary>
+        /// Unearths one backup layer over the world it belongs to, and answers the safety copy
+        /// it laid down first plus whether the world came back with a database beside it.
+        /// <para>
+        /// The world does not have to exist. A set whose world was deleted or renamed still
+        /// names it, and restoring one of its layers is how the world comes back: there is
+        /// nothing to overwrite, so no safety copy is taken (the answer's snapshot is null) and
+        /// the layer is simply written out under the live names in the same subfolder.
+        /// </para>
+        /// <para>
+        /// Everything here writes to disk, so the caller runs it off the UI thread. The caller
+        /// also owns the checks this cannot make: that the reference is a real layer of that
+        /// world (<see cref="ValidateBackupRef"/>) and that no server is running the world.
+        /// </para>
+        /// </summary>
+        public static (string Snapshot, bool RestoredDb) RestoreBackupLayer(
+            string saveFolder, string sub, string world, WorldBackupInfo layer)
+        {
+            var dir = Path.Combine(saveFolder, sub);
+
+            // A 1.0 layer is only safe to copy once its generation is committed: the .ok
+            // marker is written last, so a layer without it is a half-written save.
+            if (layer.IsDirectory && !layer.IsCommitted)
+                throw new InvalidOperationException(
+                    $"'{layer.Name}' holds no finished save yet, so there is nothing to unearth from it.");
+
+            // Scoped to the layer's OWN subfolder. A name that exists in both worlds_local
+            // and worlds would otherwise resolve to whichever one comes first, and the
+            // safety copy would be taken of one world while the other is overwritten.
+            var live = WorldStore.FindIn(saveFolder, sub, world);
+            var liveFwl = Path.Combine(dir, world + ".fwl");
+            var liveDb = Path.Combine(dir, world + ".db");
+            var liveDir = Path.Combine(dir, world);
+
+            // Prove it before anything is written: the world being replaced has to be the
+            // one that sits beside the layer being unearthed.
+            if (live != null)
+            {
+                var liveParent = live.Format == WorldFormat.Chunked
+                    ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(live.Folder))
+                    : live.Folder;
+
+                if (!SameFolder(liveParent, dir))
+                    throw new InvalidOperationException(
+                        $"'{world}' resolved to a world in a different save subfolder, so nothing was restored.");
+            }
+
+            // Safety layer first: snapshot whatever is live right now, in its own format, so
+            // every unearthing stays reversible from the Barrow. A world that is gone has
+            // nothing to copy aside, and that is the one case where snapshot comes back null.
+            // Local time, like every other backup stamp: the game writes its own restore
+            // layers with DateTime.Now, PreUpdateLayerName takes a local time on purpose,
+            // and the Barrow reads all fourteen digits back as a wall clock. A UTC stamp
+            // here would show and sort by the wrong hour next to all of them.
+            string snapshot = live == null ? null : RestoreLayerName(world);
+
+            if (live != null)
+            {
+                if (live.Format == WorldFormat.Chunked)
+                {
+                    WorldStore.CopyDirectory(live.Folder, Path.Combine(dir, snapshot));
+                }
+                else
+                {
+                    File.Copy(liveFwl, Path.Combine(dir, snapshot + ".fwl"), overwrite: true);
+                    if (File.Exists(liveDb)) File.Copy(liveDb, Path.Combine(dir, snapshot + ".db"), overwrite: true);
+                }
+            }
+
+            if (layer.IsDirectory)
+            {
+                // Chunked layer: the live directory keeps its place, its contents are
+                // replaced wholesale so no stale chunk file from the newer save survives.
+                if (live != null && live.Format == WorldFormat.Legacy)
+                {
+                    foreach (var ext in new[] { ".fwl", ".db" })
+                    {
+                        var stale = Path.Combine(dir, world + ext);
+                        if (File.Exists(stale)) File.Delete(stale);
+                    }
+                }
+                WorldStore.ReplaceDirectoryContents(layer.Path, liveDir, snapshot);
+                return (snapshot, true);
+            }
+
+            // Legacy layer. Onto a 1.0 world this means going back to the pre-conversion
+            // files: the live directory goes away and the pair returns to the worlds root,
+            // where the game converts it again on its next save.
+            if (live != null && live.Format == WorldFormat.Chunked && Directory.Exists(live.Folder))
+                Directory.Delete(live.Folder, recursive: true);
+
+            File.Copy(layer.Path, liveFwl, overwrite: true);
+            if (layer.HasDb) File.Copy(layer.DbPath, liveDb, overwrite: true);
+            return (snapshot, layer.HasDb);
+        }
+
+        /// <summary>
+        /// One backup layer as the Barrow lists it. <c>damaged</c> is the layer that has lost
+        /// the world file that went with it: it can be cleared but never unearthed, so the
+        /// interface greys its UNEARTH control rather than offering a restore that would write
+        /// the wrong bytes over a live world.
+        /// </summary>
+        public static object BuildBackupLayerDto(WorldBackupInfo layer, long? day)
+            => new
+            {
+                file = layer.Name,
+                kind = WorldStore.KindToken(layer.Kind),
+                isDirectory = layer.IsDirectory,
+                sizeBytes = layer.SizeBytes,
+                modifiedUtc = layer.LastWriteUtc,
+                day,
+                hasDb = layer.HasDb,
+                committed = layer.IsCommitted,
+                damaged = layer.IsDamaged,
+                saveNumber = layer.SaveNumber,
+            };
+
+        /// <summary>
+        /// The companion plugins that could not be installed, as server.status carries them, so
+        /// the interface can say a feature is off and why instead of leaving it silently missing.
+        /// Empty in the normal case. The record is process-wide, so a profile is passed in and
+        /// only that realm's failures come back, plus any recorded with no profile in hand:
+        /// otherwise one realm's bar would name a plugin belonging to the other. Passing no
+        /// profile returns everything, which is what the single-server path has always got.
+        /// </summary>
+        public static List<object> BuildPluginFailureDtos(string profile = null)
+            => Tools.CompanionPluginStatus.FailuresFor(profile)
+                .Select(f => (object)new
+                {
+                    plugin = f.Plugin,
+                    message = f.Message,
+                    text = f.Describe(),
+                    profile = f.Profile,
+                })
+                .ToList();
 
         /// <summary>
         /// Copies a world into a destination save folder's worlds_local subdir in whichever
@@ -3601,7 +4789,7 @@ namespace ValheimBakaLoader.Forms
         /// 1.0 world directory - so an adopted world is a real independent copy and the
         /// original is never moved, altered, or deleted. The biome data cache travels with it.
         /// </summary>
-        private static void CopyWorldFiles(string sourceFolder, string sub, string world, string destSaveFolder)
+        public static void CopyWorldFiles(string sourceFolder, string sub, string world, string destSaveFolder)
         {
             if (string.IsNullOrWhiteSpace(sourceFolder) || string.IsNullOrWhiteSpace(world)) return;
 
@@ -3610,7 +4798,21 @@ namespace ValheimBakaLoader.Forms
                 .FirstOrDefault(w => string.Equals(w.Name, world, StringComparison.OrdinalIgnoreCase));
             if (source == null) return;
 
-            WorldStore.CopyWorld(source, destSaveFolder);
+            try
+            {
+                WorldStore.CopyWorld(source, destSaveFolder);
+            }
+            catch (InvalidOperationException taken)
+            {
+                // WorldStore refuses to copy onto a world of the same name rather than mixing
+                // two save histories into one folder. Adopt asks for a fresh folder, so this
+                // only fires when a removed profile left its worlds behind. The host asked to
+                // adopt, so say what happened to the adoption and what to do about it.
+                throw new InvalidOperationException(
+                    $"The save folder for this server already holds a world called '{world}', so nothing was adopted. "
+                    + "Pick a different name for the new server, or clear that folder first. "
+                    + taken.Message);
+            }
         }
 
         /// <summary>
@@ -3663,7 +4865,10 @@ namespace ValheimBakaLoader.Forms
                 // "PlayStation", "PlayFab", ...). The UI prefers it over guessing from the id,
                 // which stopped being reliable once ids lost their fixed shape.
                 platform = player.Platform,
-                player.Platform,
+                // Compatibility only: the same value under the old PascalCase key, which the
+                // anonymous type used to produce by accident. Added deliberately 2026-09-10
+                // so a WebUI still reading it keeps working for one release; remove in 1.1.
+                Platform = player.Platform,
                 player.PlayerId,
                 player.PlayerName,
                 displayName = name,
@@ -3671,7 +4876,31 @@ namespace ValheimBakaLoader.Forms
                 lastStatusChange = player.LastStatusChange,
                 characters = player.Characters?.Select(c => c.CharacterName).ToList(),
                 serverKey = player.ServerKey,
+                position = LivePositionOf(player),
             };
+        }
+
+        /// <summary>
+        /// Where this player is standing, as the roster shows it ("x, y, z" in whole metres),
+        /// or null. Read out of the running server's position cache, which one "playerlist"
+        /// call fills for everybody at once every few seconds - there is no per-player call.
+        /// Only an online player has a position: a cached coordinate for somebody who has
+        /// since logged off would read as if they were still out there.
+        /// </summary>
+        private string LivePositionOf(PlayerInfo player)
+        {
+            if (player == null || player.PlayerStatus != PlayerStatus.Online) return null;
+
+            var profile = player.ServerKey ?? ActiveProfileName;
+            if (string.IsNullOrWhiteSpace(profile)) return null;
+            if (!Sessions.TryGetValue(profile, out var session)) return null;
+
+            var character = string.IsNullOrWhiteSpace(player.LastStatusCharacter)
+                ? player.PlayerName
+                : player.LastStatusCharacter;
+
+            try { return session.Server.GetCachedPosition(character); }
+            catch { return null; }
         }
 
         /// <summary>
@@ -3705,7 +4934,12 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
-        private object BuildModDto(Tools.Models.InstalledMod mod)
+        /// <summary>
+        /// One row of the mods table. Static and reachable so the shape can be tested without
+        /// a scan. The three thunderstore keys are camel case on purpose: they are a new
+        /// contract with the page, while the older keys keep the casing the page already reads.
+        /// </summary>
+        public static object BuildModDto(Tools.Models.InstalledMod mod)
         {
             return new
             {
@@ -3716,7 +4950,48 @@ namespace ValheimBakaLoader.Forms
                 mod.LatestVersion,
                 mod.UpdateAvailable,
                 mod.PluginDirectory,
+                // Null unless the Thunderstore index actually matched this folder, so a row
+                // never offers a page that would land on a 404.
+                thunderstoreNamespace = mod.ThunderstoreNamespace,
+                thunderstoreName = mod.ThunderstoreName,
+                thunderstoreUrl = ThunderstorePageUrl(mod.ThunderstoreNamespace, mod.ThunderstoreName),
             };
+        }
+
+        // A Thunderstore namespace or package name: letters, digits, underscore, hyphen and
+        // dot, nothing else. A slash, a colon, a space or a percent sign is refused, so no
+        // scheme, host, query or fragment can be smuggled through either half of the address.
+        private static readonly System.Text.RegularExpressions.Regex ThunderstoreSegmentPattern =
+            new(@"^[A-Za-z0-9_\-.]{1,128}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// True when a value is usable as one segment of a Thunderstore package address.
+        /// A segment made only of dots is refused as well: it passes the character rule but
+        /// walks the path somewhere else once a browser works the address out.
+        /// </summary>
+        public static bool IsThunderstoreSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+
+            var trimmed = value.Trim();
+            if (trimmed.Trim('.').Length == 0) return false;
+
+            return ThunderstoreSegmentPattern.IsMatch(trimmed);
+        }
+
+        /// <summary>
+        /// The address of a mod's own Thunderstore page, or null when either half of the
+        /// package identity is missing or is not a plain package segment. The app builds the
+        /// address itself and never accepts one from the page, so a right-click on a mod row
+        /// can only ever open Thunderstore.
+        /// </summary>
+        public static string ThunderstorePageUrl(string packageNamespace, string packageName)
+        {
+            if (!IsThunderstoreSegment(packageNamespace) || !IsThunderstoreSegment(packageName))
+                return null;
+
+            return "https://thunderstore.io/c/valheim/p/"
+                + packageNamespace.Trim() + "/" + packageName.Trim() + "/";
         }
 
         private object BuildUserPrefsDto()

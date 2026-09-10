@@ -25,6 +25,56 @@ namespace ValheimBakaLoader.Game
         UserPreferences LoadPreferences();
 
         void SavePreferences(UserPreferences preferences);
+
+        /// <summary>
+        /// The only safe way to change userprefs.json: load, change, write back, all three under
+        /// the one gate every other writer of that file takes.
+        /// <para>
+        /// <see cref="SavePreferences"/> writes the WHOLE document, servers and worlds included,
+        /// so a caller that loads the document, edits its own corner and saves is not editing one
+        /// field: it is replacing every field, with whatever the rest of them looked like when it
+        /// loaded. The Discord status post did exactly that from a timer thread while the server's
+        /// stdout thread recorded a launched build, and the profile's launch history went back to
+        /// what it was seconds earlier, which is the difference between a quiet start and the
+        /// launch guard asking about a build change that already happened.
+        /// </para>
+        /// <para>
+        /// The default body is the whole implementation, so an in-memory provider in a test gets
+        /// the same serialisation without writing a line.
+        /// </para>
+        /// </summary>
+        void Mutate(Action<UserPreferences> change)
+        {
+            if (change == null) return;
+
+            Mutate(prefs =>
+            {
+                change(prefs);
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// The same read, change and write under one gate, for a caller that only sometimes has
+        /// something to write. Returning false from <paramref name="change"/> leaves the document
+        /// exactly as it was and writes nothing, so a no-op cannot cost a disk write or a saved
+        /// event. Answers whether anything was written.
+        /// </summary>
+        bool Mutate(Func<UserPreferences, bool> change)
+        {
+            if (change == null) return false;
+
+            lock (PreferencesFileGate.Gate)
+            {
+                var prefs = LoadPreferences();
+                if (prefs == null) return false;
+
+                if (!change(prefs)) return false;
+
+                SavePreferences(prefs);
+                return true;
+            }
+        }
     }
 
     public interface IServerPreferencesProvider
@@ -101,6 +151,23 @@ namespace ValheimBakaLoader.Game
     }
 
     /// <summary>
+    /// The one gate every read-modify-write of userprefs.json goes through. Server profiles,
+    /// worlds and the user's own settings all live in that single file, so saving a profile is
+    /// really "load the whole document, change one entry, write the whole document back". The
+    /// file provider locks each disk operation on its own, which is not enough: two threads can
+    /// both load before either writes, and the later write drops the other's change.
+    /// <para>
+    /// It has to sit outside the generic type: a static field inside
+    /// <c>PreferencesSection&lt;T&gt;</c> would give server profiles and worlds a lock each,
+    /// which is exactly the pair that needs to share one.
+    /// </para>
+    /// </summary>
+    internal static class PreferencesFileGate
+    {
+        public static readonly object Gate = new();
+    }
+
+    /// <summary>
     /// Shared plumbing for the named collections inside user preferences.
     /// Subclasses only say which list they own and what to call it in logs.
     /// </summary>
@@ -145,14 +212,21 @@ namespace ValheimBakaLoader.Game
         {
             if (preferences == null) return;
 
-            var root = Root.LoadPreferences();
-            var list = ListOf(root);
+            // Load, change, write back - all three under one gate. The server's stdout thread
+            // records a launched build here while the UI thread saves a profile edit; without
+            // this the second write is built on a document read before the first one landed.
+            lock (PreferencesFileGate.Gate)
+            {
+                var root = Root.LoadPreferences();
+                var list = ListOf(root);
 
-            list.RemoveAll(e => e.EntryName == preferences.EntryName);
-            list.Add(preferences);
-            preferences.LastSaved = DateTime.UtcNow;
+                list.RemoveAll(e => e.EntryName == preferences.EntryName);
+                list.Add(preferences);
+                preferences.LastSaved = DateTime.UtcNow;
 
-            Root.SavePreferences(root);
+                Root.SavePreferences(root);
+            }
+
             Logger.Information("Saved {noun} preferences: {name}", Noun, preferences.EntryName);
         }
 
@@ -160,10 +234,15 @@ namespace ValheimBakaLoader.Game
         {
             if (string.IsNullOrWhiteSpace(name)) return;
 
-            var root = Root.LoadPreferences();
-            if (ListOf(root).RemoveAll(e => e.EntryName == name) == 0) return;
+            // Same read-modify-write as SavePreferences, same gate.
+            lock (PreferencesFileGate.Gate)
+            {
+                var root = Root.LoadPreferences();
+                if (ListOf(root).RemoveAll(e => e.EntryName == name) == 0) return;
 
-            Root.SavePreferences(root);
+                Root.SavePreferences(root);
+            }
+
             Logger.Information("Removed {noun} preferences: {name}", Noun, name);
         }
     }

@@ -1,4 +1,4 @@
-// BakaLoader Spawn Helper v1.2.0 - headless-server-safe spawn via main-thread dispatch.
+// BakaLoader Spawn Helper v1.3.0 - headless-server-safe spawn via main-thread dispatch.
 //
 // WHY THIS EXISTS:
 // WEC's "spawn_object" crashes dedicated servers because RCON commands execute on a
@@ -37,7 +37,7 @@ namespace BakaLoaderSpawnHelper
     {
         private const string PluginGuid = "com.baka.spawnhelper";
         private const string PluginName = "BakaLoader Spawn Helper";
-        private const string PluginVersion = "1.2.0";
+        private const string PluginVersion = "1.3.0";
 
         private static ManualLogSource Log;
 
@@ -195,6 +195,8 @@ namespace BakaLoaderSpawnHelper
                 var obj = UnityEngine.Object.Instantiate(prefab, pos, Quaternion.identity);
                 if (obj == null) continue;
 
+                MarkAsSpawnedIn(obj);
+
                 // Set creature level (Valheim levels: 1=base, 2=1star, 3=2star)
                 if (req.Level > 0)
                 {
@@ -210,6 +212,34 @@ namespace BakaLoaderSpawnHelper
             }
 
             Log.LogInfo($"Spawned {spawned}x {req.Prefab} (level {req.Level}) at ({req.X:F1}, {req.Z:F1}, {req.Y:F1})");
+        }
+
+        /// <summary>
+        /// Applies the same per-object bookkeeping the game's own "spawn" command applies.
+        /// Vanilla stamps every object it conjures with the cheated flag on its ZDO and runs
+        /// ItemDrop.OnCreateNew, which also records the world level the item was made at.
+        /// Without it a conjured object looks legitimately earned to every system that reads
+        /// the flag, and an item drop carries whatever world level happened to be on the
+        /// prefab. The command itself stays uncheat-flagged; that is a separate thing, and
+        /// this marks the objects, not the console.
+        /// </summary>
+        private static void MarkAsSpawnedIn(GameObject obj)
+        {
+            try
+            {
+                var cheated = !PlayerProfile.s_bypassCheatChecks;
+
+                var view = obj.GetComponent<ZNetView>();
+                if (view != null && view.IsValid())
+                    view.GetZDO().Set(ZDOVars.s_cheated, cheated);
+
+                ItemDrop.OnCreateNew(obj, cheated);
+            }
+            catch (Exception ex)
+            {
+                // Never lose the spawn over the bookkeeping.
+                Log.LogWarning("Could not mark the spawned object: " + ex.Message);
+            }
         }
     }
 }

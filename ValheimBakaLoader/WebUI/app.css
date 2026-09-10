@@ -379,6 +379,10 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
    the buttons wrap onto their own line rather than being clipped off the card. */
 .hearth-meta{display:flex;align-items:flex-end;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .hstatus{display:flex;flex-direction:column;gap:3px;flex:1 1 150px;min-width:0}
+/* The state line keeps enough room for itself: when the waiting-update pill joins the
+   row, the pill and the buttons wrap rather than squeezing "RUNNING · 4h 32m" down to
+   an ellipsis. min() so a card narrower than that still fits its own content. */
+.hearth-card .hstatus{flex-basis:200px;min-width:min(200px,100%)}
 .hearth-meta .btn{flex:none}
 .hstate{font-family:var(--serif);font-size:17px;font-weight:700;letter-spacing:3px;color:var(--ember-hi);
   text-shadow:0 0 14px rgba(255,122,26,.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -454,6 +458,13 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
 .pill.amber{background:rgba(232,169,60,.13);color:var(--amber);border:1px solid rgba(232,169,60,.4)}
 .pill.blue{background:rgba(91,122,140,.15);color:var(--cold-hi);border:1px solid rgba(91,122,140,.4)}
 .pill.ember{background:var(--ember-dim);color:var(--ember-hi);border:1px solid rgba(255,122,26,.45)}
+/* The Server card's waiting-update pill is a real button drawn as a pill: it reads as
+   status and acts as the action, and greys out while the server is still up. */
+.updpill{flex:none;align-self:center;font-family:var(--sans);cursor:pointer;
+  transition:background .15s var(--ease),color .15s var(--ease)}
+.updpill:hover:not(:disabled){background:rgba(232,169,60,.24);color:#F3C77A}
+.updpill:disabled{opacity:.5;cursor:not-allowed}
+.updpill:focus-visible{outline:1px solid var(--amber);outline-offset:2px}
 
 /* ============ TABLES (Vikings / Mods) ============ */
 table{width:100%;border-collapse:collapse;font-size:12px}
@@ -542,6 +553,10 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   margin:20px 0 10px;display:flex;align-items:center;gap:10px}
 .formsec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--bronze),transparent)}
 .formsec .r{color:var(--bronze-hi)}
+/* A section heading pairs the plain word with the Norse one, the same way a card
+   header does. The rule line to its right takes the free space, so the caption sits
+   beside the label instead of being pushed to the far edge. */
+.formsec .cnorse{margin-left:0;font-size:11px;letter-spacing:1.6px}
 /* World hall: Advanced Rites + Directories fold like the Upkeep card - the section
    rune smoulders (emberW) and rotates -90deg (closed) -> 0deg (open), and the
    chevron at the far right of the row is the explicit expand affordance. */
@@ -656,13 +671,20 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .palette .pfoot kbd{font-family:var(--mono);font-size:9px;border:1px solid #33383F;border-radius:3px;padding:0 4px}
 
 /* ============ TOASTS ============
-   Bottom-centre of the content pane (clear of the sidebar), lifted above the
-   status bar and, on the Saga hall, above the console input row via
-   --toast-lift, which app.js measures when that hall opens. */
-.toasts{position:absolute;left:92px;right:0;bottom:calc(42px + var(--toast-lift,0px));z-index:88;
-  display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;
+   Bottom right of the page area, clear of the status bar, never wider than 420px so a
+   long line wraps instead of running across the hall. The newest lands at the bottom
+   and pushes the older ones up. --toast-lift raises the whole stack: app.js measures
+   the Saga console row and, while a dialog is open, that dialog's button row, so a
+   toast never covers something the host is being asked to answer. */
+.toasts{position:absolute;left:auto;right:14px;bottom:calc(42px + var(--toast-lift,0px));z-index:88;
+  width:420px;max-width:calc(100vw - 106px);
+  display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none;
   transition:bottom .2s var(--ease)}
-.toast{pointer-events:auto;display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:240px;
+/* Nothing in a toast is clickable: it carries no dismiss and no link, and it lands over
+   the bottom right of whatever is on screen, including an open dialog's list. Taking the
+   pointer out of it means a RESTORE or a delete under one still takes the click. */
+.toast{pointer-events:none;display:flex;align-items:center;gap:10px;padding:10px 14px;
+  min-width:240px;max-width:100%;
   background:linear-gradient(180deg,var(--surface-3),var(--surface-1));border:1px solid var(--bronze-hi);border-radius:9px;
   box-shadow:0 12px 32px rgba(0,0,0,.6),0 0 18px rgba(255,122,26,.08);
   font-size:11.5px;color:var(--bone);animation:toastIn .3s var(--ease);position:relative;overflow:hidden}
@@ -683,6 +705,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 /* ============ LIVE CONTEXT MENU (fixed, JS-positioned) ============ */
 .ctxmenu.ctxfixed{position:fixed;top:0;left:0;right:auto;width:232px;z-index:95;display:none;animation:none}
 .ctxmenu.ctxfixed.open{display:block;animation:pageIn .15s var(--ease)}
+.copychip.disabled{cursor:not-allowed}
 .ctxmenu .ci.disabled{opacity:.35;cursor:not-allowed}
 .ctxmenu .ci.disabled:hover{background:transparent;color:var(--bone)}
 .ctxmenu .ci.disabled:hover .r{color:var(--bronze-hi)}
@@ -726,6 +749,11 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .modal .mwarn{margin-top:10px;padding:8px 12px;border:1px solid rgba(232,169,60,.4);border-radius:7px;
   background:rgba(232,169,60,.08);color:var(--amber);font-size:11px;line-height:1.5}
 .modal .mbody-note{color:var(--bone-dim);font-size:11px;margin-top:2px}
+/* The secondary path out of a dialog, offered as text rather than a fourth button. */
+.mlink{display:inline-block;color:var(--ember-hi);cursor:pointer;font-weight:600;
+  border-bottom:1px dotted rgba(255,122,26,.55);padding-bottom:1px}
+.mlink:hover{color:#FFB35C;border-bottom-color:var(--ember)}
+.mlink:focus-visible{outline:1px solid var(--ember);outline-offset:2px}
 .modal .mchk{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--bone);cursor:pointer}
 .modal .mchk input{accent-color:var(--ember)}
 /* server-console picker (consoleModal) */
@@ -756,6 +784,18 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   font-variant-numeric:tabular-nums}
 .modal .dstat .dsk{font-size:9px;letter-spacing:1.6px;text-transform:uppercase;color:var(--bone-dim);margin-top:2px}
 .modal .dnote{font-size:10px;color:var(--bone-faint);line-height:1.5;margin-top:4px}
+
+/* The Barrow's layer rows.
+   A layer carries a long backup name, its kind, its size, its age and two controls, which
+   is more than a 460px modal fits on one line. The row used to run straight past the
+   modal's own overflow:hidden, so RESTORE and the delete cross were drawn outside the
+   panel and could not be clicked at all. Both Barrow panes are wider now, and the name
+   is the part that gives up width and ellipsises, so the two controls keep their seats
+   however long a backup name gets. The wrap is the last resort behind that.
+   Scoped to this row: every other .drow in the app already fits at 460px. */
+.modal.mwide{width:min(760px,calc(100vw - 40px))}
+.modal .drow.blayer{flex-wrap:wrap;row-gap:3px}
+.modal .drow.blayer .dk{flex:1 1 190px;white-space:nowrap}
 
 /* first-launch setup wizard */
 .modal.wiz{width:560px}
@@ -974,6 +1014,21 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   font-size:9px;color:var(--amber)}
 .holdbar .hbmsg{color:var(--bone-dim);min-width:0;flex:1 1 260px}
 .holdbar .hbacts{display:flex;align-items:center;gap:7px;margin-left:auto;flex:none;flex-wrap:wrap}
+/* A server update is the one condition with a measurable amount left to run, so it
+   carries a real bar. A phase that cannot report bytes sweeps instead of lying about
+   a percentage. */
+.holdbar .hbprog{flex:0 0 160px;height:6px;border-radius:4px;overflow:hidden;
+  background:rgba(255,255,255,.08);border:1px solid rgba(140,109,63,.35)}
+.holdbar .hbprog i{display:block;height:100%;width:0;border-radius:4px;
+  background:linear-gradient(90deg,#B4430C,var(--ember));transition:width .25s var(--ease)}
+.holdbar .hbprog.indet i{width:40%;animation:hbsweep 1.4s var(--ease) infinite}
+@keyframes hbsweep{from{margin-left:-40%}to{margin-left:100%}}
+.holdbar .hbpct{flex:none;font-family:var(--mono);font-size:10px;color:var(--bone-dim);
+  font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){
+  .holdbar .hbprog.indet i{animation:none;width:100%;opacity:.45}
+  .holdbar .hbprog i{transition:none}
+}
 
 /* ---------- ATLAS (webmap + skies) ---------- */
 #page-atlas{display:none;flex-direction:column;height:100%}
@@ -1008,6 +1063,10 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .afact{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;line-height:1.4;font-family:var(--sans)}
 .afact .ak{color:var(--bone-faint);letter-spacing:.04em}
 .afact .av{color:var(--bone);font-variant-numeric:tabular-nums;text-align:right}
+/* One sentence under a card header saying why the card shows what it shows. Sans, not
+   mono: it is prose, not a measurement. */
+.cardnote{margin-top:6px;font-family:var(--sans);font-size:11px;line-height:1.45;
+  color:var(--bone-faint)}
 .atlas-roster{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .atlas-roster .vrow{padding:4px 0}
 .atlas-roster .empty{font-size:11.5px;color:var(--bone-faint);font-family:var(--sans)}

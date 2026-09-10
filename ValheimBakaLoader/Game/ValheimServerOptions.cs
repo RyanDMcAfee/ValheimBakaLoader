@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -47,6 +47,13 @@ namespace ValheimBakaLoader.Game
         /// Null before the first guarded launch. Read by the launch guard, never by the game.
         /// </summary>
         string LastLaunchedServerBuild { get; }
+
+        /// <summary>
+        /// Binary fingerprint of the server this profile last started, taken at the same moment
+        /// as <see cref="LastLaunchedServerBuild"/>. The guard falls back to it when the Steam
+        /// manifest cannot be read at the next start. Null before the first guarded launch.
+        /// </summary>
+        string LastLaunchedServerFingerprint { get; }
 
         /// <summary>Game version that server reported ("1.0.7"), or null when unknown.</summary>
         string LastLaunchedGameVersion { get; }
@@ -134,6 +141,7 @@ namespace ValheimBakaLoader.Game
                 // The launch guard compares these against the build on disk. Leaving them out
                 // makes every launch look like the first one on a changed build.
                 LastLaunchedServerBuild = serverPrefs.LastLaunchedServerBuild,
+                LastLaunchedServerFingerprint = serverPrefs.LastLaunchedServerFingerprint,
                 LastLaunchedGameVersion = serverPrefs.LastLaunchedGameVersion,
             };
 
@@ -187,6 +195,8 @@ namespace ValheimBakaLoader.Game
         public string LogFolderPath { get; set; }
 
         public string LastLaunchedServerBuild { get; set; }
+
+        public string LastLaunchedServerFingerprint { get; set; }
 
         public string LastLaunchedGameVersion { get; set; }
 

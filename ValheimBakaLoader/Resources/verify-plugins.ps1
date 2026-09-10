@@ -15,6 +15,11 @@
 #   3. nothing reads ZRoutedRpc.Everybody as a field (it is a constant from 1.0)
 #   4. every [HarmonyPatch(typeof(X), "name")] and AccessTools lookup names a member
 #      that exists
+#   5. when BakaLoaderMaxPlayers is present, the constants its transpilers rewrite are
+#      still in the game's own IL where the plugin looks for them, asked the way each
+#      transpiler asks it: the admission cap is the first sbyte after the
+#      GetNrOfPlayers() call and its value is then checked, and each lobby cap is the
+#      first sbyte carrying 11
 #
 # It exits non-zero on any problem, so it can gate a release. Run it against the DLLs
 # built by build-plugins.ps1, pointed at the same server install:
@@ -74,12 +79,50 @@ $gameAsms = @("assembly_guiutils","assembly_googleanalytics","Unity.TextMeshPro"
 
 $fail = 0
 $examined = 0
+$maxPlayersSeen = $false
+
+# Finds a method with a body by type name and method name, ignoring namespaces (the game
+# assembly has none for these) and nested types.
+function Get-GameMethod($asm, [string] $typeName, [string] $methodName) {
+  foreach ($t in $asm.MainModule.GetTypes()) {
+    if ($t.Name -ne $typeName) { continue }
+    foreach ($m in $t.Methods) {
+      if ($m.Name -eq $methodName -and $m.HasBody) { return $m }
+    }
+  }
+  return $null
+}
+
+# The index of the first ldc.i4.s at or after $from, or -1. This is the admission-cap
+# transpiler's own rule: it takes the first sbyte after the GetNrOfPlayers() call and then
+# checks the value, so the gate has to look the same way round.
+function Find-SbyteConstant($instructions, [int] $from) {
+  for ($i = $from; $i -lt $instructions.Count; $i++) {
+    if ($instructions[$i].OpCode.Name -eq "ldc.i4.s") { return $i }
+  }
+  return -1
+}
+
+# The index of the first ldc.i4.s carrying exactly $value at or after $from, or -1. This is
+# the lobby-cap transpiler's own rule (ReplaceLobbyCap skips any other sbyte on the way and
+# rewrites the first one that is 11), and the gate has to ask the same question. Asking for
+# the first sbyte of any value instead would fail a build the plugin still patches correctly
+# the moment the game emits some other constant earlier in the method, and would pass a build
+# where the cap has moved off 11 while an earlier constant happens to be 11.
+function Find-SbyteConstantWithValue($instructions, [int] $from, [int] $value) {
+  for ($i = $from; $i -lt $instructions.Count; $i++) {
+    if ($instructions[$i].OpCode.Name -ne "ldc.i4.s") { continue }
+    if ([int]$instructions[$i].Operand -eq $value) { return $i }
+  }
+  return -1
+}
 
 # -Recurse because the bundled DLLs live one level down (Resources\Commander\*.dll and so
 # on), and a server's BepInEx\plugins is nested the same way. Pointing at either of those
 # without it used to enumerate nothing and still report success.
 foreach ($dll in (Get-ChildItem -LiteralPath $PluginDir -Filter *.dll -Recurse -File | Sort-Object FullName)) {
   $examined++
+  if ($dll.Name -eq "BakaLoaderMaxPlayers.dll") { $maxPlayersSeen = $true }
   Write-Host ""
   Write-Host ("=== {0} ===" -f $dll.Name)
   $asm = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($dll.FullName, $rp)
@@ -179,6 +222,82 @@ foreach ($dll in (Get-ChildItem -LiteralPath $PluginDir -Filter *.dll -Recurse -
   $asm.Dispose()
 }
 
+# ---- 5. the game constants the MaxPlayers transpilers rewrite must still be there ----
+#
+# Checks 1 to 4 all ask the same question: does this NAME still resolve. A hand-written
+# transpiler asks a different one, because it assumes a SHAPE in the target method's IL.
+# BakaLoaderMaxPlayers finds the admission cap by taking the first sbyte constant after the
+# GetNrOfPlayers() call and rewrites it only when it holds the vanilla 10, and it finds each
+# PlayFab lobby cap by taking the first sbyte 11. A game update can move those constants or
+# change their values without renaming one member, which every check above would wave through
+# while the plugin silently stops raising the cap. So read the real IL and confirm each
+# constant is still exactly where the plugin will go looking for it.
+if ($maxPlayersSeen) {
+  Write-Host ""
+  Write-Host "=== MaxPlayers transpiler targets in the game's own IL ==="
+  $gameAsm = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $ManagedDir "assembly_valheim.dll"), $rp)
+  try {
+    # The admission cap: ZNet.RPC_PeerInfo, first sbyte constant after the call.
+    $m = Get-GameMethod $gameAsm "ZNet" "RPC_PeerInfo"
+    if ($null -eq $m) {
+      Write-Host "  ZNet.RPC_PeerInfo: MISSING"
+      $fail++
+    } else {
+      $ins = @($m.Body.Instructions)
+      $callAt = -1
+      for ($i = 0; $i -lt $ins.Count; $i++) {
+        $op = $ins[$i].Operand
+        if ($op -is [Mono.Cecil.MethodReference] -and $op.Name -eq "GetNrOfPlayers") { $callAt = $i; break }
+      }
+      if ($callAt -lt 0) {
+        Write-Host "  ZNet.RPC_PeerInfo: no call to GetNrOfPlayers - the admission cap CANNOT be raised"
+        $fail++
+      } else {
+        $capAt = Find-SbyteConstant $ins ($callAt + 1)
+        if ($capAt -lt 0) {
+          Write-Host "  ZNet.RPC_PeerInfo: no sbyte constant after GetNrOfPlayers - the admission cap CANNOT be raised"
+          $fail++
+        } else {
+          # 10 is BakaLoaderMaxPlayers.VanillaAdmissionCap. The two have to agree: the plugin
+          # refuses to rewrite anything else, so a change here without a change there would
+          # pass this gate and then quietly leave the cap alone on a live server.
+          $expected = 10
+          $value = [int]$ins[$capAt].Operand
+          $ok = ($value -eq $expected)
+          Write-Host ("  ZNet.RPC_PeerInfo admission cap after GetNrOfPlayers(): {0} (expected {1}) {2}" -f $value, $expected, $(if ($ok) {"OK"} else {"MISMATCH"}))
+          if (-not $ok) { $fail++ }
+        }
+      }
+    }
+
+    # The PlayFab lobby caps. 11 is what BakaLoaderMaxPlayers.ReplaceLobbyCap looks for:
+    # vanilla's 10 plus the one slot the dedicated server itself takes. The search is by
+    # value, exactly as the plugin searches, because CreateAndJoinNetwork already carries a
+    # second sbyte (15, the peer connectivity options) and the order of the two is the game's
+    # to change.
+    $expectedLobby = 11
+    foreach ($name in @("CreateLobby", "CreateAndJoinNetwork")) {
+      $lm = Get-GameMethod $gameAsm "ZPlayFabMatchmaking" $name
+      if ($null -eq $lm) {
+        Write-Host ("  ZPlayFabMatchmaking.{0}: MISSING" -f $name)
+        $fail++
+        continue
+      }
+      $lins = @($lm.Body.Instructions)
+      $at = Find-SbyteConstantWithValue $lins 0 $expectedLobby
+      if ($at -lt 0) {
+        Write-Host ("  ZPlayFabMatchmaking.{0}: no ldc.i4.s {1} in the method, so the lobby cap CANNOT be raised" -f $name, $expectedLobby)
+        $fail++
+        continue
+      }
+      Write-Host ("  ZPlayFabMatchmaking.{0} lobby cap: {1} found at instruction {2} OK" -f $name, $expectedLobby, $at)
+    }
+  }
+  finally {
+    $gameAsm.Dispose()
+  }
+}
+
 Write-Host ""
 
 # A gate that checked nothing must never read as a pass. This is the whole reason the
@@ -189,5 +308,5 @@ if ($examined -eq 0) {
 }
 
 if ($fail -gt 0) { Write-Host ("VERIFY FAILED: {0} problem(s) in {1} assembly(ies)" -f $fail, $examined); exit 1 }
-Write-Host ("VERIFY OK: {0} assembly(ies) examined; every game member reference, ConsoleCommand ctor and Harmony string target resolves against the supplied Managed folder." -f $examined)
+Write-Host ("VERIFY OK: {0} assembly(ies) examined; every game member reference, ConsoleCommand ctor and Harmony string target resolves against the supplied Managed folder, and every constant the transpilers rewrite is still in place." -f $examined)
 exit 0

@@ -129,14 +129,69 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             var world = Path.Combine(WorldsDir(), "NeverSaved");
             MakeGeneration(world, 0, committed: false);
+            // A world that DOES copy, so the pass as a whole still protects something.
+            MakeLegacyWorld("Midgard");
 
             var result = WorldStore.SnapshotAllPreUpdate(SaveFolder, Stamp);
 
-            Assert.True(result.Ok);           // nothing to copy is not a failure
-            Assert.Empty(result.Copied);
+            Assert.True(result.Ok, result.Error);   // one world with nothing in it is not a failure
+            Assert.Equal(new[] { "Midgard_backup_preupdate-" + StampText }, result.Copied);
             Assert.Single(result.Skipped);
             Assert.Contains("NeverSaved", result.Skipped[0]);
             Assert.False(Directory.Exists(Path.Combine(WorldsDir(), "NeverSaved_backup_preupdate-" + StampText)));
+        }
+
+        [Fact]
+        public void A_world_with_no_finished_save_is_not_counted_as_a_world_that_failed_to_copy()
+        {
+            // The 1.0 server writes "_main.0.fwl2" the moment it creates a world and only lands
+            // the ".db2"/".chunks"/".ok" at the first world save, so a crash or a force kill
+            // inside that first save interval leaves a save folder in exactly this state.
+            // There is nothing in it an upgrade could take away, so there is nothing to protect
+            // and no reason to refuse the launch that asked to be protected.
+            MakeGeneration(Path.Combine(WorldsDir(), "NeverSaved"), 0, committed: false);
+
+            var result = WorldStore.SnapshotAllPreUpdate(SaveFolder, Stamp);
+
+            Assert.True(result.Ok, result.Error);
+            Assert.Null(result.Error);
+            Assert.Empty(result.Copied);
+
+            // Not protected is not the same as silently gone: the pass names it.
+            var skipped = Assert.Single(result.Skipped);
+            Assert.Contains("NeverSaved", skipped);
+            Assert.Contains("no finished save", skipped);
+        }
+
+        [Fact]
+        public void A_folder_where_nothing_has_a_finished_save_is_a_clean_pass_that_names_them_all()
+        {
+            MakeGeneration(Path.Combine(WorldsDir(), "NeverSaved"), 0, committed: false);
+            MakeGeneration(Path.Combine(WorldsDir(), "AlsoNeverSaved"), 0, committed: false);
+
+            var result = WorldStore.SnapshotAllPreUpdate(SaveFolder, Stamp);
+
+            Assert.True(result.Ok, result.Error);
+            Assert.Empty(result.Copied);
+            Assert.Equal(2, result.Skipped.Count);
+        }
+
+        [Fact]
+        public void A_world_that_HAS_a_finished_save_and_cannot_be_copied_stops_the_pass()
+        {
+            // This is the case the zero copy guard is actually for: a world with a whole save
+            // in it that the snapshot could not put anywhere. Waving the launch through here
+            // starts a newer build on a world with nothing behind it.
+            MakeLegacyWorld("Midgard");
+
+            using var _ = new FileStream(
+                Path.Combine(WorldsDir(), "Midgard.fwl"), FileMode.Open, FileAccess.Read, FileShare.None);
+
+            var result = WorldStore.SnapshotAllPreUpdate(SaveFolder, Stamp);
+
+            Assert.False(result.Ok);
+            Assert.Empty(result.Copied);
+            Assert.Contains("Midgard", result.Error);
         }
 
         [Fact]
@@ -210,10 +265,12 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.False(result.Ok);
             Assert.NotNull(result.Error);
 
-            // A folder that simply has no worlds in it is a clean, empty pass.
+            // A folder that simply has no worlds in it is a clean, empty pass: there was nothing
+            // that needed protecting, which is not the same as protecting nothing.
             var empty = WorldStore.SnapshotAllPreUpdate(SaveFolder, Stamp);
-            Assert.True(empty.Ok);
+            Assert.True(empty.Ok, empty.Error);
             Assert.Empty(empty.Copied);
+            Assert.Empty(empty.Skipped);
         }
 
         [Fact]

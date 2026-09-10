@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.1.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.2.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -65,7 +65,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.1.0";
+        private const string PluginVersion = "1.2.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -613,6 +613,8 @@ namespace BakaLoaderCommander
                 var obj = UnityEngine.Object.Instantiate(prefab, p, Quaternion.identity);
                 if (obj == null) continue;
 
+                MarkAsSpawnedIn(obj);
+
                 if (level > 0)
                 {
                     var character = obj.GetComponent<Character>();
@@ -629,11 +631,40 @@ namespace BakaLoaderCommander
                 pos.y.ToString("F1", CultureInfo.InvariantCulture) + ")";
         }
 
+        /// <summary>
+        /// Applies the same per-object bookkeeping the game's own "spawn" command applies.
+        /// Vanilla stamps every object it conjures with the cheated flag on its ZDO and runs
+        /// ItemDrop.OnCreateNew, which also records the world level the item was made at.
+        /// Without it a conjured object looks legitimately earned to every system that reads
+        /// the flag, and an item drop carries whatever world level happened to be on the
+        /// prefab. Whether the console command itself is cheat-flagged is a separate thing;
+        /// this marks the objects, not the console.
+        /// </summary>
+        private static void MarkAsSpawnedIn(GameObject obj)
+        {
+            try
+            {
+                var cheated = !PlayerProfile.s_bypassCheatChecks;
+
+                var view = obj.GetComponent<ZNetView>();
+                if (view != null && view.IsValid())
+                    view.GetZDO().Set(ZDOVars.s_cheated, cheated);
+
+                ItemDrop.OnCreateNew(obj, cheated);
+            }
+            catch (Exception ex)
+            {
+                // Never lose the spawn over the bookkeeping.
+                Log.LogWarning("Could not mark the spawned object: " + ex.Message);
+            }
+        }
+
         // ---- baka_killall -----------------------------------------------------
         // Absorbed from BakaKillAll (3 enumeration fallbacks). HOSTILES ONLY:
         // players, tamed pets, and friendly factions (AnimalsVeg passive wildlife,
-        // Dverger allies, PlayerSpawned) are spared - modded servers add tons of
-        // friendly NPCs/pets and this must never wipe them.
+        // Dverger allies, PlayerSpawned summons, TrainingDummy training posts) are
+        // spared - modded servers add tons of friendly NPCs/pets, and training posts
+        // are player-built structures, so this must never wipe any of them.
 
         private static string CmdKillAll()
         {
@@ -687,13 +718,14 @@ namespace BakaLoaderCommander
 
                 // Friendly / non-hostile factions. Everything else (ForestMonsters,
                 // Undead, Demon, MountainMonsters, SeaMonsters, PlainsMonsters,
-                // MistlandsMonsters, Boss) is a hostile mob and stays killable.
+                // MistlandsMonsters, DeepNorth, Boss) is a hostile mob and stays killable.
                 switch (c.m_faction)
                 {
                     case Character.Faction.Players:       // player-faction NPCs (many modded friendlies)
-                    case Character.Faction.AnimalsVeg:    // passive wildlife (deer, gulls, hares…)
+                    case Character.Faction.AnimalsVeg:    // passive wildlife (deer, gulls, hares)
                     case Character.Faction.Dverger:       // dvergr allies
                     case Character.Faction.PlayerSpawned: // player-summoned allies
+                    case Character.Faction.TrainingDummy: // player-built training posts
                         return true;
                 }
 

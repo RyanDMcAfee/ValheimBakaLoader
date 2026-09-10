@@ -38,7 +38,9 @@ namespace ValheimBakaLoader.Tools
         /// <summary>"{world}.fwl.old" + "{world}.db.old" - the pre-1.0 last-known-good pair.</summary>
         Old = 4,
 
-        /// <summary>Backup-shaped but none of the above (a bare "{world}_{stamp}.fwl", say).</summary>
+        /// <summary>
+        /// Backup-shaped but none of the above. Kept as the value an unread name falls back to.
+        /// </summary>
         Other = 5,
 
         /// <summary>
@@ -125,6 +127,15 @@ namespace ValheimBakaLoader.Tools
         /// <summary>False for a chunked layer whose newest generation was never committed (.ok missing).</summary>
         public bool IsCommitted { get; init; }
 
+        /// <summary>
+        /// True when the layer is missing either half of the pair that makes it loadable: a
+        /// "{world}_backup_{stamp}.db" whose ".fwl" partner is gone, or the ".fwl" whose ".db"
+        /// is gone. It is listed so the space it takes can be seen and reclaimed, and it can be
+        /// deleted, but there is nothing whole to restore from it. Restoring half a pair leaves
+        /// the world's metadata and its database describing two different saves.
+        /// </summary>
+        public bool IsDamaged { get; init; }
+
         public long SizeBytes { get; init; }
 
         public DateTime LastWriteUtc { get; init; }
@@ -144,9 +155,14 @@ namespace ValheimBakaLoader.Tools
     ///  * a chunked generation only counts once its .ok commit marker is on disk (the game
     ///    writes .ok last and deletes the previous generation after), so the live world is
     ///    the HIGHEST N whose four files all exist;
-    ///  * backups are never worlds. Legacy backups are "{world}_backup_*.fwl",
-    ///    "{world}.fwl.old" and bare "{world}_{stamp}.fwl"; chunked backups are sibling
-    ///    DIRECTORIES named "{world}_backup_[auto-|restore-|cloud-]{stamp}".
+    ///  * backups are never worlds, and worlds are never backups. A name is a backup only
+    ///    when the game itself would call it one: "{world}.fwl.old"/".db.old", or a name the
+    ///    game can read a stamp out of. Carrying the "_backup_" marker at its second-to-last
+    ///    underscore makes it that world's layer; carrying no marker makes it what the game
+    ///    calls a rolling save, which the game files under the name trimmed at its LAST
+    ///    underscore and never elects as a world in its own right, so neither do we. What
+    ///    such a folder IS owed is a mention: the pre-update pass names it in its skipped
+    ///    list so a host is told it was left where it is.
     /// </summary>
     public static class WorldStore
     {
@@ -161,23 +177,25 @@ namespace ValheimBakaLoader.Tools
         // "_main.<N>.fwl2" - the game's own save-number regex.
         private static readonly Regex MainFwl2 = new(@"^_main\.(\d+)\.fwl2$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-        // A save stamp is yyyyMMddHHmmss (14 chars, pre-1.0) or yyyyMMdd-HHmmss (15 chars, 1.0).
-        private const string StampPattern = @"(?<stamp>\d{8}-?\d{6})";
+        /// <summary>
+        /// The game's own save-stamp pattern (SaveSystem.GetTimestampFromPath). It is NOT
+        /// anchored, and every one of the six date and time groups may be followed by any
+        /// number of hyphens, so "20260909180000", "20260909-180000" and "2026-09-09-18-00-00"
+        /// are all the same stamp and a stamp may sit anywhere in the name. Matching the
+        /// game's own shape is what keeps a layer it wrote from being listed as a world.
+        /// </summary>
+        private static readonly Regex GameStamp = new(
+            @".+(\d{4})-*(\d{2})-*(\d{2})-*(\d{2})-*(\d{2})-*(\d{2})",
+            RegexOptions.Compiled);
 
-        private static readonly Regex BackupNamed = new(
-            @"^(?<world>.+?)_backup_(?<infix>auto-|restore-|cloud-|preupdate-)?" + StampPattern + "$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        /// <summary>The marker the game looks for at the second-to-last underscore.</summary>
+        private const string BackupMarker = "_backup_";
 
         /// <summary>The infix BakaLoader stamps onto a pre-update snapshot.</summary>
         public const string PreUpdateInfix = "preupdate-";
 
         /// <summary>The timestamp shape Valheim 1.0 uses for its own backup names.</summary>
         public const string BackupStampFormat = "yyyyMMdd-HHmmss";
-
-        // A bare timestamped snapshot with no "_backup_" marker, e.g. "Midgard_20220620-101500".
-        private static readonly Regex BackupStamped = new(
-            @"^(?<world>.+?)_" + StampPattern + "$",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         // ---------------------------------------------------------------- enumeration
 
@@ -314,6 +332,54 @@ namespace ValheimBakaLoader.Tools
         /// <summary>True when a world by that name exists on disk in EITHER format.</summary>
         public static bool Exists(string saveFolder, string worldName) => Find(saveFolder, worldName) != null;
 
+        /// <summary>
+        /// The path of anything already using this exact world name under a save folder, found by
+        /// looking at the filesystem instead of at the world list. Null when the name is free.
+        /// <para>
+        /// <see cref="Find"/> answers "which world does the host see", and it deliberately leaves
+        /// names out: a backup-shaped name is never returned, and neither is a name Windows would
+        /// rewrite on its way to a path. "Is this name taken" has to stay true for every one of
+        /// those, because writing a fresh .fwl beside a world the list cannot see is how a live
+        /// world ends up with a second, conflicting seed sitting next to it.
+        /// </para>
+        /// </summary>
+        public static string FindWorldFilesOnDisk(string saveFolder, string worldName)
+        {
+            if (string.IsNullOrWhiteSpace(saveFolder) || string.IsNullOrWhiteSpace(worldName)) return null;
+
+            foreach (var sub in WorldSubfolders)
+            {
+                var hit = FindWorldFilesIn(WorldsDir(saveFolder, sub), worldName);
+                if (hit != null) return hit;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The same raw probe inside ONE worlds folder: the world's own directory, its ".fwl", or
+        /// even a lone ".db" left behind, whichever is there first. Null when the name is free.
+        /// </summary>
+        private static string FindWorldFilesIn(string worldsDir, string worldName)
+        {
+            if (string.IsNullOrWhiteSpace(worldsDir) || string.IsNullOrWhiteSpace(worldName)) return null;
+            if (worldName.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0) return null;
+
+            try
+            {
+                var folder = System.IO.Path.Combine(worldsDir, worldName);
+                if (Directory.Exists(folder) && FindGeneration(folder).Exists) return folder;
+
+                foreach (var ext in new[] { ".fwl", ".db" })
+                {
+                    var path = System.IO.Path.Combine(worldsDir, worldName + ext);
+                    if (File.Exists(path)) return path;
+                }
+            }
+            catch { /* an unreadable folder is not a claim on the name */ }
+
+            return null;
+        }
+
         /// <summary>Names of every world under the save folder, deduped, worlds_local first.</summary>
         public static List<string> GetWorldNames(string saveFolder)
             => Enumerate(saveFolder).Select(w => w.Name).ToList();
@@ -323,6 +389,13 @@ namespace ValheimBakaLoader.Tools
         /// <summary>
         /// Every backup layer of one world inside a single worlds subfolder: legacy .fwl pairs,
         /// the ".fwl.old" pair, and chunked backup directories. Newest first.
+        /// <para>
+        /// A layer that has lost either half of its pair is listed too, marked
+        /// <see cref="WorldBackupInfo.IsDamaged"/>: the ".db" whose ".fwl" is gone, and the
+        /// ".fwl" whose ".db" is gone. There is nothing whole to restore from either, but a
+        /// half can be as large as the world itself and nothing else on the machine would ever
+        /// show it.
+        /// </para>
         /// </summary>
         public static IReadOnlyList<WorldBackupInfo> EnumerateBackups(string saveFolder, string sub, string worldName)
         {
@@ -368,8 +441,41 @@ namespace ValheimBakaLoader.Tools
 
                     // A layer is keyed on its .fwl; the paired .db rides along.
                     var isOldPair = fileName.EndsWith(".fwl.old", StringComparison.OrdinalIgnoreCase);
-                    if (!isOldPair && !string.Equals(System.IO.Path.GetExtension(fileName), ".fwl", StringComparison.OrdinalIgnoreCase))
+                    var isMeta = isOldPair
+                        || string.Equals(System.IO.Path.GetExtension(fileName), ".fwl", StringComparison.OrdinalIgnoreCase);
+                    if (!isMeta)
+                    {
+                        // A ".db"/".db.old" whose ".fwl" partner is gone. Nothing keys a layer on
+                        // it, so it used to be invisible: a whole world's worth of bytes sitting
+                        // in the worlds folder that no screen could show and no delete could take.
+                        var partner = LegacyLayerMeta(dir, worldName, fileName);
+                        if (partner == null || File.Exists(partner)) continue;
+
+                        var orphanStem = fileName.EndsWith(".db.old", StringComparison.OrdinalIgnoreCase)
+                            ? fileName[..^".db.old".Length]
+                            : System.IO.Path.GetFileNameWithoutExtension(fileName);
+
+                        TryParseBackupName(orphanStem, out _, out var orphanKind, out var orphanStamp);
+                        if (fileName.EndsWith(".db.old", StringComparison.OrdinalIgnoreCase))
+                            orphanKind = WorldBackupKind.Old;
+
+                        results.Add(new WorldBackupInfo
+                        {
+                            World = worldName,
+                            Name = fileName,
+                            Kind = orphanKind,
+                            IsDirectory = false,
+                            Path = file,
+                            MetaPath = null,
+                            DbPath = file,
+                            SizeBytes = SafeFileSize(file),
+                            IsCommitted = false,
+                            IsDamaged = true,
+                            LastWriteUtc = SafeLastWriteUtc(file),
+                            Stamp = orphanStamp,
+                        });
                         continue;
+                    }
 
                     var dbPath = LegacyLayerDb(dir, worldName, fileName);
                     var hasDb = File.Exists(dbPath);
@@ -390,6 +496,11 @@ namespace ValheimBakaLoader.Tools
                         DbPath = hasDb ? dbPath : null,
                         SizeBytes = size,
                         IsCommitted = true,
+                        // Half a pair, the other way round: the ".fwl" is here and the ".db"
+                        // it describes is not. Copying it over a live world would leave that
+                        // world's metadata and its database from two different saves, with a
+                        // seed and a uid that no longer match the terrain on disk.
+                        IsDamaged = !hasDb,
                         LastWriteUtc = SafeLastWriteUtc(hasDb ? dbPath : file),
                         Stamp = stamp,
                     });
@@ -398,6 +509,106 @@ namespace ValheimBakaLoader.Tools
             catch { /* ignore */ }
 
             return results.OrderByDescending(b => b.LastWriteUtc).ToList();
+        }
+
+        /// <summary>
+        /// One backup set whose world is gone: every layer on disk that names a world no
+        /// worlds folder holds any more.
+        /// </summary>
+        public sealed class OrphanBackupSet
+        {
+            /// <summary>The world the layers name, which no longer exists on disk.</summary>
+            public string WorldName { get; init; }
+
+            /// <summary>"worlds_local" or "worlds": the folder the layers sit in.</summary>
+            public string Sub { get; init; }
+
+            /// <summary>The layers themselves, newest first, exactly as a live world's are.</summary>
+            public IReadOnlyList<WorldBackupInfo> Layers { get; init; }
+
+            /// <summary>Total bytes the set takes on disk.</summary>
+            public long SizeBytes { get; init; }
+        }
+
+        /// <summary>
+        /// Every backup set under a save folder whose owning world is gone from BOTH worlds
+        /// subfolders.
+        /// <para>
+        /// Layers are only ever asked for by the name of a world that is still there, so a set
+        /// left behind by a world deleted outside BakaLoader, renamed, or removed with its
+        /// layers kept had no screen at all: it could not be seen, sized or reclaimed, and it
+        /// can be as large as the world it came from. This walks the layer names themselves and
+        /// groups them by the world each one names, so a set with nobody left to claim it is
+        /// still something a host can look at, restore from, or take back the disk of.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<OrphanBackupSet> EnumerateOrphanBackups(string saveFolder)
+        {
+            var results = new List<OrphanBackupSet>();
+            if (string.IsNullOrWhiteSpace(saveFolder)) return results;
+
+            // A world in EITHER subfolder claims its layers wherever they sit, so every live
+            // name is gathered before any set is called owner less.
+            var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var sub in WorldSubfolders)
+            {
+                foreach (var world in EnumerateIn(saveFolder, sub)) live.Add(world.Name);
+            }
+
+            foreach (var sub in WorldSubfolders)
+            {
+                var dir = WorldsDir(saveFolder, sub);
+                if (dir == null || !Directory.Exists(dir)) continue;
+
+                var owners = new List<string>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                void Claim(string owner)
+                {
+                    if (string.IsNullOrWhiteSpace(owner)) return;
+                    if (live.Contains(owner)) return;
+                    // The name is handed back to the UI and comes back as a reference, so it
+                    // has to be a name a reference is allowed to carry.
+                    if (!IsSafeReferenceToken(owner)) return;
+                    if (!seen.Add(owner)) return;
+                    owners.Add(owner);
+                }
+
+                try
+                {
+                    foreach (var child in Directory.EnumerateDirectories(dir))
+                    {
+                        if (TryParseBackupName(System.IO.Path.GetFileName(child), out var owner, out _, out _))
+                            Claim(owner);
+                    }
+                }
+                catch { /* an unreadable folder hides nothing that was visible before */ }
+
+                try
+                {
+                    foreach (var file in Directory.EnumerateFiles(dir))
+                    {
+                        if (IsBackupFileName(System.IO.Path.GetFileName(file), out var owner)) Claim(owner);
+                    }
+                }
+                catch { /* ignore */ }
+
+                foreach (var owner in owners)
+                {
+                    var layers = EnumerateBackups(saveFolder, sub, owner);
+                    if (layers.Count == 0) continue;
+
+                    results.Add(new OrphanBackupSet
+                    {
+                        WorldName = owner,
+                        Sub = sub,
+                        Layers = layers,
+                        SizeBytes = layers.Sum(l => l.SizeBytes),
+                    });
+                }
+            }
+
+            return results;
         }
 
         /// <summary>
@@ -453,8 +664,15 @@ namespace ValheimBakaLoader.Tools
         /// against the layers found on disk, and the resolved path is re-checked to sit directly
         /// inside that worlds folder. There is no path built from caller-supplied text, so the
         /// live world (file pair or 1.0 directory) can never be reached through here.
+        /// <para>
+        /// A layer that is missing the half it would be restored FROM is refused by default. It
+        /// is still listed, and a delete can still be pointed at it with <paramref name="allowDamaged"/>,
+        /// but a restore that took a lone ".db" for a ".fwl" would write database bytes over the
+        /// live world's metadata file.
+        /// </para>
         /// </summary>
-        public static WorldBackupInfo ResolveBackupLayer(string saveFolder, string sub, string worldName, string name)
+        public static WorldBackupInfo ResolveBackupLayer(
+            string saveFolder, string sub, string worldName, string name, bool allowDamaged = false)
         {
             if (!IsSafeReferenceToken(worldName) || !IsSafeReferenceToken(name)) return null;
             if (sub != WorldSubfolders[0] && sub != WorldSubfolders[1]) return null;
@@ -466,6 +684,7 @@ namespace ValheimBakaLoader.Tools
             var layer = EnumerateBackups(saveFolder, sub, worldName)
                 .FirstOrDefault(b => string.Equals(b.Name, name, StringComparison.OrdinalIgnoreCase));
             if (layer == null) return null;
+            if (layer.IsDamaged && !allowDamaged) return null;
 
             try
             {
@@ -503,6 +722,17 @@ namespace ValheimBakaLoader.Tools
             return System.IO.Path.Combine(worldsDir, System.IO.Path.GetFileNameWithoutExtension(fwlFileName) + ".db");
         }
 
+        /// <summary>The .fwl that pairs with a legacy backup layer's .db file name, or null.</summary>
+        public static string LegacyLayerMeta(string worldsDir, string worldName, string dbFileName)
+        {
+            if (string.IsNullOrWhiteSpace(dbFileName)) return null;
+            if (dbFileName.EndsWith(".db.old", StringComparison.OrdinalIgnoreCase))
+                return System.IO.Path.Combine(worldsDir, worldName + ".fwl.old");
+            if (!string.Equals(System.IO.Path.GetExtension(dbFileName), ".db", StringComparison.OrdinalIgnoreCase))
+                return null;
+            return System.IO.Path.Combine(worldsDir, System.IO.Path.GetFileNameWithoutExtension(dbFileName) + ".fwl");
+        }
+
         /// <summary>
         /// True when a DIRECTORY sitting in worlds_local/worlds is a backup rather than a world.
         /// </summary>
@@ -511,8 +741,9 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// True when a FILE sitting in worlds_local/worlds is a backup rather than a live world
-        /// file: "{world}_backup_*.fwl/.db", "{world}.fwl.old"/".db.old", or a bare
-        /// "{world}_{stamp}.fwl/.db" left behind by the 2022 worlds_local migration.
+        /// file: "{world}_backup_*.fwl/.db", "{world}.fwl.old"/".db.old", or the game's rolling
+        /// shape "{world}_{stamp}.fwl/.db", which the game files under the trimmed name and
+        /// never opens as a world.
         /// </summary>
         public static bool IsBackupFileName(string fileName, out string worldName)
         {
@@ -539,8 +770,53 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
+        /// The timestamp the game reads out of a save name, or null when there is none it can
+        /// use. This is SaveSystem.GetTimestampFromPath: the pattern is unanchored, the hyphens
+        /// between the six groups are all optional, and a stamp whose numbers are not a real
+        /// date (month 13, say) counts as no stamp at all, exactly as the game counts it.
+        /// </summary>
+        public static DateTime? TryReadStamp(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+
+            var m = GameStamp.Match(name);
+            if (!m.Success) return null;
+
+            try
+            {
+                return new DateTime(
+                    int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture),
+                    int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture),
+                    int.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture),
+                    int.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture),
+                    int.Parse(m.Groups[5].Value, CultureInfo.InvariantCulture),
+                    int.Parse(m.Groups[6].Value, CultureInfo.InvariantCulture));
+            }
+            catch
+            {
+                // The game swallows the same failure and carries on with no timestamp, which
+                // makes the name a plain save name rather than a layer.
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Splits a backup-shaped name (no extension) into the world it belongs to, its kind,
         /// and its timestamp. False when the name is not backup-shaped at all.
+        /// <para>
+        /// This follows the game's own two-step decision (SaveSystem.GetSaveInfo into
+        /// UpdateSaveNameAndReturnSaveFileType) rather than a shape of our own. The game reads
+        /// a stamp out of the name; if it finds one and there is at least one underscore, the
+        /// name is never a save of its own:
+        /// <list type="bullet">
+        /// <item>the literal "_backup_" marker at the second-to-last underscore names the
+        /// world in front of it and the infix after it names the kind;</item>
+        /// <item>no marker is what the game calls a ROLLING save. The game trims the name at
+        /// its LAST underscore, files it under that world, and never elects it as a primary
+        /// file, so "Midgard_20220620-101500" is a layer of "Midgard" and is not a world.
+        /// Listing it as one would offer a save the game itself will not open.</item>
+        /// </list>
+        /// </para>
         /// </summary>
         public static bool TryParseBackupName(string name, out string worldName, out WorldBackupKind kind, out DateTime? stamp)
         {
@@ -549,40 +825,83 @@ namespace ValheimBakaLoader.Tools
             stamp = null;
             if (string.IsNullOrWhiteSpace(name)) return false;
 
-            // "_backup_" shapes first: a bare-stamp match would otherwise swallow them
-            // and hand back a world name ending in "_backup".
-            var m = BackupNamed.Match(name);
-            if (m.Success)
+            var read = TryReadStamp(name);
+            if (read == null) return false;
+
+            // The game reads the marker off the second-to-last underscore, so a world whose own
+            // name ends in "_backup" keeps its layers and a name like "My_backup_World_{stamp}"
+            // is read as a rolling save of "My_backup_World" rather than a layer of "My".
+            var marker = SecondToLastIndexOfUnderscore(name);
+            var marked = marker >= 0
+                         && name.Length - marker >= BackupMarker.Length
+                         && string.Equals(name.Substring(marker, BackupMarker.Length), BackupMarker, StringComparison.Ordinal);
+
+            var cut = marked ? marker : name.LastIndexOf('_');
+            if (cut < 0) return false;
+
+            worldName = name.Substring(0, cut);
+            if (worldName.Length == 0)
             {
-                worldName = m.Groups["world"].Value;
-                if (worldName.Length == 0) return false;
-                var infix = m.Groups["infix"].Value.ToLowerInvariant();
-                kind = infix switch
-                {
-                    "auto-" => WorldBackupKind.Auto,
-                    "restore-" => WorldBackupKind.Restore,
-                    "cloud-" => WorldBackupKind.Cloud,
-                    PreUpdateInfix => WorldBackupKind.PreUpdate,
-                    // No infix: the untouched originals the game renames aside when it
-                    // converts a pre-1.0 world to the directory format.
-                    _ => WorldBackupKind.Legacy,
-                };
-                stamp = ParseStamp(m.Groups["stamp"].Value);
-                return true;
+                // The game falls back to a plain save name when the trim would leave nothing.
+                worldName = null;
+                return false;
             }
 
-            m = BackupStamped.Match(name);
-            if (m.Success)
-            {
-                worldName = m.Groups["world"].Value;
-                if (worldName.Length == 0) return false;
-                kind = WorldBackupKind.Other;
-                stamp = ParseStamp(m.Groups["stamp"].Value);
-                return true;
-            }
-
-            return false;
+            kind = marked ? KindFromMarker(name, marker) : WorldBackupKind.Other;
+            stamp = read;
+            return true;
         }
+
+        /// <summary>
+        /// True when a name is what the game calls a ROLLING save: a stamp it can read, at
+        /// least one underscore, and no "_backup_" marker at the second-to-last one. The game
+        /// files such a file under <paramref name="worldName"/>, the name trimmed at its last
+        /// underscore, and never opens it as a world of its own.
+        /// <para>
+        /// It is still a whole save on disk, so the pre-update pass names it rather than
+        /// letting it vanish out of both lists at once.
+        /// </para>
+        /// </summary>
+        public static bool IsRollingSaveName(string name, out string worldName)
+        {
+            worldName = null;
+            if (!TryParseBackupName(name, out var owner, out var kind, out _)) return false;
+            if (kind != WorldBackupKind.Other) return false;
+            worldName = owner;
+            return true;
+        }
+
+        /// <summary>Index of the second-to-last '_' in a name, or -1 when there are fewer than two.</summary>
+        private static int SecondToLastIndexOfUnderscore(string name)
+        {
+            var last = -1;
+            var previous = -1;
+            for (var i = 0; i < name.Length; i++)
+            {
+                if (name[i] != '_') continue;
+                previous = last;
+                last = i;
+            }
+            return previous;
+        }
+
+        /// <summary>
+        /// Which layer a "_backup_" marker names, read the way the game reads it: the infix that
+        /// follows the marker, or the untouched pre-conversion originals when there is none.
+        /// "preupdate-" is BakaLoader's own addition; the game files it as a standard backup.
+        /// </summary>
+        private static WorldBackupKind KindFromMarker(string name, int marker)
+        {
+            if (StartsAt(name, marker, BackupMarker + "auto-")) return WorldBackupKind.Auto;
+            if (StartsAt(name, marker, BackupMarker + "cloud-")) return WorldBackupKind.Cloud;
+            if (StartsAt(name, marker, BackupMarker + "restore-")) return WorldBackupKind.Restore;
+            if (StartsAt(name, marker, BackupMarker + PreUpdateInfix)) return WorldBackupKind.PreUpdate;
+            return WorldBackupKind.Legacy;
+        }
+
+        private static bool StartsAt(string name, int index, string expected)
+            => name.Length - index >= expected.Length
+               && string.Equals(name.Substring(index, expected.Length), expected, StringComparison.Ordinal);
 
         /// <summary>The wire token for a backup kind (what the Barrow DTO carries).</summary>
         public static string KindToken(WorldBackupKind kind) => kind switch
@@ -711,8 +1030,20 @@ namespace ValheimBakaLoader.Tools
         /// already in, leaving the source completely untouched. The biome data cache travels
         /// with it when one exists (the game regenerates it otherwise, which costs a long
         /// first boot). Returns the copied world's new folder.
+        /// <para>
+        /// A world of the same name already at the destination stops the copy. Copying onto it
+        /// would leave one folder holding files from two unrelated save histories, and whichever
+        /// generation happened to end up with a whole set of files would then load as the world.
+        /// </para>
         /// </summary>
-        public static string CopyWorld(WorldInfo world, string destSaveFolder)
+        /// <param name="overwrite">
+        /// True to replace the world already at the destination. The replacement is staged in a
+        /// sibling folder (a chunked world) or under sibling temp names (a legacy pair) and
+        /// swapped in only once every file it needs has landed, so a copy that fails part way
+        /// through leaves the world that was there untouched rather than half gone. Nothing at
+        /// the destination is removed before the whole replacement is on disk beside it.
+        /// </param>
+        public static string CopyWorld(WorldInfo world, string destSaveFolder, bool overwrite = false)
         {
             if (world == null) throw new ArgumentNullException(nameof(world));
             if (string.IsNullOrWhiteSpace(destSaveFolder))
@@ -722,25 +1053,202 @@ namespace ValheimBakaLoader.Tools
             var destWorldsDir = System.IO.Path.Combine(destSaveFolder, WorldSubfolders[0]);
             Directory.CreateDirectory(destWorldsDir);
 
+            // Copying a world onto itself is the one call that can only destroy: with overwrite
+            // the source is what gets cleared to make room for the source.
+            if (SameDirectory(SourceWorldsDir(world), destWorldsDir))
+            {
+                throw new InvalidOperationException(
+                    $"'{world.Name}' is already in that save folder. A world cannot be copied over itself, "
+                    + "so nothing was copied.");
+            }
+
+            var taken = FindWorldFilesIn(destWorldsDir, world.Name);
+            if (taken != null && !overwrite)
+            {
+                throw new InvalidOperationException(
+                    $"A world called '{world.Name}' is already in that save folder. Copying onto it would "
+                    + "mix the two saves together, so nothing was copied.");
+            }
+
+            // A directory of that name is the name taken as well, even when it holds no finished
+            // save: a copy landing beside it leaves two spellings of one world and whichever the
+            // game read first would be the one it opened. Only a caller that asked to replace
+            // what is there may clear it.
+            var occupied = System.IO.Path.Combine(destWorldsDir, world.Name);
+            if (!overwrite && DirectoryHasAnything(occupied))
+            {
+                throw new InvalidOperationException(
+                    $"A folder called '{world.Name}' is already in that save folder. Copying onto it would "
+                    + "mix the two saves together, so nothing was copied.");
+            }
+
             string destFolder;
             if (world.Format == WorldFormat.Chunked)
             {
                 destFolder = System.IO.Path.Combine(destWorldsDir, world.Name);
-                CopyDirectory(world.Folder, destFolder);
+
+                if (Directory.Exists(destFolder) && FindGeneration(destFolder).Exists)
+                {
+                    // A real world is there. Swap the whole directory, never merge into it.
+                    ReplaceDirectoryContents(world.Folder, destFolder, recoveryHint: DestinationUnchanged);
+                }
+                else
+                {
+                    TryDeleteDirectory(destFolder);
+                    CopyDirectory(world.Folder, destFolder);
+                }
+
+                // A legacy pair of the same name would be shadowed by the directory and would
+                // come back as a world of its own the moment the directory went away.
+                if (overwrite) DeleteLegacyPair(destWorldsDir, world.Name, includeOldSiblings: true);
             }
             else
             {
                 destFolder = destWorldsDir;
+                CopyLegacyPairIn(world, destWorldsDir, overwrite);
+            }
+
+            CopyBiomeCache(world.SaveFolder, destSaveFolder, BiomeCacheKey(world));
+            return destFolder;
+        }
+
+        /// <summary>
+        /// Copies a legacy world's files into a worlds folder the staged way: every file lands
+        /// beside its final name first and is checked, what was there is only taken once the
+        /// whole set is on disk, and the temp names are swapped in last. Deleting first and
+        /// copying second is what leaves a destination world gone and half a replacement in
+        /// its place when the second file cannot be written.
+        /// </summary>
+        private static void CopyLegacyPairIn(WorldInfo world, string destWorldsDir, bool overwrite)
+        {
+            var suffix = ".copying-" + DateTime.Now.ToString(BackupStampFormat, CultureInfo.InvariantCulture);
+            var staged = new List<(string Temp, string Final)>();
+
+            try
+            {
                 foreach (var ext in new[] { ".fwl", ".db", ".fwl.old", ".db.old" })
                 {
                     var src = System.IO.Path.Combine(world.Folder, world.Name + ext);
                     if (!File.Exists(src)) continue;
-                    File.Copy(src, System.IO.Path.Combine(destWorldsDir, world.Name + ext), overwrite: true);
+
+                    var final = System.IO.Path.Combine(destWorldsDir, world.Name + ext);
+                    var temp = final + suffix;
+                    staged.Add((temp, final));
+
+                    File.Copy(src, temp, overwrite: true);
+                    if (!File.Exists(temp) || SafeFileSize(temp) != SafeFileSize(src))
+                    {
+                        throw new IOException(
+                            $"'{world.Name + ext}' did not land whole at the destination.");
+                    }
                 }
             }
+            catch (Exception e)
+            {
+                foreach (var (temp, _) in staged) TryDeleteFile(temp);
+                throw new InvalidOperationException(
+                    $"'{world.Name}' could not be copied, so nothing in the destination folder was changed. "
+                    + e.Message, e);
+            }
 
-            CopyBiomeCache(world.SaveFolder, destSaveFolder, world.Name);
-            return destFolder;
+            // Every file is on disk beside the name it is about to take. Only now is it safe to
+            // take what was there.
+            if (overwrite)
+            {
+                TryDeleteDirectory(System.IO.Path.Combine(destWorldsDir, world.Name));
+                DeleteLegacyPair(destWorldsDir, world.Name, includeOldSiblings: true);
+            }
+
+            try
+            {
+                foreach (var (temp, final) in staged) File.Move(temp, final, overwrite: true);
+            }
+            finally
+            {
+                // A rename inside one folder rarely fails, but if one does the rest of the
+                // staged files must not be left sitting in the worlds folder under a name
+                // nothing will ever read again.
+                foreach (var (temp, _) in staged) TryDeleteFile(temp);
+            }
+        }
+
+        /// <summary>The worlds folder a world's files sit directly in, whichever format it is.</summary>
+        private static string SourceWorldsDir(WorldInfo world)
+        {
+            if (world == null || string.IsNullOrWhiteSpace(world.Folder)) return null;
+            if (world.Format != WorldFormat.Chunked) return world.Folder;
+            return System.IO.Path.GetDirectoryName(System.IO.Path.TrimEndingDirectorySeparator(world.Folder));
+        }
+
+        /// <summary>True when two paths name the same directory. False on any doubt.</summary>
+        private static bool SameDirectory(string left, string right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
+            try
+            {
+                return string.Equals(
+                    System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(left)),
+                    System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(right)),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>True when a directory is there and holds at least one file or folder.</summary>
+        private static bool DirectoryHasAnything(string dir)
+        {
+            try
+            {
+                return !string.IsNullOrWhiteSpace(dir)
+                       && Directory.Exists(dir)
+                       && Directory.EnumerateFileSystemEntries(dir).Any();
+            }
+            catch { return false; }
+        }
+
+        /// <summary>Removes a file if it is there. Never throws.</summary>
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) File.Delete(path);
+            }
+            catch { /* best effort */ }
+        }
+
+        /// <summary>What a failed staged swap tells the host when there is no snapshot to name.</summary>
+        private const string DestinationUnchanged = "Nothing in the destination folder was changed.";
+
+        /// <summary>
+        /// Removes a legacy "{world}.fwl/.db" pair from a worlds folder and returns what went.
+        /// Nothing is removed when the pair is not there.
+        /// </summary>
+        /// <param name="includeOldSiblings">
+        /// True to take the "{world}.fwl.old"/".db.old" pair as well. Those are a backup LAYER, so
+        /// only a caller that is replacing or removing the whole world says yes.
+        /// </param>
+        private static List<string> DeleteLegacyPair(string worldsDir, string worldName, bool includeOldSiblings)
+        {
+            var removed = new List<string>();
+            if (string.IsNullOrWhiteSpace(worldsDir) || string.IsNullOrWhiteSpace(worldName)) return removed;
+            if (worldName.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0) return removed;
+
+            var extensions = includeOldSiblings
+                ? new[] { ".fwl", ".db", ".fwl.old", ".db.old" }
+                : new[] { ".fwl", ".db" };
+
+            foreach (var ext in extensions)
+            {
+                var path = System.IO.Path.Combine(worldsDir, worldName + ext);
+                try
+                {
+                    if (!File.Exists(path)) continue;
+                    File.Delete(path);
+                    removed.Add(System.IO.Path.GetFileName(path));
+                }
+                catch { /* a locked leftover must not abort what is already done */ }
+            }
+            return removed;
         }
 
         /// <summary>
@@ -903,6 +1411,20 @@ namespace ValheimBakaLoader.Tools
         /// Copies every world under a save folder aside as a pre-update snapshot. Stops at the
         /// first hard failure and reports it in <see cref="WorldSnapshotResult.Error"/>, so a
         /// caller can refuse to start a server whose worlds are not safely copied.
+        /// <para>
+        /// A pass that protected none of the worlds it COULD have protected is a failure too.
+        /// The three cases are not the same thing and the caller has to be able to tell them
+        /// apart: an empty save folder is a clean pass with nothing to do; a world with no
+        /// finished save on disk yet (created and never saved, or force killed inside its first
+        /// save) is named in <see cref="WorldSnapshotResult.Skipped"/> and is not counted, since
+        /// there is nothing in it to lose; a world that DOES have a finished save and could not
+        /// be copied is a hard failure that has to stop the launch it was protecting.
+        /// </para>
+        /// <para>
+        /// A folder shaped like the game's rolling save, "{world}_{stamp}", is not a world and
+        /// is not copied, but it is named in <see cref="WorldSnapshotResult.Skipped"/> so it
+        /// does not fall out of the world list and the snapshot list at the same time.
+        /// </para>
         /// </summary>
         /// <param name="refuse">
         /// Optional veto asked about every world before it is copied. Returning a reason is a
@@ -936,8 +1458,24 @@ namespace ValheimBakaLoader.Tools
                 return result;
             }
 
+            // Worlds that actually had something to protect. A world with no finished save on
+            // disk is not a failed copy, it is a world with nothing in it to copy, and counting
+            // it as a failure refuses a launch that was never at risk.
+            var protectable = 0;
+            string onlyProtectable = null;
+
             foreach (var world in worlds)
             {
+                if (!HasFinishedSaveToCopy(world))
+                {
+                    result.Skipped.Add(
+                        world.Name + " (there is no finished save in it yet, so there is nothing to copy aside.)");
+                    continue;
+                }
+
+                protectable++;
+                onlyProtectable ??= world.Name;
+
                 if (refuse != null)
                 {
                     string veto;
@@ -963,19 +1501,79 @@ namespace ValheimBakaLoader.Tools
                     result.Bytes += SnapshotWorldPreUpdate(world, stamp);
                     result.Copied.Add(PreUpdateLayerName(world.Name, stamp));
                 }
-                catch (InvalidOperationException refused)
-                {
-                    // Nothing to copy for this world; that is not a reason to block the start.
-                    result.Skipped.Add(world.Name + " (" + refused.Message + ")");
-                }
                 catch (Exception e)
                 {
+                    // This world DID have a finished save in it, so a refusal here is a world
+                    // that was worth protecting and is not protected. That stops the pass.
                     result.Error = $"Could not copy '{world.Name}' aside: {e.Message}";
                     return result;
                 }
             }
 
+            // Belt and braces on the loop above: worlds that were worth protecting were there
+            // and not one of them was copied. Reporting that as a finished snapshot is how a
+            // launch gets waved through with zero bytes behind it.
+            if (protectable > 0 && result.Copied.Count == 0)
+            {
+                result.Error = protectable == 1
+                    ? $"'{onlyProtectable}' is the only world in this save folder with a finished save and it could not be copied aside, so there is nothing to go back to."
+                    : $"None of the {protectable} worlds in this save folder with a finished save could be copied aside, so there is nothing to go back to.";
+            }
+
+            NameRollingSaves(saveFolder, result);
             return result;
+        }
+
+        /// <summary>
+        /// True when a world has a finished save on disk that a snapshot could copy: a
+        /// committed generation for a 1.0 world, the ".fwl" for a legacy pair. A world without
+        /// one holds nothing that an upgrade could take away.
+        /// </summary>
+        private static bool HasFinishedSaveToCopy(WorldInfo world)
+        {
+            if (world == null) return false;
+            if (world.Format == WorldFormat.Chunked) return world.IsCommitted && world.SaveNumber != null;
+            try { return !string.IsNullOrEmpty(world.MetaPath) && File.Exists(world.MetaPath); }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Names every rolling save under the save folder in the pass's skipped list. The game
+        /// files "{world}_{stamp}" under the trimmed name and never opens it as a world, so it
+        /// is not in the world list and cannot be copied as one; saying so is what keeps it
+        /// from disappearing out of both lists at once.
+        /// </summary>
+        private static void NameRollingSaves(string saveFolder, WorldSnapshotResult result)
+        {
+            foreach (var sub in WorldSubfolders)
+            {
+                var dir = WorldsDir(saveFolder, sub);
+                if (dir == null || !Directory.Exists(dir)) continue;
+
+                try
+                {
+                    foreach (var child in Directory.EnumerateDirectories(dir))
+                    {
+                        var name = System.IO.Path.GetFileName(child);
+                        if (IsRollingSaveName(name, out var owner)) Note(name, owner);
+                    }
+
+                    foreach (var file in Directory.EnumerateFiles(dir))
+                    {
+                        var name = System.IO.Path.GetFileName(file);
+                        // One entry per layer, keyed on the ".fwl" the way the Barrow keys it.
+                        if (!string.Equals(System.IO.Path.GetExtension(name), ".fwl", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (IsRollingSaveName(System.IO.Path.GetFileNameWithoutExtension(name), out var owner))
+                            Note(name, owner);
+                    }
+                }
+                catch { /* an unreadable folder is not a snapshot failure */ }
+            }
+
+            void Note(string name, string owner)
+                => result.Skipped.Add(
+                    name + " (the game files this under '" + owner + "' as a rolling save, so it is left where it is.)");
         }
 
         /// <summary>Copies "{world}_biomedatacache.bin" between save folders when the source has one.</summary>
@@ -1000,6 +1598,25 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
+        /// The name the game keys a world's biome data cache on: the world name stored INSIDE the
+        /// .fwl/.fwl2, which is what the game carries in World.m_name and what it builds
+        /// "{name}_biomedatacache.bin" from. That is only the same as the folder or file name
+        /// until a copy or a rename puts the world under a different one, and the payload bytes
+        /// (and so the name in them) travel with every copy. The on-disk name is the fallback for
+        /// a world whose metadata cannot be read, and for one whose stored name would not make a
+        /// file name.
+        /// </summary>
+        public static string BiomeCacheKey(WorldInfo world)
+        {
+            if (world == null) return null;
+
+            var stored = FwlReader.TryRead(world.MetaPath)?.WorldName;
+            if (string.IsNullOrWhiteSpace(stored)) return world.Name;
+            if (stored.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0) return world.Name;
+            return stored;
+        }
+
+        /// <summary>
         /// Makes sure a save folder has the sibling folders the game writes into, so a freshly
         /// provisioned isolated save folder is shaped like one the game made itself.
         /// </summary>
@@ -1018,12 +1635,24 @@ namespace ValheimBakaLoader.Tools
         /// Deletes a world and everything the game would delete with it: the world directory
         /// (or the legacy file pair), its backup layers when asked, and the biome data cache.
         /// Returns the names of what was actually removed.
+        /// <para>
+        /// The sweep covers BOTH worlds subfolders, not just the one the world was found in.
+        /// A same-named spelling next door is hidden by the dedupe in <see cref="Enumerate"/>
+        /// for exactly as long as the one being deleted is there, so leaving it behind is how a
+        /// world nobody could see comes back as a live world of the same name on the very next
+        /// read: a stale save the host never asked to keep, and one that a server would then be
+        /// launched onto.
+        /// </para>
         /// </summary>
         public static IReadOnlyList<string> DeleteWorld(string saveFolder, string worldName, bool includeBackups = true)
         {
             var deleted = new List<string>();
             var world = Find(saveFolder, worldName);
             if (world == null) return deleted;
+
+            // Read before anything is removed: the stored name lives in the .fwl we are about to
+            // delete, and it is the only name the game's cache file is ever built from.
+            var cacheKey = BiomeCacheKey(world);
 
             if (world.Format == WorldFormat.Chunked)
             {
@@ -1041,9 +1670,32 @@ namespace ValheimBakaLoader.Tools
                 }
             }
 
-            if (includeBackups)
+            // Every other spelling of this name, in BOTH worlds subfolders. The dedupe in
+            // Enumerate hides a same-named directory or legacy pair next door for exactly as
+            // long as the one just deleted was there, so this is the only pass that can reach it.
+            foreach (var sub in WorldSubfolders)
             {
-                foreach (var layer in EnumerateBackups(saveFolder, world.Sub, world.Name))
+                var worldsDir = WorldsDir(saveFolder, sub);
+                if (worldsDir == null || !Directory.Exists(worldsDir)) continue;
+
+                var shadowed = System.IO.Path.Combine(worldsDir, world.Name);
+                if (Directory.Exists(shadowed) && FindGeneration(shadowed).Exists)
+                {
+                    try
+                    {
+                        Directory.Delete(shadowed, recursive: true);
+                        deleted.Add(System.IO.Path.GetFileName(shadowed));
+                    }
+                    catch { /* a locked leftover must not abort what is already done */ }
+                }
+
+                // Only the live pair here: the ".old" siblings are a backup layer, and whether
+                // layers go is what includeBackups decides just below.
+                deleted.AddRange(DeleteLegacyPair(worldsDir, world.Name, includeOldSiblings: false));
+
+                if (!includeBackups) continue;
+
+                foreach (var layer in EnumerateBackups(saveFolder, sub, world.Name))
                 {
                     try
                     {
@@ -1057,7 +1709,7 @@ namespace ValheimBakaLoader.Tools
             // grid left behind would be reused by a later world of the same name.
             try
             {
-                var cache = BiomeCachePath(saveFolder, world.Name);
+                var cache = BiomeCachePath(saveFolder, cacheKey);
                 if (cache != null && File.Exists(cache))
                 {
                     File.Delete(cache);
@@ -1127,7 +1779,12 @@ namespace ValheimBakaLoader.Tools
         /// The snapshot the caller took before it asked for this, named in the error so the host
         /// is told what to unearth if the swap could not be finished.
         /// </param>
-        public static void ReplaceDirectoryContents(string sourceDir, string liveDir, string safetyLayerName = null)
+        /// <param name="recoveryHint">
+        /// The way back to put in the error instead of the snapshot sentence, for a caller that
+        /// took no snapshot because it was not replacing anything of the host's to begin with.
+        /// </param>
+        public static void ReplaceDirectoryContents(
+            string sourceDir, string liveDir, string safetyLayerName = null, string recoveryHint = null)
         {
             if (string.IsNullOrWhiteSpace(liveDir)) throw new ArgumentException("liveDir is required", nameof(liveDir));
 
@@ -1145,6 +1802,9 @@ namespace ValheimBakaLoader.Tools
                 ? "the safety copy taken before the restore"
                 : "the safety copy \"" + safetyLayerName + "\"";
 
+            var custom = !string.IsNullOrWhiteSpace(recoveryHint);
+            var wayBack = custom ? recoveryHint : "Unearth " + safety + " if it does not load.";
+
             TryDeleteDirectory(staged);
             TryDeleteDirectory(scratch);
 
@@ -1157,7 +1817,7 @@ namespace ValheimBakaLoader.Tools
                 {
                     throw new InvalidOperationException(
                         "The copied world has no finished save in it, so the live world was left as it was. "
-                        + "Unearth " + safety + " if it does not load.");
+                        + wayBack);
                 }
             }
             catch (Exception e)
@@ -1167,8 +1827,7 @@ namespace ValheimBakaLoader.Tools
                 if (e is InvalidOperationException) throw;
 
                 throw new InvalidOperationException(
-                    "The world could not be copied, so it was left as it was. Unearth " + safety
-                    + " if it does not load.", e);
+                    "The world could not be copied, so it was left as it was. " + wayBack, e);
             }
 
             var livePresent = Directory.Exists(liveDir);
@@ -1188,14 +1847,14 @@ namespace ValheimBakaLoader.Tools
                     {
                         throw new InvalidOperationException(
                             "The world could not be swapped in and the original could not be put back. "
-                            + "It is at \"" + scratch + "\". Unearth " + safety + " if that folder is gone.", e);
+                            + "It is at \"" + scratch + "\"."
+                            + (custom ? string.Empty : " Unearth " + safety + " if that folder is gone."), e);
                     }
                 }
 
                 TryDeleteDirectory(staged);
                 throw new InvalidOperationException(
-                    "The world could not be replaced, so it was left as it was. Unearth " + safety
-                    + " if it does not load.", e);
+                    "The world could not be replaced, so it was left as it was. " + wayBack, e);
             }
 
             TryDeleteDirectory(scratch);
@@ -1252,18 +1911,6 @@ namespace ValheimBakaLoader.Tools
         {
             if (string.IsNullOrWhiteSpace(saveFolder) || string.IsNullOrWhiteSpace(sub)) return null;
             return System.IO.Path.Combine(saveFolder, sub);
-        }
-
-        private static DateTime? ParseStamp(string raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) return null;
-            var digits = raw.Replace("-", "");
-            if (digits.Length != 14) return null;
-            return DateTime.TryParseExact(digits, "yyyyMMddHHmmss",
-                System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var parsed)
-                ? parsed
-                : null;
         }
 
         private static long SafeFileSize(string path)

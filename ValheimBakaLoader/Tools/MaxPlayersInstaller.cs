@@ -21,8 +21,8 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// Keeps an existing install current and migrates away from the legacy third-party
-        /// Azumatt-MaxPlayerCount mod: adopts its configured count into our cfg, removes its
-        /// folder and cfg, and installs the bundled plugin in its place. All failures are
+        /// Azumatt-MaxPlayerCount mod: adopts its configured count into our cfg, installs the
+        /// bundled plugin, and only then removes the legacy folder and cfg. All failures are
         /// logged and non-fatal (the legacy mod keeps working until migration succeeds).
         /// Should only be called while the server is STOPPED, since BepInEx loads plugins at
         /// start and the legacy DLL is file-locked while the server runs.
@@ -48,6 +48,9 @@ namespace ValheimBakaLoader.Tools
     /// </summary>
     public class MaxPlayersInstaller : IMaxPlayersInstaller
     {
+        /// <summary>Label used when a failure is surfaced to the operator.</summary>
+        public const string CompanionPluginName = "Max Players";
+
         public const string PluginFolderName = "BakaLoaderMaxPlayers";
         public const string PluginDllName = "BakaLoaderMaxPlayers.dll";
         public const string ConfigFileName = "com.baka.maxplayers.cfg";
@@ -115,38 +118,114 @@ namespace ValheimBakaLoader.Tools
                 {
                     Install(pluginsDir); // refresh the DLL if the bundled copy is newer
                 }
+                else
+                {
+                    // Nothing is installed and there is nothing to migrate, which is the ordinary
+                    // state of a server that never raised the cap. Nothing was checked, so this
+                    // pass has no news: an earlier failure is left standing rather than cleared by
+                    // a pass that did no work. Same shape as the item indexer's early returns.
+                    return;
+                }
+
+                CompanionPluginStatus.ReportSuccess(CompanionPluginName);
             }
             catch (Exception e)
             {
                 Logger.Warning("Could not prepare the max-players plugin: {message}", e.Message);
+                CompanionPluginStatus.ReportFailure(CompanionPluginName, e.Message);
             }
         }
 
         /// <summary>
-        /// One-way migration off the legacy mod. Adopt its count first (so nothing is lost
-        /// if a later step throws), then delete its folder - the step that fails with a
-        /// file lock if the server is running, in which case we bail out with everything
-        /// intact and retry on the next server start.
+        /// One-way migration off the legacy mod, in the order that never leaves the server
+        /// with no plugin at all. Adopt the count first (so nothing is lost if a later step
+        /// throws), then put the replacement in place, and only then take the old mod away.
+        /// The delete is the step that fails with a file lock if the server is running, in
+        /// which case we bail out with everything intact and retry on the next server start.
+        /// The two plugins sitting side by side in between is safe: the bundled one names the
+        /// legacy mod as an incompatibility and bows out for as long as it is there.
         /// </summary>
         private void MigrateFromLegacy(string pluginsDir)
         {
             var configDir = GetConfigDirectory(pluginsDir);
             var legacyDir = Path.Combine(pluginsDir, LegacyFolderName);
 
-            if (configDir != null && ReadConfiguredCount(configDir) == null)
-            {
-                var adopted = ReadCfgValue(Path.Combine(configDir, LegacyConfigFileName), LegacyConfigKey)
-                    ?? LegacyDefaultCount;
-                WriteConfiguredCount(configDir, adopted);
-            }
+            AdoptLegacyCount(configDir);
 
-            Directory.Delete(legacyDir, recursive: true);
+            // Before anything is taken away. A copy that cannot happen (the bundled DLL missing
+            // from this install, a plugins folder that will not take a write) throws from here,
+            // and the working mod is still exactly where it was when the throw reaches
+            // EnsureCurrent. Doing this after the delete is how a server ended up back at the
+            // vanilla cap of 10 with the operator's chosen count sitting in a cfg no installed
+            // plugin reads.
+            Install(pluginsDir);
+
+            try
+            {
+                Directory.Delete(legacyDir, recursive: true);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                // The old mod's DLL is held open for as long as the server runs, so its folder
+                // cannot go yet. Nothing has been lost: the count is already carried across and
+                // the next server start finishes the switch. This is a normal wait, not a
+                // failure, so it never reaches the companion-plugin failure list.
+                Logger.Information(
+                    "The old MaxPlayerCount mod is still in use, so the switch to the bundled plugin finishes at the next server start: {message}",
+                    e.Message);
+                return;
+            }
 
             var legacyCfg = configDir == null ? null : Path.Combine(configDir, LegacyConfigFileName);
             if (legacyCfg != null && File.Exists(legacyCfg)) File.Delete(legacyCfg);
 
-            Install(pluginsDir);
             Logger.Information("Migrated Max Players from the third-party MaxPlayerCount mod to the bundled BakaLoader plugin.");
+        }
+
+        /// <summary>
+        /// Brings the legacy mod's configured count across into our own cfg. Two cases matter.
+        /// On the first pass our key is still unset and the legacy value is all there is. On a
+        /// deferred pass an earlier attempt already seeded our key, and the operator may since
+        /// have saved a new count that could only reach the legacy cfg, because the running
+        /// server blocked the switch and the bundled plugin was not installed yet. Whichever
+        /// file was written last is the one the operator touched last, so that value wins; a
+        /// tie keeps ours, so a newer explicit choice of our own is never overwritten.
+        /// </summary>
+        private void AdoptLegacyCount(string configDir)
+        {
+            if (configDir == null) return;
+
+            var legacyCfg = Path.Combine(configDir, LegacyConfigFileName);
+            var legacyCount = ReadCfgValue(legacyCfg, LegacyConfigKey);
+            var ours = ReadConfiguredCount(configDir);
+
+            if (ours == null)
+            {
+                WriteConfiguredCount(configDir, legacyCount ?? LegacyDefaultCount);
+                return;
+            }
+
+            if (legacyCount == null || legacyCount.Value == ours.Value) return;
+            if (!IsNewerThan(legacyCfg, Path.Combine(configDir, ConfigFileName))) return;
+
+            Logger.Information(
+                "Keeping the max-player count of {count} that was saved while the migration was waiting.",
+                legacyCount.Value);
+            WriteConfiguredCount(configDir, legacyCount.Value);
+        }
+
+        /// <summary>True when both files exist and the first one was written strictly later.</summary>
+        private static bool IsNewerThan(string candidate, string reference)
+        {
+            try
+            {
+                if (!File.Exists(candidate) || !File.Exists(reference)) return false;
+                return File.GetLastWriteTimeUtc(candidate) > File.GetLastWriteTimeUtc(reference);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>BepInEx/plugins -&gt; BepInEx/config (same derivation as CommanderInstaller).</summary>

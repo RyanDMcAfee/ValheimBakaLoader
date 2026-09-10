@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using ValheimBakaLoader.Properties;
 
@@ -67,6 +67,15 @@ namespace ValheimBakaLoader.Game
         public string LastLaunchedServerBuild { get; set; }
 
         /// <summary>
+        /// The binary fingerprint of the server this profile last actually started, taken at
+        /// the same moment as <see cref="LastLaunchedServerBuild"/>. The build id above is the
+        /// Steam manifest's answer and the fingerprint is the binaries' own, so keeping both
+        /// leaves the launch guard something to compare when the manifest cannot be read at
+        /// the next start. Null until the profile has been launched once.
+        /// </summary>
+        public string LastLaunchedServerFingerprint { get; set; }
+
+        /// <summary>
         /// The game version that server reported once it was up ("1.0.7"), read from its
         /// own banner. Null until a launched server has printed one.
         /// </summary>
@@ -129,6 +138,7 @@ namespace ValheimBakaLoader.Game
                 SaveDataFolderPath = file.SaveDataFolderPath ?? defaults.SaveDataFolderPath,
                 WriteServerLogsToFile = file.WriteServerLogsToFile ?? defaults.WriteServerLogsToFile,
                 LastLaunchedServerBuild = file.LastLaunchedServerBuild ?? defaults.LastLaunchedServerBuild,
+                LastLaunchedServerFingerprint = file.LastLaunchedServerFingerprint ?? defaults.LastLaunchedServerFingerprint,
                 LastLaunchedGameVersion = file.LastLaunchedGameVersion ?? defaults.LastLaunchedGameVersion,
                 AutoRestart = file.AutoRestart ?? defaults.AutoRestart,
                 AutoRestartDelay = file.AutoRestartDelay ?? defaults.AutoRestartDelay,
@@ -165,6 +175,7 @@ namespace ValheimBakaLoader.Game
             SaveDataFolderPath = SaveDataFolderPath,
             WriteServerLogsToFile = WriteServerLogsToFile,
             LastLaunchedServerBuild = LastLaunchedServerBuild,
+            LastLaunchedServerFingerprint = LastLaunchedServerFingerprint,
             LastLaunchedGameVersion = LastLaunchedGameVersion,
             AutoRestart = AutoRestart,
             AutoRestartDelay = AutoRestartDelay,

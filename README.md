@@ -23,17 +23,41 @@
 
 > Fan-made. Not affiliated with Iron Gate or Coffee Stain. Use at your own risk, and keep backups of worlds you care about.
 
+**Full documentation is in the [wiki](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki).** This page is the short version.
+
+---
+
+## What is new in 1.0.1
+
+**Update the Valheim server from the app.** When Steam has a server update queued, the start prompt offers **Update and start**: BakaLoader copies your worlds aside, runs the update, then starts the server. A server installed through your Steam library is updated by Steam itself, which BakaLoader then watches until the download is whole. A standalone install is updated with steamcmd, which BakaLoader downloads once and asks Windows to verify Valve's signature on. A failed update keeps the server stopped and tells you why. While it runs, every way of starting the server is refused, and closing BakaLoader waits until it is done, so nothing ever starts out of a folder that is halfway through being replaced.
+
+<p align="center">
+  <a href="img/bl-update.png"><img src="img/bl-update.png" width="760" alt="The start prompt offering to update the server"></a>
+</p>
+
+**Live player positions** in the roster while the server runs with RCON on, refreshed every few seconds and never stale.
+
+**The Ashlands is drawn properly.** The map now uses the game's final terrain formula, with the game's own noise functions, instead of the pregeneration approximation. Coastlines match the world you play in.
+
+**Backups without a world.** Layers left behind by a world that is gone were on disk but nowhere on screen. The backup manager now lists them, so you can bring the world back or take the space.
+
+**Fixes** across the launch guard, backups and the interface: an unreadable Steam manifest no longer clears the guard, a backup that copied nothing now stops the start, a damaged backup layer is shown rather than hidden, row actions that need a player online are greyed out with the reason instead of failing when you press them, and the mod row menu gained a link to each mod's Thunderstore page.
+
+Everything else is on the [release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
 ---
 
 ## Valheim 1.0
 
-Valheim 1.0 shipped on 9 September 2026 and changed a few things that server tools have to keep up with. BakaLoader handles them:
+Valheim 1.0 shipped on 9 September 2026 and changed a few things that server tools have to keep up with. BakaLoader handles them.
 
-- **Worlds are folders now.** 1.0 stores each world as a folder of files instead of one `.fwl` and one `.db`. The first time a 1.0 server saves an older world it converts it and keeps the old files as a backup. That conversion is one way: an older server cannot read the converted world. BakaLoader lists and backs up both formats side by side.
-- **A warning before the first launch on a new build.** When the server on disk is a different build than the one BakaLoader last started, it stops and asks before starting, and offers to back up every world first. Automatic starts and restarts wait for you instead of running unattended. If Steam has a server update queued but not installed yet, it tells you that too, because an old server refuses updated players.
-- **Admin, ban and allow lists changed format.** 1.0 only matches Steam ids written as `V_<steamid>`. Old files with bare ids stop working, which looks like everyone being banned. BakaLoader writes both forms and upgrades your existing lists the first time it touches them.
-- **PlayStation 5 and Switch 2 players** show up in the roster like everyone else.
-- The map generator follows the 1.0 Deep North terrain, and the log reader understands the new save messages.
+Worlds are folders now, and converting an old world is one way. A 1.0 server rewrites an older world on its first save and keeps the old files as a backup, and an older server cannot read the result. BakaLoader lists and backs up both formats side by side, and warns before that first save. See [World file formats](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-file-formats).
+
+Starting on a build you have not run before now asks first, and offers to back up every world. Automatic starts and restarts wait for you instead of running unattended. See [Server updates and the launch guard](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Server-updates-and-the-launch-guard).
+
+Admin, ban and allow lists changed format. 1.0 only matches Steam ids written as `V_<steamid>`, and old files with bare ids look like everyone being banned. BakaLoader writes both forms and upgrades your existing lists.
+
+PlayStation and Nintendo Switch players show up in the roster like everyone else, and the map generator follows the 1.0 terrain.
 
 If you run mods, expect some of them to need updates from their authors. BakaLoader shows what is current on Thunderstore.
 
@@ -41,54 +65,59 @@ If you run mods, expect some of them to need updates from their authors. BakaLoa
 
 ## What it does
 
-The app is split into nine screens. Each has a plain name, with its Norse name shown underneath as a small caption. A "Show Norse names" switch in Upkeep hides the captions if you want plain labels only. A header on every screen shows the active server, its state, uptime and players online, with one Start or Stop button.
+The app is split into nine screens. Each has a plain name, with its Norse name shown underneath as a small caption. A "Show Norse names" switch hides the captions if you want plain labels only. A header on every screen shows the active server, its state, uptime and players online, with one Start or Stop button.
 
 | Screen | What it is for |
 |---|---|
-| **Dashboard** (Hearth) | Server status, who is online, next save, network addresses, CPU and RAM, a tail of the log, and the Upkeep settings. |
-| **Players** (Vikings) | A sortable table with platform, session time, total playtime, last seen, deaths and position. The row button or a right-click opens the actions: promote, allow, kick, ban, heal, teleport or spawn items nearby. |
-| **Mods** | Scans your BepInEx folder against Thunderstore. Update one, update all, or paste a Thunderstore link to install. |
-| **Settings** (World) | Server name, password, port, world and seed, crossplay, backups, world modifiers, restart rules, RCON and folders. |
-| **Map** (Atlas) | Your world drawn from its seed with no map mods, fog of war from what players have shared at cartography tables, portals and builds as layers, and a weather forecast. |
-| **Configs** (Runes) | Edit your mods' config files in the app. |
-| **Log** (Saga) | The live server log with levels, search, pause on scroll, and a console line. |
-| **Discord** (Herald) | One status post in a Discord channel that edits itself as the server changes. |
-| **Statistics** (Skald) | Uptime, sessions, deaths and mod history, counted on your machine only. |
+| [**Dashboard**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-%28Hearth%29) (Hearth) | Server status, who is online, next save, network addresses, CPU and RAM, a tail of the log, and the app's own settings. |
+| [**Players**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29) (Vikings) | A sortable table with platform, session time, total playtime, last seen, deaths and position. Right-click for promote, allow, kick, ban, heal, teleport or spawn items nearby. |
+| [**Mods**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods) | Scans your BepInEx folder against Thunderstore. Update one, update all, or paste a Thunderstore link to install. |
+| [**Settings**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-%28World%29) (World) | Server name, password, port, world and seed, crossplay, backups, world modifiers, restart rules, RCON and folders. |
+| [**Map**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Map-%28Atlas%29) (Atlas) | Your world drawn from its seed with no map mods, fog of war from what players have shared at cartography tables, portals and builds as layers, and a weather forecast. |
+| [**Configs**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Configs-%28Runes%29) (Runes) | Edit your mods' config files in the app. |
+| [**Log**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Log-%28Saga%29) (Saga) | The live server log with levels, search, pause on scroll, and a console line. |
+| [**Discord**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-%28Herald%29) (Herald) | One status post in a Discord channel that edits itself as the server changes. |
+| [**Statistics**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Statistics-%28Skald%29) (Skald) | Uptime, sessions, deaths and mod history, counted on your machine only. |
 
 ### Running the server
-- Start, stop and restart from the app. Scheduled restarts warn players in game first. Optional restart when the last player leaves, and relaunch after a crash.
-- The server process is tied to the app, so it cannot linger after BakaLoader closes, even through Task Manager or a crash. If a matching server is already running when you open BakaLoader, it offers to adopt it.
-- Closing the app while players are online asks first, then saves the world on the way out.
-- Copy your public address, LAN address or crossplay join code from the dashboard. Minimize to the tray if you want it out of the way.
-- Conditions that stay true, such as a server update waiting, a held start, a failed backup or a crash with a relaunch pending, sit in a bar above the page with their action until you deal with them. Toasts are only used to confirm what you just did.
+
+Start, stop and restart from the app. Scheduled restarts warn players in game first. Optional restart when the last player leaves, and relaunch after a crash.
+
+The server process is tied to the app, so it cannot linger after BakaLoader closes, even through Task Manager or a crash. If a matching server is already running when you open BakaLoader, it offers to adopt it. Closing the app while players are online asks first, then saves the world on the way out.
+
+Copy your public address, LAN address or crossplay join code from the dashboard, or give the server a name of its own with the domain wizard. Minimize to the tray if you want it out of the way.
+
+Conditions that stay true, such as a server update waiting, a held start, a failed backup or a crash with a relaunch pending, sit in a bar above the page with their action until you deal with them. Toasts are only used to confirm what you just did.
+
+Detail: [Running the server](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Running-the-server).
 
 ### More than one server
-Each server has its own profile. Profiles can be fully isolated with their own install, mods and save folder. Switching is one click in the sidebar. The new-server wizard picks a free port and warns about collisions before they happen. Orphaned worlds from an old setup can be adopted by copying them; your originals stay where they are.
+
+Each server has its own profile. Profiles can be fully isolated with their own install, mods and save folder. Switching is one click in the sidebar. The new-server wizard picks a free port and warns about collisions before they happen. Orphaned worlds from an old setup can be adopted by copying them, and your originals stay where they are.
+
+Detail: [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers).
 
 ### Backups
-The World Saves card and the Barrow list every backup layer for every world: the game's automatic snapshots, the copies BakaLoader takes before a restore, and the pre-1.0 originals the game keeps after converting a world. Restore any layer with one click. Nothing is deleted without asking.
+
+The World saves card and the backup manager list every backup layer for every world: the game's automatic snapshots, the copies BakaLoader takes before a restore or an update, and the pre-1.0 originals the game keeps after converting a world. Restore any layer with one click, and the live world is copied aside first so the restore is itself undoable. Nothing is deleted without asking.
+
+Detail: [Worlds, backups and restore](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Worlds-backups-and-restore).
 
 ---
 
 ## Quick start
 
 1. Download the latest release, unzip it, run `ValheimBakaLoader.exe`. The wizard finds your Valheim Dedicated Server install and your worlds.
-2. On the World screen give the server a name and a password. The default port is fine for most people.
-3. Pick an existing world, or type a new name (you can choose a seed).
-4. Choose how people join. Listing it as a community server puts it in the in-game browser. Crossplay lets anyone on any platform join with a code.
-5. Press Start. When the status says Running, copy your address or code and send it to your friends.
+2. On the Settings screen give the server a name and a password. The default port is fine for most people.
+3. Pick an existing world, or type a new name and choose a seed.
+4. Choose how people join. Public lists it in the in-game browser. Crossplay lets anyone on any platform join with a code.
+5. Press Start. When the status says Running, press **Copy join info** and send it to your friends.
 
-Friends outside your network usually need the server's UDP ports forwarded on your router and allowed through Windows Firewall. The wizard shows which ports.
+Friends outside your network usually need UDP 2456 and 2457 forwarded on your router and allowed through Windows Firewall, unless you use crossplay. The wizard shows which ports, and the [Privacy and network](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Privacy-and-network) page walks through both.
 
-<table width="100%">
-  <tr>
-    <td width="50%"><a href="img/router-1.png"><img src="img/router-1.png" alt="Router port forwarding"></a></td>
-    <td width="50%"><a href="img/firewall-1.png"><img src="img/firewall-1.png" alt="Windows Firewall rule"></a></td>
-  </tr>
-</table>
+In-game broadcasts, the restart countdown and the player actions use RCON through a small server-side plugin that BakaLoader installs when you first need it. Everything else works without any plugin.
 
-### Remote control
-In-game broadcasts, the restart countdown, and the player actions use RCON through a small server-side plugin that BakaLoader installs when you first need it. Everything else works without any plugin.
+Longer version: [Install and first run](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Install-and-first-run).
 
 ---
 
@@ -102,7 +131,7 @@ In-game broadcasts, the restart countdown, and the player actions use RCON throu
     </td>
     <td width="50%" valign="top">
       <a href="img/bl-vikings.png"><img src="img/bl-vikings.png" alt="Players, the roster"></a>
-      <p align="center"><strong>Players.</strong> Who is on, from where, for how long, and a menu for the rest.</p>
+      <p align="center"><strong>Players.</strong> Who is on, from where, for how long, where they are standing, and a menu for the rest.</p>
     </td>
   </tr>
   <tr>
@@ -135,44 +164,46 @@ In-game broadcasts, the restart countdown, and the player actions use RCON throu
 - [.NET 6 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/6.0). Windows prompts you on first run if it is missing.
 - Valheim Dedicated Server, free in your Steam library under Tools. The wizard can point at any install, including one managed by SteamCMD.
 
+No Linux build and no Docker image. BakaLoader is a Windows app built around the Windows server binary.
+
 ---
 
 ## Security and privacy
 
-This is a program that starts a server process, edits files in your Valheim folders, and talks to a few services. Here is exactly what it touches so you can decide for yourself.
+This is a program that starts a server process, edits files in your Valheim folders, and talks to a few services. Here is the short list, and [Privacy and network](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Privacy-and-network) has the long one.
 
 **Network connections it makes**
+
 - `thunderstore.io` to read the mod index and download mod files you asked for.
 - `api.github.com` and GitHub release downloads to check for and fetch BakaLoader updates.
+- `api.ipify.org` to find your public address for the join info.
+- Valve's own address for steamcmd, once, and the Steam client for a server update.
 - Your own Discord webhook, only if you set one up on the Discord screen.
 - An anonymous heartbeat to a small stats endpoint, about every 5 minutes while the app is open: a one-way hashed device id, the app version, and whether a server is running. No addresses, names, passwords, world data or player data. Turn it off in Upkeep with "Share anonymous usage stats".
 
 **Files it writes**
-- Its own settings and logs under `%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\`.
+
+- Its own settings, statistics and logs under `%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\`.
 - Your server's BepInEx folders when you install, update or remove mods, and the admin, ban and allow lists when you use the player actions.
 - Backups and restores inside your Valheim save folder, always as copies, never in place.
 
-The source is in this repository and every release is built from it. If Windows SmartScreen warns you on first run, that is because the release is not code-signed; check the download against the release page and decide.
+Your server password and RCON password are stored in plain text in `userprefs.json`.
+
+The source is in this repository and every release is built from it. If Windows SmartScreen warns you on first run, that is because the release is not code-signed. Check the download against the release page and decide.
 
 ---
 
 ## When something goes wrong
 
-- **Logs** are in `%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\logs\`. Application logs are per day, server logs are per session. You can change the folder on the Saga screen.
-- **The server will not start after a game update.** Steam may still have the update queued. Let Steam finish, then start again. BakaLoader tells you when it can see a pending update.
-- **Players see "incompatible version".** Client and server are on different builds. Update whichever is behind.
-- **Everyone is refused as banned after 1.0.** Your allow list has old-style ids. Open the Players screen once and BakaLoader adds the new form, or edit the file and prefix Steam ids with `V_`.
-- **Something else.** Open an issue with the log lines around the problem, or post in Discussions.
+Start with the [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting) page, which covers the usual ones: the server will not start after a game update, players seeing "incompatible version", everyone refused as banned since 1.0, a mod that will not show up, and a map that will not draw. The [FAQ](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/FAQ) has the short answers.
 
-## Questions people ask
+Logs are in `%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\logs\`. Application logs are per day, server logs are per session, and you can change the folder on the Log screen.
 
-- **Linux or Docker?** Not yet. BakaLoader is a Windows app built around the Windows server binary.
-- **Do console players need anything?** No. They join a crossplay server with the code. Mods that need a client-side part will not work for them.
-- **Does it update Valheim itself?** No. Steam or SteamCMD does that. BakaLoader watches for it and protects your worlds around it.
+If none of that covers it, open an issue with the log lines around the problem, or post in [Discussions](https://github.com/RyanDMcAfee/ValheimBakaLoader/discussions).
 
 ## Mod authors
 
-If you want your mod's items in the spawn picker or its config handled better, open an issue with the Thunderstore link. BakaLoader is a solo project and does not take code contributions.
+If you want your mod's items in the spawn picker or its config handled better, open an issue with the Thunderstore link. [For mod authors](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/For-mod-authors) says exactly what BakaLoader needs from a mod, how items are named and classified, and which command names and Harmony targets the bundled plugins already use. BakaLoader is a solo project and does not take code contributions.
 
 ## License
 

@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 
@@ -41,6 +41,7 @@ namespace ValheimBakaLoader.Game
         // -- Launch guard (what this profile last actually ran) --
 
         [JsonProperty("lastLaunchedServerBuild")] public string LastLaunchedServerBuild { get; set; }
+        [JsonProperty("lastLaunchedServerFingerprint")] public string LastLaunchedServerFingerprint { get; set; }
         [JsonProperty("lastLaunchedGameVersion")] public string LastLaunchedGameVersion { get; set; }
 
         // -- Restart automation --

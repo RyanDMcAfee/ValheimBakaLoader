@@ -89,6 +89,62 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         [Fact]
+        public void WriteNewWorld_RefusesBesideAWorldTheListDoesNotShow()
+        {
+            // A real 1.0 world whose folder name happens to carry the game's backup marker. The
+            // world list leaves it out on purpose, so the guard cannot be built on the list: the
+            // ".fwl" would land beside the live directory with a brand new seed in it.
+            const string name = "Realm_backup_auto-20260909-180000";
+            var worldDir = Path.Combine(SaveFolder, "worlds_local", name);
+            Directory.CreateDirectory(worldDir);
+            File.WriteAllBytes(Path.Combine(worldDir, "_main.3.fwl2"), new byte[] { 1, 2, 3, 4 });
+
+            Assert.Null(WorldStore.Find(SaveFolder, name));
+
+            var refused = Assert.Throws<InvalidOperationException>(
+                () => FwlWriter.WriteNewWorld(SaveFolder, name, "seed"));
+            Assert.Contains(name, refused.Message);
+
+            Assert.False(File.Exists(Path.Combine(SaveFolder, "worlds_local", name + ".fwl")));
+        }
+
+        [Fact]
+        public void WriteNewWorld_RefusesBesideALoneDatabaseFile()
+        {
+            // A ".db" with no ".fwl" is not a world the list can show either, but writing a fresh
+            // ".fwl" next to it would hand the game a save whose seed does not match its data.
+            var dir = Path.Combine(SaveFolder, "worlds_local");
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, "Halfway.db"), new byte[] { 1, 2, 3, 4 });
+
+            Assert.Throws<InvalidOperationException>(
+                () => FwlWriter.WriteNewWorld(SaveFolder, "Halfway", "seed"));
+            Assert.False(File.Exists(Path.Combine(dir, "Halfway.fwl")));
+        }
+
+        [Fact]
+        public void WriteNewWorld_RejectsANameWindowsWouldRewrite()
+        {
+            // Each of these names one thing and lands on another once Windows is done with it.
+            Assert.Throws<ArgumentException>(() => FwlWriter.WriteNewWorld(SaveFolder, "Trailing.", "seed"));
+            Assert.Throws<ArgumentException>(() => FwlWriter.WriteNewWorld(SaveFolder, "NUL", "seed"));
+            Assert.Throws<ArgumentException>(() => FwlWriter.WriteNewWorld(SaveFolder, "..", "seed"));
+        }
+
+        [Fact]
+        public void FindWorldFilesOnDisk_AnswersForNamesTheListRefuses()
+        {
+            var dir = Path.Combine(SaveFolder, "worlds_local");
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, "Plain.fwl"), new byte[] { 1, 2, 3, 4 });
+
+            Assert.NotNull(WorldStore.FindWorldFilesOnDisk(SaveFolder, "Plain"));
+            Assert.Null(WorldStore.FindWorldFilesOnDisk(SaveFolder, "Absent"));
+            Assert.Null(WorldStore.FindWorldFilesOnDisk(null, "Plain"));
+            Assert.Null(WorldStore.FindWorldFilesOnDisk(SaveFolder, "bad|name"));
+        }
+
+        [Fact]
         public void TryRead_ReturnsNullForMissingOrGarbageFiles()
         {
             Assert.Null(FwlReader.TryRead(null));

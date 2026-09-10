@@ -292,10 +292,10 @@ namespace ValheimBakaLoader.Forms
             if (WindowState == FormWindowState.Minimized) return;
             try
             {
-                var prefs = UserPrefsProvider?.LoadPreferences();
-                if (prefs == null) return;
+                if (UserPrefsProvider == null) return;
 
                 var maximized = WindowState == FormWindowState.Maximized;
+                string bounds = null;
                 if (WindowState == FormWindowState.Normal)
                 {
                     var scale = DpiScale <= 0 ? 1f : DpiScale;
@@ -303,17 +303,28 @@ namespace ValheimBakaLoader.Forms
                     var height = (int)Math.Round(ClientSize.Height / scale);
                     if (width < 320 || height < 240) return;
 
-                    var bounds = width + "x" + height;
-                    if (prefs.WindowBounds == bounds && prefs.WindowMaximized == false) return;
-                    prefs.WindowBounds = bounds;
-                }
-                else if (prefs.WindowMaximized == maximized)
-                {
-                    return;
+                    bounds = width + "x" + height;
                 }
 
-                prefs.WindowMaximized = maximized;
-                UserPrefsProvider.SavePreferences(prefs);
+                // Saving the window size writes the WHOLE of userprefs.json, servers and worlds
+                // included, so it goes through the one gate rather than loading a document here and
+                // writing it back over whatever landed in between. Returning false writes nothing,
+                // which keeps a resize that changed no value as free as it was before.
+                UserPrefsProvider.Mutate(prefs =>
+                {
+                    if (bounds != null)
+                    {
+                        if (prefs.WindowBounds == bounds && prefs.WindowMaximized == false) return false;
+                        prefs.WindowBounds = bounds;
+                    }
+                    else if (prefs.WindowMaximized == maximized)
+                    {
+                        return false;
+                    }
+
+                    prefs.WindowMaximized = maximized;
+                    return true;
+                });
             }
             catch (Exception ex)
             {

@@ -17,6 +17,8 @@ namespace ValheimBakaLoader.Tools
         void SendPlayerJoined(string playerName, string serverName);
         void SendPlayerLeft(string playerName, string serverName);
         void SendLaunchHeld(string serverName, string reason);
+        void SendServerUpdated(string serverName, string buildId, bool starting);
+        void SendServerUpdateFailed(string serverName, string reason);
         void SendLegacyWorldLoaded(string serverName, string worldName);
     }
 
@@ -74,6 +76,29 @@ namespace ValheimBakaLoader.Tools
                 "Start Held",
                 $"**{serverName}** was not started automatically. {reason}",
                 0xE0A35C); // Amber
+        }
+
+        /// <summary>
+        /// The dedicated server was updated from inside BakaLoader. Mirrors
+        /// <see cref="SendLaunchHeld"/>: same gating, same shape, one post per outcome.
+        /// </summary>
+        public void SendServerUpdated(string serverName, string buildId, bool starting)
+        {
+            var build = string.IsNullOrWhiteSpace(buildId) ? "" : $" It is now on build {buildId}.";
+            var next = starting ? " Starting it now." : " Start it when you are ready.";
+            SendEmbed(
+                "Server Updated",
+                $"**{serverName}** finished updating.{build}{next}",
+                0x57F287); // Green
+        }
+
+        /// <summary>The update did not finish, so the server is still on the old build.</summary>
+        public void SendServerUpdateFailed(string serverName, string reason)
+        {
+            SendEmbed(
+                "Server Update Failed",
+                $"**{serverName}** was not updated. {reason} The server was not started.",
+                0xED4245); // Red
         }
 
         public void SendLegacyWorldLoaded(string serverName, string worldName)

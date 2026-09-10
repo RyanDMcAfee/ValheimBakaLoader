@@ -44,6 +44,14 @@ namespace ValheimBakaLoader.Tools
     public class GitHubRelease
     {
         [JsonProperty("tag_name")] public string TagName { get; set; }
+
+        /// <summary>
+        /// The release's own page on github.com, which is where the notes live. GitHub
+        /// returns this per release; the API base in Resources is not browsable, so this
+        /// is the only honest source for a "read what changed" link.
+        /// </summary>
+        [JsonProperty("html_url")] public string HtmlUrl { get; set; }
+
         [JsonProperty("published_at")] public DateTime PublishedAt { get; set; }
         [JsonProperty("draft")] public bool Draft { get; set; }
         [JsonProperty("prerelease")] public bool Prerelease { get; set; }

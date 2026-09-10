@@ -33,6 +33,21 @@ namespace ValheimBakaLoader.Tools.Models
         public string Website { get; set; }
 
         /// <summary>
+        /// Namespace of the Thunderstore package this mod was matched to, or null when the
+        /// index had no entry for it: a loose DLL, a hand-built folder, or a package that is
+        /// not in the Valheim community. Never derived from the folder name. It is only set
+        /// from a package the index actually returned, so a row that carries it really does
+        /// have a page to open.
+        /// </summary>
+        public string ThunderstoreNamespace { get; set; }
+
+        /// <summary>
+        /// Name of the matched Thunderstore package, or null when nothing matched. Set
+        /// together with <see cref="ThunderstoreNamespace"/> and never on its own.
+        /// </summary>
+        public string ThunderstoreName { get; set; }
+
+        /// <summary>
         /// True when <see cref="LatestVersion"/> is a strictly higher semver than
         /// <see cref="InstalledVersion"/>. Returns false when either side is missing
         /// or when the installed version is "unknown" (manifest-less mods).

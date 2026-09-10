@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using ValheimBakaLoader.Game;
@@ -195,6 +195,79 @@ namespace ValheimBakaLoader.Tests.Game
             Feed("Got player ID from BrandNewCharacter : 999");
 
             Assert.All(Players.Data, p => Assert.Null(p.PlayerNumericId));
+        }
+
+        #endregion
+
+        #region The bundled max-players plugin
+
+        /// <summary>
+        /// The plugin only raises the advertised cap when the admission rewrite actually took,
+        /// and prints one fixed sentence when it did not. That sentence used to arrive as an
+        /// ordinary info line among BepInEx chatter while the World hall went on showing the
+        /// number the host saved, as though it were in force. The sentence is a compile-time
+        /// constant in the plugin (CapStaysAtVanilla), so it is copied here verbatim and may
+        /// not be reworded on either side.
+        /// </summary>
+        private const string PluginRefusalSentence =
+            "BakaLoader Max Players: this server keeps the vanilla limit of 10 players for this start. "
+            + "The number saved in the settings is not in force.";
+
+        [Fact]
+        public void The_max_players_refusal_is_lifted_to_a_warning_exactly_once()
+        {
+            // Boot the pipeline first, then listen: the warning goes back out through the same
+            // stream, which is the whole point of it.
+            Feed("Valheim version: 1.0.7 (network version 39)");
+
+            var lines = new System.Collections.Generic.List<string>();
+            void Collect(string line) { lock (lines) lines.Add(line); }
+            Server.Logger.LogReceived += Collect;
+
+            try
+            {
+                // Exactly as BepInEx prints it: the plugin's own log prefix in front of the
+                // sentence, which is what reaches the manager's stdout reader.
+                Feed("[Warning:BakaLoaderMaxPlayers] The admission cap was not raised, so the "
+                    + "advertised and lobby capacity are left at the vanilla numbers as well. "
+                    + PluginRefusalSentence);
+            }
+            finally
+            {
+                Server.Logger.LogReceived -= Collect;
+            }
+
+            string said;
+            lock (lines) said = string.Join(" | ", lines);
+
+            const string Warning = "Max Players could not be raised on this build of the game";
+            Assert.Equal(1, said.Split(new[] { Warning }, StringSplitOptions.None).Length - 1);
+            Assert.Contains("The number saved in the World hall is not in force for this session.", said);
+        }
+
+        [Fact]
+        public void An_ordinary_max_players_line_raises_nothing()
+        {
+            Feed("Valheim version: 1.0.7 (network version 39)");
+
+            var lines = new System.Collections.Generic.List<string>();
+            void Collect(string line) { lock (lines) lines.Add(line); }
+            Server.Logger.LogReceived += Collect;
+
+            try
+            {
+                // The success path the plugin prints when the patch DID take. Nothing to say.
+                Feed("[Info   :BakaLoaderMaxPlayers] Admission cap raised to 20 players.");
+            }
+            finally
+            {
+                Server.Logger.LogReceived -= Collect;
+            }
+
+            string said;
+            lock (lines) said = string.Join(" | ", lines);
+
+            Assert.DoesNotContain("Max Players could not be raised on this build of the game", said);
         }
 
         #endregion

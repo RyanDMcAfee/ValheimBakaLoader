@@ -56,6 +56,14 @@ namespace ValheimBakaLoader.Game
         /// <summary>Build id or fingerprint this profile last started, or null.</summary>
         public string LastLaunchedBuild { get; init; }
 
+        /// <summary>
+        /// The binary fingerprint taken at that same launch, or null for a profile last
+        /// launched before BakaLoader recorded one. It is what the guard compares against when
+        /// the Steam manifest cannot be read at this start, so a build id it can no longer read
+        /// is not the end of the check.
+        /// </summary>
+        public string LastLaunchedFingerprint { get; init; }
+
         /// <summary>Game version that server reported, or null.</summary>
         public string LastLaunchedGameVersion { get; init; }
 
@@ -164,6 +172,41 @@ namespace ValheimBakaLoader.Game
         // stream after the RCON command is fired (the RCON response body itself is unreliable).
         private const int PlayerListCaptureTimeoutMs = 2500;
 
+        // Only one RCON command may be in flight: the client opens and closes a socket per
+        // command, so overlapping callers cut each other off.
+        private readonly SemaphoreSlim RconGate = new(1, 1);
+
+        // Live coordinates for everyone online, keyed by the character name "playerlist" prints.
+        // Filled by one playerlist call every few seconds while the server is up, emptied the
+        // moment it is not, so the roster never shows where somebody stood last session. Each
+        // entry carries the moment it was read: a poll whose RCON reply never comes back leaves
+        // the last coordinates sitting here, and a frozen number reads exactly like a live one.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Text, DateTime TakenUtc)>
+            PlayerPositions = new(StringComparer.OrdinalIgnoreCase);
+
+        private CancellationTokenSource PositionPollCts;
+
+        /// <summary>
+        /// How often the roster's coordinates are refreshed. One RCON round trip covers every
+        /// player at once, so this is one connection per interval no matter how many are online.
+        /// A roster does not need coordinates to the second, and the WebUI polls players.list
+        /// twice a second, which is far too often to hang a socket off.
+        /// </summary>
+        private const int PositionPollSeconds = 5;
+
+        /// <summary>
+        /// How long a cached coordinate may be shown for. Several polls wide, so an ordinary
+        /// missed reply does not blank the column, but far short of the point where a player
+        /// could have walked anywhere. Past it the roster draws its plain hyphen: a coordinate
+        /// nobody has confirmed for half a minute is a guess, and a guess printed as a position
+        /// is worse than no position at all.
+        /// </summary>
+        internal const int PositionStaleSeconds = 30;
+
+        /// <summary>Whether a coordinate read at <paramref name="takenUtc"/> may still be shown.</summary>
+        internal static bool PositionIsFresh(DateTime takenUtc, DateTime nowUtc)
+            => nowUtc - takenUtc < TimeSpan.FromSeconds(PositionStaleSeconds);
+
         /// <summary>Fires once per real state transition (never repeats the same state).</summary>
         public event EventHandler<ServerStatus> StatusChanged;
 
@@ -257,6 +300,28 @@ namespace ValheimBakaLoader.Game
         public Func<LaunchContext, Task<LaunchDecision>> ConfirmLaunchAsync { get; set; }
 
         /// <summary>
+        /// Optional hook (set by the UI) that answers one question before any launch is even
+        /// claimed: is something rewriting this install right now? A server update runs Steam or
+        /// steamcmd over the very folder <c>valheim_server.exe</c> sits in, so a start that lands
+        /// mid-update runs a half written exe against half written managed assemblies. The launch
+        /// guard cannot see that: it compares builds, and the build on disk during a rewrite is
+        /// whatever the writer has got to so far.
+        /// <para>
+        /// It is consulted by EVERY path into <see cref="BeginLaunch"/>, so the Start button, the
+        /// auto start, the retry timer and the relaunch after a restart all refuse together.
+        /// Unset (as in tests) means nothing is ever blocked.
+        /// </para>
+        /// </summary>
+        public Func<bool> LaunchBlocked { get; set; }
+
+        /// <summary>
+        /// What the host is told when <see cref="LaunchBlocked"/> refuses a launch. One sentence,
+        /// the same one the bridge answers a Start RPC with, so the banner and the toast agree.
+        /// </summary>
+        public const string LaunchBlockedMessage =
+            "An update is running for this install. Wait for it to finish.";
+
+        /// <summary>
         /// Optional hook (set by the UI) that writes the build and game version a launched server
         /// actually ran into the profile's preferences. Called with the build identity once the
         /// server reaches Running, and again with the game version once its banner is parsed.
@@ -295,7 +360,36 @@ namespace ValheimBakaLoader.Game
 
         // True between "a guarded launch was accepted" and "the process exists", so a second
         // click (or a timer firing) cannot start two servers while the guard is still thinking.
-        private volatile bool LaunchPending;
+        // Held as an int and only ever claimed through Interlocked: a plain volatile bool made
+        // the check and the set two separate steps, and two starts arriving together both read
+        // "free" before either wrote "taken", so both went on to launch a server.
+        private int LaunchPendingFlag;
+
+        private bool LaunchPending => Volatile.Read(ref LaunchPendingFlag) != 0;
+
+        /// <summary>Takes the launch claim, or false when another launch already holds it.</summary>
+        private bool ClaimLaunch() => Interlocked.CompareExchange(ref LaunchPendingFlag, 1, 0) == 0;
+
+        /// <summary>Gives the launch claim back, whether the launch happened or not.</summary>
+        private void ReleaseLaunch() => Volatile.Write(ref LaunchPendingFlag, 0);
+
+        /// <summary>
+        /// Whether something is rewriting this install right now. A hook that throws is read as
+        /// "not blocked": refusing every start because a status read failed would be worse than
+        /// the window it guards, and the hook is best effort by design.
+        /// </summary>
+        private bool IsLaunchBlocked()
+        {
+            var blocked = LaunchBlocked;
+            if (blocked == null) return false;
+
+            try { return blocked(); }
+            catch (Exception e)
+            {
+                ApplicationLogger.Warning("Could not check whether an update is running: {message}", e.Message);
+                return false;
+            }
+        }
 
         // The build the running (or last-launched) process was started from, recorded into the
         // profile once the server actually comes up.
@@ -457,11 +551,26 @@ namespace ValheimBakaLoader.Game
                 new(Rx(@"Closing socket (\d+?)\D*?$"), HandleSocketClosed),
                 new(Rx(@"Destroying abandoned non persistent zdo ([\d-]+?):.*$"), HandleSocketClosed),
                 new(Rx(@"Disconnect: The client \(([^_\s]+)_([^)\s]+)\)"), HandleCrossplayDisconnect),
+
+                // The bundled max-players plugin refuses to patch when the game's IL is not the
+                // shape it expects, and prints one fixed sentence when it does. That sentence is
+                // a compile-time constant in the plugin (CapStaysAtVanilla in
+                // Resources/MaxPlayers/BakaLoaderMaxPlayers.cs), so it is safe to match on, and
+                // it must not be reworded on either side. Without this the number in the World
+                // hall reads as though it were in force for the rest of the session.
+                new(Rx(@"BakaLoader Max Players: this server keeps the vanilla limit of 10 players for this start"),
+                    HandleMaxPlayersRefused),
             };
         }
 
         private void OnStatusTransition(object sender, ServerStatus status)
         {
+            // Coordinates only mean anything while the server is up. Anything else empties the
+            // cache, so a restarted session can never hand the roster where somebody stood in
+            // the last one.
+            if (status == ServerStatus.Running) StartPositionPolling();
+            else StopPositionPolling();
+
             switch (status)
             {
                 case ServerStatus.Running:
@@ -637,8 +746,9 @@ namespace ValheimBakaLoader.Game
         {
             if (!CanStart) return;
 
-            ApplicationLogger.Information(
-                "Adopting existing server process (PID {pid})", existingProcess.Id);
+            var pid = "unknown";
+            try { pid = existingProcess.Id.ToString(CultureInfo.InvariantCulture); } catch { }
+            ApplicationLogger.Information("Adopting existing server process (PID {pid})", pid);
 
             IsAdopted = true;
 
@@ -661,6 +771,15 @@ namespace ValheimBakaLoader.Game
 
             Options = options;
             IsRestarting = false;
+
+            // An adopted process prints nothing we can read, so the version banner that
+            // normally fills this in will never arrive. Read the install now instead: without
+            // it the profile keeps whatever build it had before the adoption, and the next
+            // real Start asks the host about a change that never happened.
+            LaunchedBuildIdentity = ProbeInstall(options)?.Identity;
+
+            // Moving to Running is what records the identity (OnStatusTransition), so this
+            // assignment has to come after the line above.
             Status = ServerStatus.Running;
         }
 
@@ -715,24 +834,53 @@ namespace ValheimBakaLoader.Game
         public bool LaunchInProgress => LaunchPending;
 
         /// <summary>
+        /// True when an automatic launch that could not go ahead has a retry scheduled, so the
+        /// question comes back around on its own rather than leaving the server down for good.
+        /// </summary>
+        public bool LaunchRetryArmed => LaunchRetryCts != null;
+
+        /// <summary>
         /// The single door every launch goes through. With no guard wired the process starts
         /// synchronously exactly as it always did; with one, the guard is asked first and the
         /// launch happens (or does not) once it answers.
         /// </summary>
         private void BeginLaunch(IValheimServerOptions options, string reason, bool automatic)
         {
-            if (!CanStart) return;
             if (options == null) return;
+            if (ProcessKey != null || Status != ServerStatus.Stopped) return;
+
+            // Before anything else: an update rewriting this install folder means the exe and the
+            // managed assemblies beside it are mid-write, so there is no build here to start. This
+            // sits ahead of the claim on purpose, so a refusal leaves the flag exactly as it was.
+            if (IsLaunchBlocked())
+            {
+                ApplicationLogger.Warning(
+                    "Start refused for {name} ({reason}): {message}", options.Name, reason, LaunchBlockedMessage);
+
+                // Nobody is watching an automatic one, and a scheduled restart that lands in the
+                // stop to start gap of an update would otherwise leave the server down until
+                // somebody noticed. Ask again later, the same way a held launch does.
+                if (automatic) ArmLaunchRetry(options, reason);
+
+                SettleLaunch(reason, held: false, error: LaunchBlockedMessage);
+                return;
+            }
+
+            // Claim the launch before doing anything else with it. Everything above is a plain
+            // read of state a running server owns; this is the one step that has to be atomic,
+            // because it is what a second Start (or a timer firing on its own thread) loses to.
+            if (!ClaimLaunch()) return;
 
             CancelLaunchRetry();
 
             if (ConfirmLaunchAsync == null)
             {
-                StartCore(options, null);
+                // No guard wired: nothing is awaited, so the claim is only wanted for the
+                // length of the start itself.
+                try { StartCore(options, null); }
+                finally { ReleaseLaunch(); }
                 return;
             }
-
-            LaunchPending = true;
 
             // Off the calling thread on purpose. A guard that answers immediately would
             // otherwise run the whole launch - including a world snapshot that can be
@@ -756,6 +904,7 @@ namespace ValheimBakaLoader.Game
                     Reason = reason,
                     Current = current,
                     LastLaunchedBuild = options.LastLaunchedServerBuild,
+                    LastLaunchedFingerprint = options.LastLaunchedServerFingerprint,
                     LastLaunchedGameVersion = options.LastLaunchedGameVersion,
                     HasWorlds = HasAnyWorld(options),
                     ProfileName = ServerKey,
@@ -785,7 +934,7 @@ namespace ValheimBakaLoader.Game
                         reason,
                         string.IsNullOrWhiteSpace(note) ? "the launch guard did not clear it" : note);
 
-                    LaunchPending = false;
+                    ReleaseLaunch();
                     if (automatic) ArmLaunchRetry(options, reason);
 
                     // A guard that threw is a failure, not a decision the host was shown.
@@ -795,14 +944,18 @@ namespace ValheimBakaLoader.Game
                     return;
                 }
 
-                if (decision.BackupFirst && !RunPreUpdateBackup(options))
+                if (decision.BackupFirst && !RunPreUpdateBackup(options, out var backupError))
                 {
                     // The snapshot failed, so the start is abandoned: the whole point of the
-                    // backup was that this launch converts the worlds one way.
-                    LaunchPending = false;
+                    // backup was that this launch converts the worlds one way. The snapshot's
+                    // own sentence names the world and says what stopped it, so it is passed
+                    // through as written rather than replaced with a generic line.
+                    ReleaseLaunch();
                     if (automatic) ArmLaunchRetry(options, reason);
                     SettleLaunch(reason, held: false,
-                        error: "The worlds could not be copied aside, so the server was not started.");
+                        error: string.IsNullOrWhiteSpace(backupError)
+                            ? "The worlds could not be copied aside, so the server was not started."
+                            : backupError);
                     return;
                 }
 
@@ -811,8 +964,14 @@ namespace ValheimBakaLoader.Game
                     ApplicationLogger.Information("Launch guard cleared {name}: {note}", options.Name, decision.Note);
                 }
 
-                LaunchPending = false;
-                StartCore(options, current);
+                // The claim is held ACROSS the start, exactly as the unguarded branch above holds
+                // it. StartCore sets nothing a second caller would notice until it has copied the
+                // companion plugins onto disk and rewritten the access lists, which is tens of
+                // milliseconds and longer behind a virus scanner. Giving the claim back before
+                // that leaves CanStart true for the whole stretch, and the retry timer firing in
+                // that window used to run the guard, and the world snapshot, a second time.
+                try { StartCore(options, current); }
+                finally { ReleaseLaunch(); }
 
                 // A refused exe path or save folder leaves Status on Stopped with no event of
                 // its own, so say so rather than letting the UI show a start that never was.
@@ -823,7 +982,7 @@ namespace ValheimBakaLoader.Game
             }
             catch (Exception e)
             {
-                LaunchPending = false;
+                ReleaseLaunch();
                 ApplicationLogger.Error(e, "Could not start the server for profile {name}.", options?.Name);
 
                 // Before the guard moved this onto a background thread these validation errors
@@ -876,6 +1035,7 @@ namespace ValheimBakaLoader.Game
                     Reason = reason,
                     Current = ProbeInstall(options),
                     LastLaunchedBuild = options.LastLaunchedServerBuild,
+                    LastLaunchedFingerprint = options.LastLaunchedServerFingerprint,
                     LastLaunchedGameVersion = options.LastLaunchedGameVersion,
                     HasWorlds = HasAnyWorld(options),
                     ProfileName = ServerKey,
@@ -933,9 +1093,11 @@ namespace ValheimBakaLoader.Game
 
         /// <summary>
         /// Copies every world of this profile aside before a launch that will upgrade them.
-        /// Returns false when the copy failed, which aborts the launch.
+        /// Returns false when the copy failed, which aborts the launch, and hands back the
+        /// snapshot's own sentence for why in <paramref name="error"/> so the caller can show
+        /// it as written. Null when the copy succeeded.
         /// </summary>
-        private bool RunPreUpdateBackup(IValheimServerOptions options)
+        private bool RunPreUpdateBackup(IValheimServerOptions options, out string error)
         {
             WorldStore.WorldSnapshotResult result;
             try
@@ -969,6 +1131,7 @@ namespace ValheimBakaLoader.Game
             }
 
             PreUpdateBackupCompleted?.Invoke(this, result);
+            error = result.Ok ? null : result.Error;
             return result.Ok;
         }
 
@@ -1053,6 +1216,17 @@ namespace ValheimBakaLoader.Game
             // Raw server output also flows to the UI's log view when it asked for it.
             if (options.LogMessageHandler != null) ServerLogger.LogReceived += options.LogMessageHandler;
 
+            // Companion plugins are installed before this point on a best-effort basis, and the
+            // log stream the operator is watching does not exist until now. A failure used to
+            // leave only an application-log line, so the feature simply went missing with no
+            // explanation. Say it where they are already looking. Only this profile's failures
+            // plus any recorded with no profile in hand: another realm's plugin trouble has no
+            // business in this realm's log. The message goes in as an argument, never as the
+            // template: an exception message can carry braces and Serilog would read those as
+            // property names.
+            foreach (var failure in Tools.CompanionPluginStatus.FailuresFor(ServerKey))
+                ServerLogger.Warning("{message}", failure.Describe());
+
             ProcessKey = Guid.NewGuid().ToString();
             var process = ProcessProvider.AddBackgroundProcess(ProcessKey, exePath, launchArgs);
             process.StartInfo.EnvironmentVariables.Add("SteamAppId", Resources.ValheimSteamAppId);
@@ -1120,6 +1294,16 @@ namespace ValheimBakaLoader.Game
         {
             var pluginsDir = GetPluginsDirectory(exePath);
 
+            // Two realms can be up at once, and the record the interface reads is process-wide,
+            // so everything this pass writes is filed under this server's own profile. Start by
+            // forgetting what this profile recorded last time, so a plugin that has since been
+            // fixed stops being reported; the other realm's records are left exactly as they are.
+            // Every session's server is stamped with its profile, so the guard only skips the
+            // clear on a bare instance that has no realm to speak for, where wiping the records
+            // that belong to nobody in particular would be reaching too far.
+            if (!string.IsNullOrWhiteSpace(ServerKey)) Tools.CompanionPluginStatus.ClearProfile(ServerKey);
+            using var pluginScope = Tools.CompanionPluginStatus.BeginProfile(ServerKey);
+
             void Install(string label, Action install)
             {
                 try
@@ -1129,6 +1313,13 @@ namespace ValheimBakaLoader.Game
                 catch (Exception ex)
                 {
                     ApplicationLogger.Warning("Could not prepare the " + label + " plugin: {message}", ex.Message);
+
+                    // The application log is not where an operator looks. Record it so the
+                    // server log and the interface can both say the feature is off and why.
+                    // The two installers that report for themselves swallow their own failures,
+                    // so this only ever covers the three that do not, and the record is keyed
+                    // on the name either way so a plugin can never be listed twice.
+                    Tools.CompanionPluginStatus.ReportFailure(label, ex.Message);
                 }
             }
 
@@ -1291,7 +1482,20 @@ namespace ValheimBakaLoader.Game
 
             try
             {
-                var connected = await RconClient.ConnectAsync("127.0.0.1", Options.RconPort, Options.RconPassword);
+                // Under the gate as well: ConnectAsync starts by clearing the validated flag, so
+                // opening the countdown's connection on top of the roster poll's in flight command
+                // would leave that command reading from a socket nothing considers authenticated.
+                bool connected;
+                await RconGate.WaitAsync();
+                try
+                {
+                    connected = await RconClient.ConnectAsync("127.0.0.1", Options.RconPort, Options.RconPassword);
+                }
+                finally
+                {
+                    RconGate.Release();
+                }
+
                 if (!connected)
                 {
                     ApplicationLogger.Warning("RCON unavailable; restarting without in-game countdown.");
@@ -1313,8 +1517,7 @@ namespace ValheimBakaLoader.Game
                     token.ThrowIfCancellationRequested();
 
                     var remaining = points[i];
-                    await EnsureRconConnectedAsync();
-                    await RconClient.SendCommandAsync(BuildBroadcast($"Server restarting in {FormatTime(remaining)}!{updateNote}"));
+                    await SendCountdownBroadcastAsync($"Server restarting in {FormatTime(remaining)}!{updateNote}");
                     CountdownTick?.Invoke(this, $"Restart in {FormatTime(remaining)}");
 
                     var next = (i + 1 < points.Length) ? points[i + 1] : 0;
@@ -1322,8 +1525,7 @@ namespace ValheimBakaLoader.Game
                     if (waitTime > TimeSpan.Zero) await Task.Delay(waitTime, token);
                 }
 
-                await EnsureRconConnectedAsync();
-                await RconClient.SendCommandAsync(BuildBroadcast($"Server restarting NOW!{updateNote}"));
+                await SendCountdownBroadcastAsync($"Server restarting NOW!{updateNote}");
                 CountdownTick?.Invoke(this, "Restarting now");
                 await Task.Delay(1500, token);
 
@@ -1338,8 +1540,7 @@ namespace ValheimBakaLoader.Game
                     ApplicationLogger.Information("Restart countdown bypassed - restarting now.");
                     try
                     {
-                        await EnsureRconConnectedAsync();
-                        await RconClient.SendCommandAsync(BuildBroadcast($"Server restarting NOW!{updateNote}"));
+                        await SendCountdownBroadcastAsync($"Server restarting NOW!{updateNote}");
                     }
                     catch { }
                     shouldRestart = true;
@@ -1349,8 +1550,7 @@ namespace ValheimBakaLoader.Game
                     ApplicationLogger.Information("Scheduled restart cancelled.");
                     try
                     {
-                        await EnsureRconConnectedAsync();
-                        await RconClient.SendCommandAsync(BuildBroadcast("Server restart cancelled."));
+                        await SendCountdownBroadcastAsync("Server restart cancelled.");
                     }
                     catch { }
                 }
@@ -1362,7 +1562,12 @@ namespace ValheimBakaLoader.Game
             }
             finally
             {
-                RconClient.Disconnect();
+                // Same reason as the connect above: this clears the validated flag, so it waits
+                // for whatever else is mid command rather than pulling the floor out from under it.
+                await RconGate.WaitAsync();
+                try { RconClient.Disconnect(); }
+                finally { RconGate.Release(); }
+
                 if (CountdownCts == cts) CountdownCts = null;
                 cts.Dispose();
                 CountdownTick?.Invoke(this, null);
@@ -1433,6 +1638,28 @@ namespace ValheimBakaLoader.Game
         /// connected. Best-effort: a failure is logged and the countdown keeps its schedule so
         /// later announcements (and the restart itself) still happen on time.
         /// </summary>
+        /// <summary>
+        /// One countdown announcement, taken through the SAME single socket gate every other RCON
+        /// caller uses. Re-validating and sending were two separate steps outside the gate, and
+        /// the roster's position poll runs every few seconds: its own connect (which starts by
+        /// clearing the validated flag) or its closing disconnect landing between the two left the
+        /// client unvalidated, so the send returned null and the warning never reached a player.
+        /// The countdown swallowed that and carried on, so the server went down unannounced.
+        /// </summary>
+        private async Task SendCountdownBroadcastAsync(string message)
+        {
+            await RconGate.WaitAsync();
+            try
+            {
+                await EnsureRconConnectedAsync();
+                await RconClient.SendCommandAsync(BuildBroadcast(message));
+            }
+            finally
+            {
+                RconGate.Release();
+            }
+        }
+
         private async Task EnsureRconConnectedAsync()
         {
             if (RconClient.IsConnected) return;
@@ -1472,6 +1699,8 @@ namespace ValheimBakaLoader.Game
                 return false;
             }
 
+            // Same single-socket rule as SendRconCommandAsync: see the note there.
+            await RconGate.WaitAsync();
             try
             {
                 var connected = await RconClient.ConnectAsync("127.0.0.1", Options.RconPort, Options.RconPassword);
@@ -1493,6 +1722,7 @@ namespace ValheimBakaLoader.Game
             finally
             {
                 RconClient.Disconnect();
+                RconGate.Release();
             }
         }
 
@@ -1502,43 +1732,49 @@ namespace ValheimBakaLoader.Game
         /// Factored exactly like <see cref="BroadcastNow"/>: opens and closes the connection per call.
         /// All player-targeting actions below route through this single method.
         /// </summary>
-        public async Task<string> SendRconCommandAsync(string command)
+        public async Task<string> SendRconCommandAsync(string command, bool quiet = false)
         {
             if (string.IsNullOrWhiteSpace(command)) return null;
 
             if (!Options.RconEnabled)
             {
-                ApplicationLogger.Warning("Cannot send RCON command: RCON is not enabled for this server.");
+                if (!quiet) ApplicationLogger.Warning("Cannot send RCON command: RCON is not enabled for this server.");
                 return null;
             }
 
             if (Status != ServerStatus.Running)
             {
-                ApplicationLogger.Warning("Cannot send RCON command: the server is not running.");
+                if (!quiet) ApplicationLogger.Warning("Cannot send RCON command: the server is not running.");
                 return null;
             }
 
+            // One command at a time. The client opens a fresh socket per command and closes it
+            // in the finally below, so two overlapping callers would have one tearing the other's
+            // connection down mid-read. The roster's position poll runs on its own timer, which
+            // is exactly the caller that would otherwise land on top of a spawn or a broadcast.
+            await RconGate.WaitAsync();
             try
             {
                 var connected = await RconClient.ConnectAsync("127.0.0.1", Options.RconPort, Options.RconPassword);
                 if (!connected)
                 {
-                    ApplicationLogger.Warning("Cannot send RCON command: RCON connection failed.");
+                    if (!quiet) ApplicationLogger.Warning("Cannot send RCON command: RCON connection failed.");
                     return null;
                 }
 
                 var response = await RconClient.SendCommandAsync(command);
-                ApplicationLogger.Information("RCON command sent: {command}", command);
+                if (!quiet) ApplicationLogger.Information("RCON command sent: {command}", command);
                 return response ?? string.Empty;
             }
             catch (Exception e)
             {
-                ApplicationLogger.Error(e, "Error sending RCON command");
+                if (!quiet) ApplicationLogger.Error(e, "Error sending RCON command");
                 return null;
             }
             finally
             {
                 RconClient.Disconnect();
+                RconGate.Release();
             }
         }
 
@@ -1591,6 +1827,152 @@ namespace ValheimBakaLoader.Game
                 if (logger != null) logger.LogReceived -= OnLine;
             }
         }
+
+        /// <summary>
+        /// Where a player is standing right now, as "x, y, z" rounded to whole metres, or null
+        /// when that player is not in the last roster the server answered with, or when nothing
+        /// has confirmed the coordinate recently enough to print it. Read straight out of the
+        /// cache: no RCON call, so the WebUI may ask as often as it likes.
+        /// </summary>
+        public string GetCachedPosition(string characterName) => GetCachedPosition(characterName, DateTime.UtcNow);
+
+        /// <summary>The same read against a given moment, so the staleness rule can be driven.</summary>
+        internal string GetCachedPosition(string characterName, DateTime nowUtc)
+        {
+            if (string.IsNullOrWhiteSpace(characterName)) return null;
+            if (!PlayerPositions.TryGetValue(characterName.Trim(), out var entry)) return null;
+
+            return PositionIsFresh(entry.TakenUtc, nowUtc) ? entry.Text : null;
+        }
+
+        /// <summary>
+        /// Starts the roster's position poll. One "playerlist" call every
+        /// <see cref="PositionPollSeconds"/> seconds refreshes everybody at once; there is
+        /// deliberately no per-player call anywhere.
+        /// </summary>
+        private void StartPositionPolling()
+        {
+            StopPositionPolling();
+
+            // Nothing to poll with: the roster keeps its plain hyphen and no socket is opened.
+            if (Options == null || !Options.RconEnabled) return;
+
+            var cts = new CancellationTokenSource();
+            PositionPollCts = cts;
+            var token = cts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    try { await RefreshPlayerPositionsAsync(); }
+                    catch { /* one bad read must not end the poll for the whole session */ }
+
+                    try { await Task.Delay(TimeSpan.FromSeconds(PositionPollSeconds), token); }
+                    catch (OperationCanceledException) { return; }
+                }
+            }, token);
+        }
+
+        /// <summary>Stops the poll and empties the cache. Safe to call when nothing is running.</summary>
+        private void StopPositionPolling()
+        {
+            var cts = PositionPollCts;
+            PositionPollCts = null;
+            if (cts != null)
+            {
+                try { cts.Cancel(); } catch { }
+                cts.Dispose();
+            }
+
+            PlayerPositions.Clear();
+        }
+
+        /// <summary>
+        /// One "playerlist" round trip, parsed into every online player's coordinates. Quiet on
+        /// purpose: this runs on a timer, so a failed read is not worth a log line every few
+        /// seconds. A reply that names nobody empties the cache rather than leaving stale
+        /// coordinates behind for players who have since logged off.
+        /// </summary>
+        private async Task RefreshPlayerPositionsAsync()
+        {
+            if (Status != ServerStatus.Running) return;
+
+            var response = await SendRconCommandAsync(BuildPlayerList(), quiet: true);
+            if (response == null) return;
+
+            RecordPositions(ParseAllPositions(response), DateTime.UtcNow);
+        }
+
+        /// <summary>
+        /// Folds one parsed "playerlist" reply into the cache: everybody named is stamped with
+        /// the moment they were seen, and anybody the reply does not name is dropped rather
+        /// than left standing where they were.
+        /// </summary>
+        internal void RecordPositions(IReadOnlyDictionary<string, string> seen, DateTime nowUtc)
+        {
+            if (seen == null) return;
+
+            foreach (var pair in seen) PlayerPositions[pair.Key] = (pair.Value, nowUtc);
+
+            foreach (var key in PlayerPositions.Keys.ToList())
+            {
+                if (!seen.ContainsKey(key)) PlayerPositions.TryRemove(key, out _);
+            }
+        }
+
+        /// <summary>
+        /// Reads every entry out of a "playerlist" reply at once, rather than running the
+        /// single-player match once per name. Same anchor as
+        /// <see cref="ParsePositionForPlayer"/> - "{name}/{host}/{charId} (x, z, y)" - with the
+        /// name left open, so the log clock and the "Console:" prefix the RCON channel puts in
+        /// front of each line have to come off first or they would be read as part of the name.
+        /// Coordinates come back rounded to whole metres, which is all a roster column can show.
+        /// </summary>
+        public static Dictionary<string, string> ParseAllPositions(string response)
+        {
+            var found = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(response)) return found;
+
+            foreach (var raw in response.Split('\n'))
+            {
+                var line = raw.Trim('\r', ' ', '\t');
+                if (line.Length == 0) continue;
+
+                // "09/10/2026 12:34:56: Broheim/765.../-12 (1, 2, 3)" and "Console: Broheim/..."
+                line = LogClockPrefix.Replace(line, "");
+                line = ConsolePrefix.Replace(line, "");
+
+                foreach (Match match in PlayerListEntry.Matches(line))
+                {
+                    var name = match.Groups["name"].Value.Trim();
+                    if (name.Length == 0) continue;
+
+                    var pos = Round(match.Groups["x"].Value)
+                        + ", " + Round(match.Groups["y"].Value)
+                        + ", " + Round(match.Groups["z"].Value);
+                    found[name] = pos;
+                }
+            }
+
+            return found;
+
+            static string Round(string value)
+                => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var d)
+                    ? Math.Round(d).ToString("0", CultureInfo.InvariantCulture)
+                    : value;
+        }
+
+        private static readonly Regex LogClockPrefix =
+            new(@"^.*?\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s*:?\s*", RegexOptions.Compiled);
+
+        private static readonly Regex ConsolePrefix =
+            new(@"^\s*Console\s*:\s*", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private static readonly Regex PlayerListEntry = new(
+            @"(?<name>[^\s/][^/]*?)/(?<host>[^\s/]+)/(?<character>[^\s(]+)\s*\(\s*"
+            + @"(?<x>-?\d+(?:\.\d+)?)\s*,\s*(?<y>-?\d+(?:\.\d+)?)\s*,\s*(?<z>-?\d+(?:\.\d+)?)\s*\)",
+            RegexOptions.Compiled);
 
         /// <summary>
         /// Spawns <paramref name="amount"/> of the given catalog entry at <paramref name="playerName"/>'s
@@ -2097,6 +2479,21 @@ namespace ValheimBakaLoader.Game
             return decimal.TryParse(value, Styles, CultureInfo.CurrentCulture, out durationMs) ? durationMs : 0m;
         }
 
+        /// <summary>
+        /// The max-players plugin loaded but could not raise the cap on this build of the game.
+        /// The line is already in the log as plain output, buried in BepInEx chatter, while the
+        /// World hall keeps showing the number the host saved as though it were in force. This
+        /// lifts it to a warning on the same path every other companion-plugin trouble takes, so
+        /// it lands in the server log the interface is already showing.
+        /// </summary>
+        private void HandleMaxPlayersRefused(Match match)
+        {
+            // The message goes in as an argument, never as the template: Serilog would read any
+            // brace in it as a property name. Same reason the plugin failure lines do it.
+            ServerLogger.Warning("{message}",
+                "Max Players could not be raised on this build of the game, so this server keeps the vanilla limit of 10 players. The number saved in the World hall is not in force for this session.");
+        }
+
         private void HandleJoinCode(Match match)
         {
             var joinCode = match.Groups[1].Value;
@@ -2128,6 +2525,7 @@ namespace ValheimBakaLoader.Game
             CancelEmptyUpdateCheck();
             CancelEmptyRestart();
             CancelLaunchRetry();
+            StopPositionPolling();
 
             Stop();
             GC.SuppressFinalize(this);

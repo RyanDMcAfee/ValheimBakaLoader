@@ -28,13 +28,13 @@ namespace ValheimBakaLoader.Tools.Atlas
     /// spec; float/double mixing deliberately mirrors the game's arithmetic so
     /// results match pixel-for-pixel.
     ///
-    /// Known approximation: Ashlands. The live game builds its Ashlands terrain
-    /// from a different function entirely (a FastNoise cellular fractal, a
-    /// simplex fractal, a blend overlay and an outer edge fade), and this port
-    /// renders Ashlands with the pregeneration formula plus the gap moats. That
-    /// moves the land and water boundary, not just the texture, so the Ashlands
-    /// COASTLINE ON THE MAP IS APPROXIMATE and must not be read as the shape a
-    /// player will find. Every other biome is exact.
+    /// Ashlands, like the Deep North and the Mistlands, has two height
+    /// formulas: a cheap one the game uses while it lays out rivers and
+    /// streams, and the real one it uses for the ground a player walks on.
+    /// Both are ported (<see cref="GetAshlandsHeightPregenerate"/> and
+    /// <see cref="GetAshlandsHeight"/>) and <see cref="GetBiomeHeight"/>
+    /// branches between them on preGeneration exactly as the game does, so the
+    /// rendered Ashlands coastline is the one a player will find.
     /// </summary>
     public sealed class WorldGen
     {
@@ -62,6 +62,28 @@ namespace ValheimBakaLoader.Tools.Atlas
         private readonly int _streamSeed;
 
         private readonly UnityRandom _rng;
+
+        /// <summary>
+        /// The game's own noise generator for the Ashlands terrain. It is a
+        /// single static instance there too, built once and then reseeded to 0
+        /// (decomp_new WorldGenerator..ctor :150341-150349), so it carries no
+        /// per-world state and every sample is a pure function of its
+        /// coordinates. Shared here for the same reason, which also keeps it
+        /// safe for the renderer's parallel row loop.
+        /// </summary>
+        private static readonly FastNoise NoiseGen = CreateNoiseGenerator();
+
+        private static FastNoise CreateNoiseGenerator()
+        {
+            // Same call order as the game. The constructor seed is thrown away
+            // by SetSeed(0) below and is used for nothing else, so it does not
+            // matter what goes in; the octave count is what the constructor's
+            // fractal bounding has to be recomputed for.
+            var noise = new FastNoise(0);
+            noise.SetFractalOctaves(2);
+            noise.SetSeed(0);
+            return noise;
+        }
 
         private List<Vec2> _lakes = new List<Vec2>();
         private readonly Dictionary<GridPos, RiverPoint[]> _riverPoints = new Dictionary<GridPos, RiverPoint[]>();
@@ -714,11 +736,11 @@ namespace ValheimBakaLoader.Tools.Atlas
                 case Biome.Ocean:
                     return (float)((double)GetBaseHeight(wx, wy) * (double)mult);
                 case Biome.AshLands:
-                    // The pregeneration formula, which is NOT what the live game uses here.
-                    // The real one is a separate noise stack that shifts the land and water
-                    // boundary, so the Ashlands shape this draws is approximate. The Atlas
-                    // says so on screen; do not treat this coastline as the game's.
-                    return (float)((double)GetAshlandsHeightPregenerate(wx, wy) * (double)mult);
+                    if (preGeneration)
+                    {
+                        return (float)((double)GetAshlandsHeightPregenerate(wx, wy) * (double)mult);
+                    }
+                    return (float)((double)GetAshlandsHeight(wx, wy) * (double)mult);
                 case Biome.Plains:
                     return (float)((double)GetPlainsHeight(wx, wy) * (double)mult);
                 case Biome.Meadows:
@@ -842,6 +864,13 @@ namespace ValheimBakaLoader.Tools.Atlas
             return (float)((double)h + (double)UnityPerlin.Noise(x * 0.4000000059604645, y * 0.4000000059604645) * 0.003000000026077032);
         }
 
+        /// <summary>
+        /// The cheap Ashlands shape the game uses while it is laying out rivers
+        /// and streams, and nowhere else (decomp_new
+        /// GetAshlandsHeightPregenerate :151324-151339). The ground a player
+        /// walks on comes from <see cref="GetAshlandsHeight"/>; these two are
+        /// not interchangeable and put the coast in different places.
+        /// </summary>
         private float GetAshlandsHeightPregenerate(float wx, float wy)
         {
             float origX = wx;
@@ -858,6 +887,116 @@ namespace ValheimBakaLoader.Tools.Atlas
             h = (float)((double)h + (double)UnityPerlin.Noise(x * 0.10000000149011612, y * 0.10000000149011612) * 0.009999999776482582);
             h = (float)((double)h + (double)UnityPerlin.Noise(x * 0.4000000059604645, y * 0.4000000059604645) * 0.003000000026077032);
             return AddRivers(origX, origY, h);
+        }
+
+        /// <summary>
+        /// The Ashlands terrain the game actually builds (decomp_new
+        /// WorldGenerator.GetAshlandsHeight :151342-151397), ported term for
+        /// term. In outline:
+        ///
+        ///   1. A distance band around the Ashlands ring, smoothed and then
+        ///      faded out towards the east and west edges of the world, gives
+        ///      the continent its bulk.
+        ///   2. Five octaves of cellular noise, each smoothstepped, are blend
+        ///      overlaid onto that band, which is what breaks the coast into
+        ///      the lobes and bays the flat pregeneration formula never had.
+        ///   3. The whole thing is pulled down to -1 past 10150 m so the
+        ///      Ashlands end in ocean rather than at the world edge.
+        ///   4. A simplex fractal, remapped and raised to 1.4, scales the
+        ///      height; three octaves of much finer cellular noise plus an
+        ///      Fbm term cut the lava cracks into anything that sits just
+        ///      above the lava line.
+        ///
+        /// The game also hands back a colour whose alpha is the crack mask from
+        /// step 4. That only tints the ground texture, so it is not returned
+        /// here, but the mask is still computed because the height depends on
+        /// it. There are no rivers in this formula: the game does not call
+        /// AddRivers here, and neither does this.
+        ///
+        /// The game's cheap:true variant (2 and 2 octaves instead of 5 and 3)
+        /// exists for the Ashlands ocean gradient sampler at decomp_new
+        /// :58081 and is not on the terrain path, so it is not ported.
+        /// </summary>
+        private float GetAshlandsHeight(float wx, float wy)
+        {
+            double x = wx;
+            double y = wy;
+            double baseHeight = GetBaseHeight((float)x, (float)y);
+
+            double angle = (double)WorldAngle((float)x, (float)y) * 100.0;
+            double band = LengthD(x, y + (double)AshlandsYOffset - (double)AshlandsYOffset * 0.3)
+                - ((double)AshlandsMinDistance + angle);
+            band = Math.Abs(band) / 1000.0;
+            band = 1.0 - Clamp01(band);
+            band = MathfLikeSmoothStep(0.1, 1.0, band);
+            double eastWestFade = Math.Abs(x);
+            eastWestFade = 1.0 - Clamp01(eastWestFade / 7500.0);
+            band *= eastWestFade;
+
+            double outerFade = LengthD(x, y) - 10150.0;
+            outerFade = 1.0 - Clamp01(outerFade / 600.0);
+
+            x += (double)(100000f + _offset3);
+            y += (double)(100000f + _offset3);
+
+            double cells = 0.0;
+            double cellAmp = 1.0;
+            double cellScale = 0.33000001311302185;
+            for (int i = 0; i < 5; i++)
+            {
+                cells += cellAmp * MathfLikeSmoothStep(0.0, 1.0, NoiseGen.GetCellular(x * cellScale, y * cellScale));
+                cellScale *= 2.0;
+                cellAmp *= 0.5;
+            }
+            cells = Remap(cells, -1.0, 1.0, 0.0, 1.0);
+            double shaped = LerpD(band, BlendOverlay(band, cells), 0.5);
+
+            // decomp_new :151371-151372 builds a two-term Perlin bump here
+            // (num11) and then never reads it again. Four Perlin samples per
+            // Ashlands pixel for a value the game throws away, and Perlin is
+            // pure, so leaving it out changes no output and is the only line
+            // of this function that is not transcribed.
+            double h = LerpD(baseHeight, 0.15000000596046448, 0.75);
+            h += shaped * 0.5;
+            h = LerpD(-1.0, h, MathfLikeSmoothStep(0.0, 1.0, outerFade));
+
+            double lavaLevel = 0.15;
+
+            double cracks = 0.0;
+            double crackAmp = 1.0;
+            double crackScale = 8.0;
+            for (int j = 0; j < 3; j++)
+            {
+                cracks += crackAmp * NoiseGen.GetCellular(x * crackScale, y * crackScale);
+                crackScale *= 2.0;
+                crackAmp *= 0.5;
+            }
+            cracks = Remap(cracks, -1.0, 1.0, 0.0, 1.0);
+            cracks = Clamp01(Math.Pow(cracks, 4.0) * 2.0);
+
+            double simplex = NoiseGen.GetSimplexFractal(x * 0.075, y * 0.075);
+            simplex = Remap(simplex, -1.0, 1.0, 0.0, 1.0);
+            simplex = Math.Pow(simplex, 1.399999976158142);
+            h *= simplex;
+
+            // The game builds a Vector2 here, so both coordinates go through
+            // float before the Fbm sees them. That truncation is part of the
+            // result and is reproduced.
+            double crackField = Fbm((float)(x * 0.009999999776482582), (float)(y * 0.009999999776482582), 3, 2.0, 0.5);
+            crackField *= Clamp01(Remap(band, 0.0, 0.5, 0.5, 1.0));
+            crackField = LerpStepD(0.699999988079071, 1.0, crackField);
+            crackField = Math.Pow(crackField, 2.0);
+
+            double crackMask = BlendOverlay(crackField, cracks);
+            crackMask *= Clamp01((h - lavaLevel - 0.02) / 0.01);
+
+            double depth = UnityPerlin.Noise(x * 0.05 + 5124.0, y * 0.05 + 5000.0);
+            depth = Math.Pow(depth, 2.0);
+            depth = Remap(depth, 0.0, 1.0, 0.009999999776482582, 0.054999999701976776);
+            double cut = MathfClamp((float)(h - depth), (float)(lavaLevel + 0.009999999776482582), 5000f);
+            h = LerpD(h, cut, crackMask);
+
+            return (float)h;
         }
 
         private float BaseHeightTilt(float wx, float wy)
@@ -1040,6 +1179,98 @@ namespace ValheimBakaLoader.Tools.Atlas
                 return 0.0;
             }
             return v;
+        }
+
+        // The double-precision half of the game's DUtils, used by the Ashlands
+        // terrain. Line numbers are decomp_noise/assembly_utils.decompiled.cs.
+
+        /// <summary>DUtils.Length(double, double) at :11212.</summary>
+        private static double LengthD(double x, double y)
+        {
+            return Math.Sqrt(x * x + y * y);
+        }
+
+        /// <summary>DUtils.Lerp(double, double, double) at :11241.</summary>
+        private static double LerpD(double a, double b, double t)
+        {
+            if (t <= 0.0)
+            {
+                return a;
+            }
+            if (t >= 1.0)
+            {
+                return b;
+            }
+            return a * (1.0 - t) + b * t;
+        }
+
+        /// <summary>DUtils.LerpStep(double, double, double) at :11259.</summary>
+        private static double LerpStepD(double l, double h, double v)
+        {
+            return Clamp01((v - l) / (h - l));
+        }
+
+        /// <summary>DUtils.InverseLerp(double, double, double) at :11330.</summary>
+        private static double InverseLerp(double a, double b, double value)
+        {
+            if (a == b)
+            {
+                return 0.0;
+            }
+            return Clamp01((value - a) / (b - a));
+        }
+
+        /// <summary>
+        /// DUtils.Remap at :11325. It clamps, because InverseLerp does.
+        /// </summary>
+        private static double Remap(double value, double inLow, double inHigh, double outLow, double outHigh)
+        {
+            return LerpD(outLow, outHigh, InverseLerp(inLow, inHigh, value));
+        }
+
+        /// <summary>DUtils.BlendOverlay(double, double) at :11217.</summary>
+        private static double BlendOverlay(double a, double b)
+        {
+            if (a < 0.5)
+            {
+                return 2.0 * a * b;
+            }
+            return 1.0 - 2.0 * (1.0 - a) * (1.0 - b);
+        }
+
+        /// <summary>
+        /// DUtils.Fbm(Vector2, int, double, double) at :11309. The caller hands
+        /// it a Vector2, so the coordinates arrive already truncated to float;
+        /// they are taken as floats here for the same reason.
+        /// </summary>
+        private static double Fbm(float px, float py, int octaves, double lacunarity, double gain)
+        {
+            double sum = 0.0;
+            double amp = 1.0;
+            double x = px;
+            double y = py;
+            for (int i = 0; i < octaves; i++)
+            {
+                sum += amp * (double)UnityPerlin.Noise(x, y);
+                amp *= gain;
+                x *= lacunarity;
+                y *= lacunarity;
+            }
+            return sum;
+        }
+
+        /// <summary>Unity's Mathf.Clamp(float, float, float), NaN behaviour included.</summary>
+        private static float MathfClamp(float value, float min, float max)
+        {
+            if (value < min)
+            {
+                return min;
+            }
+            if (value > max)
+            {
+                return max;
+            }
+            return value;
         }
     }
 }

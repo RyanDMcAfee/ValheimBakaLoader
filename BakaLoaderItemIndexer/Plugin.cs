@@ -20,7 +20,7 @@ namespace BakaLoaderItemIndexer
     {
         public const string PluginGuid = "com.bakaloader.itemindexer";
         public const string PluginName = "BakaLoader Item Indexer";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.2.0";
 
         /// <summary>
         /// How many entries the file on disk currently holds. A later pass only rewrites when
@@ -192,9 +192,20 @@ namespace BakaLoaderItemIndexer
                 case ItemDrop.ItemData.ItemType.Chest:
                 case ItemDrop.ItemData.ItemType.Legs:
                 case ItemDrop.ItemData.ItemType.Shoulder:
+                // Hands is the one entry here that IsEquipable does NOT return true for. It is a
+                // real gear slot that mods use for gauntlets, so it is kept on purpose.
                 case ItemDrop.ItemData.ItemType.Hands:
                 case ItemDrop.ItemData.ItemType.Tool:
                 case ItemDrop.ItemData.ItemType.Torch:
+                // The game's own test for equipment is ItemData.IsEquipable, and these three
+                // were missing from this list while it returns true for all of them. The caller
+                // only keeps a quality value for "Equipment", so a utility item or a trinket
+                // with qualities lost the picker's quality box, and arrows were filed as plain
+                // items. Utility is the Megingjord and the Wishbone; Ammo is every arrow, bolt
+                // and thrown missile.
+                case ItemDrop.ItemData.ItemType.Utility:
+                case ItemDrop.ItemData.ItemType.Ammo:
+                case ItemDrop.ItemData.ItemType.Trinket:
                     return "Equipment";
                 case ItemDrop.ItemData.ItemType.Material:
                     return "Resource";

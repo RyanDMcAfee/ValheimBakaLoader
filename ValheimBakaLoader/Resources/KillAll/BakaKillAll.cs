@@ -1,4 +1,4 @@
-// BakaLoader KillAll v1.3.0 - compiled against SERVER assembly_valheim
+// BakaLoader KillAll v1.5.0 - compiled against SERVER assembly_valheim
 // Multiple fallback approaches for finding creatures on dedicated servers.
 using System;
 using System.Collections.Generic;
@@ -11,7 +11,7 @@ namespace BakaLoaderKillAll
     [BepInPlugin("com.baka.killall", "BakaLoader KillAll", PluginVersion)]
     public class KillAllPlugin : BaseUnityPlugin
     {
-        private const string PluginVersion = "1.3.0";
+        private const string PluginVersion = "1.5.0";
 
         private static ManualLogSource Log;
         private static volatile bool KillPending;
@@ -86,7 +86,7 @@ namespace BakaLoaderKillAll
                 {
                     Character c = staticList[i];
                     if (c == null) continue;
-                    if (IsPlayerSafe(c)) { players++; continue; }
+                    if (ShouldSpare(c)) { players++; continue; }
                     if (TryKill(c)) killed++;
                 }
             }
@@ -98,7 +98,7 @@ namespace BakaLoaderKillAll
                 {
                     Character c = sceneChars[i];
                     if (c == null) continue;
-                    if (IsPlayerSafe(c)) { players++; continue; }
+                    if (ShouldSpare(c)) { players++; continue; }
                     if (TryKill(c)) killed++;
                 }
             }
@@ -110,17 +110,49 @@ namespace BakaLoaderKillAll
                 {
                     Character c = allMono[i] as Character;
                     if (c == null) continue;
-                    if (IsPlayerSafe(c)) { players++; continue; }
+                    if (ShouldSpare(c)) { players++; continue; }
                     if (TryKill(c)) killed++;
                 }
             }
 
-            Log.LogInfo("KillAll complete: " + killed + " creatures killed, " + players + " players spared, " + allMono.Length + " total MonoBehaviours in scene.");
+            Log.LogInfo("KillAll complete: " + killed + " creatures killed, " + players + " spared (players, pets and allies), " + allMono.Length + " total MonoBehaviours in scene.");
         }
 
-        private static bool IsPlayerSafe(Character c)
+        /// <summary>
+        /// Kill-all is for hostiles. Players, tamed animals and the friendly factions are never
+        /// targets, and neither is a player-built training post: it is its own faction in the
+        /// game and it is a structure somebody put up, not a creature that wandered in.
+        /// <para>
+        /// This is a copy of Commander's rule on purpose. Either plugin can be the one that
+        /// answers baka_killall (Commander answers it over its own RCON, this one registers the
+        /// in-game console command), and BakaLoader's own button promises "players, pets and
+        /// allies spared" whichever answers. A shorter rule here meant an operator who typed the
+        /// command at the server console lost every wolf, boar and lox their players had raised.
+        /// Change one of these and change the other.
+        /// </para>
+        /// </summary>
+        private static bool ShouldSpare(Character c)
         {
-            try { return c.IsPlayer(); }
+            try
+            {
+                if (c.IsPlayer()) return true;
+                if (c.IsTamed()) return true; // pets: wolves, lox, modded companions
+
+                // Friendly and non-hostile factions. Everything else (ForestMonsters, Undead,
+                // Demon, MountainMonsters, SeaMonsters, PlainsMonsters, MistlandsMonsters,
+                // DeepNorth, Boss) is a hostile mob and stays killable.
+                switch (c.m_faction)
+                {
+                    case Character.Faction.Players:       // player-faction NPCs (many modded friendlies)
+                    case Character.Faction.AnimalsVeg:    // passive wildlife (deer, gulls, hares)
+                    case Character.Faction.Dverger:       // dvergr allies
+                    case Character.Faction.PlayerSpawned: // player-summoned allies
+                    case Character.Faction.TrainingDummy: // player-built training posts
+                        return true;
+                }
+
+                return false;
+            }
             catch { return true; } // if in doubt, don't kill
         }
 

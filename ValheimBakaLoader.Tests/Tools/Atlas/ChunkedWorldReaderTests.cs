@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -8,6 +9,7 @@ using System.Text;
 using ValheimBakaLoader.Tools;
 using ValheimBakaLoader.Tools.Atlas;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace ValheimBakaLoader.Tests.Tools.Atlas
 {
@@ -19,18 +21,23 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
     /// parts a fresh world has none of (portals, cartography tables, build
     /// sites, packed positions and rotations) get exercised too.
     /// </summary>
+    [Collection("DiagnosticSink")]
     public class ChunkedWorldReaderTests : IDisposable
     {
         private readonly string _tempDir =
             Path.Combine(Path.GetTempPath(), "vbl-chunked-tests-" + Guid.NewGuid().ToString("N"));
 
-        public ChunkedWorldReaderTests()
+        private readonly ITestOutputHelper _output;
+
+        public ChunkedWorldReaderTests(ITestOutputHelper output)
         {
+            _output = output;
             Directory.CreateDirectory(_tempDir);
         }
 
         public void Dispose()
         {
+            ChunkedWorldReader.GenerationPicked = null;
             try { Directory.Delete(_tempDir, recursive: true); } catch { /* best effort */ }
         }
 
@@ -753,6 +760,355 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             }
             Assert.Equal("12345", WorldLocationNames.Resolve(12345));
             Assert.True(WorldLocationNames.Count >= 178);
+        }
+
+
+        // ------------------------------------------------------------------
+        // Hostile or damaged .db2 headers
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Rewrites a world's .db2 with a chosen zone-block length field and
+        /// whatever bytes should follow it. Everything before the length is a
+        /// valid header so the read gets that far.
+        /// </summary>
+        private string WriteWorldWithZoneBlockLength(string worldName, int declaredLength, byte[] payload)
+        {
+            var chunk = new ChunkSpec { Chunk = 1, Size = 0 };
+            chunk.Zdos.Add(new ZdoSpec { Prefab = Hash("Beech1"), X = 1f, Y = 2f, Z = 3f });
+            string dir = WriteWorld(worldName, 2, 1800, new List<ChunkSpec> { chunk });
+
+            string db2 = Path.Combine(dir, "_main.2.db2");
+            using (var fs = new FileStream(db2, FileMode.Create, FileAccess.Write))
+            using (var bw = new BinaryWriter(fs, Encoding.UTF8))
+            {
+                bw.Write(41);          // world version
+                bw.Write(1800.0);      // net time
+                bw.Write(declaredLength);
+                bw.Write(payload);
+            }
+            return dir;
+        }
+
+        [Fact]
+        public void Db2_ZoneBlockLongerThanWhatIsLeftInTheFileIsRejectedBeforeItIsAllocated()
+        {
+            // One int32 off the disk used to decide the size of a byte array on
+            // its own. A corrupt world claiming 200 MB made the reader allocate
+            // 200 MB and only then notice the file was 40 bytes long.
+            string dir = WriteWorldWithZoneBlockLength("ShortBlock", 200 * 1024 * 1024, new byte[] { 1, 2, 3, 4 });
+
+            var notes = new List<string>();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            WorldDbInfo info = ChunkedWorldReader.TryRead(dir, notes.Add);
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            Assert.Null(info);
+            Assert.Contains(notes, n => n.Contains("only 4 are left in the file"));
+            Assert.True(allocated < 4 * 1024 * 1024,
+                $"the rejected read allocated {allocated} bytes, so the length field is still being trusted");
+        }
+
+        [Fact]
+        public void Db2_ZoneBlockOverTheCeilingIsRejected()
+        {
+            // 300 MB sits under the old 512 MB bound and over the 256 MB one.
+            string dir = WriteWorldWithZoneBlockLength("HugeBlock", 300 * 1024 * 1024, new byte[] { 1, 2, 3, 4 });
+
+            var notes = new List<string>();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            WorldDbInfo info = ChunkedWorldReader.TryRead(dir, notes.Add);
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            Assert.Null(info);
+            Assert.Contains(notes, n => n.Contains("is out of range") && n.Contains("256 MB"));
+            Assert.True(allocated < 4 * 1024 * 1024, $"the rejected read allocated {allocated} bytes");
+        }
+
+        [Fact]
+        public void Db2_ZoneBlockThatExpandsPastTheCeilingIsCorruptNotValid()
+        {
+            // A gzip member ends with its uncompressed length. This one is a
+            // real, small block with that trailer rewritten to claim 2 GB, which
+            // is what a decompression bomb announces about itself. The cap on the
+            // compressed size says nothing about this: a few hundred bytes in,
+            // gigabytes out.
+            byte[] block = Gzip(new byte[] { 7, 7, 7, 7, 7, 7, 7, 7 });
+            byte[] lying = (byte[])block.Clone();
+            BitConverter.GetBytes(2u * 1024u * 1024u * 1024u).CopyTo(lying, lying.Length - 4);
+
+            string dir = WriteWorldWithZoneBlockLength("Bomb", lying.Length, lying);
+
+            var notes = new List<string>();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            WorldDbInfo info = ChunkedWorldReader.TryRead(dir, notes.Add);
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            Assert.Null(info);
+            Assert.Contains(notes, n => n.Contains("expands to") && n.Contains("1024 MB ceiling"));
+            Assert.True(allocated < 4 * 1024 * 1024,
+                $"the rejected read allocated {allocated} bytes, so it decompressed the block first");
+        }
+
+        [Fact]
+        public void Db2_AZoneBlockBiggerThanOneCopyBufferStillReads()
+        {
+            // The counted copy replaced CopyTo, so a block that takes more than
+            // one pass through the buffer has to still come out whole. The real
+            // 1.0 world in TestData decompresses to a couple of hundred
+            // kilobytes, which is several buffers worth.
+            var info = WorldDbReader.TryReadAny(RealWorldDir());
+
+            Assert.NotNull(info);
+            Assert.Equal(12272, info.Locations.Count);
+        }
+
+        // ------------------------------------------------------------------
+        // Reading again: only when a save landed underneath the read
+        // ------------------------------------------------------------------
+
+        [Fact]
+        public void ShouldReadAgain_OnlyWhenTheGenerationRotated()
+        {
+            // A newer committed generation is the game's own proof that a save
+            // landed, because it writes N+1 .ok before deleting N.
+            Assert.True(ChunkedWorldReader.ShouldReadAgain(generationRead: 4, committedNow: 5, attempt: 0));
+
+            // Same generation still newest: the file is damaged, not rotating.
+            Assert.False(ChunkedWorldReader.ShouldReadAgain(generationRead: 4, committedNow: 4, attempt: 0));
+
+            // Nothing committed at all, or something older: also not a rotation.
+            Assert.False(ChunkedWorldReader.ShouldReadAgain(generationRead: 4, committedNow: 3, attempt: 0));
+            Assert.False(ChunkedWorldReader.ShouldReadAgain(generationRead: 4, committedNow: -1, attempt: 0));
+
+            // One re-read and no more, whatever the folder does after that.
+            Assert.False(ChunkedWorldReader.ShouldReadAgain(generationRead: 4, committedNow: 5, attempt: 1));
+        }
+
+        [Fact]
+        public void MissingChunk_IsCalledDamageAndTheReadIsNotRepeated()
+        {
+            var present = new ChunkSpec { Chunk = 1, Size = 0 };
+            present.Zdos.Add(new ZdoSpec { Prefab = Hash("portal_wood"), X = 1f, Y = 2f, Z = 3f });
+            string dir = WriteWorld("StillBroken", 4, 5400, new List<ChunkSpec> { present });
+
+            // Point the index at a second chunk whose file was never written.
+            using (var fs = new FileStream(Path.Combine(dir, "_main.4.chunks"), FileMode.Create, FileAccess.Write))
+            using (var bw = new BinaryWriter(fs))
+            {
+                bw.Write((ushort)41);
+                bw.Write(5);
+                bw.Write(2);
+                bw.Write((ushort)1); bw.Write((byte)0); bw.Write(1u); bw.Write(1);
+                bw.Write((ushort)0x0505); bw.Write((byte)0); bw.Write(9u); bw.Write(4);
+            }
+
+            // Warm the code path so the timing printed below is the read and
+            // not the first-call JIT.
+            Assert.NotNull(ChunkedWorldReader.TryRead(dir, null));
+
+            // Every generation the reader picks up, so "it did not read the
+            // folder twice" is something this test watches happen instead of
+            // something it infers from a stopwatch.
+            var picked = new List<int>();
+            ChunkedWorldReader.GenerationPicked = (folder, generation) => picked.Add(generation);
+
+            var notes = new List<string>();
+            var clock = Stopwatch.StartNew();
+            WorldDbInfo info;
+            try
+            {
+                info = ChunkedWorldReader.TryRead(dir, notes.Add);
+            }
+            finally
+            {
+                ChunkedWorldReader.GenerationPicked = null;
+            }
+            clock.Stop();
+
+            // The rest of the world still comes back, and the map is told a piece
+            // of it is missing.
+            Assert.NotNull(info);
+            Assert.Equal(2, info.ChunksTotal);
+            Assert.Equal(1, info.ChunksSkipped);
+            Assert.Contains(notes, n => n.Contains("damage and not a save landing"));
+            Assert.Contains(notes, n => n.Contains("could not be read") && n.Contains("skipping"));
+
+            // Generation 4 is still the newest committed one, so there is nothing
+            // to wait for and nothing to read again. The old reader slept 250 ms
+            // on this exact path before reaching the same answer; the timing
+            // below is printed for information and nothing hangs on it, because
+            // a busy machine can make any wall-clock number say anything.
+            _output.WriteLine($"damaged-chunk read took {clock.Elapsed.TotalMilliseconds:F1} ms");
+            Assert.Equal(new[] { 4 }, picked);
+        }
+
+        [Fact]
+        public void RotatedGeneration_AlreadyCommittedBeforeTheRead_IsReadWhole()
+        {
+            // The other side of the same rule, end to end: generation 4 has lost
+            // its chunk file AND generation 5 is committed, which is what a
+            // reader sees a moment after a save lands. The world that comes back
+            // has to be generation 5, whole, with no complaint about damage.
+            var four = new ChunkSpec { Chunk = 1, Size = 0 };
+            four.Zdos.Add(new ZdoSpec { Prefab = Hash("portal_wood"), X = 1f, Y = 2f, Z = 3f });
+            string dir = WriteWorld("Rotated", 4, 5400, new List<ChunkSpec> { four });
+            File.Delete(Path.Combine(dir, four.FileName));
+
+            var five = new ChunkSpec { Chunk = 2, Size = 0, Version = 7 };
+            five.Zdos.Add(new ZdoSpec
+            {
+                Prefab = Hash("portal_wood"), X = 40f, Y = 5f, Z = 60f,
+                Strings = { (Hash("tag"), "after the save") },
+            });
+            WriteWorld("Rotated", 5, 7200, new List<ChunkSpec> { five });
+
+            var notes = new List<string>();
+            WorldDbInfo info = ChunkedWorldReader.TryRead(dir, notes.Add);
+
+            Assert.NotNull(info);
+            Assert.Equal("after the save", Assert.Single(info.Portals).Tag);
+            Assert.Equal(0, info.ChunksSkipped);
+            Assert.DoesNotContain(notes, n => n.Contains("damage"));
+        }
+
+        [Fact]
+        public void SaveLandingMidRead_MakesTheReaderTakeTheNewGenerationInstead()
+        {
+            // The case the re-read branch exists for, driven for real. The test
+            // above starts with both generations already on disk, so the reader
+            // picks the newer one straight away and never reaches the branch.
+            // Here generation 5 lands after the reader has committed to reading
+            // generation 4, in the order the game writes it: 5 whole and marked
+            // committed first, then 4 chunk file deleted underneath the read.
+            var four = new ChunkSpec { Chunk = 1, Size = 0 };
+            four.Zdos.Add(new ZdoSpec
+            {
+                Prefab = Hash("portal_wood"), X = 1f, Y = 2f, Z = 3f,
+                Strings = { (Hash("tag"), "before the save") },
+            });
+            string dir = WriteWorld("MidRead", 4, 5400, new List<ChunkSpec> { four });
+
+            var five = new ChunkSpec { Chunk = 2, Size = 0, Version = 7 };
+            five.Zdos.Add(new ZdoSpec
+            {
+                Prefab = Hash("portal_wood"), X = 40f, Y = 5f, Z = 60f,
+                Strings = { (Hash("tag"), "after the save") },
+            });
+
+            var picked = new List<int>();
+            ChunkedWorldReader.GenerationPicked = (folder, generation) =>
+            {
+                picked.Add(generation);
+                if (generation != 4) return;
+                WriteWorld("MidRead", 5, 7200, new List<ChunkSpec> { five });
+                File.Delete(Path.Combine(dir, four.FileName));
+            };
+
+            var notes = new List<string>();
+            WorldDbInfo info;
+            try
+            {
+                info = ChunkedWorldReader.TryRead(dir, notes.Add);
+            }
+            finally
+            {
+                ChunkedWorldReader.GenerationPicked = null;
+            }
+
+            // It really did read twice, and the second read was the save that
+            // had just landed.
+            Assert.Equal(new[] { 4, 5 }, picked);
+
+            // What comes back is generation 5, whole, with no complaint filed
+            // about the generation it walked away from.
+            Assert.NotNull(info);
+            Assert.Equal("after the save", Assert.Single(info.Portals).Tag);
+            Assert.Equal(0, info.ChunksSkipped);
+            Assert.Equal(7200.0, info.NetTime, 3);
+            Assert.DoesNotContain(notes, n => n.Contains("damage"));
+            Assert.DoesNotContain(notes, n => n.Contains("could not be read"));
+        }
+        // ------------------------------------------------------------------
+        // Reading a lot of chunk files
+        // ------------------------------------------------------------------
+
+        private static List<ChunkSpec> ManyChunks(int count)
+        {
+            var chunks = new List<ChunkSpec>(count);
+            for (int i = 0; i < count; i++)
+            {
+                // Chunk 1 size 0 is the portal chunk, so it is skipped here and
+                // every portal below is found by its prefab instead.
+                var chunk = new ChunkSpec { Chunk = (ushort)(i + 2), Size = 0, Version = (uint)(i + 1) };
+                chunk.Zdos.Add(new ZdoSpec
+                {
+                    Prefab = Hash("portal_wood"), X = i, Y = 0f, Z = -i,
+                    Strings = { (Hash("tag"), "portal " + i) },
+                });
+                chunks.Add(chunk);
+            }
+            return chunks;
+        }
+
+        [Fact]
+        public void ManyChunks_ComeBackWholeAndInTheSameOrderEveryTime()
+        {
+            const int count = 400;
+            string dir = WriteWorld("BigWorld", 3, 3600, ManyChunks(count));
+
+            var clock = Stopwatch.StartNew();
+            WorldDbInfo first = ChunkedWorldReader.TryRead(dir, null);
+            clock.Stop();
+
+            Assert.NotNull(first);
+            Assert.Equal(count, first.ChunksTotal);
+            Assert.Equal(0, first.ChunksSkipped);
+            Assert.Equal(count, first.Portals.Count);
+
+            // The chunk files are read a few at a time now, so the one thing that
+            // could quietly rot is the order they are merged in. It has to be the
+            // order of the index, every time, or the same world draws differently
+            // on two runs.
+            for (int i = 0; i < count; i++)
+            {
+                Assert.Equal("portal " + i, first.Portals[i].Tag);
+            }
+
+            for (int run = 0; run < 3; run++)
+            {
+                WorldDbInfo again = ChunkedWorldReader.TryRead(dir, null);
+                Assert.NotNull(again);
+                Assert.Equal(
+                    string.Join(",", first.Portals.ConvertAll(p => p.Tag)),
+                    string.Join(",", again.Portals.ConvertAll(p => p.Tag)));
+            }
+
+            _output.WriteLine($"{count} chunk files read in {clock.Elapsed.TotalMilliseconds:F1} ms");
+        }
+
+        [Fact]
+        public void RealWorld_ReadsRepeatedlyAtASaneSpeed()
+        {
+            // The measurement F8 asks for, on the real 1.0 save in TestData. It
+            // is one chunk file next to a 143 KB .db2, so this is mostly the
+            // header and zone-block path; the many-file gain is what the
+            // synthetic world above covers.
+            string dir = RealWorldDir();
+            Assert.NotNull(WorldDbReader.TryReadAny(dir));   // warm up
+
+            const int runs = 20;
+            var clock = Stopwatch.StartNew();
+            for (int i = 0; i < runs; i++)
+            {
+                Assert.NotNull(WorldDbReader.TryReadAny(dir));
+            }
+            clock.Stop();
+
+            _output.WriteLine($"real 1.0 world read {runs} times in {clock.Elapsed.TotalMilliseconds:F1} ms "
+                + $"({clock.Elapsed.TotalMilliseconds / runs:F2} ms per read)");
+            Assert.True(clock.Elapsed.TotalSeconds < 20,
+                $"{runs} reads of the real world took {clock.Elapsed.TotalSeconds:F1} s");
         }
 
         // ------------------------------------------------------------------

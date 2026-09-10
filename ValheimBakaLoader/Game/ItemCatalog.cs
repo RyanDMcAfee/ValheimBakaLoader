@@ -70,6 +70,11 @@ namespace ValheimBakaLoader.Game
         private List<ItemCatalogEntry> _entries = new();
         private string _loadedFrom;
 
+        // The write time of the file behind _loadedFrom. The indexer plugin rewrites items.json
+        // at the same path on every server start, so the path alone cannot tell a fresh catalog
+        // from the one already in memory.
+        private DateTime? _loadedWriteTimeUtc;
+
         public ItemCatalog(IApplicationLogger logger)
         {
             Logger = logger;
@@ -108,7 +113,21 @@ namespace ValheimBakaLoader.Game
 
                 if (candidate != null && File.Exists(candidate))
                 {
-                    if (string.Equals(_loadedFrom, candidate, StringComparison.OrdinalIgnoreCase)) return;
+                    // Same path AND same write time means the catalog in memory is still the one
+                    // on disk. A server restart regenerates items.json in place, which moves the
+                    // write time, and that is exactly when the picker has to pick the new list up.
+                    string loadedFrom;
+                    DateTime? loadedWriteTimeUtc;
+                    lock (Lock)
+                    {
+                        loadedFrom = _loadedFrom;
+                        loadedWriteTimeUtc = _loadedWriteTimeUtc;
+                    }
+
+                    if (string.Equals(loadedFrom, candidate, StringComparison.OrdinalIgnoreCase)
+                        && loadedWriteTimeUtc.HasValue
+                        && loadedWriteTimeUtc.Value == ReadWriteTimeUtc(candidate)) return;
+
                     LoadFrom(candidate);
                 }
                 else if (_entries.Count == 0)
@@ -134,10 +153,27 @@ namespace ValheimBakaLoader.Game
             }
         }
 
+        /// <summary>The file's write time, or null when it cannot be read for any reason.</summary>
+        private static DateTime? ReadWriteTimeUtc(string path)
+        {
+            try
+            {
+                return File.GetLastWriteTimeUtc(path);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private void LoadFrom(string path)
         {
             try
             {
+                // Read the write time BEFORE the content. A rewrite that lands between the two
+                // then leaves an older stamp against newer content, so the next call reloads
+                // rather than settling on a file it never fully read.
+                var writeTimeUtc = ReadWriteTimeUtc(path);
                 var json = File.ReadAllText(path);
                 var entries = JsonConvert.DeserializeObject<List<ItemCatalogEntry>>(json) ?? new();
                 entries = entries
@@ -148,6 +184,7 @@ namespace ValheimBakaLoader.Game
                 {
                     _entries = entries;
                     _loadedFrom = path;
+                    _loadedWriteTimeUtc = writeTimeUtc;
                 }
 
                 Logger.Information("Loaded {count} catalog entries from {path}", entries.Count, path);

@@ -370,6 +370,78 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.Equal("39", Server.NetworkVersion);
         }
 
+        [Fact]
+        public async Task Two_starts_arriving_together_only_launch_one_server()
+        {
+            // The guard is deliberately slow: that is the window in which the old code let
+            // both starts read "nothing pending" before either wrote it, and both went on.
+            var asked = 0;
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Server.ConfirmLaunchAsync = async _ =>
+            {
+                Interlocked.Increment(ref asked);
+                await release.Task;
+                return LaunchDecision.Go();
+            };
+
+            var options = Options();
+            await Task.WhenAll(
+                Task.Run(() => Server.Start(options)),
+                Task.Run(() => Server.Start(options)));
+
+            // Both calls have returned; only one of them may be sitting on the guard.
+            await WaitUntil(() => Volatile.Read(ref asked) >= 1);
+            Assert.Equal(1, Volatile.Read(ref asked));
+
+            release.TrySetResult(true);
+            await WaitUntil(() => Server.Status == ServerStatus.Starting);
+            await Task.Delay(150);
+            Assert.Equal(1, Volatile.Read(ref asked));
+        }
+
+        [Fact]
+        public async Task A_start_that_lost_the_race_leaves_the_winner_alone()
+        {
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Server.ConfirmLaunchAsync = async _ =>
+            {
+                await release.Task;
+                return LaunchDecision.Go();
+            };
+
+            Server.Start(Options());
+            await WaitUntil(() => Server.LaunchInProgress);
+
+            // A second click while the guard is still thinking must be a no-op, not a queued
+            // second launch that fires the moment the first one clears.
+            Assert.False(Server.CanStart);
+            Server.Start(Options());
+
+            release.TrySetResult(true);
+            await WaitUntil(() => Server.Status == ServerStatus.Starting);
+            Assert.False(Server.LaunchInProgress);
+        }
+
+        [Fact]
+        public void An_adopted_server_records_its_build_too()
+        {
+            // No stdout arrives for a process BakaLoader did not start, so the version banner
+            // that normally fills this in never lands. Without a probe at adoption time the
+            // profile keeps its old build and the next real Start asks about a change that
+            // never happened.
+            var recorded = new System.Collections.Generic.List<(string Build, string Version)>();
+            Server.RecordLaunchedBuild = (build, version) => recorded.Add((build, version));
+
+            using var standIn = new System.Diagnostics.Process();
+            Server.AdoptProcess(standIn, Options());
+
+            Assert.Equal(ServerStatus.Running, Server.Status);
+            Assert.True(Server.IsAdopted);
+            Assert.Single(recorded);
+            Assert.False(string.IsNullOrWhiteSpace(recorded[0].Build));
+            Assert.Null(recorded[0].Version);
+        }
+
         // ------------------------------------------------------------------ plumbing
 
         private ValheimServerOptions Options() => new()

@@ -62,7 +62,28 @@ const S={
   crashed:false,          // the last stop was a crash, and nothing has started since
   journal:{},             // player key -> {playSec,deaths,sessions} from the Skald journal
   vikSort:{col:null,dir:0}, // roster sort: name|status|platform|session|playtime|seen|deaths|pos
+  /* Last answer from server.updateCheck: how this server was installed, whether Steam has
+     an update waiting for it, and whether BakaLoader can apply that update itself. */
+  update:{installKind:null,updatePending:false,pendingBytes:0,buildId:null,targetBuildId:null,
+          canUpdate:false,running:false,reason:""},
 };
+
+/* An update rewrites valheim_server.exe and the managed assemblies under the install
+   folder. A start begun while that is happening launches off half written files, so every
+   start and restart surface asks this first and says the same sentence when it refuses.
+   The native side holds the same gate on IServerUpdateService.IsRunning, so a stale page
+   cannot get past it either. */
+function updBlockMsg(){return TT("An update is running for this install. Wait for it to finish.");}
+function updateBlocksStart(){return !!(S.update&&S.update.running);}
+/* A refusal the native side worded itself is shown exactly as it came. Returns true when
+   the answer was a refusal, so the caller stops there. */
+function rpcRefused(r){
+  if(!r||typeof r!=="object"||r.ok!==false) return false;
+  const why=String(r.error||r.reason||"").trim();
+  toast("ᚦ "+(why||TT("That was refused.")));
+  if(why) logLine("warn","[BakaLoader] refused: "+why);
+  return true;
+}
 
 /* True when an event's profile tag belongs to the profile shown in the UI.
    Untagged events (null/undefined) always pass - single-server compatibility. */
@@ -224,6 +245,10 @@ const TERM_PAIRS=[
   ["RUNES","CONFIGS"],
   ["Runes","Configs"],
   ["SAGA","CONSOLE"],
+  /* These two run before the bare "saga" pair on purpose: "the saga log" through that one
+     alone comes out as "the log log". */
+  ["The saga log","The log"],
+  ["the saga log","the log"],
   ["Saga","Console"],
   ["saga","log"],
   ["Helm turned","Switched to"],
@@ -347,16 +372,32 @@ function updateScrollCue(el){
     el.parentElement.classList.toggle("cue-up",up);
   }
 }
-const _cueRO=typeof ResizeObserver!=="undefined"
-  ?new ResizeObserver(es=>{
+function _cueObserver(){
+  if(typeof ResizeObserver==="undefined") return null;
+  return new ResizeObserver(es=>{
     const seen=new Set();
     es.forEach(e=>{
       const pane=e.target.classList&&e.target.classList.contains("scrollcue")
         ?e.target:(e.target.closest?e.target.closest(".scrollcue"):null);
       if(pane&&!seen.has(pane)){seen.add(pane);updateScrollCue(pane);}
     });
-  })
-  :null;
+  });
+}
+/* Two observers, not one. The persistent panes (.page, the atlas, the chip strip) are
+   reused for the life of the window, so their observer is never torn down. Everything
+   inside a modal is thrown away and rebuilt on the next open, and a ResizeObserver holds
+   its targets alive, so modal panes get their own observer that modalClose disconnects.
+   One shared observer leaked every discarded modal subtree for the whole session. */
+const _cueRO=_cueObserver();
+const _cueModalRO=_cueObserver();
+function cueObserverFor(el){
+  return (el.closest&&el.closest(".modal-bg"))?_cueModalRO:_cueRO;
+}
+/* Drop every modal-scoped target the observer is still holding. Called before the modal
+   markup is replaced or wiped, while those nodes are still reachable. */
+function releaseModalScrollCues(){
+  if(_cueModalRO) _cueModalRO.disconnect();
+}
 function watchScrollCue(el){
   if(!el) return;
   if(_cueSeen.has(el)){updateScrollCue(el);return;}
@@ -365,7 +406,8 @@ function watchScrollCue(el){
   if(el.classList.contains("page")) el.dataset.cueHost="parent";
   else el.classList.add("scrollfade");
   el.addEventListener("scroll",()=>updateScrollCue(el),{passive:true});
-  if(_cueRO){_cueRO.observe(el);[...el.children].forEach(c=>_cueRO.observe(c));}
+  const ro=cueObserverFor(el);
+  if(ro){ro.observe(el);[...el.children].forEach(c=>ro.observe(c));}
   updateScrollCue(el);
 }
 function rescanScrollCues(){$$(".scrollcue").forEach(updateScrollCue);}
@@ -376,21 +418,63 @@ function refreshScrollCues(){
      frame has settled so the cue is right at load, not only after a scroll. */
   requestAnimationFrame(rescanScrollCues);
 }
-window.addEventListener("resize",rescanScrollCues);
 window.addEventListener("load",()=>{refreshScrollCues();setTimeout(rescanScrollCues,400);});
 if(document.fonts&&document.fonts.ready) document.fonts.ready.then(rescanScrollCues).catch(()=>{});
 
+/* ---------- WINDOW RESIZE ----------
+   One listener for the whole app, coalesced onto a single animation frame. A live
+   window drag fires resize dozens of times a second, and each of the five things
+   below reads layout, so five raw listeners meant five forced reflow passes per
+   event. Now every measurement happens once per painted frame, in a fixed order:
+   the rail first (it decides how tall the chip strip may be), then the panes that
+   measure inside it. The flame is left to its own ResizeObserver on the canvas,
+   which already fires for a window resize, and the roster's column note is only
+   worth computing while the roster is the hall on screen. */
+let _resizeRaf=0;
+function onWindowResize(){
+  if(_resizeRaf) return;
+  _resizeRaf=requestAnimationFrame(()=>{
+    _resizeRaf=0;
+    try{fitServerStrip();}catch(_){}
+    try{hlogFit();}catch(_){}
+    try{rescanScrollCues();}catch(_){}
+    try{updateToastLift();}catch(_){}
+    /* The canvas observer watches the CSS box, and moving the window to a display with a
+       different scale does not change that box, only devicePixelRatio. Without this the
+       flame keeps the old backing store and draws blurred. It is idempotent: it returns
+       without touching anything unless the backing size really differs. */
+    try{flameResize();}catch(_){}
+    if(currentPage==="vikings"){try{renderVikCols();}catch(_){}}
+  });
+}
+window.addEventListener("resize",onWindowResize);
+
 /* ---------- TOAST LIFT ----------
-   Toasts live at the bottom centre of the content pane. On the Saga hall they
-   ride above the console input row so they never cover what you are typing. */
-function setToastLift(name){
+   Toasts live at the bottom right of the content pane, clear of the status bar. Two
+   things are allowed to push them further up: the Saga hall's console input row, so
+   they never cover what you are typing, and an open modal's button row, so a toast
+   fired mid-dialog never lands on the buttons that dialog is waiting on. */
+const TOAST_BASE=42;    // matches the base offset in the .toasts rule in app.css
+function updateToastLift(){
   let lift=0;
-  if(name==="saga"){
+  if(currentPage==="saga"){
     const row=$("#page-saga .termin");
     lift=(row&&row.offsetHeight?row.offsetHeight:36)+18;
   }
-  document.documentElement.style.setProperty("--toast-lift",lift+"px");
+  const btns=document.querySelector(".modal-bg.open .modal .mbtns");
+  const app=$("#app");
+  if(btns&&app){
+    const r=btns.getBoundingClientRect(), a=app.getBoundingClientRect();
+    if(r.height>0) lift=Math.max(lift,Math.round(a.bottom-r.top)+12-TOAST_BASE);
+    /* A dialog tall enough to reach the top of the window would otherwise lift the
+       stack clean off the screen. Keep it inside the page area and let it overlap the
+       dialog's upper half instead of vanishing. */
+    lift=Math.min(lift,Math.max(0,Math.round(a.height)-TOAST_BASE-160));
+  }
+  document.documentElement.style.setProperty("--toast-lift",Math.max(0,lift)+"px");
 }
+/* goPage still calls this by name; currentPage is already the new hall by then. */
+function setToastLift(){updateToastLift();}
 
 /* ---------- HEARTH: RECENT LOG CARD ----------
    Mirrors the tail of the Saga chronicle (logLine feeds it). It keeps 30 lines
@@ -438,7 +522,7 @@ if(typeof ResizeObserver!=="undefined"){
   const hlogRO=new ResizeObserver(()=>hlogFit());
   if($("#hearthLog")) hlogRO.observe($("#hearthLog"));
 }
-window.addEventListener("resize",hlogFit);
+/* window resize is handled by the shared dispatcher above */
 
 /* ---------- COLLAPSIBLE HEADERS ----------
    One wiring for every foldable header: click or Enter/Space toggles it, the
@@ -498,7 +582,8 @@ function goPage(name){
     p.style.display=on?(FLEX_PAGES[p.id]?"flex":"block"):"none";
   });
   currentPage=name;
-  setToastLift(name);
+  setToastLift();
+  if(name==="vikings"){try{renderVikCols();}catch(_){}}
   if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();flameResize();}
   flameTick();   // the fire only burns while the Dashboard is on screen
   refreshScrollCues();
@@ -598,7 +683,7 @@ function fitServerStrip(){
   }
   updateScrollCue(strip);
 }
-window.addEventListener("resize",fitServerStrip);
+/* window resize is handled by the shared dispatcher, so the rail is measured once a frame */
 /* web fonts change the footer's height, which changes what the strip can have */
 if(document.fonts&&document.fonts.ready) document.fonts.ready.then(fitServerStrip).catch(()=>{});
 /* Right-click a chip → per-realm actions. */
@@ -660,7 +745,7 @@ async function deleteServerFlow(name){
     const df=delFiles?delFiles.classList.contains("on"):false;
     const ok=m.querySelector("#delOk"); ok.disabled=true; ok.textContent=TT("Deleting…");
     const r=await rpc("profiles.delete",{name,deleteFiles:df});
-    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Delete");const st=m.querySelector("#delStatus");if(st)st.textContent=TT("Delete failed, see the saga log.");return;}
+    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Delete");const st=m.querySelector("#delStatus");if(st)st.textContent=TT("Delete failed. See the saga log.");return;}
     modalClose();
     if(S.profileName===name) S.profileName=null;
     await refreshServers();
@@ -677,7 +762,7 @@ async function restoreModal(){
   const archived=(S.servers||[]).filter(s=>s.archived);
   const orphans=await rpc("worlds.listOrphans",{});
   const orphanList=Array.isArray(orphans)?orphans:[];
-  if(!archived.length&&!orphanList.length){toast(TT("Nothing to restore, no archived realms or past worlds found."));return;}
+  if(!archived.length&&!orphanList.length){toast(TT("Nothing to restore: no archived realms or past worlds found."));return;}
 
   const archRows=archived.map(s=>
     `<div class="arow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line,#2A2E34)">`+
@@ -747,7 +832,7 @@ async function adoptWorldFlow(o){
     if(taken.has(name.toLowerCase())){st.textContent=TT("A realm by that name already exists.");return;}
     const ok=m.querySelector("#awOk"); ok.disabled=true; ok.textContent=TT("Bringing back…");
     const r=await rpc("servers.adoptWorld",{world:o.world,folder:o.folder,sub:o.sub,name,seedMods:seed.classList.contains("on")});
-    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Bring back");st.textContent=TT("Could not bring that world back, see the saga log.");return;}
+    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Bring back");st.textContent=TT("Could not bring that world back. See the saga log.");return;}
     modalClose();
     await refreshServers();
     if(r&&r.ProfileName){await switchServer(r.ProfileName);goPage("world");}
@@ -763,13 +848,20 @@ async function switchServer(name){
   S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
   S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
   /* conditions belong to the realm that raised them */
-  ["saveFailed","backupFailed","crashRelaunch","modUpdates"].forEach(clearCondition);
+  ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate"].forEach(clearCondition);
+  /* so does the update answer: install kind, waiting bytes and the reason a realm cannot
+     be updated are all about the install the previous realm pointed at. */
+  SRV_UPDATE=null; _updHidden=false;
+  S.update={installKind:null,updatePending:false,pendingBytes:0,buildId:null,targetBuildId:null,
+            canUpdate:false,running:false,reason:""};
+  try{renderUpdatePill();}catch(_){}
   S.journal={}; S.vikSort={col:null,dir:0}; S.crashed=false;
   /* the previous realm's write times belong to the previous realm */
   $("#saveAvg").textContent="avg -";
   try{atlasReset();}catch{}
   const st=await rpc("server.state");
   if(st!==FAIL){S.state=null;applyState(st);}
+  refreshUpdateInfo();   // this realm's own install, asked fresh
   renderAllFromPrefs();
   await refreshPlayers();
   renderMods();
@@ -872,7 +964,7 @@ async function addServerProfile(){
     });
     if(created===FAIL||!created){
       okB.disabled=false; okB.textContent=TT("Forge realm");
-      statusN.textContent=TT("Could not forge that realm, see the saga log.");
+      statusN.textContent=TT("Could not forge that realm. See the saga log.");
       return;
     }
     modalClose();
@@ -1047,8 +1139,11 @@ function flameInit(){
   if(typeof ResizeObserver!=="undefined"){
     FLAME.ro=new ResizeObserver(()=>flameResize());
     FLAME.ro.observe(cv);
+  }else{
+    /* Only where ResizeObserver is missing. With it, the canvas observer above already
+       fires for a window resize, and a second path re-measured the same canvas twice. */
+    window.addEventListener("resize",flameResize);
   }
-  window.addEventListener("resize",flameResize);
   document.addEventListener("visibilitychange",flameTick);
   if(FLAME.reduced) flameStill(); else flameTick();
 }
@@ -1109,9 +1204,12 @@ function renderAppBar(){
   const b=$("#abLifecycle"); if(!b) return;
   const canStop=Native.available?!!(S.state&&S.state.canStop):running;
   const canStart=Native.available?!!(S.state&&S.state.canStart):!running;
+  /* Stop stays available while an install is being updated; a start does not. */
+  const updBusy=!canStop&&updateBlocksStart();
   b.textContent=canStop?TT("Stop"):TT("Start");
-  b.title=canStop?TT("Douse the hearth: stops the server"):TT("Kindle the hearth: starts the server");
-  b.disabled=Native.available?!(canStart||canStop):false;
+  b.title=updBusy?updBlockMsg()
+    :(canStop?TT("Douse the hearth: stops the server"):TT("Kindle the hearth: starts the server"));
+  b.disabled=updBusy?true:(Native.available?!(canStart||canStop):false);
   b.classList.toggle("btn-cold",canStop);
   b.classList.toggle("btn-ember",!canStop);
 }
@@ -1126,12 +1224,14 @@ async function lifecycleToggle(){
       if(r!==FAIL){applyState(r);toast("ᛪ Hearth doused · server stopping");logLine("warn","[BakaLoader] stop requested - dousing the embers");}
     }else if(st.canStart){
       if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
+      if(updateBlocksStart()){toast("ᚦ "+updBlockMsg());return;}
       // Nothing changed -> straight to the same start call as before. A changed build or a
       // waiting Steam update puts the choice to the host first, and only then starts.
       withLaunchGuard(async answer=>{
         if(answer){startWithAnswer(answer);return;}
         const r=await rpc("server.start",{prefs:S.prefs});
-        if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
+        if(r===FAIL||rpcRefused(r)) return;
+        applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));
       });
     }
     return;
@@ -1161,6 +1261,7 @@ function renderHearth(){
   hState.title=hState.textContent;
   hPid.title=hPid.textContent;
   stokeBtn.disabled=!running;
+  try{renderUpdatePill();}catch(_){}
   renderAppBar();
 }
 function renderHearthNative(){
@@ -1201,6 +1302,12 @@ function renderHearthNative(){
   stokeBtn.disabled=!(st.canStop||st.countdownActive);
   stokeBtn.classList.toggle("btn-ember",!!st.countdownActive);
   stokeBtn.classList.toggle("btn-ghost",!st.countdownActive);
+  /* Neither a start nor a restart may begin while this install is being rewritten. */
+  if(updateBlocksStart()){
+    if(!st.canStop){douseBtn.disabled=true;douseBtn.title=updBlockMsg();}
+    stokeBtn.disabled=true;stokeBtn.title=updBlockMsg();
+  }
+  try{renderUpdatePill();}catch(_){}
   renderAppBar();
 }
 /* "Valheim 1.0.7 (net 39)" on the status card - the numbers the running server printed
@@ -1247,18 +1354,32 @@ function applyState(st){
   if("networkVersion" in st) S.networkVersion=st.networkVersion||null;
   // A held start rides along with the state, so the banner survives a reload.
   if("launchHold" in st) setLaunchHold(st.launchHold);
+  // Companion plugins that would not install. Absent on a 1.0.0 host, which simply
+  // means the condition is never raised.
+  if("pluginFailures" in st) conditionPluginFailures(st.pluginFailures,st.status);
+  /* Whether an update can run at all depends on the run state, so the cached answer is
+     stale the moment the server starts or stops. Re-ask on the transition rather than
+     leaving the pill greyed with "Stop the server to update it." after it was stopped. */
+  if(prev!==st.status){try{refreshUpdateInfo();}catch(_){}}
   renderHearthNative();
 }
 douseBtn.addEventListener("click",e=>{e.stopPropagation();lifecycleToggle();});
+/* The Server card's update pill: the same action the condition bar and the palette run. */
+$("#hUpdPill")?.addEventListener("click",e=>{
+  e.stopPropagation();
+  if(e.currentTarget.disabled) return;
+  updateBackupPrompt(false);
+});
 $("#abLifecycle").addEventListener("click",()=>lifecycleToggle());
 /* A restart stops the server and starts it again, so it meets the same guard as a start.
    Ask first, then send the answer along with the restart. */
 function smartRestart(){
+  if(updateBlocksStart()){toast("ᚦ "+updBlockMsg());return;}
   withLaunchGuard(answer=>{smartRestartNow(answer);});
 }
 function smartRestartNow(answer){
   return rpc("server.restart",answer?{guard:answer}:{}).then(r=>{
-    if(r===FAIL) return;
+    if(r===FAIL||rpcRefused(r)) return;
     applyState(r.state);
     if(r.restart==="countdown"){
       // countdown task spins up async - flip the button to "Restart NOW" right away
@@ -1602,15 +1723,31 @@ $("#scanBtn").addEventListener("click",()=>{
   toast("ᛋ Thunderstore scan begun · v1 community index");
   logLine("info","[Thunderstore] fetching valheim community index (cached 15m)…");
 });
-/* right-click a mod row → remove */
+/* Opens the mod's own page on Thunderstore in the host's browser. The scan is what
+   pairs a plugin with a page, so a hand-dropped or bundled plugin has none and the
+   menu says that rather than opening nothing. */
+function openThunderstorePage(mod){
+  const namespace=mod&&mod.thunderstoreNamespace, name=mod&&mod.thunderstoreName;
+  if(!namespace||!name) return;
+  Native.call("shell.openThunderstore",{namespace,name})
+    .catch(err=>toast("ᚦ "+TT("Thunderstore page did not open · ")+(err&&err.message||"unknown error")));
+}
+/* right-click a mod row → its Thunderstore page, or remove */
+function modRowItems(mod){
+  const onStore=!!(mod.thunderstoreNamespace&&mod.thunderstoreName);
+  return [
+    {r:"ᛋ",label:"Open Thunderstore page",disabled:!onStore,tip:TT("Not on Thunderstore"),
+      fn:()=>openThunderstorePage(mod)},
+    "hr",
+    {r:"ᛪ",label:"Remove mod…",danger:true,fn:()=>removeModFlow(mod)},
+  ];
+}
 $("#modTable").addEventListener("contextmenu",e=>{
   if(!Native.available) return;
   const tr=e.target.closest("tr[data-i]"); if(!tr) return;
   e.preventDefault();
   const mod=($("#modTable")._list||[])[+tr.dataset.i]; if(!mod) return;
-  ctxOpen(e.clientX,e.clientY,mod.FullName,[
-    {r:"ᛪ",label:"Remove mod…",danger:true,fn:()=>removeModFlow(mod)},
-  ]);
+  ctxOpen(e.clientX,e.clientY,mod.FullName,modRowItems(mod));
 });
 async function removeModFlow(mod){
   const files=await rpc("mods.findConfigs",{fullName:mod.FullName});
@@ -1699,9 +1836,22 @@ function updatePalGating(){
   $$(".pitem").forEach(it=>{
     const cmd=it.dataset.cmd; let dis=false, why="";
     if(it.id==="palConsole"||PAL_NEEDS_RUNNING[cmd]){dis=!running;why="Server not running - nothing to send the command to";}
-    else if(cmd==="Restart server"){dis=!(st.canStop||st.countdownActive);why="Server not running";}
+    else if(cmd==="Update server"){
+      const u=S.update||{};
+      if(u.running){dis=true;why="An update is already running";}
+      else if(!u.updatePending){dis=true;why="No server update is waiting";}
+      else if(!updCanUpdate(null)){dis=true;why=u.reason||"BakaLoader cannot apply this update itself";}
+      else if(st.status!=="Stopped"){dis=true;why="Stop the server to update";}
+    }
+    else if(cmd==="Restart server"){
+      if(updateBlocksStart()){dis=true;why=updBlockMsg();}
+      else{dis=!(st.canStop||st.countdownActive);why="Server not running";}
+    }
     else if(cmd==="Stop server"){dis=!st.canStop;why="Server not running";}
-    else if(cmd==="Start server"){dis=!st.canStart;why="Server already running";}
+    else if(cmd==="Start server"){
+      if(updateBlocksStart()){dis=true;why=updBlockMsg();}
+      else{dis=!st.canStart;why="Server already running";}
+    }
     it.classList.toggle("disabled",dis);
     it.title=dis?why:"";
   });
@@ -1762,14 +1912,16 @@ function invokePal(){
       smartRestart();
     }else if(cmd==="Start server"){
       const st=S.state||{};
-      if(!st.canStart){toast("ᚦ Start unavailable · already running?");}
+      if(updateBlocksStart()){toast("ᚦ "+updBlockMsg());}
+      else if(!st.canStart){toast("ᚦ Start unavailable · already running?");}
       else if(!S.prefs){toast("ᚦ no profile loaded · cannot start");}
       /* the same gate the Kindle button goes through: a changed build or a waiting
          Steam update is put to the host here too, not started past silently */
       else withLaunchGuard(async answer=>{
         if(answer){startWithAnswer(answer);return;}
         const r=await rpc("server.start",{prefs:S.prefs});
-        if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
+        if(r===FAIL||rpcRefused(r)) return;
+        applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));
       });
     }else if(cmd==="Stop server"){
       if(!(S.state||{}).canStop){toast("ᚦ Stop unavailable · server not running");}
@@ -1790,6 +1942,9 @@ function invokePal(){
       });
     }else if(cmd==="Send console command…"){
       consoleModal();
+    }else if(cmd==="Update server"){
+      /* Same question the condition bar asks, and the same one-at-a-time guard. */
+      updateBackupPrompt(false);
     }else if(cmd==="Update all mods"){
       goPage("mods");
       $("#updAllBtn").click();
@@ -1985,7 +2140,7 @@ async function vellumModal(){
       `<label class="togglerow" style="cursor:pointer"><span class="tl">${esc(TT("Keep BakaLoader's own log"))}`+
         `<br><span style="font-size:9.5px;opacity:.7">ApplicationLogs_&lt;day&gt;.txt · ${esc(TT("30-day keep"))}</span></span>`+
         `<div class="toggle${(up?up.WriteApplicationLogsToFile:true)?" on":""}" id="vlApp"></div></label>`+
-      `<div class="fieldnote">${esc(TT("each server session writes its own scroll, ServerLogs-<realm>-<start time>.txt, pruned after 30 days. Per-realm writing is the 'Write server logs to file' rune in the realm's settings."))}</div>`+
+      `<div class="fieldnote">${esc(TT("each server session writes its own scroll: ServerLogs-<realm>-<start time>.txt, pruned after 30 days. Per-realm writing is the 'Write server logs to file' rune in the realm's settings."))}</div>`+
       `<div class="fieldnote" id="vlStatus"></div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="vlCancel">Cancel</button>`+
@@ -2000,7 +2155,7 @@ async function vellumModal(){
       LogsFolderPath:m.querySelector("#vlPath").value.trim(),
       WriteApplicationLogsToFile:tApp.classList.contains("on"),
     }});
-    if(r===FAIL){st.textContent=TT("could not save, the folder must be a full, writable path (e.g. D:\\ValheimLogs)");return;}
+    if(r===FAIL){st.textContent=TT("could not save: the folder must be a full, writable path (e.g. D:\\ValheimLogs)");return;}
     modalClose();
     toast(TT("ᚹ Vellum inscribed · log settings saved"));
   });
@@ -2099,7 +2254,12 @@ async function initUpkeep(){
   }
   /* the generic [data-t] handler already flipped .on before these fire, so just persist */
   const save=()=>rpc("userprefs.save",{prefs:{AutoUpdateBakaLoader:T("tAutoUpdApp"),StartWithWindows:T("tStartWin"),ShareAnonymousStats:T("tShareStats"),PlainTerminology:!T("tPlainTerms")}});
-  $("#tAutoUpdApp").addEventListener("click",save);
+  $("#tAutoUpdApp").addEventListener("click",()=>{
+    save();
+    /* the standing update row says whether it installs itself, so it has to follow
+       the switch rather than keep whatever was true when it was raised */
+    if(CONDITIONS.has("appUpdate")) conditionAppUpdate(APP_UPDATE_V);
+  });
   $("#tStartWin").addEventListener("click",save);
   $("#tShareStats").addEventListener("click",save);
   $("#tPlainTerms").addEventListener("click",()=>{PLAIN=!T("tPlainTerms");save();applyTerms();});
@@ -2228,13 +2388,23 @@ window.addEventListener("blur",ctxClose);
 
 /* ---------- MODALS ---------- */
 const modalBg=$("#modalBg");
-function modalClose(){modalBg.classList.remove("open");modalBg.innerHTML="";}
+function modalClose(){
+  releaseModalScrollCues();   // let go of this modal's panes before the nodes are dropped
+  modalBg.classList.remove("open");
+  modalBg.innerHTML="";
+  updateToastLift();
+}
 modalBg.addEventListener("mousedown",e=>{if(e.target===modalBg)modalClose();});
 function modalOpen(html){
+  /* Several flows swap one modal for the next without closing first (the Barrow's
+     world drill-down, a wizard step). The outgoing panes are discarded right here,
+     so they are released here too. */
+  releaseModalScrollCues();
   modalBg.innerHTML=`<div class="modal">${html}</div>`;
   modalBg.classList.add("open");
   esWire(modalBg);
   refreshScrollCues();
+  updateToastLift();
   return modalBg.firstElementChild;
 }
 function promptModal(title,placeholder,onOk){
@@ -2285,34 +2455,68 @@ function guardBody(g){
   return TT(`The Valheim server changed from ${b.from} to build ${b.to}. `)+
          TT("Starting will upgrade your worlds to the new version. Older servers cannot read upgraded worlds.");
 }
-/* Puts the question to the host. onPick gets "proceed", "backup" or null (not now). */
-function launchGuardModal(g,onPick){
+/* Puts the question to the host. onPick gets "proceed", "backup" or null (not now).
+   For a waiting Steam update the button set follows how this server was installed, so
+   the modal never offers an update it has no way to apply. */
+async function launchGuardModal(g,onPick){
   const pending=g.outcome==="updatePending";
+  /* Ask what kind of install this is before the buttons are drawn, so the host sees
+     the right set on the first paint rather than a set that changes under them. */
+  if(pending) await refreshUpdateInfo();
+  const kind=pending?updKind(g):"";
+  const canUpd=pending&&updCanUpdate(g);
   const title=pending?TT("A server update is waiting"):TT("The server build changed");
   const pick=v=>{modalClose();onPick(v);};
+  /* An update already in flight takes every start off the table, this modal's
+     "Start anyway" included: the files it would launch are being rewritten right now. */
+  const busy=updateBlocksStart();
+  const off=busy?` disabled title="${esc(updBlockMsg())}"`:"";
   const buttons=pending
-    ?`<button class="btn btn-ghost btn-sm" id="mSteam">ᛊ&nbsp; ${esc(TT("Open Steam"))}</button>`+
-     `<button class="btn btn-ghost btn-sm" id="mAnyway">${esc(TT("Start anyway"))}</button>`+
-     `<button class="btn btn-ember btn-sm" id="mLater">${esc(TT("Not now"))}</button>`
-    :`<button class="btn btn-ember btn-sm" id="mBackup">${esc(TT("Back up worlds and start"))}</button>`+
-     `<button class="btn btn-ghost btn-sm" id="mAnyway">${esc(TT("Start without backup"))}</button>`+
+    ?(canUpd&&!busy?`<button class="btn btn-ember btn-sm" id="mUpdate">${esc(TT("Update and start"))}</button>`:"")+
+     `<button class="btn btn-ghost btn-sm" id="mAnyway"${off}>${esc(TT("Start anyway"))}</button>`+
+     `<button class="btn btn-ghost btn-sm" id="mLater">${esc(TT("Not now"))}</button>`
+    :`<button class="btn btn-ember btn-sm" id="mBackup"${off}>${esc(TT("Back up worlds and start"))}</button>`+
+     `<button class="btn btn-ghost btn-sm" id="mAnyway"${off}>${esc(TT("Start without backup"))}</button>`+
      `<button class="btn btn-ghost btn-sm" id="mLater">${esc(TT("Not now"))}</button>`;
+  /* Steam owns a library install, so opening Steam stays on offer there. It is the
+     only thing on offer when BakaLoader cannot tell how the server was installed. */
+  const steamLink=pending&&(kind==="steamLibrary"||kind==="unknown")
+    ?`<div style="margin-top:8px"><span class="mlink" id="mSteam" role="button" tabindex="0">ᛊ&nbsp; ${esc(TT("Open Steam"))}</span></div>`
+    :"";
   const m=modalOpen(
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᛊ</span>${esc(title)}</div>`+
     `<div class="mbody">`+
     `<div style="margin-bottom:8px">${esc(guardBody(g))}</div>`+
+    (busy?`<div class="subval" style="margin-bottom:6px">${esc(updBlockMsg())}</div>`:"")+
+    (pending&&kind==="unknown"
+      ?`<div class="subval" style="margin-bottom:6px">${esc(TT("BakaLoader cannot tell how this server was installed, so it cannot update it for you. Open Steam and update Valheim Dedicated Server there."))}</div>`
+      :"")+
+    (pending&&canUpd
+      ?`<div class="subval" style="margin-bottom:6px">${esc(kind==="standalone"
+          ?TT("BakaLoader copies the worlds aside, updates this install with steamcmd, then starts the server.")
+          :TT("BakaLoader copies the worlds aside, asks Steam to download the update, then starts the server."))}</div>`
+      :"")+
     (g.hasWorlds&&!pending
       ?`<div class="subval" style="margin-bottom:6px">${esc(TT("A backup copies every world in this server's save folder aside first, and the Barrow can put one back."))}</div>`
       :"")+
     (g.manifest?`<div class="subval mono" style="word-break:break-all">${esc(g.manifest)}</div>`:"")+
+    steamLink+
     `</div>`+
     `<div class="mbtns">${buttons}</div>`);
-  m.querySelector("#mSteam")?.addEventListener("click",()=>{
+  const openSteam=()=>{
     rpc("shell.openUrl",{target:"steam-downloads"});
     toast("ᛊ Steam downloads opened · apply the update, then start again");
+  };
+  const steam=m.querySelector("#mSteam");
+  steam?.addEventListener("click",openSteam);
+  steam?.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openSteam();}});
+  /* The primary answers the backup question by doing it: copy aside, update, start. */
+  m.querySelector("#mUpdate")?.addEventListener("click",()=>{
+    modalClose();
+    runServerUpdate({backup:true,startAfter:true});
   });
-  m.querySelector("#mBackup")?.addEventListener("click",()=>pick("backup"));
-  m.querySelector("#mAnyway")?.addEventListener("click",()=>pick("proceed"));
+  m.querySelector("#mBackup")?.addEventListener("click",()=>{if(updateBlocksStart()){toast("ᚦ "+updBlockMsg());return;}pick("backup");});
+  m.querySelector("#mAnyway")?.addEventListener("click",()=>{if(updateBlocksStart()){toast("ᚦ "+updBlockMsg());return;}pick("proceed");});
   m.querySelector("#mLater")?.addEventListener("click",()=>pick(null));
 }
 /* Runs the guard for a start-shaped action. Calls go(answer) once the host has decided;
@@ -2321,8 +2525,265 @@ function withLaunchGuard(go){
   if(!Native.available){go(null);return;}
   rpc("server.launchCheck",S.prefs?{prefs:S.prefs}:{}).then(g=>{
     if(g===FAIL||!g||g.outcome==="proceed"){go(null);return;}
-    launchGuardModal(g,answer=>{ if(answer) go(answer); });
+    /* The modal is async now (it asks what kind of install this is first), and nothing
+       awaits it, so catch here rather than leave a rejection nobody handles. */
+    Promise.resolve(launchGuardModal(g,answer=>{ if(answer) go(answer); }))
+      .catch(e=>{toast("ᚦ "+TT("Could not put the question · ")+(e&&e.message||""));});
   });
+}
+
+/* ---------- UPDATE THE SERVER FROM HERE ----------
+   Steam knows an update is waiting long before anyone opens Steam. BakaLoader can
+   apply it itself, so the host never leaves the app: a Steam-library install is
+   handed to the Steam client to verify and download, and a standalone install is
+   updated with steamcmd. Which of those it is decides what the buttons may offer,
+   so every surface asks server.updateCheck first and offers only what is really possible.
+   Progress is a condition-bar row with a real percentage, never a run of toasts. */
+const UPD_PHASES=["idle","backingUp","askingSteam","downloading","verifying",
+                  "runningSteamCmd","finished","failed","cancelled"];
+/* The host may send the phase as its name or as the enum's ordinal, so accept both
+   and compare on letters only (askingSteam, asking_steam and AskingSteam all match). */
+function updPhaseKey(p){
+  if(typeof p==="number") return UPD_PHASES[p]||"";
+  const s=String(p==null?"":p).toLowerCase().replace(/[^a-z]/g,"");
+  return UPD_PHASES.find(k=>k.toLowerCase()===s)||"";
+}
+/* Steam is asked to download and then simply watched, so waiting can be given up on.
+   Once bytes are being written into the install folder, stopping part way would leave
+   a half-written install, so the button says what is happening and does nothing. */
+const UPD_CANCELLABLE={askingSteam:1,downloading:1};
+/* A reason that already ends in a full stop, with another sentence about to be appended,
+   reads as two stops. */
+function updTrimStop(t){return String(t==null?"":t).trim().replace(/\.\s*$/,"");}
+/* The bridge says outright whether a completion was the host stopping it. The older
+   wording is still recognised, so a host that predates the flag is quiet about it too. */
+function updWasCancelled(d,why){
+  if(d&&d.cancelled===true) return true;
+  if(d&&d.cancelled===false) return false;
+  return /cancel/i.test(String(why||""));
+}
+function updMbPair(done,total){
+  const mb=n=>Math.round((Number(n)||0)/1048576);
+  return mb(done)+" "+TT("of")+" "+mb(total)+" MB";
+}
+/* What the bar says right now. The service sends its own sentence whenever it has one,
+   so the phase table below is the fallback, not the source of truth. */
+function updPhaseText(u){
+  const said=String((u&&u.message)||"").trim();
+  if(said) return said;
+  const k=updPhaseKey(u&&u.phase);
+  if(k==="backingUp") return TT("Backing up worlds");
+  if(k==="askingSteam") return TT("Asking Steam to download the update");
+  if(k==="downloading"){
+    const total=Number(u&&u.bytesTotal)||0;
+    return total>0
+      ?TT("Steam is downloading: ")+updMbPair(u.bytesDone,total)
+      :TT("Steam is downloading the update");
+  }
+  if(k==="verifying") return TT("Verifying the install");
+  if(k==="runningSteamCmd") return TT("Running steamcmd");
+  if(k==="finished") return TT("Update finished.");
+  if(k==="cancelled") return TT("Stopped waiting. Steam carries on downloading on its own.");
+  return TT("Updating the server");
+}
+/* Normalised install kind. An answer we do not recognise counts as unknown, which is
+   the shape that offers Steam and nothing else. */
+function updKind(g){
+  const k=String((g&&g.installKind)||S.update.installKind||"").toLowerCase();
+  if(k==="steamlibrary") return "steamLibrary";
+  if(k==="standalone") return "standalone";
+  return "unknown";
+}
+/* True only when the native side said so. A host that does not carry the update RPCs
+   yet answers nothing, so every surface falls back to what 1.0.0 offered. */
+function updCanUpdate(g){
+  if(updKind(g)==="unknown") return false;
+  const c=g&&g.canUpdate;
+  return c==null?!!S.update.canUpdate:!!c;
+}
+/* Quiet: a host without the RPC must not toast on every dashboard render. */
+async function refreshUpdateInfo(){
+  if(!Native.available) return S.update;
+  const r=await Native.call("server.updateCheck",{}).catch(()=>null);
+  if(r&&typeof r==="object"){
+    S.update=Object.assign({},S.update,r);
+    renderUpdatePill();
+    /* The hold's primary ("Update server" or "Open Steam") is decided from this answer,
+       and the bar is painted long before it lands, so repaint it here or the first paint
+       is the only one the host ever sees. The same answer gates the start controls. */
+    try{renderLaunchHold();}catch(_){}
+    try{updatePalGating();}catch(_){}
+    try{renderAppBar();}catch(_){}
+  }
+  return S.update;
+}
+/* The one place that asks the native side to run an update. */
+let _updSending=false;
+/* Whether the run in flight promised to start the server afterwards. It decides whether a
+   failed run may put a held start back on screen: an update run from the pill or the
+   palette was never a start, so there is no start to hold. */
+let _updStartAfter=false;
+async function runServerUpdate(opts){
+  opts=opts||{};
+  if(!Native.available){toast("ᛊ "+TT("Update server · preview only"));return;}
+  /* running is only true once the native side has answered, so a second click during
+     that round trip needs its own guard or two updates go out for one intent. */
+  if(S.update.running||_updSending){toast("ᛊ "+TT("An update is already running"));return;}
+  _updSending=true;
+  let r;
+  try{ r=await rpc("server.update",{backup:opts.backup!==false,startAfter:!!opts.startAfter}); }
+  finally{ _updSending=false; }
+  if(r===FAIL) return;
+  if(r&&r.started===false){
+    const why=r.reason||TT("see the saga log");
+    toast("ᚦ "+TT("The update was not started · ")+why);
+    logLine("warn","[BakaLoader] the server update was not started: "+why);
+    return;
+  }
+  _updHidden=false;
+  _updStartAfter=!!opts.startAfter;
+  S.update.running=true;
+  SRV_UPDATE={profile:S.profileName,phase:"backingUp",percent:-1};
+  renderUpdatePill(); renderServerUpdate(); renderLaunchHold(); renderAppBar();
+  logLine("ok","[BakaLoader] server update requested"+
+    (opts.startAfter?" · the server starts when it finishes":""));
+}
+/* The bar, the dashboard pill and the palette all ask the backup question first: the
+   modal's "Update and start" is the only path that has already answered it. */
+function updateBackupPrompt(startAfter){
+  const m=modalOpen(
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛊ</span>${esc(TT("Update the server"))}</div>`+
+    `<div class="mbody">`+
+    `<div style="margin-bottom:8px">${esc(TT("Back up the worlds before the update?"))}</div>`+
+    `<div class="subval">${esc(TT("A backup copies every world in this server's save folder aside first, and the Barrow can put one back."))}</div>`+
+    `</div>`+
+    `<div class="mbtns">`+
+      `<button class="btn btn-ember btn-sm" id="muYes">${esc(TT("Back up and update"))}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="muNo">${esc(TT("Update without a backup"))}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="muCancel">${esc(TT("Cancel"))}</button>`+
+    `</div>`);
+  m.querySelector("#muCancel").addEventListener("click",modalClose);
+  m.querySelector("#muNo").addEventListener("click",()=>{modalClose();runServerUpdate({backup:false,startAfter});});
+  m.querySelector("#muYes").addEventListener("click",()=>{modalClose();runServerUpdate({backup:true,startAfter});});
+}
+/* ---- the update's own condition-bar row ---- */
+let SRV_UPDATE=null;    // the last progress record for the active profile, or null
+let _updHidden=false;   // the host dismissed the row; the update itself carries on
+function renderServerUpdate(){
+  const u=SRV_UPDATE;
+  if(!u||_updHidden||!isActiveProfile(u.profile)){clearCondition("serverUpdate");return;}
+  const k=updPhaseKey(u.phase);
+  const pct=Number(u.percent);
+  const det=isFinite(pct)&&pct>=0;
+  const shown=det?Math.max(0,Math.min(100,Math.round(pct))):0;
+  const stoppable=!!UPD_CANCELLABLE[k];
+  setCondition("serverUpdate",{
+    sev:"info",
+    title:TT("Updating"),
+    msg:updPhaseText(u),
+    dismissLabel:TT("Hide"),
+    progressHtml:
+      `<span class="hbprog${det?"":" indet"}" role="progressbar" aria-label="${esc(TT("Server update progress"))}" aria-valuemin="0" aria-valuemax="100"`+
+      (det?` aria-valuenow="${shown}" title="${shown}%"`:` title="${esc(TT("Working"))}"`)+
+      `><i${det?` style="width:${shown}%"`:""}></i></span>`+
+      (det?`<span class="hbpct">${shown}%</span>`:""),
+    actionsHtml:stoppable
+      ?`<button class="btn btn-ghost btn-sm" id="suCancel" title="${esc(TT("Stop watching for the download. Steam carries on with it."))}">${esc(TT("Stop waiting"))}</button>`
+      :`<button class="btn btn-ghost btn-sm" disabled title="${esc(TT("An update cannot be stopped part way through writing files."))}">${esc(TT("Updating"))}</button>`,
+    wire:bar=>{
+      bar.querySelector("#suCancel")?.addEventListener("click",()=>{
+        /* The bridge answers whether it actually stopped anything. Once files are being
+           written it cannot, and the one line the host gets comes from the completion
+           event, so nothing is claimed here that the run has not done yet. */
+        rpc("server.updateCancel",{}).then(r=>{
+          if(r===FAIL) return;
+          if(r&&typeof r==="object"&&r.cancelled===false)
+            toast("ᚦ "+TT("This update cannot be stopped now. It is writing files."));
+        });
+      });
+    },
+    onDismiss:()=>{_updHidden=true;},   // hides the row only; nothing is cancelled
+  });
+}
+/* ---- the three inbound events, as named handlers so the preview harness can drive
+       exactly what the native host drives ---- */
+function onUpdateProgress(d){
+  if(!d||!isActiveProfile(d.profile)) return;
+  SRV_UPDATE=d;
+  S.update.running=true;
+  if(d.line) logLine("info","[update] "+d.line);
+  renderUpdatePill(); renderServerUpdate(); renderLaunchHold(); renderAppBar();
+}
+function onUpdateDone(d){
+  if(d&&!isActiveProfile(d.profile)) return;
+  SRV_UPDATE=null; _updHidden=false; _updStartAfter=false;
+  S.update.running=false; S.update.updatePending=false;
+  if(d&&d.buildId) S.update.buildId=d.buildId;
+  clearCondition("serverUpdate");
+  clearLaunchHold();       // the question that raised the hold has been answered
+  renderUpdatePill();
+  toast("ᛊ "+(d&&d.startAfter?TT("Update finished. Starting the server."):TT("Update finished.")));
+  logLine("ok","[BakaLoader] the server update finished"+(d&&d.buildId?" · build "+d.buildId:""));
+  renderAppBar();
+  refreshUpdateInfo();
+}
+function onUpdateFailed(d){
+  if(d&&!isActiveProfile(d.profile)) return;
+  const startAfter=_updStartAfter;
+  SRV_UPDATE=null; _updHidden=false; _updStartAfter=false;
+  S.update.running=false;
+  clearCondition("serverUpdate");
+  renderUpdatePill();
+  const why=updTrimStop(d&&d.reason);
+  /* Stopping the wait is the host's own decision, so it is said once, quietly, and
+     nothing turns red. The row that stood before this update is put back untouched. */
+  if(updWasCancelled(d,why)){
+    logLine("info","[BakaLoader] the server update was stopped. Steam keeps downloading on its own.");
+    toast("ᛊ "+TT("Update stopped. Steam keeps downloading on its own."));
+    renderLaunchHold(); renderAppBar();
+    refreshUpdateInfo();
+    return;
+  }
+  const said=why||TT("no reason was given");
+  toast("ᚦ "+TT("The update did not finish · ")+said);
+  /* A held start is put back with the failure written across it. An update run from the
+     pill or the palette held no start, so there is none to put back and none to mention. */
+  if(!LAUNCH_HOLD&&startAfter&&S.update.updatePending)
+    LAUNCH_HOLD={outcome:"updatePending",pendingBytes:S.update.pendingBytes,profile:S.profileName};
+  logLine("err","[BakaLoader] the update did not finish: "+said+"."+
+    (LAUNCH_HOLD?" The server was not started.":""));
+  if(LAUNCH_HOLD){LAUNCH_HOLD.updateError=said;renderLaunchHold();}
+  renderAppBar();
+  refreshUpdateInfo();
+}
+/* Preview and walk-harness seam: the same three handlers the native events call, plus
+   a way to seed what a check would have answered. Nothing here reaches a real server. */
+window.BakaPreview={
+  updateInfo:o=>{S.update=Object.assign({},S.update,o||{});renderUpdatePill();renderLaunchHold();},
+  updateProgress:onUpdateProgress,
+  updateDone:onUpdateDone,
+  updateFailed:onUpdateFailed,
+  launchGuard:(g,cb)=>Promise.resolve(launchGuardModal(g||{outcome:"updatePending"},cb||(()=>{}))),
+  launchHold:g=>setLaunchHold(g),
+};
+/* Dashboard Server card: the waiting update, said once, where the state is said. */
+function renderUpdatePill(){
+  const el=$("#hUpdPill"); if(!el) return;
+  const u=S.update||{};
+  if(!u.updatePending||u.running){el.style.display="none";return;}
+  const st=S.state||{};
+  /* Read the state, and fall back to the card's own cold class so the preview shows
+     the same disabled pill the app does without a state DTO. */
+  const card=document.getElementById("hearthCard");
+  const live=st.status?st.status!=="Stopped":!!(card&&!card.classList.contains("cold"));
+  el.style.display="";
+  el.textContent=TT("Update available");
+  el.disabled=!!live||!updCanUpdate(null);
+  el.title=live
+    ?TT("Stop the server to update")
+    :(updCanUpdate(null)
+      ?TT("Download and apply the waiting Valheim server update")
+      :(u.reason||TT("BakaLoader cannot apply this update itself. Open Steam and update the dedicated server there.")));
 }
 
 /* ---------- CONDITION BAR ----------
@@ -2331,7 +2792,11 @@ function withLaunchGuard(go){
    on screen until it is answered or dismissed. Toasts are left to confirm what the
    host just did. The element keeps the id launchHold: the held start is one of the
    conditions it carries, and the native side still addresses it by that name. */
-const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch","appUpdate","modUpdates"];
+/* Worst first, and the order says so: the held start, then the three failures, then the
+   two warnings, then the two notices. A save that failed outranks a plugin that would not
+   install, and both outrank a download running to plan. */
+const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
+                       "serverUpdate","pluginFailure","appUpdate","modUpdates"];
 const CONDITIONS=new Map();
 function setCondition(kind,cond){
   if(!cond) CONDITIONS.delete(kind); else CONDITIONS.set(kind,cond);
@@ -2352,6 +2817,7 @@ function renderConditionBar(){
   bar.innerHTML=
     `<span class="hbtitle">${esc(c.title)}</span>`+
     `<span class="hbmsg">${esc(c.msg)}</span>`+
+    (c.progressHtml||"")+
     `<span class="hbacts">${c.actionsHtml||""}`+
     `<button class="btn btn-ghost btn-sm" data-cond-dismiss>${esc(c.dismissLabel||TT("Dismiss"))}</button>`+
     `</span>`;
@@ -2369,14 +2835,25 @@ let LAUNCH_HOLD=null;
 function renderLaunchHold(){
   const g=LAUNCH_HOLD;
   if(!g||!isActiveProfile(g.profile)){clearCondition("launchHold");return;}
+  /* An update in flight is answering this very question, and every action here is refused
+     while it runs, so the progress row has the bar to itself. The hold object is kept, so
+     a cancelled or failed update puts this row back exactly as it was. */
+  if(updateBlocksStart()){clearCondition("launchHold");return;}
   const pending=g.outcome==="updatePending";
+  const canUpd=pending&&updCanUpdate(g);
+  /* A failed update leaves this hold standing, so it carries the reason it failed and
+     every action it had before. */
+  const why=g.updateError?TT("The update did not finish: ")+updTrimStop(g.updateError)+TT(". The server was not started. "):"";
   setCondition("launchHold",{
-    sev:"warn",
+    sev:g.updateError?"err":"warn",
     title:pending?TT("Update waiting"):TT("Build changed"),
-    msg:guardBody(g),
+    msg:why+guardBody(g),
     dismissLabel:TT("Not now"),
     actionsHtml:
-      (pending?`<button class="btn btn-ghost btn-sm" id="lhSteam">${esc(TT("Open Steam"))}</button>`:"")+
+      /* "Update server" takes the primary seat from "Open Steam" wherever BakaLoader
+         can do the update itself; Steam stays the only offer where it cannot. */
+      (canUpd?`<button class="btn btn-ember btn-sm" id="lhUpdate">${esc(TT("Update server"))}</button>`:"")+
+      (pending&&!canUpd?`<button class="btn btn-ghost btn-sm" id="lhSteam">${esc(TT("Open Steam"))}</button>`:"")+
       (pending?"":`<button class="btn btn-ember btn-sm" id="lhBackup">${esc(TT("Back up worlds and start"))}</button>`)+
       `<button class="btn btn-ghost btn-sm" id="lhAnyway">${esc(pending?TT("Start anyway"):TT("Start without backup"))}</button>`,
     wire:bar=>{
@@ -2384,6 +2861,7 @@ function renderLaunchHold(){
         rpc("shell.openUrl",{target:"steam-downloads"});
         toast("ᛊ Steam downloads opened · apply the update, then start again");
       });
+      bar.querySelector("#lhUpdate")?.addEventListener("click",()=>updateBackupPrompt(true));
       bar.querySelector("#lhBackup")?.addEventListener("click",()=>startWithAnswer("backup"));
       bar.querySelector("#lhAnyway")?.addEventListener("click",()=>startWithAnswer("proceed"));
     },
@@ -2423,6 +2901,55 @@ function conditionCrashed(){
     wire:bar=>bar.querySelector("#cbCrashLog").addEventListener("click",()=>goPage("saga")),
   });
 }
+/* A companion plugin that would not install. The server starts anyway, on purpose, so
+   without this the feature it powers simply goes missing and only the log says why.
+   server.status carries the list, so this needs no RPC and no event of its own. */
+let PLUGIN_FAIL_HIDDEN=null;    // the failure set the host has already waved away
+function pluginFailureSig(list){
+  return JSON.stringify(list.map(f=>[String(f.plugin||""),String(f.text||f.message||"")]));
+}
+/* The Mods hall already lists BakaLoader's own bundled plugins beside the Thunderstore
+   ones, so a plugin that never landed belongs there too. Unlike the condition bar this
+   line cannot be dismissed: the gap is still there after the bar has been waved away,
+   and this is the hall a host opens to ask whether a plugin is present. */
+function renderModsPluginNote(fails){
+  const el=$("#modsPluginNote"); if(!el) return;
+  const names=(fails||[]).map(f=>String(f.plugin||"").trim()).filter(Boolean);
+  if(!names.length){el.style.display="none";el.textContent="";return;}
+  /* "A and B", "A, B and C": a bare comma list reads as a fragment, not a sentence. */
+  const who=names.length===1?names[0]
+    :names.slice(0,-1).join(", ")+TT(" and ")+names[names.length-1];
+  el.style.display="";
+  el.textContent=names.length===1
+    ?who+TT(" is not installed. BakaLoader could not put it in place when the server started, so the features it powers are off. It tries again at the next start.")
+    :who+TT(" are not installed. BakaLoader could not put them in place when the server started, so the features they power are off. It tries again at the next start.");
+}
+function conditionPluginFailures(list,status){
+  const fails=Array.isArray(list)?list.filter(Boolean):[];
+  /* An empty list means the plugins are in place now, so a later failure is news again
+     rather than something the host already dismissed. */
+  if(!fails.length) PLUGIN_FAIL_HIDDEN=null;
+  /* Only worth saying while the server this affects is up: a stopped server has no
+     missing feature to explain, and the installers run again at the next start. */
+  const live=status==="Running"||status==="Starting";
+  renderModsPluginNote(live?fails:[]);
+  if(!fails.length||!live){clearCondition("pluginFailure");return;}
+  const sig=pluginFailureSig(fails);
+  if(PLUGIN_FAIL_HIDDEN===sig){clearCondition("pluginFailure");return;}
+  const first=fails[0];
+  const more=fails.length-1;
+  const text=String(first.text||first.message||"").trim()
+    ||TT("A plugin BakaLoader installs alongside the server could not be put in place.");
+  setCondition("pluginFailure",{sev:"warn",title:TT("A plugin did not install"),
+    /* The first failure said in full, then a count for the rest: four plugin sentences
+       in one bar reads as noise, and the log carries every one of them. */
+    msg:text+(more>0?" "+TT(more===1?"And one more plugin did not install."
+                                    :"And "+more+" more plugins did not install."):""),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbPluginLog">${esc(TT("Open the log"))}</button>`,
+    wire:bar=>bar.querySelector("#cbPluginLog").addEventListener("click",()=>goPage("saga")),
+    onDismiss:()=>{PLUGIN_FAIL_HIDDEN=sig;},
+  });
+}
 function conditionModUpdates(n){
   if(!n){clearCondition("modUpdates");return;}
   setCondition("modUpdates",{sev:"info",title:TT("Mod updates"),
@@ -2433,28 +2960,57 @@ function conditionModUpdates(n){
     wire:bar=>bar.querySelector("#cbMods").addEventListener("click",()=>goPage("mods")),
   });
 }
+/* Opens the Upkeep card, where the auto-update switch lives. */
+function openUpkeepCard(){
+  goPage("hearth");
+  const card=$("#upkeepCard");
+  if(card&&!card.classList.contains("open")) $("#upkeepHead").click();
+  requestAnimationFrame(()=>{try{card.scrollIntoView({block:"nearest"});}catch(_){}});
+}
+let APP_UPDATE_V=null;   // the version the standing BakaLoader-update row is about
 function conditionAppUpdate(v){
+  APP_UPDATE_V=v==null?APP_UPDATE_V:v;
+  /* Only promise the install when the switch that performs it is on. With auto-update
+     off nothing installs itself, and saying otherwise would be a lie the host acts on. */
+  const auto=(()=>{try{return T("tAutoUpdApp");}catch(_){return false;}})();
   setCondition("appUpdate",{sev:"info",title:TT("BakaLoader update"),
     msg:(v?TT("BakaLoader ")+v+TT(" is available."):TT("A newer BakaLoader is available."))+" "+
-        TT("It installs the next time you close the app."),
-    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbUpkeep">${esc(TT("Upkeep settings"))}</button>`,
-    wire:bar=>bar.querySelector("#cbUpkeep").addEventListener("click",()=>{
-      goPage("hearth");
-      const card=$("#upkeepCard");
-      if(card&&!card.classList.contains("open")) $("#upkeepHead").click();
-      requestAnimationFrame(()=>{try{card.scrollIntoView({block:"nearest"});}catch(_){}});
-    }),
+        (auto?TT("It installs the next time you close the app.")
+             :TT("Auto-update is off, so it waits until you turn that on in Upkeep.")),
+    actionsHtml:
+      `<button class="btn btn-ghost btn-sm" id="cbChanges">${esc(TT("See what changed"))}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="cbUpkeep">${esc(TT("Upkeep settings"))}</button>`,
+    wire:bar=>{
+      /* The release page is a shell target the host owns. A host that does not carry
+         it yet leaves the Upkeep card as the place to go, rather than an error. */
+      bar.querySelector("#cbChanges").addEventListener("click",()=>{
+        if(!Native.available){openUpkeepCard();toast("ᛟ "+TT("Release notes open in the app"));return;}
+        Native.call("shell.openUrl",{target:"releases"}).catch(()=>{
+          openUpkeepCard();
+          toast("ᛟ "+TT("Release notes are not reachable from here · Upkeep opened instead"));
+        });
+      });
+      bar.querySelector("#cbUpkeep").addEventListener("click",openUpkeepCard);
+    },
   });
 }
 /* Start the server carrying the host's answer to the guard. */
 function startWithAnswer(answer){
   if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
+  /* Asked before the hold is cleared: a refused start must leave the question standing. */
+  if(updateBlocksStart()){
+    toast("ᚦ "+updBlockMsg());
+    logLine("warn","[BakaLoader] the start was refused: "+updBlockMsg());
+    return;
+  }
   clearLaunchHold();
   rpc("server.start",{prefs:S.prefs,guard:answer}).then(r=>{
-    if(r===FAIL) return;
+    if(r===FAIL||rpcRefused(r)) return;
     applyState(r);
+    /* The copy has not happened yet: server.worldsBackedUp is what says how many
+       worlds actually landed, and it is the only thing allowed to claim it is done. */
     toast(answer==="backup"
-      ?"ᚠ Worlds copied aside · server starting"
+      ?"ᚠ Copying the worlds aside · the server starts once that is done"
       :"ᚠ Hearth kindled · server starting");
     logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?")+" · "+answer);
   });
@@ -2516,7 +3072,8 @@ function netModal(){
   const stat=(k,v)=>`<div class="dstat"><div class="bigval" style="font-size:20px">${v}</div><div class="subval">${k}</div></div>`;
   const online=S.players.filter(p=>p.status==="Online"||p.status==="Joining");
   const sess=online.length
-    ?online.map(p=>`<div class="drow"><span class="dk">${esc(p.displayName)}</span><span class="dv mono">${esc(p.Platform||"?")} · ${esc(p.PlayerId||"")}</span><span class="dv" style="flex:0 0 auto">joined ${fmtT(p.lastStatusChange)}</span></div>`).join("")
+    /* Same platformName() the roster uses, so one player never has two names. */
+    ?online.map(p=>`<div class="drow"><span class="dk">${esc(p.displayName)}</span><span class="dv mono">${esc(playerPlatform(p)||"?")} · ${esc(p.PlayerId||"")}</span><span class="dv" style="flex:0 0 auto">joined ${fmtT(p.lastStatusChange)}</span></div>`).join("")
     :`<div class="subval" style="padding:4px 2px">${TT("no vikings connected")}</div>`;
   const m=modalOpen(
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᚾ</span>Network</div>`+
@@ -2612,6 +3169,22 @@ const BARROW_MOCK=[
      {file:"Trialgrounds.fwl.old",kind:"old",isDirectory:false,committed:true,sizeBytes:8790224,day:21,hasDb:true,modifiedUtc:new Date(Date.now()-13*86400000).toISOString()},
    ]},
 ];
+/* Backup layers whose world is no longer on disk. Nothing else on the machine lists
+   these, and a stack of them can be as large as the world it came from. */
+const BARROW_ORPHAN_MOCK=[
+  {world:"Eikthyr",folder:"C:/Users/you/AppData/LocalLow/IronGate/Valheim",sub:"worlds_local",
+   layers:[
+     {file:"Eikthyr_backup_20260114-133010.fwl",kind:"other",isDirectory:false,committed:true,
+      damaged:false,sizeBytes:74210000,day:118,hasDb:true,
+      modifiedUtc:new Date(Date.now()-240*86400000).toISOString()},
+   ]},
+  {world:"Stonefall",folder:"C:/Users/you/AppData/LocalLow/IronGate/Valheim",sub:"worlds",
+   layers:[
+     {file:"Stonefall_backup_20251214-171043.fwl",kind:"other",isDirectory:false,committed:true,
+      damaged:false,sizeBytes:69120000,day:66,hasDb:true,
+      modifiedUtc:new Date(Date.now()-300*86400000).toISOString()},
+   ]},
+];
 /* "legacy" is the untouched pre-conversion pair Valheim renames aside the first time it
    saves an older world into the 1.0 directory format. */
 const BARROW_KIND={auto:"AUTO SNAPSHOT",old:"LAST GOOD",restore:"PRE-RESTORE",
@@ -2641,14 +3214,34 @@ function barrowFolderLabel(g){
   const tail=i>=0&&parts[i+1]?"servers/"+parts[i+1]:parts[parts.length-1]||"";
   return tail+(g.sub==="worlds"?" · worlds":"");
 }
+/* backups.overview answers either the plain list of worlds it always did, or an object
+   carrying that list plus the backup sets whose world is gone. Both are read here so the
+   Barrow works against a host of either vintage. */
+function barrowNormalize(r){
+  if(Array.isArray(r)) return {groups:r,orphans:[]};
+  if(r&&typeof r==="object"){
+    const g=r.worlds||r.groups||r.items||[];
+    return {groups:Array.isArray(g)?g:[],orphans:Array.isArray(r.orphans)?r.orphans:[]};
+  }
+  return {groups:[],orphans:[]};
+}
+/* An owner-less set laid out like a world group, so one row component draws both. */
+function barrowOrphanGroup(o){
+  const layers=(o&&(o.layers||o.backups))||[];
+  return {world:String((o&&o.world)||""),folder:(o&&o.folder)||"",sub:(o&&o.sub)||"",
+          running:false,orphan:true,backups:Array.isArray(layers)?layers:[]};
+}
 async function barrowFetch(){
-  if(!Native.available) return BARROW_MOCK;
+  if(!Native.available) return {groups:BARROW_MOCK,orphans:BARROW_ORPHAN_MOCK.map(barrowOrphanGroup)};
   const r=await rpc("backups.overview",{});
-  return r===FAIL?null:(r||[]);
+  if(r===FAIL) return null;
+  const n=barrowNormalize(r);
+  return {groups:n.groups,orphans:n.orphans.map(barrowOrphanGroup)};
 }
 async function barrowModal(){
-  const groups=await barrowFetch();
-  if(!groups){toast("ᚦ Could not read the backups");return;}
+  const all=await barrowFetch();
+  if(!all){toast("ᚦ Could not read the backups");return;}
+  const groups=all.groups||[], orphans=all.orphans||[];
   const rows=groups.length?groups.map((g,i)=>
     `<div class="drow browRow" data-i="${i}" style="cursor:pointer">`+
     `<span class="dk mono">${esc(g.world)}</span>`+
@@ -2658,24 +3251,107 @@ async function barrowModal(){
     `</div><div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(g))}${worldFormatLabel(g)?" · "+esc(worldFormatLabel(g)):""}${g.day!=null?" · day "+g.day:""}</div>`
   ).join(""):emptyState({mark:"\u16DD",title:"No worlds found on disk",
     reason:"BakaLoader looks in each realm's save folder. Start a server once and its world appears here."});
+  /* Layers whose world is gone. Nothing else on the machine shows them, and until now
+     nothing here did either, so the disk they hold could not be seen or reclaimed. */
+  const orphanRows=orphans.length
+    ?`<div class="dsec">${esc(TT("Backups without a world"))}</div>`+
+     `<div class="subval" style="margin-bottom:6px">${esc(TT("layers left behind by a world that is no longer on disk - restore one to bring that world back, or delete it to reclaim the space"))}</div>`+
+     orphans.map((o,oi)=>
+       `<div class="drow"><span class="dk mono">${esc(o.world)}</span>`+
+       `<span class="dv">${esc(TT("no world on disk"))}</span>`+
+       `<span class="dv mono">${o.backups.length} ${TT(o.backups.length===1?"layer":"layers")} · `+
+       `${fmtBytes(o.backups.reduce((n,b)=>n+(Number(b.sizeBytes)||0),0))}</span></div>`+
+       `<div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(o))}</div>`+
+       o.backups.map((b,i)=>barrowLayerRowHtml(o,b,i,
+         {restore:"oUnearth",drop:"oDrop"},` data-o="${oi}"`)).join("")
+     ).join("")
+    :"";
+  /* Wider than a normal modal on purpose: a layer row is a file name plus four facts
+     plus two controls, and at 460px the tail was drawn outside the modal and could not
+     be clicked. Both Barrow panes share the width so stepping in and out does not
+     resize the window under the pointer. */
   const m=modalOpen(
     `<div class="mtitle">${esc(TT("Backups"))}<span class="cnorse">${esc(TT("The Barrow"))}</span></div>`+
     `<div class="mbody">`+
     `<div class="subval" style="margin-bottom:8px">${esc(TT("every realm's layers - automatic snapshots, the game's last-good pair, and the safety copies laid down before each restore"))}</div>`+
-    rows+`</div>`+
+    rows+orphanRows+`</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+  m.classList.add("mwide");
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelectorAll(".browRow").forEach(r=>r.addEventListener("click",()=>barrowWorldModal(groups[+r.dataset.i])));
+  m.querySelectorAll(".oUnearth").forEach(c=>c.addEventListener("click",()=>{
+    const o=orphans[+c.dataset.o]; if(!o) return;
+    const b=o.backups[+c.dataset.i];
+    const block=barrowLayerBlock(o,b);
+    if(block){toast("ᚦ "+block);return;}
+    confirmModal(TT("Bring this world back?"),
+      `<div class="subval">${esc(TT("There is no live world for this layer any more."))} <span class="mono">${esc(b.file)}</span> ${esc(TT("is written back into the save folder as"))} <span class="mono">${esc(o.world)}</span>${esc(TT(", and it becomes a world a realm can point at again."))}</div>`,
+      TT("Restore"),async()=>{
+        if(!Native.available){
+          toast("ᛝ "+TT("World brought back")+" · "+TT("preview only"));
+          return;
+        }
+        const r=await rpc("backups.restore",{world:o.world,folder:o.folder,sub:o.sub,file:b.file});
+        if(r===FAIL) return;
+        toast("ᛝ "+TT("World brought back")+" · "+o.world);
+        logLine("ok","[BakaLoader] brought '"+o.world+"' back from "+b.file+" · it had no world on disk");
+        barrowModal();
+      });
+  }));
+  m.querySelectorAll(".oDrop").forEach(c=>c.addEventListener("click",()=>{
+    const o=orphans[+c.dataset.o]; if(!o) return;
+    const b=o.backups[+c.dataset.i];
+    confirmModal(TT("Delete this layer?"),
+      `<div class="subval"><span class="mono">${esc(b.file)}</span>${b.isDirectory?" "+esc(TT("and everything inside it")):(b.hasDb&&b.damaged!==true?" "+esc(TT("and its paired .db")):"")} ${esc(TT("will be deleted from disk. This cannot be undone."))} ${esc(TT("Nothing else on this machine holds this world."))}</div>`,
+      "Delete",async()=>{
+        if(!Native.available){
+          o.backups=o.backups.filter(x=>x!==b);
+          toast("ᛪ "+TT("Layer deleted")+" · "+TT("preview only"));
+          setTimeout(()=>barrowModal(),0);
+          return;
+        }
+        const r=await rpc("backups.delete",{world:o.world,folder:o.folder,sub:o.sub,file:b.file});
+        if(r===FAIL) return;
+        toast("ᛪ "+TT("Layer deleted"));
+        logLine("warn","[BakaLoader] deleted the ownerless backup layer "+b.file+" of '"+o.world+"'");
+        barrowModal();
+      });
+  }));
+}
+/* A snapshot folder Valheim has not finished writing carries no world to put back. The
+   warning under the confirm already said so; the button itself now says it too, instead
+   of running a restore that can only fail. Same for a damaged layer: the host names it
+   in the overview, and the app refuses that restore anyway. */
+function barrowLayerBlock(g,b){
+  /* Damaged goes first on purpose. Stopping the server does not bring a missing world
+     file back, so "Stop the server first" would send the host off to do something that
+     cannot help. This layer can only ever be cleared. */
+  if(b.damaged===true)
+    return TT("This layer lost its world file, so there is nothing to restore from it. You can still delete it.");
+  if(g.running) return TT("Stop the server first");
+  if(b.isDirectory&&b.committed===false)
+    return TT("This snapshot holds no finished save, so there is nothing to restore from it yet.");
+  return "";
+}
+/* One layer row, drawn the same whether the world it belongs to is still on disk or
+   gone: sel names the two classes the calling modal wires, extra carries any attribute
+   that row needs to say which set it came from. */
+function barrowLayerRowHtml(g,b,i,sel,extra){
+  const block=barrowLayerBlock(g,b);
+  const cls=sel||{restore:"bUnearth",drop:"bDrop"};
+  const at=extra||"";
+  return `<div class="drow blayer"><span class="dk mono" style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(b.file)}</span>`+
+  `<span class="dv" style="flex:0 0 auto">${esc(TT(BARROW_KIND[b.kind]||"BACKUP"))}</span>`+
+  `<span class="dv mono" style="flex:0 0 auto">${fmtBytes(b.sizeBytes)}${b.isDirectory?" · "+esc(TT("folder")):""}${b.day!=null?" · day "+b.day:""}`+
+  /* A leftover reads as a leftover in the row, not only in the greyed control's title. */
+  `${b.damaged===true?" · <span style=\"color:var(--warn,#e0a35c)\">"+esc(TT("no world file"))+"</span>":""}</span>`+
+  `<span class="dv" style="flex:0 0 auto">${agoAt(b.modifiedUtc)}</span>`+
+  `<span class="copychip ${cls.restore}${block?" disabled":""}" data-i="${i}"${at} title="${esc(block||TT("Unearth this layer: put this backup back"))}"${block?` style="opacity:.4;cursor:not-allowed"`:""}>${esc(TT("RESTORE"))}</span>`+
+  `<span class="copychip ${cls.drop}" data-i="${i}"${at} style="color:var(--warn,#e0a35c)">✕</span>`+
+  `</div>`;
 }
 function barrowWorldModal(g){
-  const layerRow=(b,i)=>
-    `<div class="drow"><span class="dk mono" style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(b.file)}</span>`+
-    `<span class="dv" style="flex:0 0 auto">${esc(TT(BARROW_KIND[b.kind]||"BACKUP"))}</span>`+
-    `<span class="dv mono" style="flex:0 0 auto">${fmtBytes(b.sizeBytes)}${b.isDirectory?" · "+esc(TT("folder")):""}${b.day!=null?" · day "+b.day:""}</span>`+
-    `<span class="dv" style="flex:0 0 auto">${agoAt(b.modifiedUtc)}</span>`+
-    `<span class="copychip bUnearth" data-i="${i}" title="${g.running?esc(TT("Stop the server first")):esc(TT("Unearth this layer: put this backup back"))}"${g.running?` style="opacity:.4;cursor:not-allowed"`:""}>${esc(TT("RESTORE"))}</span>`+
-    `<span class="copychip bDrop" data-i="${i}" style="color:var(--warn,#e0a35c)">✕</span>`+
-    `</div>`;
+  const layerRow=(b,i)=>barrowLayerRowHtml(g,b,i);
   const bks=g.backups||[];
   const m=modalOpen(
     `<div class="mtitle">${esc(TT("Backups"))} · ${esc(g.world)}<span class="cnorse">${esc(TT("The Barrow"))}</span></div>`+
@@ -2691,16 +3367,19 @@ function barrowWorldModal(g){
     `<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(g.folder)}/${esc(g.sub)}</div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBack">Back</button><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+  m.classList.add("mwide");
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelector("#mBack").addEventListener("click",()=>barrowModal());
   const reopen=async()=>{
-    const groups=await barrowFetch();
-    const g2=groups&&groups.find(x=>x.world===g.world&&x.folder===g.folder&&x.sub===g.sub);
+    const all=await barrowFetch();
+    const g2=all&&(all.groups||[]).find(x=>x.world===g.world&&x.folder===g.folder&&x.sub===g.sub);
     if(g2) barrowWorldModal(g2); else barrowModal();
   };
   m.querySelectorAll(".bUnearth").forEach(c=>c.addEventListener("click",()=>{
     if(g.running){toast("ᚦ "+TT("Stop the server first - the live realm would clobber the restored files"));return;}
     const b=bks[+c.dataset.i];
+    const block=barrowLayerBlock(g,b);
+    if(block){toast("ᚦ "+block);return;}
     confirmModal(TT("Restore this backup?"),
       `<div class="subval">${esc(TT("The live realm is copied to a fresh safety layer first, then"))} <span class="mono">${esc(b.file)}</span> ${esc(TT("replaces the live files. Every unearthing is reversible from the Barrow."))}${barrowUnearthNote(g,b)}</div>`,
       TT("Restore"),async()=>{
@@ -2722,7 +3401,7 @@ function barrowWorldModal(g){
   m.querySelectorAll(".bDrop").forEach(c=>c.addEventListener("click",()=>{
     const b=bks[+c.dataset.i];
     confirmModal(TT("Delete this layer?"),
-      `<div class="subval"><span class="mono">${esc(b.file)}</span>${b.isDirectory?" "+esc(TT("and everything inside it")):(b.hasDb?" "+esc(TT("and its paired .db")):"")} ${esc(TT("will be deleted from disk. This cannot be undone."))}</div>`,
+      `<div class="subval"><span class="mono">${esc(b.file)}</span>${b.isDirectory?" "+esc(TT("and everything inside it")):(b.hasDb&&b.damaged!==true?" "+esc(TT("and its paired .db")):"")} ${esc(TT("will be deleted from disk. This cannot be undone."))}</div>`,
       "Delete",async()=>{
         if(!Native.available){
           g.backups=g.backups.filter(x=>x!==b);
@@ -2864,9 +3543,14 @@ const VIK_COLS=9;
 /* Short platform tag off the id the roster already carries. Steam accounts are a
    bare 17-digit id; crossplay accounts arrive as "<Platform>_<id>". Anything that
    matches neither shape gets no guess, just a dash. */
+/* One table, and it says exactly what PlayerPlatforms.DisplayName says in C#: the same
+   player must not read as "Switch" in the roster and "Nintendo" in the Network drawer.
+   The aliases are the ones TryGetValidPlatform accepts, plus a few that only ever turn
+   up as an id prefix (xboxlive, microsoft, epic), which the C# side passes through. */
 const PLATFORM_NAMES={steam:"Steam",v:"Steam",xbox:"Xbox",xboxlive:"Xbox",microsoft:"Xbox",x:"Xbox",
-  playstation:"PlayStation",psn:"PlayStation",s:"PlayStation",nintendo:"Switch",switch:"Switch",n:"Switch",
-  gamecenter:"Game Center",a:"Game Center",playfab:"PlayFab",epic:"Epic"};
+  playstation:"PlayStation",psn:"PlayStation",s:"PlayStation",
+  nintendo:"Nintendo Switch",switch:"Nintendo Switch",n:"Nintendo Switch",
+  gamecenter:"Apple Game Center",a:"Apple Game Center",playfab:"Crossplay",epic:"Epic"};
 /* Own keys only. A player id such as "constructor_123" or "toString_9" would otherwise
    find a function on Object.prototype and print it as the player's platform. */
 function platformName(key){
@@ -2938,7 +3622,9 @@ function renderVikCols(){
     ?"· "+gone.join(TT(" and "))+TT(" need a wider window · the right-click menu still carries every action")
     :"";
 }
-window.addEventListener("resize",renderVikCols);
+/* Recomputed by the shared resize dispatcher, but only while the roster is on screen:
+   reading the header cells' computed display on every tick of a drag paid for a note
+   nobody could see. goPage brings it up to date when the hall is opened. */
 
 function renderPlayers(){
   const rank=s=>VIK_RANK[s]??2;
@@ -2956,7 +3642,9 @@ function renderPlayers(){
       reason:"Players appear here as soon as they connect."});
   esWire($("#homeVik"));
   const tb=$("#vikTable");
-  const noPos=TT("The server's player list carries no coordinates. Send 'playerlist' from the console for live positions.");
+  /* Positions come off the running server's own player list, so an offline player and a
+     stopped or RCON-less server all show the dash rather than a stale coordinate. */
+  const noPos=TT("No position reported. Live positions need the server running with RCON enabled.");
   tb.innerHTML=list.map((p,i)=>{
     const pill=p.status==="Online"?"green":(p.status==="Offline"?"blue":"amber");
     const j=playerJournal(p);
@@ -3035,18 +3723,30 @@ async function openPlayerMenu(x,y,p){
   ]);
   const rcon=!!S.caps.rcon, dev=!!S.caps.devcommands;
   const noR="requires the RCON mod", noD="requires the devcommands mods";
+  /* Half of this menu reaches for the character standing in the world, so it has
+     nothing to act on while that player is away: heal, smite, teleport, a spawn at
+     their feet and a kick all need them connected. Online is exactly what the
+     roster pill calls online, so a player still joining or on their way out reads
+     as away here too. The list actions below write files on disk and work either
+     way, which is why they stay live for an offline player. */
+  const live=p.status==="Online";
+  /* A player still joining is connected, so a kick can reach them; the other live
+     actions want a character standing in the world, which a joining player is not yet. */
+  const connected=live||p.status==="Joining";
+  const noLive=TT("Only works while the player is online.");
+  const noConn=TT("Only works while the player is connected.");
   const items=[
-    {r:"ᛏ",label:"Heal",disabled:!rcon,tip:noR,fn:()=>doPlayerAct("players.heal",{target:tgt},"Healed "+tgt)},
-    {r:"ᚦ",label:"Smite",danger:true,confirm:true,disabled:!rcon,tip:noR,fn:()=>doPlayerAct("players.smite",{target:tgt},"Smote "+tgt)},
-    {r:"ᛒ",label:"Teleport…",disabled:!rcon,tip:noR,
+    {r:"ᛏ",label:"Heal",disabled:!rcon||!live,tip:rcon?noLive:noR,fn:()=>doPlayerAct("players.heal",{target:tgt},"Healed "+tgt)},
+    {r:"ᚦ",label:"Smite",danger:true,confirm:true,disabled:!rcon||!live,tip:rcon?noLive:noR,fn:()=>doPlayerAct("players.smite",{target:tgt},"Smote "+tgt)},
+    {r:"ᛒ",label:"Teleport…",disabled:!rcon||!live,tip:rcon?noLive:noR,
       fn:()=>promptModal("Teleport "+tgt,"destination - player name, or x,z,y coords (spaces fine)",
         v=>doPlayerAct("players.teleport",{target:tgt,destination:v},"Teleported "+tgt+" → "+v))},
-    {r:"ᛟ",label:"Spawn item at…",disabled:!dev,tip:noD,fn:()=>openSpawnModal(p)},
+    {r:"ᛟ",label:"Spawn item at…",disabled:!dev||!live,tip:dev?noLive:noD,fn:()=>openSpawnModal(p)},
     "hr",
     {r:"ᚨ",label:isAdmin===true?"Demote from admin":"Promote to admin",fn:()=>setPlayerList(p,"Admin",isAdmin!==true)},
     {r:"ᚹ",label:isPerm===true?"Remove from whitelist":"Permit (whitelist)",fn:()=>setPlayerList(p,"Permitted",isPerm!==true)},
     "hr",
-    {r:"ᚲ",label:"Kick",danger:true,confirm:true,disabled:!rcon,tip:noR,fn:()=>doPlayerAct("players.kick",{target:tgt},"Kicked "+tgt)},
+    {r:"ᚲ",label:"Kick",danger:true,confirm:true,disabled:!rcon||!connected,tip:rcon?noConn:noR,fn:()=>doPlayerAct("players.kick",{target:tgt},"Kicked "+tgt)},
     {r:"ᛉ",label:isBan===true?"Unban":"Ban",danger:isBan!==true,confirm:isBan!==true,fn:()=>doBan(p,isBan===true,tgt)},
     "hr",
     {r:"ᛁ",label:"Copy ID",fn:()=>{navigator.clipboard?.writeText(id||"").catch(()=>{});toast("ᛁ ID copied · "+id);}},
@@ -4050,6 +4750,7 @@ const ATLAS={
   fogImg:null, fogReady:false, fogTex:null, fogMask:null, fogExtent:12288, // fog png spans ±2048*12/2 m
   viewBase:0,                                     // min(wrap w,h) at last resize - keeps the chart scaling with the window
   info:null, rendering:false, seq:0,
+  infoError:null,                                 // why the last world-info read did not answer
   layers:{portals:true,pois:true,builds:true,pins:false,fog:true},
   fogWipe:null,                                   // {to,r} while the fog toggle wipes concentrically from world center
   cam:{cx:0,cz:0,ppm:0},                          // ppm = screen px per world meter
@@ -4064,6 +4765,7 @@ function atlasMsg(text){
 function atlasReset(){
   ATLAS.world=null; ATLAS.mapImg=null; ATLAS.mapReady=false;
   ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.fogMask=null; ATLAS.info=null;
+  ATLAS.infoError=null;
   ATLAS.cam.ppm=0; ATLAS.seq++;
   atlasMsg("Loading the known world…");
   if(currentPage==="atlas") atlasEnter();
@@ -4073,7 +4775,7 @@ async function atlasEnter(){
   if(!Native.available){atlasMock();return;}
   const world=atlasWorldName();
   $("#atlasWorldName").textContent=world||"-";
-  if(!world){atlasMsg("No world chosen yet, pick one in the World hall.");return;}
+  if(!world){atlasMsg("No world chosen yet. Pick one in the World hall.");return;}
   if(ATLAS.world!==world){
     ATLAS.world=world; ATLAS.mapImg=null; ATLAS.mapReady=false;
     ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.fogMask=null; ATLAS.info=null; ATLAS.cam.ppm=0;
@@ -4112,8 +4814,17 @@ async function atlasRenderMap(force){
 async function atlasRefreshInfo(){
   const world=ATLAS.world; if(!world) return;
   const seq=ATLAS.seq;
-  const r=await Native.call("atlas.worldInfo",{world}).catch(()=>null);
-  if(seq!==ATLAS.seq||!r) return;
+  /* Keep the rejection instead of swallowing it. A scan already in flight, or a reader
+     that threw, used to leave the last world's facts on screen with nothing said. */
+  let err=null;
+  const r=await Native.call("atlas.worldInfo",{world}).catch(e=>{err=e;return null;});
+  if(seq!==ATLAS.seq) return;
+  if(!r){
+    ATLAS.infoError=(err&&err.message)?String(err.message):"";
+    renderAtlasSide();
+    return;
+  }
+  ATLAS.infoError=null;
   r._rxAt=Date.now(); // weather clock anchors netTime+savedAge to this receipt
   ATLAS.info=r;
   if(r.fogUrl){
@@ -4124,14 +4835,34 @@ async function atlasRefreshInfo(){
   }else{ATLAS.fogImg=null;ATLAS.fogReady=false;}
   renderAtlasSide(); atlasDraw();
 }
+/* Three different things used to read as one: a world that has genuinely never been
+   saved, a save on disk this reader could not make sense of, and a read that never
+   answered at all. The C# reader already works out which and can say so, so pass its
+   own sentence through when it sends one, and never tell a host to wait for a save
+   that already exists. */
+function atlasNoDbText(info){
+  const said=String((info&&(info.reason||info.diagnostic))||ATLAS.infoError||"").trim();
+  if(said) return TT("The save could not be read: ")+said;
+  /* infoError is null until a read actually fails, and "" for a failure that carried
+     no message, so an empty string still means failed. */
+  if(ATLAS.infoError!=null)
+    return TT("The save could not be read. The saga log carries what the reader said.");
+  if(!info) return TT("Reading the world file…");
+  if(info.saveExists===true||info.hasSave===true)
+    return TT("There is a save on disk, but this reader could not make sense of it.");
+  return TT("No save file yet. The clock starts with the first launch.");
+}
 function renderAtlasSide(){
   const info=ATLAS.info;
   $("#atlasWorldName").textContent=ATLAS.world||"-";
   if(!info||!info.hasDb){
+    const why=atlasNoDbText(info);
     $("#atlasDay").textContent="-";
-    $("#atlasClock").textContent="no save file yet, the clock starts with the first launch";
+    $("#atlasClock").textContent=why;
+    $("#atlasClock").title=why;
     $("#atlasSaved").textContent="-"; $("#atlasExplored").textContent="-"; $("#atlasEvent").textContent="-";
   }else{
+    $("#atlasClock").title="";
     $("#atlasDay").textContent="Day "+info.day;
     const frac=((Number(info.netTime)%1800)+1800)%1800/1800;
     const mins=Math.floor(frac*24*60);
@@ -4151,8 +4882,11 @@ function renderAtlasSide(){
     if(skipped>0) cn.textContent=TT(skipped+" of "+(info.chunksTotal||skipped)
       +" chunks could not be read, so portals and build sites may be missing");
   }
+  /* The Ashlands caveat that used to sit here is gone: the atlas now draws that coast
+     from the game's own height function, so the shape on screen is the shape in game.
+     #atlasShapeNote stays as an empty, hidden slot for the next note that needs it. */
   const sn=$("#atlasShapeNote");
-  if(sn) sn.textContent=TT("Ashlands shape is approximate");
+  if(sn&&sn.textContent){sn.textContent="";sn.style.display="none";}
   /* roster: who's online (mod-free maps can't place them) */
   const roster=$("#atlasRoster");
   if(roster){
@@ -4302,7 +5036,7 @@ function renderWeather(){
   }
   $("#wxForecast").innerHTML=rows.join("");
   $("#wxAnchor").textContent=nt.paused
-    ?TT("Time stands still, no vikings ashore.")
+    ?TT("Time stands still: no vikings ashore.")
     :TT("Anchored to the last world save.");
 }
 /* biome picker pills */
@@ -4498,7 +5232,7 @@ function atlasDraw(){
       }
       if(!wipe){
         g.font="11px 'IBM Plex Mono',monospace"; g.textAlign="center"; g.textBaseline="middle";
-        g.fillText("ᚾ unexplored, no cartography table has shared the realm yet",s.w/2,s.h/2);
+        g.fillText("ᚾ unexplored: no cartography table has shared the realm yet",s.w/2,s.h/2);
         g.textAlign="start";
       }
     }
@@ -4760,6 +5494,10 @@ if(Native.available){
      applied on the next close. Nothing raises it yet (see the report): the self-update
      runs unattended at launch, so this is the seam it would arrive on. */
   Native.on("app.updateAvailable",d=>conditionAppUpdate(d&&d.version));
+  /* The server update, from the service that runs it. Progress is a bar, not toasts. */
+  Native.on("server.updateProgress",onUpdateProgress);
+  Native.on("server.updateDone",onUpdateDone);
+  Native.on("server.updateFailed",onUpdateFailed);
   Native.on("server.countdown",d=>{if(d?.message&&isActiveProfile(d?.profile))toast("ᚨ "+d.message);});
   Native.on("player.updated",p=>{
     if(!p) return;
@@ -4850,6 +5588,7 @@ if(Native.available){
     }
     const st=await rpc("server.state");
     if(st!==FAIL) applyState(st);
+    refreshUpdateInfo();   // quiet: fills the dashboard pill and gates the palette entry
     refreshServers(); // populate the multi-server chip strip
     const caps=await rpc("caps.get");
     if(caps!==FAIL&&caps) S.caps=caps;
@@ -4917,15 +5656,29 @@ if(!Native.available){
     }),150);
   }
 
+  /* Waiting-update preview: open index.html#update, #update=steamLibrary or
+     #update=unknown to walk the three install kinds without a native host. */
+  if(location.hash.indexOf("#update")===0){
+    const kind=location.hash.indexOf("=")>0?location.hash.split("=")[1]:"standalone";
+    S.update=Object.assign({},S.update,{
+      installKind:kind,updatePending:true,pendingBytes:848*1048576,
+      buildId:"19503481",targetBuildId:"19640213",
+      canUpdate:kind!=="unknown",running:false,
+      reason:kind==="unknown"?"No Steam manifest was found above the server executable.":"",
+    });
+    setLaunchHold({outcome:"updatePending",pendingBytes:S.update.pendingBytes,profile:null});
+    renderUpdatePill();
+  }
+
   /* Preview roster: real player DTOs through the real renderer, so sorting, the
      folding columns and the row menu are all exercised offline. One Steam id, one
      crossplay Xbox id and one PlayStation id keep the Platform column honest. */
   const ago=min=>new Date(Date.now()-min*60000).toISOString();
   S.players=[
     {key:"Steam:76561198012345678",platform:"Steam",PlayerId:"76561198012345678",PlayerName:"Smithix",
-     displayName:"Smithix",status:"Online",lastStatusChange:ago(272),position:"3959, −1361, 35"},
+     displayName:"Smithix",status:"Online",lastStatusChange:ago(272),position:"3959, -1361, 35"},
     {key:"Xbox:Xbox_2814639011776000",platform:"Xbox",PlayerId:"Xbox_2814639011776000",PlayerName:"Van Hoenhiem",
-     displayName:"Van Hoenhiem",status:"Online",lastStatusChange:ago(126),position:"−212, 887, 41"},
+     displayName:"Van Hoenhiem",status:"Online",lastStatusChange:ago(126),position:"-212, 887, 41"},
     {key:"PlayStation:PlayStation_5001234567",platform:"PlayStation",PlayerId:"PlayStation_5001234567",PlayerName:"Ragnhild",
      displayName:"Ragnhild",status:"Offline",lastStatusChange:ago(185)},
     {key:"Steam:76561198087654321",platform:"Steam",PlayerId:"76561198087654321",PlayerName:"Bjornulf",
@@ -4950,6 +5703,15 @@ if(!Native.available){
     {ModName:"Rcon_Commands",Author:"JereKuusela",FullName:"JereKuusela-Rcon_Commands",InstalledVersion:"1.12.0",LatestVersion:"1.12.0"},
     {ModName:"ValheimOptimizer",Author:"Dreous",FullName:"Dreous-ValheimOptimizer",InstalledVersion:"1.2.1",LatestVersion:"1.2.1"},
   ];
+  /* A scan is what pairs a plugin with its Thunderstore page, so the preview carries
+     the same three fields the real scan adds. The bundled helper ships inside
+     BakaLoader and has no page, which is the row that shows the menu item greyed. */
+  S.mods.forEach(m=>{
+    const on=!m.Bundled;
+    m.thunderstoreNamespace=on?m.Author:null;
+    m.thunderstoreName=on?m.ModName:null;
+    m.thunderstoreUrl=on?("https://thunderstore.io/c/valheim/p/"+m.Author+"/"+m.ModName+"/"):null;
+  });
   S.modsScanned=true; S.lastScan="21:38";
   renderMods();
   $("#fWorld").innerHTML=`<option>Final Sunset</option>`;

@@ -156,6 +156,8 @@ namespace ValheimBakaLoader.Tools
     /// HARD INVARIANT: never touches an existing world. If the world already exists
     /// under the save folder in EITHER format (a legacy "{world}.fwl", or a 1.0 world
     /// directory), the write is refused - an existing world's seed must never change.
+    /// The check reads the filesystem rather than the world list, so a world the list
+    /// deliberately leaves out still holds its name.
     /// </summary>
     public static class FwlWriter
     {
@@ -207,14 +209,23 @@ namespace ValheimBakaLoader.Tools
                 throw new ArgumentException("A world name is required.", nameof(worldName));
             if (worldName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
                 throw new ArgumentException("The world name contains characters that can't be used in a file name.", nameof(worldName));
+            if (!WorldStore.IsSafeReferenceToken(worldName))
+                throw new ArgumentException("That world name is not one Windows can keep as a folder name.", nameof(worldName));
 
             // THE guard: an existing world's seed must never be overwritten. A Valheim 1.0
             // world is a DIRECTORY, so a name check that only looked for "{world}.fwl" would
             // happily write a second, conflicting seed beside a live chunked world.
+            //
+            // The world LIST is not enough on its own to answer this. It leaves names out on
+            // purpose, backup-shaped ones above all, so a live world whose folder happens to
+            // carry the game's backup marker is invisible to it while being perfectly real on
+            // disk. The raw filesystem probe is what closes that: it answers "is this name
+            // taken" for every name, including the ones the list refuses to return.
             var existingWorld = WorldStore.Find(saveFolder, worldName);
-            if (existingWorld != null)
+            var existingPath = existingWorld?.Folder ?? WorldStore.FindWorldFilesOnDisk(saveFolder, worldName);
+            if (existingPath != null)
                 throw new InvalidOperationException(
-                    $"World '{worldName}' already exists ({existingWorld.Folder}) - the seed of an existing world can't be changed.");
+                    $"World '{worldName}' already exists ({existingPath}) - the seed of an existing world can't be changed.");
 
             seedName = (seedName ?? "").Trim();
             if (seedName.Length == 0) seedName = RandomSeedName();

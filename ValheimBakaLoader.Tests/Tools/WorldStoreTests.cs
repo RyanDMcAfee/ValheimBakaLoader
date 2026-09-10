@@ -227,11 +227,26 @@ namespace ValheimBakaLoader.Tests.Tools
         [InlineData("Midgard_backup_cloud-20260909-180000", "Midgard", WorldBackupKind.Cloud)]
         // The untouched pre-conversion originals: "_backup_" with no infix.
         [InlineData("Midgard_backup_20260909-175156", "Midgard", WorldBackupKind.Legacy)]
-        // The 14-character stamp the pre-1.0 game used.
+        // The 14-character stamp the pre-1.0 game used, still on this machine's own auto layers.
         [InlineData("Midgard_backup_auto-20220620101500", "Midgard", WorldBackupKind.Auto)]
-        [InlineData("Midgard_20220620-101500", "Midgard", WorldBackupKind.Other)]
+        // The game separates the six date and time groups with any number of hyphens, so all of
+        // these are the same stamp to it and all of them are layers, not worlds.
+        [InlineData("Midgard_backup_2026-09-09-18-00-00", "Midgard", WorldBackupKind.Legacy)]
+        [InlineData("Midgard_backup_auto-2026-09-09-180000", "Midgard", WorldBackupKind.Auto)]
+        [InlineData("Midgard_backup_cloud-20260909180000", "Midgard", WorldBackupKind.Cloud)]
+        // The pattern is not anchored either: trailing text after the stamp is still a layer.
+        [InlineData("Midgard_backup_auto-20260909-180000 (copy)", "Midgard", WorldBackupKind.Auto)]
+        // A world of its own whose name ends in "_backup" keeps its own layers.
+        [InlineData("Midgard_backup_backup_20260909-180000", "Midgard_backup", WorldBackupKind.Legacy)]
         // A world name that itself ends in an underscore word must not be mangled.
         [InlineData("My_Great_World_backup_auto-20260909-180000", "My_Great_World", WorldBackupKind.Auto)]
+        // A stamped name with NO "_backup_" marker is the game's rolling save: it belongs to
+        // the name trimmed at the LAST underscore and the game never opens it as a world.
+        [InlineData("Midgard_20220620-101500", "Midgard", WorldBackupKind.Other)]
+        [InlineData("Midgard_20220620101500", "Midgard", WorldBackupKind.Other)]
+        // The marker is in the name but not at the second-to-last underscore, so the game reads
+        // no marker at all and trims at the last one instead.
+        [InlineData("My_backup_World_20260909-180000", "My_backup_World", WorldBackupKind.Other)]
         public void TryParseBackupName_ClassifiesEveryShape(string name, string world, WorldBackupKind kind)
         {
             Assert.True(WorldStore.TryParseBackupName(name, out var owner, out var parsed, out var stamp));
@@ -246,6 +261,11 @@ namespace ValheimBakaLoader.Tests.Tools
         [InlineData("worlds_local")]
         [InlineData("Realm_backup_notatimestamp")]
         [InlineData("")]
+        // A stamp but no underscore at all: the game has nothing to trim at, so it is a save.
+        [InlineData("20220620-101500")]
+        // The marker is there but the numbers are not a date the game can read, so it reads no
+        // stamp at all and treats the name as an ordinary save name.
+        [InlineData("Midgard_backup_20261340-000000")]
         public void TryParseBackupName_LeavesRealWorldNamesAlone(string name)
         {
             Assert.False(WorldStore.TryParseBackupName(name, out _, out _, out _));
@@ -257,7 +277,12 @@ namespace ValheimBakaLoader.Tests.Tools
         [InlineData("Midgard_backup_20260909-175156.db", "Midgard")]
         [InlineData("Midgard.fwl.old", "Midgard")]
         [InlineData("Midgard.db.old", "Midgard")]
+        [InlineData("Final Sunset_backup_auto-20260722065046.fwl", "Final Sunset")]
+        [InlineData("Midgard_backup_2026-09-09-17-51-56.fwl", "Midgard")]
+        // The rolling shape: no marker, so the game trims at the last underscore and files it
+        // under "Midgard" as a backup file it will never elect as the world.
         [InlineData("Midgard_20220620-101500.fwl", "Midgard")]
+        [InlineData("Midgard_20220620-101500.db", "Midgard")]
         public void IsBackupFileName_CatchesEveryLegacyLayerShape(string file, string world)
         {
             Assert.True(WorldStore.IsBackupFileName(file, out var owner));
@@ -268,6 +293,8 @@ namespace ValheimBakaLoader.Tests.Tools
         [InlineData("Midgard.fwl")]
         [InlineData("Midgard.db")]
         [InlineData("Midgard2.fwl")]
+        // An underscore and a number that is not a date the game can read is just a name.
+        [InlineData("Midgard_2.fwl")]
         public void IsBackupFileName_LeavesTheLivePairAlone(string file)
         {
             Assert.False(WorldStore.IsBackupFileName(file, out _));
@@ -640,6 +667,585 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal(
                 Path.Combine(SaveFolder, "cache", "Midgard_biomedatacache.bin"),
                 WorldStore.BiomeCachePath(SaveFolder, "Midgard"));
+        }
+
+        // ------------------------------------------------------- the game's own naming (W-06)
+
+        [Fact]
+        public void A_layer_the_game_would_recognise_is_never_listed_as_a_world()
+        {
+            var dir = WorldsDir();
+            MakeLegacyWorld("Midgard");
+
+            // Hyphens between every date and time group. The game reads this as a layer of
+            // "Midgard"; a shape that only allowed one hyphen in a fixed spot read it as a world.
+            File.WriteAllBytes(Path.Combine(dir, "Midgard_backup_2026-09-09-17-51-56.fwl"), BuildFwl(37, "Midgard", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "Midgard_backup_2026-09-09-17-51-56.db"), BuildDbHeader(37, 1800));
+
+            // A directory layer with the same lenient stamp, and one with text after the stamp.
+            MakeGeneration(Path.Combine(dir, "Midgard_backup_auto-2026-09-09-18-00-00"), 2, committed: true, worldName: "Midgard");
+            MakeGeneration(Path.Combine(dir, "Midgard_backup_auto-20260909-190000 (copy)"), 2, committed: true, worldName: "Midgard");
+
+            Assert.Equal(new[] { "Midgard" }, WorldStore.GetWorldNames(SaveFolder));
+
+            var layers = WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "Midgard");
+            Assert.Equal(
+                new[]
+                {
+                    "Midgard_backup_2026-09-09-17-51-56.fwl",
+                    "Midgard_backup_auto-2026-09-09-18-00-00",
+                    "Midgard_backup_auto-20260909-190000 (copy)",
+                },
+                layers.Select(l => l.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+
+            Assert.Equal(
+                new DateTime(2026, 9, 9, 17, 51, 56),
+                layers.Single(l => l.Name.EndsWith(".fwl")).Stamp);
+        }
+
+        [Fact]
+        public void The_live_save_folder_classifies_exactly_the_way_the_game_names_it()
+        {
+            // The real worlds_local on this machine, name for name: one legacy world still on the
+            // pre-1.0 stamp convention for its own auto layers, two orphaned backup sets whose
+            // worlds are long gone, and the client's map render caches.
+            var dir = WorldsDir();
+
+            MakeLegacyWorld("Final Sunset");
+            File.WriteAllBytes(Path.Combine(dir, "Final Sunset.fwl.old"), BuildFwl(37, "Final Sunset", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "Final Sunset.db.old"), BuildDbHeader(37, 1800));
+
+            var autoStamps = new[] { "20260722065046", "20260722165442", "20260819074545" };
+            foreach (var stamp in autoStamps)
+            {
+                File.WriteAllBytes(Path.Combine(dir, "Final Sunset_backup_auto-" + stamp + ".fwl"), BuildFwl(37, "Final Sunset", "s"));
+                File.WriteAllBytes(Path.Combine(dir, "Final Sunset_backup_auto-" + stamp + ".db"), BuildDbHeader(37, 1800));
+            }
+
+            File.WriteAllBytes(Path.Combine(dir, "Final Sunset_backup_restore-20260607-024757.fwl"), BuildFwl(37, "Final Sunset", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "Final Sunset_backup_restore-20260607-024757.db"), BuildDbHeader(37, 1800));
+
+            File.WriteAllBytes(Path.Combine(dir, "Azula.fwl.old"), BuildFwl(37, "Azula", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "Azula_backup_20231120-133010.fwl"), BuildFwl(37, "Azula", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "Azula_backup_20231120-133010.db"), BuildDbHeader(37, 1800));
+
+            foreach (var cache in new[] { "Azula_forestMaskTexCache", "Azula_heightTexCache", "Azula_mapTexCache" })
+                File.WriteAllBytes(Path.Combine(dir, cache), new byte[] { 1, 2, 3, 4 });
+
+            File.WriteAllBytes(Path.Combine(dir, "NewAge_backup_20251214-171043.fwl"), BuildFwl(37, "NewAge", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "NewAge_backup_20251214-171043.db"), BuildDbHeader(37, 1800));
+
+            // Exactly one live world. Every layer, and every client cache file, stays out of it.
+            Assert.Equal(new[] { "Final Sunset" }, WorldStore.GetWorldNames(SaveFolder));
+
+            var sunset = WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "Final Sunset");
+            Assert.Equal(5, sunset.Count);
+            Assert.Equal(WorldBackupKind.Old, sunset.Single(l => l.Name == "Final Sunset.fwl.old").Kind);
+            Assert.Equal(WorldBackupKind.Restore, sunset.Single(l => l.Name == "Final Sunset_backup_restore-20260607-024757.fwl").Kind);
+            Assert.All(
+                sunset.Where(l => l.Name.Contains("_backup_auto-")),
+                l => Assert.Equal(WorldBackupKind.Auto, l.Kind));
+            Assert.All(sunset, l => Assert.True(l.HasDb));
+
+            // The pre-1.0 stamp with no hyphen at all still reads as a real date.
+            Assert.Equal(
+                new DateTime(2026, 7, 22, 6, 50, 46),
+                sunset.Single(l => l.Name == "Final Sunset_backup_auto-20260722065046.fwl").Stamp);
+
+            var azula = WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "Azula");
+            Assert.Equal(
+                new[] { "Azula.fwl.old", "Azula_backup_20231120-133010.fwl" },
+                azula.Select(l => l.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+            Assert.Equal(WorldBackupKind.Old, azula.Single(l => l.Name == "Azula.fwl.old").Kind);
+            Assert.Equal(WorldBackupKind.Legacy, azula.Single(l => l.Name.Contains("_backup_")).Kind);
+
+            // The client's map render caches are not worlds, layers, or anything else here.
+            Assert.DoesNotContain(azula, l => l.Name.EndsWith("TexCache"));
+
+            var newAge = Assert.Single(WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "NewAge"));
+            Assert.Equal("NewAge_backup_20251214-171043.fwl", newAge.Name);
+            Assert.Equal(WorldBackupKind.Legacy, newAge.Kind);
+            Assert.Equal(new DateTime(2025, 12, 14, 17, 10, 43), newAge.Stamp);
+        }
+
+        // ------------------------------- a rolling save is a LAYER, never a world (W-07)
+
+        [Fact]
+        public void A_bare_stamped_save_is_a_layer_of_the_trimmed_world_and_never_a_world()
+        {
+            var dir = WorldsDir();
+
+            // The live world, plus the leftover a 2022 migration renamed aside with no marker.
+            MakeLegacyWorld("Midgard");
+            MakeLegacyWorld("Midgard_20220620-101500");
+            MakeGeneration(Path.Combine(dir, "Realm_20260909180000"), 1, committed: true, worldName: "Realm_20260909180000");
+
+            // The game reads a stamp out of both names, finds no "_backup_" at the second to
+            // last underscore, calls them rolling saves and files them under the name trimmed
+            // at the LAST underscore. It never elects a rolling file as a world, so a world
+            // list holding one would offer a save the game itself refuses to open, and a
+            // server launched at it would generate a brand new realm under that name.
+            Assert.Equal(new[] { "Midgard" }, WorldStore.GetWorldNames(SaveFolder));
+            Assert.Null(WorldStore.Find(SaveFolder, "Midgard_20220620-101500"));
+            Assert.Null(WorldStore.Find(SaveFolder, "Realm_20260909180000"));
+
+            // They are layers of the trimmed name, which is what makes them reachable in the
+            // Barrow rather than lost between the two lists.
+            var midgard = WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "Midgard");
+            var rolling = Assert.Single(midgard, l => l.Name == "Midgard_20220620-101500.fwl");
+            Assert.Equal(WorldBackupKind.Other, rolling.Kind);
+            Assert.Equal(new DateTime(2022, 6, 20, 10, 15, 0), rolling.Stamp);
+            Assert.True(rolling.HasDb);
+            Assert.False(rolling.IsDamaged);
+
+            var realm = Assert.Single(WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "Realm"));
+            Assert.Equal("Realm_20260909180000", realm.Name);
+            Assert.True(realm.IsDirectory);
+            Assert.Equal(WorldBackupKind.Other, realm.Kind);
+
+            // "Realm" has no live world at all, so the whole set is reachable only through the
+            // owner less scan.
+            var orphan = Assert.Single(WorldStore.EnumerateOrphanBackups(SaveFolder), o => o.WorldName == "Realm");
+            Assert.Equal("worlds_local", orphan.Sub);
+            Assert.Single(orphan.Layers);
+        }
+
+        [Fact]
+        public void The_preupdate_pass_names_a_rolling_save_instead_of_letting_it_vanish()
+        {
+            var dir = WorldsDir();
+            MakeLegacyWorld("Midgard");
+            MakeLegacyWorld("Midgard_20220620-101500");
+
+            var when = new DateTime(2026, 9, 9, 18, 42, 7, DateTimeKind.Local);
+            var result = WorldStore.SnapshotAllPreUpdate(SaveFolder, when);
+
+            // The live world is copied aside.
+            Assert.True(result.Ok, result.Error);
+            Assert.Equal(new[] { "Midgard_backup_preupdate-20260909-184207" }, result.Copied);
+            Assert.True(File.Exists(Path.Combine(dir, "Midgard_backup_preupdate-20260909-184207.fwl")));
+
+            // The rolling save is not a world and is not copied as one, but the pass says so
+            // rather than leaving it out of the world list and the snapshot list at once.
+            var named = Assert.Single(result.Skipped, s => s.StartsWith("Midgard_20220620-101500.fwl"));
+            Assert.Contains("rolling save", named);
+            Assert.Contains("'Midgard'", named);
+        }
+
+        // ----------------------------------------------- the cache key the game uses (W-08)
+
+        [Fact]
+        public void The_biome_cache_is_keyed_on_the_name_stored_inside_the_world_file()
+        {
+            // What a copied or renamed world looks like: the folder says one thing, the name the
+            // game carries in the file says another, and the cache file is named after the file.
+            var dir = WorldsDir();
+            File.WriteAllBytes(Path.Combine(dir, "CopiedRealm.fwl"), BuildFwl(37, "Midgard", "seedy"));
+            File.WriteAllBytes(Path.Combine(dir, "CopiedRealm.db"), BuildDbHeader(37, 3600));
+
+            var cacheDir = Path.Combine(SaveFolder, "cache");
+            Directory.CreateDirectory(cacheDir);
+            var realCache = Path.Combine(cacheDir, "Midgard_biomedatacache.bin");
+            File.WriteAllBytes(realCache, new byte[] { 1, 2, 3 });
+
+            var world = WorldStore.Find(SaveFolder, "CopiedRealm");
+            Assert.Equal("Midgard", WorldStore.BiomeCacheKey(world));
+
+            // A copy takes the cache under the name the game will ask for at the destination.
+            var dest = Path.Combine(SaveFolder, "adopted");
+            WorldStore.CopyWorld(world, dest);
+            Assert.True(File.Exists(Path.Combine(dest, "cache", "Midgard_biomedatacache.bin")));
+
+            // And a delete takes the real cache with it instead of leaving a 2048x2048 grid
+            // behind for the next world that happens to store the same name.
+            var deleted = WorldStore.DeleteWorld(SaveFolder, "CopiedRealm");
+            Assert.False(File.Exists(realCache));
+            Assert.Contains("Midgard_biomedatacache.bin", deleted);
+        }
+
+        [Fact]
+        public void The_biome_cache_key_falls_back_to_the_name_on_disk()
+        {
+            var dir = WorldsDir();
+            File.WriteAllBytes(Path.Combine(dir, "Unreadable.fwl"), new byte[] { 9, 9, 9, 9 });
+            File.WriteAllBytes(Path.Combine(dir, "Unreadable.db"), BuildDbHeader(37, 3600));
+
+            var world = WorldStore.Find(SaveFolder, "Unreadable");
+            Assert.NotNull(world);
+            Assert.Equal("Unreadable", WorldStore.BiomeCacheKey(world));
+        }
+
+        // ------------------------------------------- one destination, one world (W-10)
+
+        [Fact]
+        public void CopyWorld_refuses_a_destination_that_already_has_that_world()
+        {
+            MakeGeneration(MakeChunkedWorld("NewRealm"), 2, committed: true);
+
+            var dest = Path.Combine(SaveFolder, "adopted");
+            var destWorlds = Path.Combine(dest, "worlds_local");
+            var destWorld = Path.Combine(destWorlds, "NewRealm");
+            MakeGeneration(destWorld, 7, committed: true, worldName: "NewRealm");
+            File.WriteAllBytes(Path.Combine(destWorld, "07_07__0_41.chunk"), new byte[16]);
+
+            var refused = Assert.Throws<InvalidOperationException>(
+                () => WorldStore.CopyWorld(WorldStore.Find(SaveFolder, "NewRealm"), dest));
+            Assert.Contains("NewRealm", refused.Message);
+
+            // Nothing was merged in: the world that was there is exactly as it was.
+            Assert.Equal(7, WorldStore.Find(dest, "NewRealm").SaveNumber);
+            Assert.True(File.Exists(Path.Combine(destWorld, "07_07__0_41.chunk")));
+            Assert.False(File.Exists(Path.Combine(destWorld, "_main.2.fwl2")));
+        }
+
+        [Fact]
+        public void CopyWorld_with_overwrite_replaces_the_whole_destination_directory()
+        {
+            MakeGeneration(MakeChunkedWorld("NewRealm"), 2, committed: true);
+
+            var dest = Path.Combine(SaveFolder, "adopted");
+            var destWorlds = Path.Combine(dest, "worlds_local");
+            var destWorld = Path.Combine(destWorlds, "NewRealm");
+            MakeGeneration(destWorld, 7, committed: true, worldName: "NewRealm");
+            File.WriteAllBytes(Path.Combine(destWorld, "07_07__0_41.chunk"), new byte[16]);
+            // A same-named legacy pair that the directory was hiding.
+            File.WriteAllBytes(Path.Combine(destWorlds, "NewRealm.fwl"), BuildFwl(37, "NewRealm", "s"));
+            File.WriteAllBytes(Path.Combine(destWorlds, "NewRealm.db"), BuildDbHeader(37, 1800));
+
+            WorldStore.CopyWorld(WorldStore.Find(SaveFolder, "NewRealm"), dest, overwrite: true);
+
+            var copied = WorldStore.Find(dest, "NewRealm");
+            Assert.Equal(2, copied.SaveNumber);
+            Assert.False(File.Exists(Path.Combine(destWorld, "_main.7.fwl2")));
+            Assert.False(File.Exists(Path.Combine(destWorld, "07_07__0_41.chunk")));
+            Assert.False(File.Exists(Path.Combine(destWorlds, "NewRealm.fwl")));
+
+            // The staged swap leaves nothing behind beside the world either.
+            Assert.Equal(
+                new[] { "NewRealm" },
+                Directory.GetDirectories(destWorlds).Select(Path.GetFileName).OrderBy(n => n).ToArray());
+        }
+
+        [Fact]
+        public void CopyWorld_refuses_a_legacy_pair_that_is_already_at_the_destination()
+        {
+            MakeLegacyWorld("OldRealm");
+
+            var dest = Path.Combine(SaveFolder, "adopted");
+            var destWorlds = Path.Combine(dest, "worlds_local");
+            Directory.CreateDirectory(destWorlds);
+            File.WriteAllBytes(Path.Combine(destWorlds, "OldRealm.fwl"), BuildFwl(37, "OldRealm", "other"));
+            File.WriteAllBytes(Path.Combine(destWorlds, "OldRealm.fwl.old"), BuildFwl(37, "OldRealm", "other"));
+
+            Assert.Throws<InvalidOperationException>(
+                () => WorldStore.CopyWorld(WorldStore.Find(SaveFolder, "OldRealm"), dest));
+            Assert.Equal("other", FwlReader.TryRead(Path.Combine(destWorlds, "OldRealm.fwl")).SeedName);
+
+            WorldStore.CopyWorld(WorldStore.Find(SaveFolder, "OldRealm"), dest, overwrite: true);
+
+            Assert.Equal("seedy", FwlReader.TryRead(Path.Combine(destWorlds, "OldRealm.fwl")).SeedName);
+            // The ".fwl.old" the source has no answer for went with the world it belonged to.
+            Assert.False(File.Exists(Path.Combine(destWorlds, "OldRealm.fwl.old")));
+        }
+
+        // --------------------------------------------- no world comes back from the dead (W-11)
+
+        [Fact]
+        public void DeleteWorld_takes_the_legacy_pair_a_chunked_world_was_hiding()
+        {
+            var dir = WorldsDir();
+            MakeLegacyWorld("Both", seedName: "the-old-one");
+            MakeGeneration(Path.Combine(dir, "Both"), 1, committed: true);
+
+            // Only the 1.0 world is listed while both are there.
+            var only = Assert.Single(WorldStore.Enumerate(SaveFolder));
+            Assert.Equal(WorldFormat.Chunked, only.Format);
+
+            var deleted = WorldStore.DeleteWorld(SaveFolder, "Both");
+
+            Assert.Contains("Both", deleted);
+            Assert.Contains("Both.fwl", deleted);
+            Assert.Contains("Both.db", deleted);
+            Assert.False(File.Exists(Path.Combine(dir, "Both.fwl")));
+
+            // Nothing rises again on the next read.
+            Assert.Empty(WorldStore.Enumerate(SaveFolder));
+        }
+
+        // --------------------------------------- half a layer is still a layer (W-14)
+
+        [Fact]
+        public void An_orphan_backup_db_is_listed_as_damaged_and_goes_with_the_world()
+        {
+            var dir = WorldsDir();
+            MakeLegacyWorld("Midgard");
+
+            // The ".db" of a layer whose ".fwl" is gone: a whole world's worth of bytes that no
+            // screen could show and no delete could reach.
+            var orphan = Path.Combine(dir, "Midgard_backup_20260909-175156.db");
+            File.WriteAllBytes(orphan, BuildDbHeader(37, 1800));
+
+            var layer = Assert.Single(WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "Midgard"));
+            Assert.Equal("Midgard_backup_20260909-175156.db", layer.Name);
+            Assert.True(layer.IsDamaged);
+            Assert.False(layer.IsCommitted);
+            Assert.Null(layer.MetaPath);
+            Assert.True(layer.HasDb);
+            Assert.Equal(WorldBackupKind.Legacy, layer.Kind);
+            Assert.True(layer.SizeBytes > 0);
+
+            // A restore must never be pointed at it: there is no ".fwl" to restore from, and
+            // copying the ".db" into the live world's metadata file would break the world.
+            Assert.Null(WorldStore.ResolveBackupLayer(
+                SaveFolder, "worlds_local", "Midgard", "Midgard_backup_20260909-175156.db"));
+            Assert.NotNull(WorldStore.ResolveBackupLayer(
+                SaveFolder, "worlds_local", "Midgard", "Midgard_backup_20260909-175156.db", allowDamaged: true));
+
+            var deleted = WorldStore.DeleteWorld(SaveFolder, "Midgard");
+            Assert.Contains("Midgard_backup_20260909-175156.db", deleted);
+            Assert.False(File.Exists(orphan));
+        }
+
+        [Fact]
+        public void DeleteWorld_that_keeps_the_layers_keeps_the_old_pair_a_chunked_world_was_hiding()
+        {
+            var dir = WorldsDir();
+            MakeLegacyWorld("Both");
+            File.WriteAllBytes(Path.Combine(dir, "Both.fwl.old"), BuildFwl(37, "Both", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "Both.db.old"), BuildDbHeader(37, 1800));
+            MakeGeneration(Path.Combine(dir, "Both"), 1, committed: true);
+
+            var deleted = WorldStore.DeleteWorld(SaveFolder, "Both", includeBackups: false);
+
+            // The shadowed LIVE pair goes, because it would come back as a world of its own.
+            Assert.Contains("Both.fwl", deleted);
+            Assert.False(File.Exists(Path.Combine(dir, "Both.fwl")));
+
+            // The ".old" pair is a layer, and the caller asked for the layers to be left alone.
+            Assert.True(File.Exists(Path.Combine(dir, "Both.fwl.old")));
+            Assert.DoesNotContain("Both.fwl.old", deleted);
+            Assert.Empty(WorldStore.Enumerate(SaveFolder));
+        }
+
+        [Fact]
+        public void A_complete_layer_is_still_keyed_on_its_fwl_and_never_listed_twice()
+        {
+            var dir = WorldsDir();
+            MakeLegacyWorld("Midgard");
+            File.WriteAllBytes(Path.Combine(dir, "Midgard_backup_20260909-175156.fwl"), BuildFwl(37, "Midgard", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "Midgard_backup_20260909-175156.db"), BuildDbHeader(37, 1800));
+
+            var layer = Assert.Single(WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "Midgard"));
+            Assert.Equal("Midgard_backup_20260909-175156.fwl", layer.Name);
+            Assert.False(layer.IsDamaged);
+            Assert.True(layer.HasDb);
+        }
+
+        [Fact]
+        public void A_layer_that_lost_its_db_is_damaged_in_the_same_way_the_lone_db_is()
+        {
+            var dir = WorldsDir();
+            MakeLegacyWorld("Midgard");
+
+            // The ".db" of this layer was deleted to save space, so the ".fwl" is all that is
+            // left of it. Restoring it would copy an old seed and uid over the live world's
+            // metadata and leave the current database beside it, describing another save.
+            File.WriteAllBytes(Path.Combine(dir, "Midgard_backup_auto-20260722065046.fwl"), BuildFwl(37, "Midgard", "s"));
+
+            var layer = Assert.Single(WorldStore.EnumerateBackups(SaveFolder, "worlds_local", "Midgard"));
+            Assert.Equal("Midgard_backup_auto-20260722065046.fwl", layer.Name);
+            Assert.True(layer.IsDamaged);
+            Assert.False(layer.HasDb);
+            Assert.True(layer.SizeBytes > 0);
+
+            // Listed and deletable, never restorable: exactly what the lone ".db" gets.
+            Assert.Null(WorldStore.ResolveBackupLayer(
+                SaveFolder, "worlds_local", "Midgard", "Midgard_backup_auto-20260722065046.fwl"));
+            Assert.NotNull(WorldStore.ResolveBackupLayer(
+                SaveFolder, "worlds_local", "Midgard", "Midgard_backup_auto-20260722065046.fwl", allowDamaged: true));
+        }
+
+        // ------------------------------------- backup sets with no world left (W-14)
+
+        [Fact]
+        public void EnumerateOrphanBackups_finds_the_sets_whose_world_is_gone_in_both_subfolders()
+        {
+            var local = WorldsDir();
+            var legacy = WorldsDir("worlds");
+
+            // A live world with layers of its own: never an orphan.
+            MakeLegacyWorld("Final Sunset");
+            File.WriteAllBytes(Path.Combine(local, "Final Sunset_backup_auto-20260722065046.fwl"), BuildFwl(37, "Final Sunset", "s"));
+            File.WriteAllBytes(Path.Combine(local, "Final Sunset_backup_auto-20260722065046.db"), BuildDbHeader(37, 1800));
+
+            // Two sets in worlds_local whose worlds are long gone.
+            File.WriteAllBytes(Path.Combine(local, "Azula.fwl.old"), BuildFwl(37, "Azula", "s"));
+            File.WriteAllBytes(Path.Combine(local, "Azula_backup_20231120-133010.fwl"), BuildFwl(37, "Azula", "s"));
+            File.WriteAllBytes(Path.Combine(local, "Azula_backup_20231120-133010.db"), BuildDbHeader(37, 1800));
+            File.WriteAllBytes(Path.Combine(local, "NewAge_backup_20251214-171043.fwl"), BuildFwl(37, "NewAge", "s"));
+            File.WriteAllBytes(Path.Combine(local, "NewAge_backup_20251214-171043.db"), BuildDbHeader(37, 1800));
+
+            // And one in the sibling "worlds" folder.
+            File.WriteAllBytes(Path.Combine(legacy, "bruvs_backup_20240418-153951.fwl"), BuildFwl(37, "bruvs", "s"));
+            File.WriteAllBytes(Path.Combine(legacy, "bruvs_backup_20240418-153951.db"), BuildDbHeader(37, 1800));
+
+            var orphans = WorldStore.EnumerateOrphanBackups(SaveFolder);
+
+            Assert.Equal(
+                new[] { "Azula", "NewAge", "bruvs" },
+                orphans.Select(o => o.WorldName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+            Assert.DoesNotContain(orphans, o => o.WorldName == "Final Sunset");
+
+            var azula = orphans.Single(o => o.WorldName == "Azula");
+            Assert.Equal("worlds_local", azula.Sub);
+            Assert.Equal(
+                new[] { "Azula.fwl.old", "Azula_backup_20231120-133010.fwl" },
+                azula.Layers.Select(l => l.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+            Assert.True(azula.SizeBytes > 0);
+
+            Assert.Equal("worlds", orphans.Single(o => o.WorldName == "bruvs").Sub);
+
+            // Every layer of an owner less set still resolves, so a restore or a delete can be
+            // pointed at it exactly the way a live world's layer is.
+            Assert.NotNull(WorldStore.ResolveBackupLayer(
+                SaveFolder, "worlds_local", "NewAge", "NewAge_backup_20251214-171043.fwl"));
+        }
+
+        [Fact]
+        public void A_backup_set_stops_being_an_orphan_the_moment_its_world_is_back()
+        {
+            var dir = WorldsDir();
+            File.WriteAllBytes(Path.Combine(dir, "Azula_backup_20231120-133010.fwl"), BuildFwl(37, "Azula", "s"));
+            File.WriteAllBytes(Path.Combine(dir, "Azula_backup_20231120-133010.db"), BuildDbHeader(37, 1800));
+
+            Assert.Single(WorldStore.EnumerateOrphanBackups(SaveFolder));
+
+            // A world in the OTHER subfolder still owns its layers, so the set is not owner less.
+            MakeLegacyWorld("Azula", sub: "worlds");
+            Assert.Empty(WorldStore.EnumerateOrphanBackups(SaveFolder));
+        }
+
+        // ------------------------------------ a copy never takes the destination first (W-10)
+
+        [Fact]
+        public void CopyWorld_that_cannot_finish_a_legacy_pair_leaves_the_destination_world_whole()
+        {
+            MakeLegacyWorld("Realm", seedName: "the-new-one");
+
+            var dest = Path.Combine(SaveFolder, "adopted");
+            var destWorlds = Path.Combine(dest, "worlds_local");
+            Directory.CreateDirectory(destWorlds);
+            File.WriteAllBytes(Path.Combine(destWorlds, "Realm.fwl"), BuildFwl(37, "Realm", "the-old-one"));
+            File.WriteAllBytes(Path.Combine(destWorlds, "Realm.db"), BuildDbHeader(37, 1800));
+
+            var source = WorldStore.Find(SaveFolder, "Realm");
+
+            // The ".fwl" copies, then the ".db" cannot be read: a full disk, a cloud sync handle
+            // or a lock all land here. Before the staged copy, the destination pair had already
+            // been deleted by this point and there was no way back.
+            using (var _ = new FileStream(
+                Path.Combine(WorldsDir(), "Realm.db"), FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var failed = Assert.Throws<InvalidOperationException>(
+                    () => WorldStore.CopyWorld(source, dest, overwrite: true));
+                Assert.Contains("nothing in the destination folder was changed", failed.Message);
+            }
+
+            // The world that was there is exactly as it was, and no half copy is beside it.
+            Assert.Equal("the-old-one", FwlReader.TryRead(Path.Combine(destWorlds, "Realm.fwl")).SeedName);
+            Assert.True(File.Exists(Path.Combine(destWorlds, "Realm.db")));
+            Assert.Equal(
+                new[] { "Realm.db", "Realm.fwl" },
+                Directory.GetFiles(destWorlds).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        }
+
+        [Fact]
+        public void CopyWorld_refuses_the_save_folder_the_world_already_lives_in()
+        {
+            MakeLegacyWorld("Realm");
+            MakeGeneration(Path.Combine(WorldsDir(), "Chunky"), 2, committed: true);
+
+            // Same folder in, same folder out: with overwrite this used to delete the source
+            // pair and then copy it from the files it had just deleted.
+            foreach (var name in new[] { "Realm", "Chunky" })
+            {
+                var world = WorldStore.Find(SaveFolder, name);
+                var refused = Assert.Throws<InvalidOperationException>(
+                    () => WorldStore.CopyWorld(world, SaveFolder, overwrite: true));
+                Assert.Contains(name, refused.Message);
+            }
+
+            Assert.True(File.Exists(Path.Combine(WorldsDir(), "Realm.fwl")));
+            Assert.True(File.Exists(Path.Combine(WorldsDir(), "Realm.db")));
+            Assert.Equal(
+                new[] { "Chunky", "Realm" },
+                WorldStore.GetWorldNames(SaveFolder).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        }
+
+        [Fact]
+        public void CopyWorld_without_overwrite_refuses_a_destination_folder_rather_than_deleting_it()
+        {
+            MakeGeneration(MakeChunkedWorld("Realm"), 2, committed: true);
+
+            // A destination directory of that name that holds no finished save: the ".fwl2" was
+            // lost to a cloud sync conflict, so nothing claims the name through the world list,
+            // but the database and the chunk files are still all there.
+            var dest = Path.Combine(SaveFolder, "adopted");
+            var destWorld = Path.Combine(dest, "worlds_local", "Realm");
+            Directory.CreateDirectory(destWorld);
+            File.WriteAllBytes(Path.Combine(destWorld, "_main.3.db2"), BuildDbHeader(41, 1800));
+            File.WriteAllBytes(Path.Combine(destWorld, "00_00__0_41.chunk"), new byte[64]);
+
+            var refused = Assert.Throws<InvalidOperationException>(
+                () => WorldStore.CopyWorld(WorldStore.Find(SaveFolder, "Realm"), dest));
+            Assert.Contains("Realm", refused.Message);
+
+            // A call that did not ask to replace anything never deletes a tree.
+            Assert.True(File.Exists(Path.Combine(destWorld, "_main.3.db2")));
+            Assert.True(File.Exists(Path.Combine(destWorld, "00_00__0_41.chunk")));
+            Assert.False(File.Exists(Path.Combine(destWorld, "_main.2.fwl2")));
+        }
+
+        // ------------------------------ a delete reaches both spellings of the name (W-11)
+
+        [Fact]
+        public void DeleteWorld_takes_the_same_named_world_hiding_in_the_sibling_subfolder()
+        {
+            var local = WorldsDir();
+            var legacy = WorldsDir("worlds");
+
+            // The live world, and a stale 2023 era pair of the same name in the other spelling
+            // of the worlds folder. The dedupe hides the second one for exactly as long as the
+            // first is there, so no list has ever shown it.
+            MakeLegacyWorld("Final Sunset", seedName: "the-live-one");
+            MakeLegacyWorld("Final Sunset", sub: "worlds", seedName: "the-stale-one");
+            File.WriteAllBytes(Path.Combine(legacy, "Final Sunset_backup_20231202-002515.fwl"), BuildFwl(37, "Final Sunset", "s"));
+
+            var only = Assert.Single(WorldStore.Enumerate(SaveFolder));
+            Assert.Equal("worlds_local", only.Sub);
+
+            WorldStore.DeleteWorld(SaveFolder, "Final Sunset");
+
+            // Nothing rises again on the next read, in either spelling.
+            Assert.Empty(WorldStore.Enumerate(SaveFolder));
+            Assert.False(File.Exists(Path.Combine(local, "Final Sunset.fwl")));
+            Assert.False(File.Exists(Path.Combine(legacy, "Final Sunset.fwl")));
+            Assert.False(File.Exists(Path.Combine(legacy, "Final Sunset_backup_20231202-002515.fwl")));
+        }
+
+        [Fact]
+        public void DeleteWorld_takes_a_shadowed_chunked_directory_in_the_sibling_subfolder()
+        {
+            var local = WorldsDir();
+            MakeGeneration(Path.Combine(local, "Realm"), 2, committed: true);
+            MakeGeneration(Path.Combine(WorldsDir("worlds"), "Realm"), 1, committed: true);
+
+            Assert.Single(WorldStore.Enumerate(SaveFolder));
+
+            WorldStore.DeleteWorld(SaveFolder, "Realm");
+
+            Assert.Empty(WorldStore.Enumerate(SaveFolder));
+            Assert.False(Directory.Exists(Path.Combine(WorldsDir("worlds"), "Realm")));
         }
     }
 }

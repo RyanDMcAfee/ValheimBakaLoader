@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -36,6 +36,31 @@ namespace ValheimBakaLoader.Tools
         /// <summary>Bytes still to download for the pending update. Zero when nothing is pending.</summary>
         public long PendingBytes { get; init; }
 
+        /// <summary>The build Steam means to have installed here, when the manifest named one.</summary>
+        public string TargetBuildId { get; init; }
+
+        /// <summary>
+        /// Steam's own StateFlags for the install: 4 is "fully installed and nothing queued",
+        /// which is the only value that ends a download. Zero without a manifest.
+        /// </summary>
+        public long StateFlags { get; init; }
+
+        /// <summary>Size of the download Steam last planned, straight out of the manifest.</summary>
+        public long BytesToDownload { get; init; }
+
+        /// <summary>How much of that download Steam has fetched so far.</summary>
+        public long BytesDownloaded { get; init; }
+
+        /// <summary>
+        /// Size of the staging pass Steam runs after the last byte arrives, when the manifest
+        /// carried one. The download counters stop moving while this one does, so both are
+        /// watched before an update is called stalled.
+        /// </summary>
+        public long BytesToStage { get; init; }
+
+        /// <summary>How much of that staging pass Steam has done so far.</summary>
+        public long BytesStaged { get; init; }
+
         /// <summary>
         /// SHA-256 over the server exe and assembly_valheim.dll (each file's bytes plus its
         /// length). Null when neither file could be read.
@@ -44,6 +69,13 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>Full path of the appmanifest that was read, or null when none was found.</summary>
         public string ManifestPath { get; init; }
+
+        /// <summary>
+        /// The server executable this info was probed from. Kept so the launch guard can
+        /// hash the binaries once when an identity arrives in a different form than the one
+        /// that was stored last time. Null on infos built by hand in tests.
+        /// </summary>
+        public string ExePath { get; init; }
 
         public ServerBuildSource Source { get; init; }
 
@@ -89,7 +121,19 @@ namespace ValheimBakaLoader.Tools
 
         public const string ManifestFileName = "appmanifest_" + SteamAppId + ".acf";
 
+        /// <summary>The dedicated server executable, which is what makes a folder an install.</summary>
+        private const string ServerExeName = "valheim_server.exe";
+
+        /// <summary>Both folder separators, so a trailing one never hides a parent folder.</summary>
+        private static readonly char[] SlashChars = { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
+
         private const string SteamAppsFolderName = "steamapps";
+
+        /// <summary>The folder Steam puts every installed game in, inside a library's steamapps.</summary>
+        private const string SteamCommonFolderName = "common";
+
+        /// <summary>The Steam client's own list of libraries, in a library root and in its config folder.</summary>
+        private const string LibraryFoldersFileName = "libraryfolders.vdf";
 
         /// <summary>Steam's StateUpdateRequired bit inside StateFlags (value 6 = installed + update required).</summary>
         private const int StateUpdateRequired = 2;
@@ -108,8 +152,15 @@ namespace ValheimBakaLoader.Tools
         private static readonly Regex StateFlagsKey = Key("StateFlags");
         private static readonly Regex BytesToDownloadKey = Key("BytesToDownload");
         private static readonly Regex BytesDownloadedKey = Key("BytesDownloaded");
+        private static readonly Regex BytesToStageKey = Key("BytesToStage");
+        private static readonly Regex BytesStagedKey = Key("BytesStaged");
         private static readonly Regex LastUpdatedKey = Key("LastUpdated");
         private static readonly Regex TargetBuildIdKey = Key("TargetBuildID");
+        private static readonly Regex InstallDirKey = Key("installdir");
+
+        // Every "path" entry in the Steam client's libraryfolders.vdf.
+        private static readonly Regex LibraryPathKey = new(
+            "\"path\"\\s*\"([^\"]*)\"", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         /// <summary>
         /// Probes the install that owns <paramref name="serverExePath"/>. Never throws: an
@@ -139,6 +190,7 @@ namespace ValheimBakaLoader.Tools
                     PendingBytes = 0,
                     Fingerprint = fingerprint,
                     ManifestPath = null,
+                    ExePath = serverExePath,
                     Source = fingerprint != null ? ServerBuildSource.Fingerprint : ServerBuildSource.Unknown,
                 };
             }
@@ -151,22 +203,27 @@ namespace ValheimBakaLoader.Tools
             catch
             {
                 // The manifest exists but cannot be read (locked by Steam mid-write, or
-                // permissions). Fall back to the binaries rather than guessing.
+                // permissions). Hash the binaries instead: the outer "fingerprint" local is
+                // null on this path, because a manifest was found, so it has to be computed
+                // here. Returning it null would hand the launch guard no identity at all,
+                // which reads as "nothing changed" and quietly clears the guard.
+                var fallback = fingerprint ?? Fingerprint(serverExePath);
                 return new ServerBuildInfo
                 {
-                    Fingerprint = fingerprint,
+                    Fingerprint = fallback,
                     ManifestPath = manifestPath,
-                    Source = fingerprint != null ? ServerBuildSource.Fingerprint : ServerBuildSource.Unknown,
+                    ExePath = serverExePath,
+                    Source = fallback != null ? ServerBuildSource.Fingerprint : ServerBuildSource.Unknown,
                 };
             }
 
-            var info = ParseManifest(text, manifestPath, fingerprint);
+            var info = ParseManifest(text, manifestPath, fingerprint, serverExePath);
 
             // A manifest with no readable buildid tells us nothing about identity, so fall
             // back to the binaries rather than reporting an unknown build.
             if (info.BuildId == null && info.Fingerprint == null)
             {
-                info = ParseManifest(text, manifestPath, Fingerprint(serverExePath));
+                info = ParseManifest(text, manifestPath, Fingerprint(serverExePath), serverExePath);
             }
 
             return info;
@@ -176,7 +233,8 @@ namespace ValheimBakaLoader.Tools
         /// Turns appmanifest text into a build info. Split out from <see cref="Probe"/> so the
         /// parsing can be proved against real .acf files without an install on disk.
         /// </summary>
-        public static ServerBuildInfo ParseManifest(string manifestText, string manifestPath = null, string fingerprint = null)
+        public static ServerBuildInfo ParseManifest(
+            string manifestText, string manifestPath = null, string fingerprint = null, string serverExePath = null)
         {
             if (manifestText == null) manifestText = string.Empty;
 
@@ -185,6 +243,8 @@ namespace ValheimBakaLoader.Tools
             var stateFlags = ReadLong(manifestText, StateFlagsKey) ?? 0;
             var toDownload = ReadLong(manifestText, BytesToDownloadKey) ?? 0;
             var downloaded = ReadLong(manifestText, BytesDownloadedKey) ?? 0;
+            var toStage = ReadLong(manifestText, BytesToStageKey) ?? 0;
+            var staged = ReadLong(manifestText, BytesStagedKey) ?? 0;
 
             // BytesToDownload is the SIZE of the last download Steam planned, not what is
             // left of it: a finished install keeps the full number with BytesDownloaded
@@ -203,8 +263,15 @@ namespace ValheimBakaLoader.Tools
                 BuildId = string.IsNullOrWhiteSpace(buildId) ? null : buildId,
                 UpdatePending = pending,
                 PendingBytes = pending ? pendingBytes : 0,
+                TargetBuildId = string.IsNullOrWhiteSpace(targetBuildId) ? null : targetBuildId,
+                StateFlags = stateFlags,
+                BytesToDownload = toDownload,
+                BytesDownloaded = downloaded,
+                BytesToStage = toStage,
+                BytesStaged = staged,
                 Fingerprint = fingerprint,
                 ManifestPath = manifestPath,
+                ExePath = serverExePath,
                 Source = string.IsNullOrWhiteSpace(buildId)
                     ? (fingerprint != null ? ServerBuildSource.Fingerprint : ServerBuildSource.Unknown)
                     : ServerBuildSource.Manifest,
@@ -213,9 +280,17 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
-        /// Walks up from the executable looking for "appmanifest_896660.acf": inside a
-        /// "steamapps" folder on the way up (the Steam library layout), or in a "steamapps"
-        /// child of any folder on the way up (the steamcmd layout). Null when there is none.
+        /// Walks up from the executable looking for "appmanifest_896660.acf": beside the
+        /// install in its own "steamapps" folder (the steamcmd layout), or in the library's
+        /// "steamapps" folder two levels up (the Steam library layout). Null when there is none.
+        ///
+        /// A manifest is only accepted when it really describes THIS install. steamcmd's own
+        /// "&lt;install&gt;/steamapps/appmanifest_896660.acf" beside the exe is taken as read;
+        /// every manifest found further up has to prove itself by carrying an "installdir"
+        /// that matches the folder the exe sits in. Without that rule a second server folder
+        /// under the same library (a copy at "common/vds-modded", an isolated instance, a hand
+        /// copy in a subfolder) inherits a neighbour's manifest and reports a build it is not
+        /// running, and an update aimed at it would go to the neighbour instead.
         /// </summary>
         public static string FindManifest(string serverExePath)
         {
@@ -231,22 +306,264 @@ namespace ValheimBakaLoader.Tools
                 return null;
             }
 
+            var installName = dir?.Name;
+
             for (var level = 0; dir != null && level <= MaxParentLevels; level++, dir = dir.Parent)
             {
-                // The steamcmd layout: "<install>/steamapps/appmanifest_896660.acf".
+                // The steamcmd layout: "<install>/steamapps/appmanifest_896660.acf", which
+                // steamcmd writes beside the exe it just installed.
                 var nested = Path.Combine(dir.FullName, SteamAppsFolderName, ManifestFileName);
-                if (SafeFileExists(nested)) return nested;
+                if (SafeFileExists(nested) && (level == 0 || InstallDirMatches(nested, installName)))
+                {
+                    return nested;
+                }
 
                 // The Steam library layout: the manifest sits in the steamapps folder itself,
                 // two levels above "steamapps/common/<install>/valheim_server.exe".
                 if (string.Equals(dir.Name, SteamAppsFolderName, StringComparison.OrdinalIgnoreCase))
                 {
+                    // Sitting one level under "common" is not proof on its own: a second
+                    // server folder beside the real install ("common/vds-modded") sits exactly
+                    // there and would otherwise report the neighbour's build and its pending
+                    // update. The manifest has to name the folder the executable is in.
                     var here = Path.Combine(dir.FullName, ManifestFileName);
-                    if (SafeFileExists(here)) return here;
+                    if (SafeFileExists(here) && InstallDirMatches(here, installName))
+                    {
+                        return here;
+                    }
                 }
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// True when the manifest names the folder the executable actually sits in. Used to
+        /// accept a manifest found somewhere other than the two canonical layouts. An
+        /// unreadable manifest answers false: it cannot prove anything.
+        /// </summary>
+        private static bool InstallDirMatches(string manifestPath, string installFolderName)
+        {
+            if (string.IsNullOrWhiteSpace(installFolderName)) return false;
+
+            string text;
+            try { text = File.ReadAllText(manifestPath); }
+            catch { return false; }
+
+            var named = ReadString(text, InstallDirKey);
+            return !string.IsNullOrWhiteSpace(named)
+                && string.Equals(named, installFolderName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Decides how the install that owns <paramref name="serverExePath"/> got there, which
+        /// is what says whether BakaLoader may update it with steamcmd (its own folder) or has
+        /// to hand the job to the Steam client (a library the client owns). Pure and fast: it
+        /// reads two small text files at most and never hashes anything.
+        /// </summary>
+        public static ServerInstallInfo ClassifyInstall(string serverExePath)
+        {
+            var unknown = new ServerInstallInfo { Kind = ServerInstallKind.Unknown };
+
+            if (string.IsNullOrWhiteSpace(serverExePath))
+            {
+                unknown.Reason = "This profile has no server executable set yet.";
+                return unknown;
+            }
+
+            string installDir;
+            try { installDir = Path.GetDirectoryName(Path.GetFullPath(serverExePath)); }
+            catch { installDir = null; }
+
+            unknown.InstallDir = installDir;
+
+            if (installDir == null)
+            {
+                unknown.Reason = "The server executable path could not be read.";
+                return unknown;
+            }
+
+            var manifestPath = FindManifest(serverExePath);
+            if (manifestPath == null)
+            {
+                // An isolated instance is a folder BakaLoader made itself, so blaming the host
+                // for a hand copy would be wrong twice over. The install that CAN be updated is
+                // the one it was provisioned from, so say which one that is.
+                unknown.Reason = IsolatedInstanceReason(installDir)
+                    ?? "This install has no Steam manifest, so it was copied here by hand rather than installed by Steam or steamcmd.";
+                return unknown;
+            }
+
+            unknown.ManifestPath = manifestPath;
+
+            var manifestDir = Path.GetDirectoryName(manifestPath);
+            if (manifestDir == null)
+            {
+                unknown.Reason = "The Steam manifest for this install could not be read.";
+                return unknown;
+            }
+
+            // A Steam client library: the manifest sits in a steamapps folder that carries the
+            // client's own libraryfolders.vdf, is listed in the client's library list, or holds
+            // the install under "common" the way the client lays every library out.
+            var libraryRoot = Path.GetDirectoryName(manifestDir);
+            var inLibrary =
+                SafeFileExists(Path.Combine(manifestDir, LibraryFoldersFileName))
+                || IsUnderSteamCommon(installDir, manifestDir)
+                || IsRegisteredSteamLibrary(libraryRoot);
+
+            if (inLibrary)
+            {
+                return new ServerInstallInfo
+                {
+                    Kind = ServerInstallKind.SteamLibrary,
+                    InstallDir = installDir,
+                    ManifestPath = manifestPath,
+                    LibraryRoot = libraryRoot,
+                };
+            }
+
+            // steamcmd writes its own steamapps folder inside the folder it installed into.
+            if (SamePath(manifestDir, Path.Combine(installDir, SteamAppsFolderName)))
+            {
+                return new ServerInstallInfo
+                {
+                    Kind = ServerInstallKind.Standalone,
+                    InstallDir = installDir,
+                    ManifestPath = manifestPath,
+                };
+            }
+
+            unknown.Reason = "The Steam manifest for this install sits somewhere BakaLoader does not recognise, so it cannot tell who owns the folder.";
+            return unknown;
+        }
+
+        /// <summary>
+        /// A plain sentence for an install BakaLoader provisioned itself, naming the base
+        /// install it was copied from when that folder can still be found beside it. Null when
+        /// the folder is not one of BakaLoader's isolated instances.
+        /// </summary>
+        private static string IsolatedInstanceReason(string installDir)
+        {
+            if (string.IsNullOrWhiteSpace(installDir)) return null;
+
+            string parentName;
+            string instancesRoot;
+            try
+            {
+                var parent = Directory.GetParent(installDir.TrimEnd(SlashChars));
+                parentName = parent?.Name;
+                instancesRoot = parent?.FullName;
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (!string.Equals(parentName, InstallIsolationService.InstancesRootName, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var baseName = FindBaseInstallName(instancesRoot);
+            return baseName != null
+                ? "This is an isolated copy BakaLoader made from \"" + baseName
+                    + "\". Update that install, then provision this one again."
+                : "This is an isolated copy BakaLoader made from another install. Update the install it was made from, then provision this one again.";
+        }
+
+        /// <summary>
+        /// The name of the only server install sitting beside the instances root, which is
+        /// where an isolated copy's base lives. Null when there is not exactly one.
+        /// </summary>
+        private static string FindBaseInstallName(string instancesRoot)
+        {
+            try
+            {
+                var siblings = Directory.GetParent(instancesRoot);
+                if (siblings == null) return null;
+
+                string found = null;
+                foreach (var folder in siblings.EnumerateDirectories())
+                {
+                    if (string.Equals(folder.Name, InstallIsolationService.InstancesRootName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!SafeFileExists(Path.Combine(folder.FullName, ServerExeName))) continue;
+                    if (found != null) return null;   // two candidates name neither
+                    found = folder.Name;
+                }
+
+                return found;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>True when the install sits at "&lt;steamapps&gt;/common/&lt;install&gt;", Steam's own shape.</summary>
+        private static bool IsUnderSteamCommon(string installDir, string manifestDir)
+        {
+            try
+            {
+                var parent = Path.GetDirectoryName(installDir);
+                return parent != null
+                    && string.Equals(Path.GetFileName(parent), SteamCommonFolderName, StringComparison.OrdinalIgnoreCase)
+                    && SamePath(Path.GetDirectoryName(parent), manifestDir);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// True when the Steam client on this machine lists the folder as one of its
+        /// libraries. Reads the client's own libraryfolders.vdf; any failure answers false.
+        /// </summary>
+        private static bool IsRegisteredSteamLibrary(string libraryRoot)
+        {
+            if (string.IsNullOrWhiteSpace(libraryRoot)) return false;
+
+            try
+            {
+                var steamPath = Microsoft.Win32.Registry.GetValue(
+                    @"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string;
+                if (string.IsNullOrWhiteSpace(steamPath)) return false;
+
+                var listing = Path.Combine(steamPath, "config", LibraryFoldersFileName);
+                if (!SafeFileExists(listing)) return false;
+
+                var text = File.ReadAllText(listing);
+                foreach (Match m in LibraryPathKey.Matches(text))
+                {
+                    var path = m.Groups[1].Value.Replace(@"\\", @"\");
+                    if (SamePath(path, libraryRoot)) return true;
+                }
+            }
+            catch
+            {
+                // No Steam client, no permission, or a listing we cannot parse: the caller
+                // still has the two layout rules above to go on.
+            }
+
+            return false;
+        }
+
+        /// <summary>Compares two folder paths the way Windows does, trailing slashes and all.</summary>
+        private static bool SamePath(string left, string right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)) return false;
+            try
+            {
+                return string.Equals(
+                    Path.GetFullPath(left).TrimEnd('\\', '/'),
+                    Path.GetFullPath(right).TrimEnd('\\', '/'),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
@@ -368,6 +685,23 @@ namespace ValheimBakaLoader.Tools
         /// <param name="lastLaunchedBuild">The build id (or fingerprint) this profile last started.</param>
         /// <param name="hasWorlds">True when the profile's save folder already holds at least one world.</param>
         public static LaunchGuardOutcome Decide(ServerBuildInfo current, string lastLaunchedBuild, bool hasWorlds)
+            => Decide(current, lastLaunchedBuild, null, hasWorlds);
+
+        /// <summary>
+        /// The same decision with the second half of the stored identity available. A profile
+        /// records both what Steam called the build and what the binaries hashed to, so when
+        /// the manifest cannot be read at this start the guard still has a fingerprint to
+        /// compare a fingerprint against instead of having to say nothing changed.
+        /// </summary>
+        /// <param name="current">What the install looks like right now.</param>
+        /// <param name="lastLaunchedBuild">The build id (or fingerprint) this profile last started.</param>
+        /// <param name="lastLaunchedFingerprint">
+        /// The binary fingerprint taken at that same launch, or null for a profile last
+        /// launched by a version of BakaLoader that did not record one.
+        /// </param>
+        /// <param name="hasWorlds">True when the profile's save folder already holds at least one world.</param>
+        public static LaunchGuardOutcome Decide(
+            ServerBuildInfo current, string lastLaunchedBuild, string lastLaunchedFingerprint, bool hasWorlds)
         {
             // Nothing readable about the install: never block a start on a guess.
             if (current == null) return LaunchGuardOutcome.Proceed;
@@ -381,15 +715,89 @@ namespace ValheimBakaLoader.Tools
 
             if (string.IsNullOrWhiteSpace(lastLaunchedBuild))
             {
+                // Nothing was stored under the build id, but a fingerprint may still have been:
+                // it is the same launch, recorded twice, so either half is enough to decide on.
+                if (!string.IsNullOrWhiteSpace(lastLaunchedFingerprint))
+                    return CompareFingerprints(current, lastLaunchedFingerprint);
+
                 // First launch this profile has ever been through the guard. A brand new
                 // profile has nothing to lose; one that already owns worlds might, because
                 // this could be the first start since a game update.
                 return hasWorlds ? LaunchGuardOutcome.BuildChanged : LaunchGuardOutcome.Proceed;
             }
 
-            return string.Equals(identity, lastLaunchedBuild, StringComparison.OrdinalIgnoreCase)
+            if (string.Equals(identity, lastLaunchedBuild, StringComparison.OrdinalIgnoreCase))
+            {
+                return LaunchGuardOutcome.Proceed;
+            }
+
+            // The identity is a Steam build id when the manifest could be read and a binary
+            // fingerprint when it could not, so it changes shape whenever the manifest starts
+            // or stops being readable. That is a change in how we looked, not a change in what
+            // is installed, and it must not be reported as a new build on its own. When the
+            // stored value and the new one are different kinds, compare like with like: the
+            // binaries can always be hashed again, and a build id can only be compared to a
+            // build id. With nothing comparable left, say nothing changed rather than invent it.
+            if (LooksLikeFingerprint(lastLaunchedBuild) != LooksLikeFingerprint(identity))
+            {
+                var comparable = LooksLikeFingerprint(lastLaunchedBuild)
+                    ? current.Fingerprint ?? ServerBuildTracker.Fingerprint(current.ExePath)
+                    : current.BuildId;
+
+                if (string.IsNullOrWhiteSpace(comparable))
+                {
+                    // The mirror image of the case above: a build id was stored and the manifest
+                    // is unreadable now, so there is no build id left to compare it to. The
+                    // fingerprint recorded beside it at that launch is comparable, and using it
+                    // is the difference between catching a game update that landed in the same
+                    // moment the manifest went quiet and waving it through.
+                    if (!string.IsNullOrWhiteSpace(lastLaunchedFingerprint))
+                        return CompareFingerprints(current, lastLaunchedFingerprint);
+
+                    return LaunchGuardOutcome.Proceed;
+                }
+
+                return string.Equals(comparable, lastLaunchedBuild, StringComparison.OrdinalIgnoreCase)
+                    ? LaunchGuardOutcome.Proceed
+                    : LaunchGuardOutcome.BuildChanged;
+            }
+
+            return LaunchGuardOutcome.BuildChanged;
+        }
+
+        /// <summary>
+        /// Compares what the binaries hash to right now against the fingerprint stored at the
+        /// last launch. A fingerprint that cannot be taken at all decides nothing, so the start
+        /// goes ahead rather than being blocked on a guess.
+        /// </summary>
+        private static LaunchGuardOutcome CompareFingerprints(ServerBuildInfo current, string lastLaunchedFingerprint)
+        {
+            var now = current.Fingerprint ?? ServerBuildTracker.Fingerprint(current.ExePath);
+            if (string.IsNullOrWhiteSpace(now)) return LaunchGuardOutcome.Proceed;
+
+            // The binaries really are different, which is a build change however the identity
+            // was written down. Same answer the build id comparison gives, and for the same
+            // reason: this launch is about to convert whatever is on disk.
+            return string.Equals(now, lastLaunchedFingerprint, StringComparison.OrdinalIgnoreCase)
                 ? LaunchGuardOutcome.Proceed
                 : LaunchGuardOutcome.BuildChanged;
+        }
+
+        /// <summary>
+        /// True for a binary fingerprint (64 hex characters of SHA-256) as opposed to a Steam
+        /// build id, which is a short run of digits.
+        /// </summary>
+        private static bool LooksLikeFingerprint(string identity)
+        {
+            if (identity == null || identity.Length != 64) return false;
+
+            foreach (var c in identity)
+            {
+                var hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                if (!hex) return false;
+            }
+
+            return true;
         }
 
         /// <summary>The wire token for an outcome (what the WebUI switches on).</summary>

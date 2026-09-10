@@ -280,9 +280,12 @@ namespace ValheimBakaLoader.Tools
 
         private void SaveMessageId(string id)
         {
-            var prefs = UserPrefsProvider.LoadPreferences();
-            prefs.DiscordStatusMessageId = id;
-            UserPrefsProvider.SavePreferences(prefs);
+            // This runs on the publish timer's thread while the server's own thread can be
+            // recording a launched build into the same document. Both write the WHOLE of
+            // userprefs.json, so the load and the write belong under the one gate: without it the
+            // later of the two put the other's change back the way it was, and a profile that lost
+            // its launch history got asked about a build change that had already happened.
+            UserPrefsProvider.Mutate(prefs => prefs.DiscordStatusMessageId = id);
         }
 
         private static string BuildThreadQuery(UserPreferences prefs)
@@ -302,8 +305,8 @@ namespace ValheimBakaLoader.Tools
             var fields = new List<object>
             {
                 new { name = "Status", value = s.StatusText ?? "Unknown", inline = true },
-                new { name = "Players online", value = s.ServerRunning ? s.PlayersOnline.ToString() : "—", inline = true },
-                new { name = "World", value = string.IsNullOrWhiteSpace(s.WorldName) ? "—" : s.WorldName, inline = true },
+                new { name = "Players online", value = s.ServerRunning ? s.PlayersOnline.ToString() : "-", inline = true },
+                new { name = "World", value = string.IsNullOrWhiteSpace(s.WorldName) ? "-" : s.WorldName, inline = true },
             };
 
             if (prefs.DiscordShareAddress)
@@ -311,7 +314,7 @@ namespace ValheimBakaLoader.Tools
                 fields.Add(new
                 {
                     name = "Join address",
-                    value = string.IsNullOrWhiteSpace(s.AddressText) ? "—" : $"`{s.AddressText}`",
+                    value = string.IsNullOrWhiteSpace(s.AddressText) ? "-" : $"`{s.AddressText}`",
                     inline = true,
                 });
             }
@@ -321,7 +324,7 @@ namespace ValheimBakaLoader.Tools
             fields.Add(new
             {
                 name = "Last mod update",
-                value = s.LastModUpdateUtc.HasValue ? $"<t:{ToUnix(s.LastModUpdateUtc.Value)}:R>" : "—",
+                value = s.LastModUpdateUtc.HasValue ? $"<t:{ToUnix(s.LastModUpdateUtc.Value)}:R>" : "-",
                 inline = true,
             });
 

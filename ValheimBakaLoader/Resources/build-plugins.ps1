@@ -15,6 +15,11 @@
 #       -ManagedDir "D:\SteamLibrary\steamapps\common\Valheim dedicated server\valheim_server_Data\Managed" `
 #       -CoreDir    "D:\SteamLibrary\steamapps\common\Valheim dedicated server\BepInEx\core"
 #
+# This is the ONE recipe for all five bundled plugins, the item indexer included. Its source
+# lives in its own folder outside Resources, but it is built here with the same compiler and the
+# same reference set as the other four, so a game update can never leave one of them built
+# against a different assembly set than the rest. Pass -SkipItemIndexer to leave it alone.
+#
 # Add -OutDir to write the DLLs somewhere else than next to their sources (useful for a dry run
 # that must not touch the bundled binaries).
 #
@@ -27,6 +32,9 @@ param(
     [Parameter(Mandatory = $true)][string] $CoreDir,
     [string] $Csc = "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Current\Bin\Roslyn\csc.exe",
     [string] $OutDir = "",
+    [switch] $SkipItemIndexer,
+    # Kept so an older command line still runs. The indexer is built by default now, so this
+    # switch no longer changes anything.
     [switch] $IncludeItemIndexer
 )
 
@@ -56,8 +64,15 @@ $plugins = @(
 )
 
 if ($IncludeItemIndexer) {
+    Write-Host "-IncludeItemIndexer is no longer needed: the item indexer is built by default."
+}
+
+if ($SkipItemIndexer) {
+    Write-Host "Skipping the item indexer because -SkipItemIndexer was passed."
+} else {
     # The item indexer's source lives outside Resources (it has its own project folder), but the
-    # DLL is bundled under Resources\ItemIndexer just like the others.
+    # DLL is bundled under Resources\ItemIndexer just like the others, and it is built here so all
+    # five come out of one compiler against one reference set.
     $plugins += @{ Dir = "ItemIndexer"; Source = "..\..\..\BakaLoaderItemIndexer\Plugin.cs"; Out = "BakaLoaderItemIndexer.dll" }
 }
 
