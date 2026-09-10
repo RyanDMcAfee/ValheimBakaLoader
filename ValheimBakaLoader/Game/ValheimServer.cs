@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,6 +16,106 @@ using ValheimBakaLoader.Tools.Processes;
 
 namespace ValheimBakaLoader.Game
 {
+    /// <summary>Why a launch is being attempted. Carried on <see cref="LaunchContext"/>.</summary>
+    public static class LaunchReasons
+    {
+        /// <summary>The host pressed Start.</summary>
+        public const string Manual = "manual";
+
+        /// <summary>The profile's auto-start pref fired when BakaLoader opened.</summary>
+        public const string AutoStart = "autostart";
+
+        /// <summary>The every-N-hours scheduled restart came round.</summary>
+        public const string Scheduled = "scheduled";
+
+        /// <summary>The server sat empty long enough to be restarted.</summary>
+        public const string Empty = "empty";
+
+        /// <summary>The server process died and crash recovery is relaunching it.</summary>
+        public const string Crash = "crash";
+
+        /// <summary>Updates were applied in the stopped gap and the server is coming back up.</summary>
+        public const string SelfUpdate = "selfupdate";
+    }
+
+    /// <summary>
+    /// Everything the launch guard needs to decide whether a start may go ahead: who asked,
+    /// what the install looks like right now, and what this profile last actually ran.
+    /// </summary>
+    public sealed class LaunchContext
+    {
+        /// <summary>True when nobody is necessarily at the keyboard, so no dialog may block.</summary>
+        public bool Automatic { get; init; }
+
+        /// <summary>One of <see cref="LaunchReasons"/>.</summary>
+        public string Reason { get; init; }
+
+        /// <summary>The Valheim server install as it is on disk right now.</summary>
+        public Tools.ServerBuildInfo Current { get; init; }
+
+        /// <summary>Build id or fingerprint this profile last started, or null.</summary>
+        public string LastLaunchedBuild { get; init; }
+
+        /// <summary>Game version that server reported, or null.</summary>
+        public string LastLaunchedGameVersion { get; init; }
+
+        /// <summary>True when the profile's save folder already holds at least one world.</summary>
+        public bool HasWorlds { get; init; }
+
+        /// <summary>The profile this launch belongs to, when the server knows it.</summary>
+        public string ProfileName { get; init; }
+
+        /// <summary>The options the server is about to launch with.</summary>
+        public IValheimServerOptions Options { get; init; }
+
+        /// <summary>
+        /// Whether this launch may use an answer the host staged in the UI. Only a launch the
+        /// host asked for may: the start they pressed, and the restart they pressed, which
+        /// relaunches unattended but carries the manual reason through the stop and back up
+        /// again. Everything BakaLoader decides on by itself - crash recovery, the empty-server
+        /// and scheduled cycles, the auto-start, a relaunch that applied updates - has to ask
+        /// again, or an answer that was never given about it brings a server up on a changed
+        /// build with no backup and nobody watching.
+        /// </summary>
+        public bool MayUseStagedAnswer => Reason == LaunchReasons.Manual;
+    }
+
+    /// <summary>The launch guard's answer.</summary>
+    public sealed class LaunchDecision
+    {
+        /// <summary>False holds the launch: nothing is started and the reason is logged.</summary>
+        public bool Proceed { get; init; }
+
+        /// <summary>Copy every world aside before the process starts. Ignored when holding.</summary>
+        public bool BackupFirst { get; init; }
+
+        /// <summary>Optional detail for the log line ("host chose start anyway").</summary>
+        public string Note { get; init; }
+
+        public static LaunchDecision Go(string note = null) => new() { Proceed = true, Note = note };
+
+        public static LaunchDecision BackUpThenGo(string note = null)
+            => new() { Proceed = true, BackupFirst = true, Note = note };
+
+        public static LaunchDecision Hold(string note = null) => new() { Proceed = false, Note = note };
+    }
+
+    /// <summary>
+    /// A launch that finished without the server coming up. Status never moved, so nothing
+    /// else tells the UI the attempt is over and the Start button can be pressed again.
+    /// </summary>
+    public sealed class LaunchSettledEventArgs : EventArgs
+    {
+        /// <summary>One of <see cref="LaunchReasons"/>.</summary>
+        public string Reason { get; init; }
+
+        /// <summary>True when the guard held the launch on purpose rather than something failing.</summary>
+        public bool Held { get; init; }
+
+        /// <summary>A sentence for the host, or null when the hold already said its piece.</summary>
+        public string Error { get; init; }
+    }
+
     /// <summary>
     /// Owns the valheim_server.exe process: launch arguments, lifecycle (start/stop/
     /// restart/adopt), stdout log parsing into player events, RCON player actions,
@@ -69,6 +170,38 @@ namespace ValheimBakaLoader.Game
         /// <summary>Fires when the game reports a world save, with the save duration in ms.</summary>
         public event EventHandler<decimal> WorldSaved;
 
+        /// <summary>
+        /// Fires when the game reports that a world save FAILED, with the elapsed
+        /// time in ms. The world on disk still holds the previous save, so play
+        /// since then is at risk until a later save succeeds.
+        /// </summary>
+        public event EventHandler<decimal> WorldSaveFailed;
+
+        /// <summary>
+        /// Fires when the game loads a world that is still in the pre-1.0 save
+        /// format. The next save rewrites it in the new format, and that cannot be
+        /// undone, so the UI warns before the host finds out the hard way.
+        /// </summary>
+        public event EventHandler LegacyWorldLoaded;
+
+        /// <summary>
+        /// Fires when the server prints its version banner. The string is the game
+        /// version; <see cref="NetworkVersion"/> carries the matching network one.
+        /// </summary>
+        public event EventHandler<string> VersionDetected;
+
+        /// <summary>
+        /// The game version the running server reported ("1.0.7"), or null before
+        /// the banner has been seen. Read from the log, never assumed.
+        /// </summary>
+        public string GameVersion { get; private set; }
+
+        /// <summary>
+        /// The network protocol version the running server reported ("39"), or null
+        /// before the banner has been seen. Clients must match it to connect.
+        /// </summary>
+        public string NetworkVersion { get; private set; }
+
         /// <summary>Fires when a crossplay session publishes its join code.</summary>
         public event EventHandler<string> InviteCodeReady;
 
@@ -113,10 +246,72 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public Func<Task<bool>> CheckForAppUpdateOnRestart { get; set; }
 
+        /// <summary>
+        /// Optional hook (set by the UI) consulted before EVERY launch - the host's Start button,
+        /// the auto-start at app launch, the scheduled restart, the empty-server restart, crash
+        /// recovery and the relaunch that follows an update. It returns whether the launch may go
+        /// ahead and whether the worlds should be copied aside first. Returning null or
+        /// <see cref="LaunchDecision.Hold"/> skips the launch; automatic paths then arm a retry so
+        /// a later cycle asks again. Unset (as in tests) means every launch proceeds unchanged.
+        /// </summary>
+        public Func<LaunchContext, Task<LaunchDecision>> ConfirmLaunchAsync { get; set; }
+
+        /// <summary>
+        /// Optional hook (set by the UI) that writes the build and game version a launched server
+        /// actually ran into the profile's preferences. Called with the build identity once the
+        /// server reaches Running, and again with the game version once its banner is parsed.
+        /// Either argument may be null, meaning "leave that one alone".
+        /// </summary>
+        public Action<string, string> RecordLaunchedBuild { get; set; }
+
+        /// <summary>
+        /// Fires after a pre-update world snapshot, whether it worked or not. A result carrying
+        /// an Error means the launch was abandoned rather than run without a safety copy.
+        /// </summary>
+        public event EventHandler<WorldStore.WorldSnapshotResult> PreUpdateBackupCompleted;
+
+        /// <summary>
+        /// Optional hook (set by the UI, which is the only thing that knows about the other
+        /// profiles) asked about every world before the pre-update snapshot copies it. Returning
+        /// a reason abandons the whole launch: several profiles can share one save folder, and a
+        /// world another server is saving into cannot be copied safely at all.
+        /// </summary>
+        public Func<WorldInfo, string> WorldSnapshotVeto { get; set; }
+
+        /// <summary>
+        /// Fires whenever a launch attempt ends with the server still down: the guard held it,
+        /// the guard threw, the pre-update snapshot failed, or the process could not be started.
+        /// Status never moves on any of those paths, so this is the only signal the UI gets that
+        /// the attempt is over and the Start button is live again.
+        /// </summary>
+        public event EventHandler<LaunchSettledEventArgs> LaunchSettled;
+
         // True when the next restart should apply pending mod updates in the stop->start gap.
         private bool ApplyUpdatesOnRestart;
 
-        public bool CanStart => ProcessKey == null && Status == ServerStatus.Stopped;
+        // Why the pending relaunch is happening, so the launch guard can tell a crash recovery
+        // apart from a scheduled restart. Set by whoever asks for the restart.
+        private string PendingLaunchReason = LaunchReasons.Manual;
+
+        // True between "a guarded launch was accepted" and "the process exists", so a second
+        // click (or a timer firing) cannot start two servers while the guard is still thinking.
+        private volatile bool LaunchPending;
+
+        // The build the running (or last-launched) process was started from, recorded into the
+        // profile once the server actually comes up.
+        private string LaunchedBuildIdentity;
+
+        // Retry for an automatic launch the guard held: the same question, asked again later.
+        private CancellationTokenSource LaunchRetryCts;
+
+        /// <summary>
+        /// Floor for how often a held automatic launch re-asks. A held launch needs a person,
+        /// so retrying on a crash-restart's 10-second cadence would only spam the log and the
+        /// Discord post without ever getting further.
+        /// </summary>
+        private const int LaunchHoldRetryMinutes = 10;
+
+        public bool CanStart => ProcessKey == null && Status == ServerStatus.Stopped && !LaunchPending;
 
         public bool CanStop => ProcessKey != null
             && (Status == ServerStatus.Starting || Status == ServerStatus.Running);
@@ -167,6 +362,7 @@ namespace ValheimBakaLoader.Game
         private readonly IKillAllInstaller KillAllInstaller;
         private readonly ICommanderInstaller CommanderInstaller;
         private readonly IMaxPlayersInstaller MaxPlayersInstaller;
+        private readonly PlayerListService PlayerLists;
 
         // Rebuilt on every Start(); tails the new process's stdout/stderr.
         private IValheimServerLogger ServerLogger;
@@ -180,7 +376,8 @@ namespace ValheimBakaLoader.Game
             ISpawnHelperInstaller spawnHelperInstaller,
             IKillAllInstaller killAllInstaller,
             ICommanderInstaller commanderInstaller,
-            IMaxPlayersInstaller maxPlayersInstaller)
+            IMaxPlayersInstaller maxPlayersInstaller,
+            PlayerListService playerListService)
         {
             ApplicationLogger = appLogger;
             ProcessProvider = processProvider;
@@ -191,6 +388,7 @@ namespace ValheimBakaLoader.Game
             KillAllInstaller = killAllInstaller;
             CommanderInstaller = commanderInstaller;
             MaxPlayersInstaller = maxPlayersInstaller;
+            PlayerLists = playerListService;
 
             LogLineRules = BuildLogLineRules();
             StatusChanged += OnStatusTransition;
@@ -214,20 +412,41 @@ namespace ValheimBakaLoader.Game
                 // Startup complete.
                 new(Rx(@"Game server connected"), HandleServerReady),
 
+                // The version banner, printed once per boot. Both numbers are read
+                // from the line, never assumed, so a game update cannot outdate them.
+                new(Rx(@"Valheim version:\s*(\S+)\s*\(network version (\d+)\)"), HandleVersionBanner),
+
                 // Periodic world save, with the save duration captured in ms.
+                // Pre-1.0 servers print a single "World saved ( 198.5ms )" line.
                 new(Rx(@"World saved \(\s*?([[\d\.]+?)\s*?ms\s*?\)\s*?$"), HandleWorldSaved),
+
+                // Valheim 1.0 splits the save into five stages; only stage 5 means
+                // the save is on disk. Durations past 999 ms are grouped ("1,234ms").
+                new(Rx(@"World save \(5/5\) done\. Total time \[([\d.,]+)ms\]"), HandleWorldSaved),
+                new(Rx(@"World save \(5/5\) FAILED\. Total time \[([\d.,]+)ms\]"), HandleWorldSaveFailed),
+
+                // The world on disk is still in the pre-1.0 format and is about to
+                // be converted by the next save.
+                new(Rx(@"ZNet\.LoadOldWorld done"), HandleLegacyWorldLoaded),
 
                 // Crossplay session published its join code.
                 new(Rx(@"Session "".*?"" with join code (.*?) "), HandleJoinCode),
 
                 // A client began connecting: Steam carries a SteamID, crossplay a
-                // "{platform}_{id}" pair on the PlayFab socket line.
+                // "{platform}_{id}" pair on the PlayFab socket line. Valheim 1.0
+                // splits that pair on the FIRST underscore only and neither half is
+                // guaranteed numeric, so the id capture takes everything that is left
+                // (e.g. "PlayFab_BakaXplay_2498_3c72cce4...").
                 new(Rx(@"Got connection SteamID (\d+?)\D*?$"), HandleSteamConnecting),
-                new(Rx(@"PlayFab socket with remote ID .*? received local Platform ID (\w+?)_(\d+?)$"), HandleCrossplayConnecting),
+                new(Rx(@"PlayFab socket with remote ID .*? received local Platform ID ([^_\s]+)_(\S+)\s*$"), HandleCrossplayConnecting),
 
                 // The character actually spawned in-world. ZDOIDs may be negative,
                 // hence [\d-] in the id capture.
                 new(Rx(@"Got character ZDOID from (.+?) : ([\d-]+?)\D*?:(\d+?)\D*?$"), HandleCharacterSpawned),
+
+                // Valheim 1.0 prints the peer's numeric player id next to their
+                // character name once the connection is accepted.
+                new(Rx(@"^.*Got player ID from (.+?) : (-?\d+)\s*$"), HandleGotPlayerId),
 
                 // Rejected connection attempt.
                 new(Rx(@"Peer (\d+?) has wrong password"), HandleWrongPassword),
@@ -237,7 +456,7 @@ namespace ValheimBakaLoader.Game
                 // client-disconnect line covers ValheimPlus version mismatches.
                 new(Rx(@"Closing socket (\d+?)\D*?$"), HandleSocketClosed),
                 new(Rx(@"Destroying abandoned non persistent zdo ([\d-]+?):.*$"), HandleSocketClosed),
-                new(Rx(@"Disconnect: The client \((\w+?)_(\d+?)\)"), HandleCrossplayDisconnect),
+                new(Rx(@"Disconnect: The client \(([^_\s]+)_([^)\s]+)\)"), HandleCrossplayDisconnect),
             };
         }
 
@@ -251,6 +470,9 @@ namespace ValheimBakaLoader.Game
                     LastActivePlayerCount = 0;
                     CancelEmptyRestart();
                     StartScheduledRestartTimer();
+                    // The server is genuinely up on this build, so it becomes the one this
+                    // profile "last launched". The version follows when the banner is parsed.
+                    RecordLaunchedIdentity();
                     break;
 
                 case ServerStatus.Stopping:
@@ -273,6 +495,26 @@ namespace ValheimBakaLoader.Game
         /// no plugin files loaded right now), then relaunches with the same options.
         /// Bails out at each step if something cancelled the restart in the meantime.
         /// </summary>
+        /// <summary>
+        /// Hands the build (and, when known, the game version) the running server actually
+        /// came up on to whoever is storing it against the profile. Best effort: a failure
+        /// here must never take a healthy server down.
+        /// </summary>
+        private void RecordLaunchedIdentity()
+        {
+            var record = RecordLaunchedBuild;
+            if (record == null) return;
+
+            try
+            {
+                record(LaunchedBuildIdentity, GameVersion);
+            }
+            catch (Exception e)
+            {
+                ApplicationLogger.Warning("Could not record the launched build: {message}", e.Message);
+            }
+        }
+
         private async Task ResumeAfterStopAsync()
         {
             var delayMs = IsCrashRestart ? Options.AutoRestartDelay * 1000 : 500;
@@ -280,12 +522,14 @@ namespace ValheimBakaLoader.Game
 
             if (!IsRestarting) return;
 
+            var appliedUpdates = false;
             if (ApplyUpdatesOnRestart && ApplyModUpdates != null)
             {
                 try
                 {
                     ApplicationLogger.Information("Applying pending mod updates before restart...");
                     await ApplyModUpdates();
+                    appliedUpdates = true;
                 }
                 catch (Exception e)
                 {
@@ -297,8 +541,16 @@ namespace ValheimBakaLoader.Game
             if (!IsRestarting) return;
 
             IsRestarting = false;
+            var wasCrash = IsCrashRestart;
             IsCrashRestart = false;
-            Start(Options);
+
+            // Every relaunch here happens on its own, without anyone necessarily watching,
+            // so it goes through the launch guard as an automatic one.
+            var reason = wasCrash ? LaunchReasons.Crash
+                : appliedUpdates ? LaunchReasons.SelfUpdate
+                : PendingLaunchReason;
+
+            BeginLaunch(Options, reason, automatic: true);
         }
 
         #endregion
@@ -444,19 +696,353 @@ namespace ValheimBakaLoader.Game
         }
 
         /// <summary>
+        /// Starts the server for the host: the Start button, and every other deliberate
+        /// start. Goes through the launch guard when one is wired, which is what stops a
+        /// server coming up on a build its worlds have never been opened by.
+        /// </summary>
+        public void Start(IValheimServerOptions options)
+            => BeginLaunch(options, LaunchReasons.Manual, automatic: false);
+
+        /// <summary>
+        /// Starts the server on BakaLoader's own initiative (the profile's auto-start at app
+        /// launch). Nobody is assumed to be watching, so the launch guard may not open a
+        /// dialog: it holds the start and reports the condition instead.
+        /// </summary>
+        public void StartAutomatically(IValheimServerOptions options)
+            => BeginLaunch(options, LaunchReasons.AutoStart, automatic: true);
+
+        /// <summary>True while a launch is waiting on the guard (or on a pre-update backup).</summary>
+        public bool LaunchInProgress => LaunchPending;
+
+        /// <summary>
+        /// The single door every launch goes through. With no guard wired the process starts
+        /// synchronously exactly as it always did; with one, the guard is asked first and the
+        /// launch happens (or does not) once it answers.
+        /// </summary>
+        private void BeginLaunch(IValheimServerOptions options, string reason, bool automatic)
+        {
+            if (!CanStart) return;
+            if (options == null) return;
+
+            CancelLaunchRetry();
+
+            if (ConfirmLaunchAsync == null)
+            {
+                StartCore(options, null);
+                return;
+            }
+
+            LaunchPending = true;
+
+            // Off the calling thread on purpose. A guard that answers immediately would
+            // otherwise run the whole launch - including a world snapshot that can be
+            // gigabytes - inline on the UI thread and freeze the window mid-copy.
+            _ = Task.Run(() => GuardedLaunchAsync(options, reason, automatic));
+        }
+
+        /// <summary>
+        /// Asks the launch guard, then either starts (copying the worlds aside first when the
+        /// host asked for that) or leaves the server down and says why. An automatic launch
+        /// that is held arms a retry, so the question comes back around on its own.
+        /// </summary>
+        private async Task GuardedLaunchAsync(IValheimServerOptions options, string reason, bool automatic)
+        {
+            try
+            {
+                var current = ProbeInstall(options);
+                var context = new LaunchContext
+                {
+                    Automatic = automatic,
+                    Reason = reason,
+                    Current = current,
+                    LastLaunchedBuild = options.LastLaunchedServerBuild,
+                    LastLaunchedGameVersion = options.LastLaunchedGameVersion,
+                    HasWorlds = HasAnyWorld(options),
+                    ProfileName = ServerKey,
+                    Options = options,
+                };
+
+                LaunchDecision decision;
+                var guardThrew = false;
+                try
+                {
+                    decision = await ConfirmLaunchAsync(context);
+                }
+                catch (Exception e)
+                {
+                    // A guard that throws must not become a silent "yes".
+                    ApplicationLogger.Error(e, "The launch guard failed; the server was not started.");
+                    decision = null;
+                    guardThrew = true;
+                }
+
+                if (decision == null || !decision.Proceed)
+                {
+                    var note = decision?.Note;
+                    ApplicationLogger.Warning(
+                        "Start held for {name} ({reason}): {note}",
+                        options.Name,
+                        reason,
+                        string.IsNullOrWhiteSpace(note) ? "the launch guard did not clear it" : note);
+
+                    LaunchPending = false;
+                    if (automatic) ArmLaunchRetry(options, reason);
+
+                    // A guard that threw is a failure, not a decision the host was shown.
+                    SettleLaunch(reason, held: !guardThrew, error: guardThrew
+                        ? "The launch check could not run, so the server was not started."
+                        : null);
+                    return;
+                }
+
+                if (decision.BackupFirst && !RunPreUpdateBackup(options))
+                {
+                    // The snapshot failed, so the start is abandoned: the whole point of the
+                    // backup was that this launch converts the worlds one way.
+                    LaunchPending = false;
+                    if (automatic) ArmLaunchRetry(options, reason);
+                    SettleLaunch(reason, held: false,
+                        error: "The worlds could not be copied aside, so the server was not started.");
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(decision.Note))
+                {
+                    ApplicationLogger.Information("Launch guard cleared {name}: {note}", options.Name, decision.Note);
+                }
+
+                LaunchPending = false;
+                StartCore(options, current);
+
+                // A refused exe path or save folder leaves Status on Stopped with no event of
+                // its own, so say so rather than letting the UI show a start that never was.
+                if (Status == ServerStatus.Stopped)
+                {
+                    SettleLaunch(reason, held: false, error: "The server did not start. Check the log for what stopped it.");
+                }
+            }
+            catch (Exception e)
+            {
+                LaunchPending = false;
+                ApplicationLogger.Error(e, "Could not start the server for profile {name}.", options?.Name);
+
+                // Before the guard moved this onto a background thread these validation errors
+                // came back out of the start call and the host saw the exact bad path.
+                SettleLaunch(reason, held: false, error: e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Announces that a launch attempt is over and the server is still down. Best effort:
+        /// a listener that throws must not take anything else with it.
+        /// </summary>
+        private void SettleLaunch(string reason, bool held, string error)
+        {
+            var settled = LaunchSettled;
+            if (settled == null) return;
+
+            try
+            {
+                settled(this, new LaunchSettledEventArgs { Reason = reason, Held = held, Error = error });
+            }
+            catch (Exception e)
+            {
+                ApplicationLogger.Warning("Could not report the settled launch: {message}", e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Asks the launch guard whether this profile may come back up, while the server is
+        /// still running and nothing has been torn down. A restart that will not be allowed to
+        /// relaunch has to be skipped rather than started: asking after the shutdown turns a
+        /// routine cycle into an outage that lasts until somebody notices.
+        /// <para>
+        /// Returns true when no guard is wired or the guard cleared the restart. On a hold the
+        /// caller leaves the server up and re-arms its own timer for the next cycle.
+        /// </para>
+        /// </summary>
+        public async Task<bool> ConfirmAutomaticRestartAsync(string reason)
+        {
+            var guard = ConfirmLaunchAsync;
+            var options = Options;
+            if (guard == null || options == null) return true;
+
+            LaunchDecision decision;
+            try
+            {
+                decision = await guard(new LaunchContext
+                {
+                    Automatic = true,
+                    Reason = reason,
+                    Current = ProbeInstall(options),
+                    LastLaunchedBuild = options.LastLaunchedServerBuild,
+                    LastLaunchedGameVersion = options.LastLaunchedGameVersion,
+                    HasWorlds = HasAnyWorld(options),
+                    ProfileName = ServerKey,
+                    Options = options,
+                });
+            }
+            catch (Exception e)
+            {
+                ApplicationLogger.Error(e,
+                    "The launch check failed, so the restart was skipped and the server left running.");
+                SettleLaunch(reason, held: false,
+                    error: "The launch check could not run, so the restart was skipped.");
+                return false;
+            }
+
+            if (decision != null && decision.Proceed) return true;
+
+            var note = decision?.Note;
+            ApplicationLogger.Warning(
+                "Restart skipped for {name} ({reason}): {note} The server was left running.",
+                options.Name,
+                reason,
+                string.IsNullOrWhiteSpace(note) ? "the launch guard did not clear it." : note);
+
+            SettleLaunch(reason, held: true, error: null);
+            return false;
+        }
+
+        /// <summary>Reads what the configured install is right now. Never throws.</summary>
+        private Tools.ServerBuildInfo ProbeInstall(IValheimServerOptions options)
+        {
+            try
+            {
+                return Tools.ServerBuildTracker.Probe(options.ServerExePath);
+            }
+            catch (Exception e)
+            {
+                ApplicationLogger.Warning("Could not read the server build: {message}", e.Message);
+                return null;
+            }
+        }
+
+        /// <summary>True when the profile's save folder already holds at least one world.</summary>
+        private static bool HasAnyWorld(IValheimServerOptions options)
+        {
+            try
+            {
+                return WorldStore.Enumerate(options.SaveDataFolderPath).Count > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Copies every world of this profile aside before a launch that will upgrade them.
+        /// Returns false when the copy failed, which aborts the launch.
+        /// </summary>
+        private bool RunPreUpdateBackup(IValheimServerOptions options)
+        {
+            WorldStore.WorldSnapshotResult result;
+            try
+            {
+                result = WorldStore.SnapshotAllPreUpdate(
+                    options.SaveDataFolderPath, whenLocal: null, refuse: WorldSnapshotVeto);
+            }
+            catch (Exception e)
+            {
+                result = new WorldStore.WorldSnapshotResult { Error = e.Message };
+            }
+
+            if (result.Ok)
+            {
+                ApplicationLogger.Information(
+                    "Copied {count} world(s) aside before starting ({bytes} bytes): {names}",
+                    result.Copied.Count,
+                    result.Bytes,
+                    string.Join(", ", result.Copied));
+
+                if (result.Skipped.Count > 0)
+                {
+                    ApplicationLogger.Warning(
+                        "Not copied aside: {names}", string.Join(", ", result.Skipped));
+                }
+            }
+            else
+            {
+                ApplicationLogger.Error(
+                    "Could not copy the worlds aside, so the server was not started: {error}", result.Error);
+            }
+
+            PreUpdateBackupCompleted?.Invoke(this, result);
+            return result.Ok;
+        }
+
+        /// <summary>
+        /// Re-asks a held automatic launch later. The cadence follows whichever schedule asked
+        /// for the launch, floored so a fast crash-restart delay cannot turn into a retry loop.
+        /// </summary>
+        private void ArmLaunchRetry(IValheimServerOptions options, string reason)
+        {
+            CancelLaunchRetry();
+
+            var scheduleMinutes = reason switch
+            {
+                LaunchReasons.Scheduled => Math.Max(1, options.ScheduledRestartHours) * 60,
+                LaunchReasons.Empty => Math.Max(1, options.EmptyServerRestartDelayMinutes),
+                LaunchReasons.Crash => Math.Max(1, options.AutoRestartDelay) / 60,
+                _ => 0,
+            };
+            var minutes = Math.Max(LaunchHoldRetryMinutes, scheduleMinutes);
+
+            var cts = new CancellationTokenSource();
+            LaunchRetryCts = cts;
+            var token = cts.Token;
+
+            ApplicationLogger.Information(
+                "Will ask again about starting {name} in {minutes} minute(s).", options.Name, minutes);
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(minutes * 60 * 1000, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return; // the host started (or stopped) the server in the meantime
+                }
+
+                if (token.IsCancellationRequested) return;
+                if (!CanStart) return;
+
+                BeginLaunch(options, reason, automatic: true);
+            });
+        }
+
+        private void CancelLaunchRetry()
+        {
+            var cts = LaunchRetryCts;
+            if (cts == null) return;
+
+            LaunchRetryCts = null;
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
+        }
+
+        /// <summary>
         /// Launches valheim_server.exe as a tracked background process using the given
         /// profile: prepares companion plugins, wires up log capture and exit/crash
         /// detection, boosts process priority, and moves the status to Starting.
         /// </summary>
-        public void Start(IValheimServerOptions options)
+        private void StartCore(IValheimServerOptions options, Tools.ServerBuildInfo build)
         {
-            if (!CanStart) return;
+            if (ProcessKey != null || Status != ServerStatus.Stopped) return;
             ApplicationLogger.Information("Starting server: {name}", options.Name);
 
+            LaunchedBuildIdentity = build?.Identity;
+            GameVersion = null;
+            NetworkVersion = null;
+
             var exePath = options.GetValidatedServerExe().FullName;
-            var launchArgs = GenerateArgs(options);
+            var launchArgs = GenerateArgs(options, ApplicationLogger);
 
             PrepareCompanionPlugins(exePath, options);
+            UpgradeAccessLists(options);
             ApplicationLogger.Information(@"Server run command: ""{exePath}"" {processArgs}",
                 exePath, RedactPassword(launchArgs));
 
@@ -497,6 +1083,32 @@ namespace ValheimBakaLoader.Game
             IsRestarting = false;
             Options = options;
             Status = ServerStatus.Starting; // last: fires StatusChanged
+        }
+
+        /// <summary>
+        /// Gives the adminlist / permittedlist / bannedlist files their Valheim 1.0 twins
+        /// while the server is down. Valheim 1.0 only matches a Steam id written as
+        /// "V_76561198...", so a list carried over from an older server would silently stop
+        /// working - and the host would find out by being locked out of their own server.
+        /// Best effort: a list that cannot be rewritten never blocks a start.
+        /// </summary>
+        private void UpgradeAccessLists(IValheimServerOptions options)
+        {
+            if (PlayerLists == null) return;
+
+            try
+            {
+                var added = PlayerLists.UpgradeAll(options.SaveDataFolderPath);
+                if (added > 0)
+                {
+                    ApplicationLogger.Information(
+                        "Added {count} Valheim 1.0 id line(s) to the admin/permitted/banned lists.", added);
+                }
+            }
+            catch (Exception ex)
+            {
+                ApplicationLogger.Warning("Could not upgrade the access lists: {message}", ex.Message);
+            }
         }
 
         /// <summary>
@@ -555,9 +1167,14 @@ namespace ValheimBakaLoader.Game
 
                 if (allowAutoRestart && Options.AutoRestart)
                 {
+                    // The process is already gone, so there is nothing to shut down and nothing
+                    // to protect by asking here. This relaunch starts from a stopped server, so
+                    // it asks the guard at launch time in ResumeAfterStopAsync; a hold there
+                    // arms a retry rather than leaving anything half torn down.
                     ApplicationLogger.Information("Auto-restarting server in {delay} seconds...", Options.AutoRestartDelay);
                     IsCrashRestart = true;
                     IsRestarting = true;
+                    PendingLaunchReason = LaunchReasons.Crash;
                 }
             }
 
@@ -577,10 +1194,11 @@ namespace ValheimBakaLoader.Game
         /// exited. Passing options swaps the profile for the relaunch; otherwise the
         /// current one is reused.
         /// </summary>
-        public void Restart(IValheimServerOptions options = null)
+        public void Restart(IValheimServerOptions options = null, string reason = null)
         {
             if (!CanRestart) return;
             if (options != null) Options = options;
+            PendingLaunchReason = reason ?? LaunchReasons.Manual;
             BeginShutdown(restartAfter: true);
         }
 
@@ -620,7 +1238,7 @@ namespace ValheimBakaLoader.Game
             }
         }
 
-        public async Task RestartWithCountdown(int[] countdownSeconds = null, bool applyModUpdates = false)
+        public async Task RestartWithCountdown(int[] countdownSeconds = null, bool applyModUpdates = false, string reason = null)
         {
             if (!CanRestart) return;
             if (IsCountdownActive) return;
@@ -649,7 +1267,7 @@ namespace ValheimBakaLoader.Game
             if (!Options.RconEnabled)
             {
                 ApplyUpdatesOnRestart = modUpdateCount > 0;
-                Restart();
+                Restart(reason: reason);
                 return;
             }
 
@@ -662,7 +1280,7 @@ namespace ValheimBakaLoader.Game
             if (points.Length == 0)
             {
                 ApplyUpdatesOnRestart = modUpdateCount > 0;
-                Restart();
+                Restart(reason: reason);
                 return;
             }
 
@@ -753,7 +1371,7 @@ namespace ValheimBakaLoader.Game
             if (shouldRestart)
             {
                 ApplyUpdatesOnRestart = modUpdateCount > 0;
-                Restart();
+                Restart(reason: reason);
             }
         }
 
@@ -1123,9 +1741,17 @@ namespace ValheimBakaLoader.Game
                 if (Status != ServerStatus.Running) return;
                 if (CountActivePlayers(PlayerDataRepository.Data) > 0) return;
 
+                // Ask before the server goes down: a hold has to leave it running and wait for
+                // the next empty window, not strand it offline.
+                if (!await ConfirmAutomaticRestartAsync(LaunchReasons.Empty))
+                {
+                    ScheduleEmptyRestart();
+                    return;
+                }
+
                 ApplicationLogger.Information("Server still empty; restarting now.");
                 if (await TryStageAppUpdateAsync()) return; // app self-update staged; app is closing.
-                Restart();
+                Restart(reason: LaunchReasons.Empty);
             });
         }
 
@@ -1196,7 +1822,7 @@ namespace ValheimBakaLoader.Game
                         if (await TryStageAppUpdateAsync()) return;
 
                         ApplyUpdatesOnRestart = true;
-                        Restart();
+                        Restart(reason: LaunchReasons.Empty);
                         return;
                     }
                 }
@@ -1255,9 +1881,21 @@ namespace ValheimBakaLoader.Game
                 if (token.IsCancellationRequested) return;
                 if (!CanRestart) return;
 
+                // Ask before a word is broadcast and before anything is torn down. A cycle that
+                // will not be allowed to relaunch is skipped, the server stays up, and the same
+                // schedule comes round again.
+                if (!await ConfirmAutomaticRestartAsync(LaunchReasons.Scheduled))
+                {
+                    StartScheduledRestartTimer();
+                    return;
+                }
+
                 // applyModUpdates: true -> a scheduled restart also installs any pending mod
                 // updates (gated by the auto-update preference inside the hook itself).
-                await RestartWithCountdown(countdownPoints.Length > 0 ? countdownPoints : null, applyModUpdates: true);
+                await RestartWithCountdown(
+                    countdownPoints.Length > 0 ? countdownPoints : null,
+                    applyModUpdates: true,
+                    reason: LaunchReasons.Scheduled);
             });
         }
 
@@ -1391,10 +2029,72 @@ namespace ValheimBakaLoader.Game
             }, ServerKey);
         }
 
+        private void HandleGotPlayerId(Match match)
+        {
+            var characterName = match.Groups[1].Value;
+            var numericId = match.Groups[2].Value;
+            if (string.IsNullOrWhiteSpace(characterName) || string.IsNullOrWhiteSpace(numericId)) return;
+
+            PlayerDataRepository.SetPlayerNumericId(characterName.Trim(), numericId, ServerKey);
+        }
+
         private void HandleWorldSaved(Match match)
         {
-            decimal.TryParse(match.Groups[1].Value, out var durationMs);
-            WorldSaved?.Invoke(this, durationMs);
+            WorldSaved?.Invoke(this, ParseDurationMs(match.Groups[1].Value));
+        }
+
+        private void HandleWorldSaveFailed(Match match)
+        {
+            var durationMs = ParseDurationMs(match.Groups[1].Value);
+
+            ApplicationLogger.Warning(
+                "The server reported a FAILED world save after {durationMs}ms. Everything played since the last good save is still only in memory. Check the server log, the free space on the save drive, and whether anything else is holding the world files open.",
+                durationMs);
+
+            WorldSaveFailed?.Invoke(this, durationMs);
+        }
+
+        private void HandleLegacyWorldLoaded(Match match)
+        {
+            ApplicationLogger.Warning(
+                "This world is still in the pre-1.0 save format. Valheim rewrites it in the new format on the next save and there is no way back, so take a copy of the world files now if you may want to run it on an older server.");
+
+            LegacyWorldLoaded?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void HandleVersionBanner(Match match)
+        {
+            GameVersion = match.Groups[1].Value;
+            NetworkVersion = match.Groups[2].Value;
+
+            ApplicationLogger.Information(
+                "Server is running Valheim {gameVersion} (network version {networkVersion})",
+                GameVersion, NetworkVersion);
+
+            // The banner is the only place the real version comes from, so it is what gets
+            // stored against the profile as "what this profile last ran".
+            RecordLaunchedIdentity();
+
+            VersionDetected?.Invoke(this, GameVersion);
+        }
+
+        /// <summary>
+        /// Reads a save duration out of a log line. Valheim 1.0 formats the total
+        /// with thousands grouping ("1,234ms"), while the older line and the FAILED
+        /// line print a raw decimal ("198.5ms"). The invariant reading covers both
+        /// on an English server; a server running under another culture falls back
+        /// to that culture's own formatting.
+        /// </summary>
+        private static decimal ParseDurationMs(string value)
+        {
+            const NumberStyles Styles = NumberStyles.AllowThousands
+                | NumberStyles.AllowDecimalPoint
+                | NumberStyles.AllowLeadingWhite
+                | NumberStyles.AllowTrailingWhite;
+
+            if (decimal.TryParse(value, Styles, CultureInfo.InvariantCulture, out var durationMs)) return durationMs;
+
+            return decimal.TryParse(value, Styles, CultureInfo.CurrentCulture, out durationMs) ? durationMs : 0m;
         }
 
         private void HandleJoinCode(Match match)
@@ -1427,6 +2127,7 @@ namespace ValheimBakaLoader.Game
             CancelScheduledRestart();
             CancelEmptyUpdateCheck();
             CancelEmptyRestart();
+            CancelLaunchRetry();
 
             Stop();
             GC.SuppressFinalize(this);
@@ -1439,8 +2140,10 @@ namespace ValheimBakaLoader.Game
         /// <summary>
         /// Composes the dedicated-server command line from the given options.
         /// The flag names and ordering match what valheim_server.exe expects.
+        /// The logger, when supplied, is told about any extra argument that was
+        /// refused.
         /// </summary>
-        private static string GenerateArgs(IValheimServerOptions options)
+        private static string GenerateArgs(IValheimServerOptions options, IApplicationLogger logger = null)
         {
             // Trim trailing directory separators. A path ending in '\' would otherwise
             // produce -savedir "...\" where the backslash escapes the closing quote on
@@ -1480,9 +2183,104 @@ namespace ValheimBakaLoader.Game
             }
 
             if (options.WorldKeys != null) parts.AddRange(options.WorldKeys.Select(k => $"-setkey {k}"));
-            if (!string.IsNullOrWhiteSpace(options.AdditionalArgs)) parts.Add(options.AdditionalArgs);
+
+            if (!string.IsNullOrWhiteSpace(options.AdditionalArgs))
+            {
+                var extraArgs = SanitizeAdditionalArgs(options.AdditionalArgs, out var removed);
+
+                foreach (var token in removed)
+                {
+                    BlockedAdditionalArgs.TryGetValue(token, out var reason);
+                    logger?.Warning(
+                        "Left {token} out of the server command line: {reason}", token, reason);
+                }
+
+                if (!string.IsNullOrWhiteSpace(extraArgs)) parts.Add(extraArgs);
+            }
 
             return string.Join(" ", parts);
+        }
+
+        /// <summary>
+        /// Launch flags the host must not be able to hand to the dedicated server
+        /// through the extra-arguments box, and the reason each one is refused.
+        /// </summary>
+        private static readonly Dictionary<string, string> BlockedAdditionalArgs =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["-demomode"] = "it turns off all world saving, so every minute played would be thrown away when the server stops",
+                ["-joinserverwithcharacter"] = "it makes the game try to join a server as a player instead of hosting one, which a dedicated server cannot do",
+            };
+
+        /// <summary>
+        /// Drops the launch flags listed in <see cref="BlockedAdditionalArgs"/> from a
+        /// host-typed extra-arguments string and reports what was taken out. Matching is
+        /// whole-token and case-insensitive, so "-demomodex" or a value that merely
+        /// contains the word survives untouched. Quoted values (a path with spaces, say)
+        /// are kept in one piece.
+        /// </summary>
+        public static string SanitizeAdditionalArgs(string additionalArgs)
+            => SanitizeAdditionalArgs(additionalArgs, out _);
+
+        /// <inheritdoc cref="SanitizeAdditionalArgs(string)"/>
+        public static string SanitizeAdditionalArgs(string additionalArgs, out IReadOnlyList<string> removed)
+        {
+            removed = Array.Empty<string>();
+            if (string.IsNullOrWhiteSpace(additionalArgs)) return additionalArgs;
+
+            var kept = new List<string>();
+            var dropped = new List<string>();
+
+            foreach (var token in SplitArgTokens(additionalArgs))
+            {
+                if (BlockedAdditionalArgs.ContainsKey(token))
+                {
+                    dropped.Add(token);
+                    continue;
+                }
+
+                kept.Add(token);
+            }
+
+            if (dropped.Count == 0) return additionalArgs;
+
+            removed = dropped;
+            return string.Join(" ", kept);
+        }
+
+        /// <summary>
+        /// Splits a command-line fragment into tokens on whitespace, treating a
+        /// double-quoted run as one token (quotes included, so the token can be
+        /// re-emitted as typed).
+        /// </summary>
+        private static IEnumerable<string> SplitArgTokens(string args)
+        {
+            var token = new StringBuilder();
+            var inQuotes = false;
+
+            foreach (var c in args)
+            {
+                if (c == '"')
+                {
+                    inQuotes = !inQuotes;
+                    token.Append(c);
+                    continue;
+                }
+
+                if (!inQuotes && char.IsWhiteSpace(c))
+                {
+                    if (token.Length > 0)
+                    {
+                        yield return token.ToString();
+                        token.Clear();
+                    }
+                    continue;
+                }
+
+                token.Append(c);
+            }
+
+            if (token.Length > 0) yield return token.ToString();
         }
 
         /// <summary>Masks the server password so the command line is safe to log.</summary>

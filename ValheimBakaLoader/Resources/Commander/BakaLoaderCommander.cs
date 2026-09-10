@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.0.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.1.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -65,7 +65,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.0.0";
+        private const string PluginVersion = "1.1.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -404,8 +404,12 @@ namespace BakaLoaderCommander
             if (tokens.Length <= msgStart) return "Usage: broadcast center <message>";
             var message = string.Join(" ", tokens, msgStart, tokens.Length - msgStart);
 
-            // Clients registered "ShowMessage" in MessageHud.Start - routed to Everybody.
-            ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, "ShowMessage", type, message);
+            // Clients registered "ShowMessage" in MessageHud.Start - routed to everybody.
+            // The literal 0 IS ZRoutedRpc.Everybody. It is written out instead of read from
+            // the field because Valheim 1.0 turned that field into a const, and a compiled
+            // field read (ldsfld) against a const throws MissingFieldException at runtime.
+            // A literal is correct on every game version, old and new.
+            ZRoutedRpc.instance.InvokeRoutedRPC(0L, "ShowMessage", type, message);
             return "Broadcasting message: " + message;
         }
 

@@ -27,6 +27,7 @@
     <!-- SIDEBAR -->
     <nav class="side">
       <div class="srvstrip" id="srvStrip"></div>
+      <div class="srvmore" id="srvMore" style="display:none" title="More realms below. Scroll the strip to reach them.">▾</div>
       <div class="srvsep" id="srvSep"></div>
       <div class="navitem active" data-page="hearth"><span class="rune">ᚠ</span><span class="lbl">Hearth</span></div>
       <div class="navitem" data-page="vikings"><span class="rune">ᛗ</span><span class="lbl">Vikings</span></div>
@@ -38,8 +39,8 @@
       <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Herald</span></div>
       <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Skald</span></div>
       <div class="side-foot">
-        <span class="moon">☾</span><span id="sideVer">v0.9.33</span>
-        <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of<br>mead&nbsp;⚑</a>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v0.10.0</span></span>
+        <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
 
@@ -47,6 +48,9 @@
     <div class="main">
       <!-- Persistent banner: which realm every hall is editing + live conflict warnings -->
       <div class="editbar" id="editBar" style="display:none"></div>
+      <!-- Persistent banner: a start BakaLoader held back because the server build changed
+           or Steam has an update waiting. Offers the same three answers as the start prompt. -->
+      <div class="editbar holdbar" id="launchHold" style="display:none"></div>
       <div class="pages">
 
         <!-- ============ PAGE: HEARTH ============ -->
@@ -81,7 +85,9 @@
               <div class="hearth-meta">
                 <div class="hstatus">
                   <span class="hstate" id="hState">BURNING · <span id="upTime">4h 32m</span></span>
-                  <span class="hpid" id="hPid">RUNNING · PID 150428 · valheim_server.x86_64</span>
+                  <span class="hpid" id="hPid" title="RUNNING · PID 150428 · valheim_server.x86_64">RUNNING · PID 150428 · valheim_server.x86_64</span>
+                  <!-- Game + network version, read from the server's own startup banner. -->
+                  <span class="hver" id="hVer" style="display:none"></span>
                 </div>
                 <button class="btn btn-ghost btn-sm" id="stokeBtn" title="Restart the server · warns players in-game first">Stoke</button>
                 <button class="btn btn-cold btn-sm" id="douseBtn">Douse</button>
@@ -101,11 +107,12 @@
                 <div><div class="bigval" id="saveCountdown">04:12</div><div class="subval">until next save</div></div>
                 <div style="margin-left:auto;text-align:right"><div class="subval" id="lastSaveLbl">last rune-check</div><div class="subval" style="color:var(--bone)" id="lastSave">22:05 · 8.4 MB</div><div class="subval" id="saveAvg">avg -</div></div>
               </div>
-              <div class="savebars">
+              <div class="savebars" id="saveBars">
                 <i style="height:40%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:62%"></i>
                 <i style="height:52%"></i><i style="height:70%"></i><i style="height:58%"></i><i style="height:66%"></i>
                 <i style="height:74%"></i><i style="height:60%"></i><i style="height:82%"></i><i class="hot" style="height:100%"></i>
               </div>
+              <div class="savecap" id="saveCap">write time, last 12 saves</div>
             </div>
 
             <!-- NETWORK -->
@@ -145,7 +152,7 @@
 
             <!-- UPKEEP (app self-update + start with Windows) -->
             <div class="card b-upkeep" id="upkeepCard">
-              <div class="microlabel upkeep-head" id="upkeepHead"><span class="r">ᛟ</span>Upkeep<span style="margin-left:auto" class="subval" id="blVersion">v-</span></div>
+              <div class="microlabel upkeep-head" id="upkeepHead" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᛟ</span>Upkeep<span style="margin-left:auto" class="subval" id="blVersion" data-fs-anchor>v-</span></div>
               <div class="upkeep-body" id="upkeepBody">
                 <div class="togglerow"><span class="tl">Auto-update BakaLoader</span><span class="toggle" id="tAutoUpdApp" data-t></span></div>
                 <div class="subval" id="upkeepMsg" style="margin:2px 0 4px">Fetches new releases at launch and on restarts.</div>
@@ -154,6 +161,12 @@
                 <div class="togglerow"><span class="tl">Plain terminology</span><span class="toggle" id="tPlainTerms" data-t></span></div>
                 <div class="subval" style="margin:2px 0 0">Swaps the Norse names for plain English.</div>
               </div>
+            </div>
+
+            <!-- RECENT LOG (tail of the Saga chronicle, live) -->
+            <div class="card b-log" id="logCard">
+              <div class="microlabel"><span class="r">ᛋ</span>Recent log<span style="margin-left:auto" class="copychip" id="openSagaChip" title="Open the Saga hall for the full chronicle">Open Saga</span></div>
+              <div class="term hlog" id="hearthLog"></div>
             </div>
           </div>
         </section>
@@ -176,7 +189,7 @@
           <div class="card ctxwrap" style="padding:0">
             <div style="height:14px"></div>
             <table>
-              <thead><tr><th style="width:34%">Viking</th><th>Status</th><th>Joined</th><th>Position</th><th style="width:44px"></th></tr></thead>
+              <thead><tr><th style="width:30%">Viking</th><th>Status</th><th title="Which store or console the account comes from">Platform</th><th>Joined</th><th>Position</th><th style="width:44px"></th></tr></thead>
               <tbody id="vikTable"></tbody>
             </table>
           </div>
@@ -232,12 +245,15 @@
                 <div class="togglerow"><span class="tl">Enable crossplay backend</span><span class="toggle" id="tCrossplay" data-t></span></div>
               </div>
               <div class="field"><label>Save Interval (s)</label><input type="text" id="fSaveInterval" value="600"></div>
-              <div class="field"><label>Backups Kept</label><input type="text" id="fBackups" value="50"></div>
-              <div class="field"><label>Backup Interval - Short (s)</label><input type="text" id="fBackShort" value="600"></div>
-              <div class="field"><label>Backup Interval - Long (s)</label><input type="text" id="fBackLong" value="43200"></div>
+              <!-- the three backup dials share one full-width row so both columns end level -->
+              <div class="formgrid3">
+                <div class="field"><label>Backups Kept</label><input type="text" id="fBackups" value="50"></div>
+                <div class="field"><label>Backup Interval - Short (s)</label><input type="text" id="fBackShort" value="600"></div>
+                <div class="field"><label>Backup Interval - Long (s)</label><input type="text" id="fBackLong" value="43200"></div>
+              </div>
             </div>
 
-            <div class="formsec collapsible" id="secWorldMods" title="Click to expand / collapse"><span class="r">ᚷ</span> WORLD MODIFIERS</div>
+            <div class="formsec collapsible" id="secWorldMods" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᚷ</span> WORLD MODIFIERS</div>
             <div class="formsec-body">
             <div class="formgrid">
               <div class="field"><label>Combat</label><select id="fModCombat"></select></div>
@@ -250,7 +266,7 @@
             <div class="setupreset-note" style="display:block;margin-top:8px">modifiers saved per world · max players above 10 installs a small bundled server plugin · applies the next time the server starts</div>
             </div>
 
-            <div class="formsec collapsible" id="secRites" title="Click to expand / collapse"><span class="r">ᚨ</span> ADVANCED RITES</div>
+            <div class="formsec collapsible" id="secRites" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᚨ</span> ADVANCED RITES</div>
             <div class="formsec-body">
             <div class="formgrid">
               <div class="field"><label>Empty-Server Restart</label>
@@ -284,7 +300,7 @@
             </div>
             </div>
 
-            <div class="formsec collapsible" id="secDirs" title="Click to expand / collapse"><span class="r">ᛞ</span> DIRECTORIES</div>
+            <div class="formsec collapsible" id="secDirs" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᛞ</span> DIRECTORIES</div>
             <div class="formsec-body">
             <div class="formgrid">
               <div class="field" style="grid-column:1/-1"><label>Server Executable</label>
@@ -336,18 +352,20 @@
 
             <div class="atlas-side">
               <div class="card">
-                <div class="microlabel">Skies over <span id="atlasWorldName">—</span></div>
-                <div class="bigval" id="atlasDay">—</div>
+                <div class="microlabel">Skies over <span id="atlasWorldName">-</span></div>
+                <div class="bigval" id="atlasDay">-</div>
                 <div class="subval" id="atlasClock">world clock unknown</div>
                 <div class="atlas-facts">
-                  <div class="afact"><span class="ak">Last save</span><span class="av" id="atlasSaved">—</span></div>
-                  <div class="afact"><span class="ak">Explored</span><span class="av" id="atlasExplored">—</span></div>
-                  <div class="afact"><span class="ak">Event</span><span class="av" id="atlasEvent">—</span></div>
+                  <div class="afact"><span class="ak">Last save</span><span class="av" id="atlasSaved">-</span></div>
+                  <div class="afact"><span class="ak">Explored</span><span class="av" id="atlasExplored">-</span></div>
+                  <div class="afact"><span class="ak">Event</span><span class="av" id="atlasEvent">-</span></div>
                 </div>
+                <div class="subval" id="atlasChunkNote" style="margin-top:6px;display:none"></div>
+                <div class="subval" id="atlasShapeNote" style="margin-top:6px">Ashlands shape is approximate</div>
                 <div id="wxBox" style="margin-top:8px;display:none">
                   <div class="atlas-facts">
-                    <div class="afact"><span class="ak">Skies now</span><span class="av" id="wxNow">—</span></div>
-                    <div class="afact"><span class="ak">Wind</span><span class="av"><span id="wxArrow" class="wx-arrow">↑</span><span id="wxWind">—</span></span></div>
+                    <div class="afact"><span class="ak">Skies now</span><span class="av" id="wxNow">-</span></div>
+                    <div class="afact"><span class="ak">Wind</span><span class="av"><span id="wxArrow" class="wx-arrow">↑</span><span id="wxWind">-</span></span></div>
                   </div>
                   <div class="wx-biomes" id="wxBiomes"></div>
                   <div class="microlabel" style="margin-top:8px">Forecast</div>
@@ -356,10 +374,9 @@
                 </div>
               </div>
 
-              <div class="card">
+              <div class="card" title="Mod-free maps cannot track live positions, so this card lists who is online instead.">
                 <div class="microlabel">Vikings ashore</div>
                 <div id="atlasRoster" class="atlas-roster"></div>
-                <div class="subval" style="margin-top:6px">Mod-free maps can't track live positions — the roster shows who's online.</div>
               </div>
 
               <div class="card atlas-waycard">
@@ -506,7 +523,7 @@
             <div class="card sk-players" style="padding:0">
               <div style="height:14px"></div>
               <table>
-                <thead><tr><th style="width:32%">Viking</th><th>Playtime</th><th>Visits</th><th>Deaths</th><th>Last seen</th></tr></thead>
+                <thead><tr><th style="width:30%">Viking</th><th style="width:16%">Playtime</th><th style="width:12%">Visits</th><th style="width:12%">Deaths</th><th>Last seen</th></tr></thead>
                 <tbody id="skPlayerTable"></tbody>
               </table>
             </div>
@@ -525,7 +542,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v0.9.33</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v0.10.0</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>

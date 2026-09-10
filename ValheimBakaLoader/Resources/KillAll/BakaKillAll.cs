@@ -1,4 +1,4 @@
-// BakaLoader KillAll v1.2.0 - compiled against SERVER assembly_valheim
+// BakaLoader KillAll v1.3.0 - compiled against SERVER assembly_valheim
 // Multiple fallback approaches for finding creatures on dedicated servers.
 using System;
 using System.Collections.Generic;
@@ -8,9 +8,11 @@ using UnityEngine;
 
 namespace BakaLoaderKillAll
 {
-    [BepInPlugin("com.baka.killall", "BakaLoader KillAll", "1.2.0")]
+    [BepInPlugin("com.baka.killall", "BakaLoader KillAll", PluginVersion)]
     public class KillAllPlugin : BaseUnityPlugin
     {
+        private const string PluginVersion = "1.3.0";
+
         private static ManualLogSource Log;
         private static volatile bool KillPending;
 
@@ -26,12 +28,21 @@ namespace BakaLoaderKillAll
                     KillPending = true;
                     args.Context.AddString("Queued kill-all creatures...");
                 },
-                true,
-                false,
-                true
+                // isCheat MUST stay false. From Valheim 1.0 the game refuses to run any
+                // cheat-flagged console command unless the world is already flagged as
+                // cheated, and running one flags the profile as having used cheats. This
+                // command is a server-operator tool, so it is registered as a plain
+                // server-only command and never taints the world or the achievements.
+                isCheat: false,
+                isNetwork: false,
+                onlyServer: true,
+                // hideBehindDevCommands is new in Valheim 1.0 and sits between
+                // allowInDevBuild and optionsFetcher. Every argument here is named, so the
+                // insertion cannot silently shift a value into the wrong slot.
+                hideBehindDevCommands: false
             );
 
-            Log.LogInfo("BakaLoader KillAll v1.2.0 loaded - 'baka_killall' command registered.");
+            Log.LogInfo("BakaLoader KillAll v" + PluginVersion + " loaded - 'baka_killall' command registered.");
         }
 
         private void Update()

@@ -30,6 +30,9 @@ namespace ValheimBakaLoader.Tools
         /// are shared via directory JUNCTIONS, loose root files are hard-linked (same volume) or
         /// copied, and BepInEx/plugins + config + cache are REAL per-server copies so each server's
         /// mod set is fully independent. Returns the path to the isolated server .exe.
+        ///
+        /// Provisioning works at DIRECTORY level off a deny-list, so a game update that adds a
+        /// top-level folder or new Managed assemblies is included with no code change.
         /// </summary>
         /// <param name="baseExePath">Path to the base (Steam) server .exe to derive from.</param>
         /// <param name="profileName">Profile name; sanitized into the install folder name.</param>
@@ -71,6 +74,19 @@ namespace ValheimBakaLoader.Tools
         // BepInEx subfolders that are read-only at runtime and safe to share via junction.
         private static readonly string[] JunctionableBepInExDirs = { "core", "patchers" };
 
+        /// <summary>
+        /// The ONLY top-level entries an isolated install skips. Everything else the base
+        /// install carries is provisioned automatically, by design: this is a DENY-list, not
+        /// an allow-list, so a game update that adds a folder (Valheim 1.0 added
+        /// "Valheim_BurstDebugInformation_DoNotShip") or new Managed assemblies is picked up
+        /// with no code change. Never turn this into an allow-list.
+        /// </summary>
+        private static readonly string[] SkippedTopLevelDirs =
+        {
+            InstancesRootName,      // never nest one instances root inside another
+            ".git",
+        };
+
         private readonly IApplicationLogger Logger;
 
         public InstallIsolationService(IApplicationLogger logger)
@@ -101,6 +117,12 @@ namespace ValheimBakaLoader.Tools
                 foreach (var dir in Directory.EnumerateDirectories(baseDir))
                 {
                     var name = new DirectoryInfo(dir).Name;
+                    if (SkippedTopLevelDirs.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        Logger.Debug("Skipping top-level folder '{0}' while provisioning '{1}'.", name, profileName);
+                        continue;
+                    }
+
                     if (string.Equals(name, "BepInEx", StringComparison.OrdinalIgnoreCase))
                     {
                         ProvisionBepInEx(dir, Path.Combine(installDir, name), seedPluginsFromBase, sameVolume,
@@ -108,11 +130,17 @@ namespace ValheimBakaLoader.Tools
                     }
                     else
                     {
-                        // Bulky read-only game runtime (valheim_server_Data, MonoBleedingEdge, D3D12, …): share via junction.
+                        // Everything else is bulky read-only game runtime and gets shared through a
+                        // single directory junction: valheim_server_Data (Managed and all its
+                        // assemblies included), MonoBleedingEdge, D3D12,
+                        // Valheim_BurstDebugInformation_DoNotShip, and whatever a future update
+                        // adds. Junctioning at DIRECTORY level is what makes that automatic.
                         CreateJunctionOrThrow(Path.Combine(installDir, name), dir);
                     }
                 }
 
+                // Every loose root file, no filter: the exe, its config, the doorstop files, and
+                // anything a game update drops beside them.
                 foreach (var file in Directory.EnumerateFiles(baseDir))
                 {
                     LinkOrCopyFile(file, Path.Combine(installDir, Path.GetFileName(file)), sameVolume);

@@ -16,6 +16,8 @@ namespace ValheimBakaLoader.Tools
         void SendServerCrashed(string serverName, bool willRestart, int restartDelay);
         void SendPlayerJoined(string playerName, string serverName);
         void SendPlayerLeft(string playerName, string serverName);
+        void SendLaunchHeld(string serverName, string reason);
+        void SendLegacyWorldLoaded(string serverName, string worldName);
     }
 
     public class DiscordWebhookService : IDiscordWebhookService
@@ -60,6 +62,27 @@ namespace ValheimBakaLoader.Tools
         public void SendPlayerLeft(string playerName, string serverName)
         {
             SendEmbed("Player Left", $"**{playerName}** left **{serverName}**.", 0xF39C12); // Orange
+        }
+
+        /// <summary>
+        /// The server did NOT come back up because the build on disk is not the one it last
+        /// ran, or a Steam update is waiting. Someone has to make that call, so say so.
+        /// </summary>
+        public void SendLaunchHeld(string serverName, string reason)
+        {
+            SendEmbed(
+                "Start Held",
+                $"**{serverName}** was not started automatically. {reason}",
+                0xE0A35C); // Amber
+        }
+
+        public void SendLegacyWorldLoaded(string serverName, string worldName)
+        {
+            SendEmbed(
+                "Old World Format",
+                $"**{serverName}** loaded **{worldName}** in the pre-1.0 save format. "
+                + "The next save converts it, and older servers will not be able to load it afterwards.",
+                0xE0A35C); // Amber
         }
 
         private void SendEmbed(string title, string description, int color)

@@ -157,6 +157,15 @@ namespace ValheimBakaLoader.Forms
             DiscordStatus.SnapshotProvider = BuildDiscordSnapshot;
             DiscordStatus.RequestUpdate();
 
+            // The Atlas world reader explains every file it turns down (wrong version, missing
+            // generation, unreadable chunk). Those lines are worth having in the app log when a
+            // map refuses to render, instead of vanishing into a static field nobody reads.
+            AtlasEngine.WorldDbReader.DiagnosticSink = message =>
+            {
+                if (string.IsNullOrWhiteSpace(message)) return;
+                try { appLogger.Information("Atlas: {message}", message); } catch { }
+            };
+
             // Anonymous usage heartbeat (gated on the ShareAnonymousStats pref).
             Heartbeat.ServerRunningProvider = () =>
                 Sessions.Values.Any(s => s.Server.Status == ServerStatus.Running);
@@ -190,6 +199,7 @@ namespace ValheimBakaLoader.Forms
                 WireSessionEvents(session);
                 WireAppSelfUpdate(session);
                 WireModUpdateHooks(session);
+                WireLaunchGuard(session);
 
                 Sessions[profileName] = session;
                 return session;
@@ -251,6 +261,39 @@ namespace ValheimBakaLoader.Forms
             };
             server.WorldSaved += (s, seconds) => PostEvent("server.worldSaved", new { seconds, profile });
             server.InviteCodeReady += (s, code) => PostEvent("server.inviteCode", new { code, profile });
+
+            // A FAILED save means everything played since the last good one is only in memory.
+            // That is the one server message a host must not miss, so it gets its own event.
+            server.WorldSaveFailed += (s, durationMs) =>
+            {
+                PostEvent("server.worldSaveFailed", new { durationMs, profile });
+                Analytics.Record(new AnalyticsEvent { Kind = "savefail", Server = profile });
+            };
+
+            // The world on disk is still pre-1.0. The next save rewrites it and there is no
+            // way back, so warn while the host can still take a copy.
+            server.LegacyWorldLoaded += (s, e) =>
+            {
+                var world = ServerPrefsProvider.LoadPreferences(profile)?.WorldName ?? "the world";
+                PostEvent("server.legacyWorld", new { world, profile });
+
+                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                {
+                    DiscordWebhooks.SendLegacyWorldLoaded(DisplayName(), world);
+                }
+            };
+
+            // Both numbers come from the server's own banner, never from an assumption.
+            server.VersionDetected += (s, version) =>
+            {
+                PostEvent("server.version", new
+                {
+                    version,
+                    network = server.NetworkVersion,
+                    profile,
+                });
+                DiscordStatus.RequestUpdate();
+            };
             server.ServerCrashed += (s, e) =>
             {
                 PostEvent("server.crashed", new { profile });
@@ -543,8 +586,11 @@ namespace ValheimBakaLoader.Forms
                 var prefs = ServerPrefsProvider.LoadPreferences(StartProfile)
                     ?? throw new InvalidOperationException($"No server profile named '{StartProfile}'");
 
-                Server.Start(BuildServerOptions(prefs));
-                Logger.Information("Auto-started server for profile {profile}", StartProfile);
+                // Auto-start is unattended by definition, so it goes through the launch guard
+                // as an automatic launch: a changed build holds it and raises a banner rather
+                // than quietly upgrading every world on the way up.
+                Server.StartAutomatically(BuildServerOptions(prefs));
+                Logger.Information("Auto-start requested for profile {profile}", StartProfile);
             }
             catch (Exception ex)
             {
@@ -722,6 +768,358 @@ namespace ValheimBakaLoader.Forms
             };
         }
 
+        #endregion
+
+        #region Launch guard (build changed / Steam update waiting)
+
+        // A one-shot answer the host gave in the UI, keyed by profile: "proceed" starts on the
+        // new build as-is, "backup" copies every world aside first. Consumed by the next launch.
+        // The timestamp rides along so an answer that never got used (the start was refused for
+        // some other reason) cannot silently clear a question asked half an hour later.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime At, string Answer)> LaunchOverrides =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>How long a staged answer stays good for. A launch follows within seconds.</summary>
+        private static readonly TimeSpan LaunchAnswerLifetime = TimeSpan.FromMinutes(5);
+
+        // The condition a held launch left behind, keyed by profile, so the banner survives a
+        // page reload and shows up in server.state.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, object> LaunchHolds =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Teaches one session's server to ask before it launches. A start the host asked for
+        /// in the UI carries its answer along; anything BakaLoader starts by itself is held
+        /// with a banner instead, because nobody may be at the keyboard to answer a dialog.
+        /// </summary>
+        private void WireLaunchGuard(ServerSession session)
+        {
+            var profile = session.ProfileName;
+            var server = session.Server;
+
+            server.ConfirmLaunchAsync = context =>
+            {
+                // The host already answered for this launch, and answered it recently. An answer
+                // is only good for the launch it was given for, which is what MayUseStagedAnswer
+                // decides: anything BakaLoader started by itself asks again rather than helping
+                // itself to a choice the host made about a different launch.
+                if (context.MayUseStagedAnswer
+                    && LaunchOverrides.TryRemove(profile, out var staged)
+                    && DateTime.UtcNow - staged.At <= LaunchAnswerLifetime)
+                {
+                    ClearLaunchHold(profile);
+                    return Task.FromResult(string.Equals(staged.Answer, "backup", StringComparison.OrdinalIgnoreCase)
+                        ? LaunchDecision.BackUpThenGo("the host asked for a world backup first")
+                        : LaunchDecision.Go("the host chose to start anyway"));
+                }
+
+                var outcome = LaunchGuard.Decide(context.Current, context.LastLaunchedBuild, context.HasWorlds);
+                if (outcome == LaunchGuardOutcome.Proceed)
+                {
+                    ClearLaunchHold(profile);
+                    return Task.FromResult(LaunchDecision.Go());
+                }
+
+                HoldLaunch(profile, context, outcome);
+                return Task.FromResult(LaunchDecision.Hold(HoldReason(outcome, context)));
+            };
+
+            server.RecordLaunchedBuild = (build, version) => StoreLaunchedBuild(profile, build, version);
+
+            // Profiles can share one save folder, so the pre-update snapshot can reach a world
+            // some other profile's server is saving into right now. Copying that gives a layer
+            // that reads as a whole world and is not one, so it stops the launch instead.
+            server.WorldSnapshotVeto = WorldInUseByRunningProfile;
+
+            server.PreUpdateBackupCompleted += (s, result) =>
+            {
+                PostEvent("server.worldsBackedUp", new
+                {
+                    profile,
+                    ok = result.Ok,
+                    error = result.Error,
+                    count = result.Copied.Count,
+                    bytes = result.Bytes,
+                    skipped = result.Skipped,
+                });
+
+                if (result.Ok)
+                {
+                    Analytics.Record(new AnalyticsEvent { Kind = "presnap", Server = profile });
+                }
+            };
+
+            // A launch that ends without the server coming up never changes Status, so nothing
+            // else tells the Hearth the attempt is over. Without this the Start button stays
+            // disabled from the state the start call returned and there is no way back.
+            server.LaunchSettled += (s, settled) =>
+            {
+                if (!string.IsNullOrWhiteSpace(settled.Error))
+                {
+                    PostEvent("server.launchFailed", new
+                    {
+                        profile,
+                        reason = settled.Reason,
+                        message = settled.Error,
+                    });
+                }
+
+                PostEvent("server.status", BuildServerState(session));
+                PostEvent("servers.changed", BuildServersList());
+            };
+        }
+
+        /// <summary>
+        /// Why a world may not be copied aside right now, or null when it is free. Mirrors the
+        /// guard the Barrow's restore already applies: a world a running server owns is being
+        /// written to, so it cannot be captured whole.
+        /// </summary>
+        private string WorldInUseByRunningProfile(WorldInfo world)
+        {
+            if (world == null || string.IsNullOrWhiteSpace(world.Name)) return null;
+
+            foreach (var pr in ServerPrefsProvider.LoadPreferences())
+            {
+                if (!string.Equals(pr.WorldName, world.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (Sessions.TryGetValue(pr.ProfileName, out var session)
+                    && session.Server.Status != ServerStatus.Stopped)
+                {
+                    return $"'{pr.ProfileName}' is running it right now. Stop that server first.";
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Writes what a launched server actually ran into its profile.</summary>
+        private void StoreLaunchedBuild(string profile, string build, string gameVersion)
+        {
+            if (string.IsNullOrWhiteSpace(build) && string.IsNullOrWhiteSpace(gameVersion)) return;
+
+            try
+            {
+                var prefs = ServerPrefsProvider.LoadPreferences(profile);
+                if (prefs == null) return;
+
+                var changed = false;
+                if (!string.IsNullOrWhiteSpace(build) && prefs.LastLaunchedServerBuild != build)
+                {
+                    prefs.LastLaunchedServerBuild = build;
+                    changed = true;
+                }
+                if (!string.IsNullOrWhiteSpace(gameVersion) && prefs.LastLaunchedGameVersion != gameVersion)
+                {
+                    prefs.LastLaunchedGameVersion = gameVersion;
+                    changed = true;
+                }
+                if (!changed) return;
+
+                ServerPrefsProvider.SavePreferences(prefs);
+                Logger.Information(
+                    "Recorded {profile} as last launched on {build} ({version})",
+                    profile, build ?? "(unchanged)", gameVersion ?? "version not reported yet");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not record the launched build for profile {profile}", profile);
+            }
+        }
+
+        /// <summary>
+        /// Records and announces a launch the guard would not clear: a banner in the UI, a line
+        /// in the log, a Herald post when event posts are on, and an entry in the journal.
+        /// </summary>
+        private void HoldLaunch(string profile, LaunchContext context, LaunchGuardOutcome outcome)
+        {
+            var dto = BuildLaunchGuardDto(profile, context, outcome);
+            LaunchHolds[profile] = dto;
+
+            var reason = HoldReason(outcome, context);
+            Logger.Warning("Start held for profile {profile}: {reason}", profile, reason);
+
+            PostEvent("server.launchHold", dto);
+            PostEvent("servers.changed", BuildServersList());
+
+            Analytics.Record(new AnalyticsEvent
+            {
+                Kind = "hold",
+                Server = profile,
+                FromVersion = context.LastLaunchedBuild,
+                ToVersion = context.Current?.Identity,
+            });
+
+            try
+            {
+                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                {
+                    var name = ServerPrefsProvider.LoadPreferences(profile)?.Name;
+                    DiscordWebhooks.SendLaunchHeld(
+                        string.IsNullOrWhiteSpace(name) ? profile : name, reason);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not post the held start to Discord");
+            }
+        }
+
+        /// <summary>
+        /// The prefs a start-shaped call is talking about: the payload when the UI sent one,
+        /// otherwise whatever is saved for the active profile.
+        /// </summary>
+        private ServerPreferences ResolveStartPrefs(JObject p)
+        {
+            var payload = p?["prefs"];
+            var prefs = payload is JObject sent && sent.HasValues ? sent.ToObject<ServerPreferences>() : null;
+            prefs ??= ServerPrefsProvider.LoadPreferences(ActiveProfileName) ?? new ServerPreferences();
+            return MergeLaunchHistory(prefs);
+        }
+
+        /// <summary>
+        /// The WebUI builds its prefs payload out of form fields, which do not include the
+        /// launch history - so a plain round-trip would erase it and make every start look
+        /// like the first one. Fill those two fields back in from what is on disk.
+        /// </summary>
+        private ServerPreferences MergeLaunchHistory(ServerPreferences prefs)
+        {
+            if (prefs == null) return null;
+            if (!string.IsNullOrWhiteSpace(prefs.LastLaunchedServerBuild)
+                && !string.IsNullOrWhiteSpace(prefs.LastLaunchedGameVersion)) return prefs;
+
+            try
+            {
+                var stored = ServerPrefsProvider.LoadPreferences(
+                    string.IsNullOrWhiteSpace(prefs.ProfileName) ? ActiveProfileName : prefs.ProfileName);
+                if (stored == null) return prefs;
+
+                prefs.LastLaunchedServerBuild ??= stored.LastLaunchedServerBuild;
+                prefs.LastLaunchedGameVersion ??= stored.LastLaunchedGameVersion;
+            }
+            catch { /* an unreadable profile just means the guard asks again */ }
+
+            return prefs;
+        }
+
+        /// <summary>
+        /// Stages the host's answer to the launch guard for the next launch of that profile.
+        /// Anything other than the two known answers is ignored, so the guard is never
+        /// cleared by a stray parameter.
+        /// </summary>
+        private void StageLaunchAnswer(string profile, string answer)
+        {
+            if (string.IsNullOrWhiteSpace(profile)) return;
+
+            if (string.Equals(answer, "backup", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(answer, "proceed", StringComparison.OrdinalIgnoreCase))
+            {
+                LaunchOverrides[profile] = (DateTime.UtcNow, answer.ToLowerInvariant());
+                return;
+            }
+
+            // No answer this time: make sure a stale one cannot clear a fresh question.
+            LaunchOverrides.TryRemove(profile, out _);
+        }
+
+        /// <summary>
+        /// Takes a staged answer back when the launch it was staged for never happened, so no
+        /// later launch can consume it.
+        /// </summary>
+        private void DropLaunchAnswer(string profile)
+        {
+            if (string.IsNullOrWhiteSpace(profile)) return;
+            LaunchOverrides.TryRemove(profile, out _);
+        }
+
+        private void ClearLaunchHold(string profile)
+        {
+            if (LaunchHolds.TryRemove(profile, out _))
+            {
+                PostEvent("server.launchHoldCleared", new { profile });
+            }
+        }
+
+        /// <summary>One plain sentence for the log and the Discord post.</summary>
+        private static string HoldReason(LaunchGuardOutcome outcome, LaunchContext context)
+        {
+            if (outcome == LaunchGuardOutcome.UpdatePending)
+            {
+                var mb = Math.Max(1, (context.Current?.PendingBytes ?? 0) / 1048576);
+                return $"Steam has a server update waiting ({mb} MB). Starting now would run the old build.";
+            }
+
+            var from = string.IsNullOrWhiteSpace(context.LastLaunchedBuild)
+                ? "an unknown build"
+                : "build " + ServerBuildInfo.Short(context.LastLaunchedBuild);
+            var to = "build " + ServerBuildInfo.Short(context.Current?.Identity);
+            return $"The server changed from {from} to {to}. Starting will upgrade the worlds to the new version.";
+        }
+
+        /// <summary>Everything the WebUI needs to phrase the question and offer the three answers.</summary>
+        private object BuildLaunchGuardDto(string profile, LaunchContext context, LaunchGuardOutcome outcome)
+        {
+            var current = context.Current;
+            return new
+            {
+                profile,
+                outcome = LaunchGuard.Token(outcome),
+                automatic = context.Automatic,
+                reason = context.Reason,
+                currentBuild = current?.Identity,
+                currentBuildShort = ServerBuildInfo.Short(current?.Identity),
+                source = current?.Source.ToString(),
+                pendingBytes = current?.PendingBytes ?? 0,
+                lastBuild = context.LastLaunchedBuild,
+                lastBuildShort = ServerBuildInfo.Short(context.LastLaunchedBuild),
+                lastVersion = context.LastLaunchedGameVersion,
+                hasWorlds = context.HasWorlds,
+                manifest = current?.ManifestPath,
+                message = HoldReason(outcome, context),
+            };
+        }
+
+        /// <summary>
+        /// Answers the same question the guard asks, without starting anything - so the Start
+        /// button can put the choice to the host BEFORE the server goes anywhere.
+        /// </summary>
+        private object BuildLaunchCheck(string profile, IValheimServerOptions options, ServerPreferences prefs)
+        {
+            Tools.ServerBuildInfo current = null;
+            try
+            {
+                current = ServerBuildTracker.Probe(options.ServerExePath);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not read the server build for profile {profile}", profile);
+            }
+
+            var hasWorlds = false;
+            try
+            {
+                hasWorlds = WorldStore.Enumerate(options.SaveDataFolderPath).Count > 0;
+            }
+            catch { /* an unreadable save folder is not a reason to block a start */ }
+
+            var context = new LaunchContext
+            {
+                Automatic = false,
+                Reason = LaunchReasons.Manual,
+                Current = current,
+                LastLaunchedBuild = prefs.LastLaunchedServerBuild,
+                LastLaunchedGameVersion = prefs.LastLaunchedGameVersion,
+                HasWorlds = hasWorlds,
+                ProfileName = profile,
+                Options = options,
+            };
+
+            var outcome = LaunchGuard.Decide(current, context.LastLaunchedBuild, hasWorlds);
+            return BuildLaunchGuardDto(profile, context, outcome);
+        }
+
+        #endregion
+
+        #region Analytics plumbing
+
         /// <summary>Per-player scratch bucket for the analytics.overview aggregation.</summary>
         private class SkaldPlayerAgg
         {
@@ -887,6 +1285,9 @@ namespace ValheimBakaLoader.Forms
             {
                 var prefs = (p["prefs"] ?? throw new ArgumentException("prefs is required"))
                     .ToObject<ServerPreferences>();
+                // The form has no fields for the launch history, so carry it over rather than
+                // letting a plain save wipe it and make the next start look like the first.
+                prefs = MergeLaunchHistory(prefs);
                 ServerPrefsProvider.SavePreferences(prefs);
                 CurrentProfile = prefs.ProfileName;
                 PostEvent("servers.changed", BuildServersList());
@@ -1155,34 +1556,20 @@ namespace ValheimBakaLoader.Forms
                         .Where(w => !string.IsNullOrWhiteSpace(w)),
                     StringComparer.OrdinalIgnoreCase);
 
-                var found = new List<(string World, string Folder, string Sub, long SizeBytes, DateTime ModifiedUtc)>();
+                var found = new List<(string World, string Folder, string Sub, string Format, long SizeBytes, DateTime ModifiedUtc)>();
                 foreach (var saveFolder in KnownSaveFolders())
                 {
-                    foreach (var sub in new[] { "worlds_local", "worlds" })
+                    foreach (var sub in WorldStore.WorldSubfolders)
                     {
-                        var dir = Path.Combine(saveFolder, sub);
-                        if (!Directory.Exists(dir)) continue;
-
-                        foreach (var fwl in Directory.GetFiles(dir, "*.fwl"))
+                        // Backups are not adoptable realms, and WorldStore never returns one, so
+                        // a live server's snapshot trail and the originals left behind by a 1.0
+                        // conversion both stay out of the restore panel on their own.
+                        foreach (var w in WorldStore.EnumerateIn(saveFolder, sub))
                         {
-                            var world = Path.GetFileNameWithoutExtension(fwl);
-                            if (string.IsNullOrWhiteSpace(world) || owned.Contains(world)) continue;
-
-                            // Automatic backup snapshots ("World_backup_auto-…") of a world some
-                            // profile still owns aren't adoptable realms - hide them so a live
-                            // server's snapshot trail doesn't flood the restore panel.
-                            var backupIdx = world.IndexOf("_backup_", StringComparison.OrdinalIgnoreCase);
-                            if (backupIdx > 0 && owned.Contains(world.Substring(0, backupIdx))) continue;
-
-                            var db = Path.Combine(dir, world + ".db");
-                            long size = 0;
-                            try { size += new FileInfo(fwl).Length; } catch { /* ignore */ }
-                            try { if (File.Exists(db)) size += new FileInfo(db).Length; } catch { /* ignore */ }
-                            DateTime modified;
-                            try { modified = File.GetLastWriteTimeUtc(File.Exists(db) ? db : fwl); }
-                            catch { modified = DateTime.MinValue; }
-
-                            found.Add((world, saveFolder, sub, size, modified));
+                            if (owned.Contains(w.Name)) continue;
+                            found.Add((w.Name, saveFolder, sub,
+                                w.Format == WorldFormat.Chunked ? "chunked" : "legacy",
+                                w.SizeBytes, w.LastWriteUtc));
                         }
                     }
                 }
@@ -1197,6 +1584,7 @@ namespace ValheimBakaLoader.Forms
                             world = newest.World,
                             folder = newest.Folder,
                             sub = newest.Sub,
+                            format = newest.Format,
                             sizeBytes = newest.SizeBytes,
                             modifiedUtc = newest.ModifiedUtc,
                             olderCount = g.Count() - 1,
@@ -1224,10 +1612,13 @@ namespace ValheimBakaLoader.Forms
                 if (string.IsNullOrWhiteSpace(sub)) sub = "worlds_local";
 
                 // Fail loudly BEFORE creating anything: a missing source must never produce a
-                // profile that claims the world while zero files were actually copied.
-                var srcWorldsDir = string.IsNullOrWhiteSpace(sourceFolder) ? null : Path.Combine(sourceFolder, sub);
-                if (srcWorldsDir == null || !Directory.Exists(srcWorldsDir)
-                    || !File.Exists(Path.Combine(srcWorldsDir, world + ".fwl")))
+                // profile that claims the world while zero files were actually copied. Either
+                // save format counts as present.
+                var sourceWorld = string.IsNullOrWhiteSpace(sourceFolder)
+                    ? null
+                    : WorldStore.EnumerateIn(sourceFolder, sub)
+                        .FirstOrDefault(w => string.Equals(w.Name, world, StringComparison.OrdinalIgnoreCase));
+                if (sourceWorld == null)
                     throw new ArgumentException(
                         $"World '{world}' was not found under '{sourceFolder ?? "<null>"}\\{sub}' - nothing was adopted.");
 
@@ -1472,7 +1863,11 @@ namespace ValheimBakaLoader.Forms
                 {
                     SaveDataFolderPath = ResolveSaveDataFolder(p.Value<string>("saveDataFolderPath")),
                 };
-                return Task.FromResult<object>(options.GetValidatedSaveDataFolder().GetWorldNames());
+                // Both save formats, side by side: pre-1.0 "{name}.fwl" pairs and the 1.0
+                // world DIRECTORIES. Conversion originals and auto snapshots are backup
+                // layers, so they never show up here as pickable worlds.
+                var folder = options.GetValidatedSaveDataFolder();
+                return Task.FromResult<object>(WorldStore.GetWorldNames(folder.FullName));
             });
 
             RegisterRpc("world.info", p =>
@@ -1489,27 +1884,32 @@ namespace ValheimBakaLoader.Forms
 
                 var files = new List<object>();
                 var backups = new List<object>();
+                var found = WorldStore.Find(saveFolder.FullName, world);
 
-                foreach (var sub in new[] { "worlds_local", "worlds" })
+                if (found != null && found.Format == WorldFormat.Chunked)
                 {
-                    var dir = Path.Join(saveFolder.FullName, sub);
-                    if (!Directory.Exists(dir)) continue;
-
-                    foreach (var f in new DirectoryInfo(dir).GetFiles($"{world}*"))
+                    // A 1.0 world is a directory: list the generation and its chunk files.
+                    foreach (var f in new DirectoryInfo(found.Folder).GetFiles())
+                        files.Add(new { name = $"{found.Sub}/{world}/{f.Name}", sizeBytes = f.Length, modifiedUtc = f.LastWriteTimeUtc });
+                }
+                else if (found != null)
+                {
+                    foreach (var ext in new[] { ".fwl", ".db", ".fwl.old", ".db.old" })
                     {
-                        var name = f.Name;
-                        var dto = new { name = $"{sub}/{name}", sizeBytes = f.Length, modifiedUtc = f.LastWriteTimeUtc };
+                        var path = Path.Combine(found.Folder, world + ext);
+                        if (!File.Exists(path)) continue;
+                        var f = new FileInfo(path);
+                        files.Add(new { name = $"{found.Sub}/{f.Name}", sizeBytes = f.Length, modifiedUtc = f.LastWriteTimeUtc });
+                    }
+                }
 
-                        // Precise name matching so "MyWorld" doesn't swallow "MyWorld2" files.
-                        if (name == $"{world}.db" || name == $"{world}.fwl"
-                            || name == $"{world}.db.old" || name == $"{world}.fwl.old")
-                        {
-                            files.Add(dto);
-                        }
-                        else if (name.StartsWith($"{world}_backup_", StringComparison.OrdinalIgnoreCase))
-                        {
-                            backups.Add(dto);
-                        }
+                foreach (var sub in WorldStore.WorldSubfolders)
+                {
+                    foreach (var layer in WorldStore.EnumerateBackups(saveFolder.FullName, sub, world))
+                    {
+                        // The ".old" pair is shown above with the live files, like it always was.
+                        if (layer.Kind == WorldBackupKind.Old) continue;
+                        backups.Add(new { name = $"{sub}/{layer.Name}", sizeBytes = layer.SizeBytes, modifiedUtc = layer.LastWriteUtc });
                     }
                 }
 
@@ -1517,6 +1917,7 @@ namespace ValheimBakaLoader.Forms
                 {
                     world,
                     folder = saveFolder.FullName,
+                    format = found == null ? null : (found.Format == WorldFormat.Chunked ? "chunked" : "legacy"),
                     files,
                     backups,
                 });
@@ -1534,22 +1935,14 @@ namespace ValheimBakaLoader.Forms
 
                 foreach (var saveFolder in KnownSaveFolders())
                 {
-                    foreach (var sub in new[] { "worlds_local", "worlds" })
+                    foreach (var sub in WorldStore.WorldSubfolders)
                     {
-                        var dir = Path.Combine(saveFolder, sub);
-                        if (!Directory.Exists(dir)) continue;
-
-                        string[] fwls;
-                        try { fwls = Directory.GetFiles(dir, "*.fwl"); }
-                        catch { continue; }
-
-                        foreach (var fwl in fwls)
+                        // WorldStore returns worlds in BOTH formats and never returns a backup,
+                        // so a converted world's "{name}_backup_{stamp}.fwl" original folds in
+                        // as a layer below instead of masquerading as a second world.
+                        foreach (var live in WorldStore.EnumerateIn(saveFolder, sub))
                         {
-                            var world = Path.GetFileNameWithoutExtension(fwl);
-                            // Backup layers are folded under their live world, never listed as worlds.
-                            if (string.IsNullOrWhiteSpace(world)
-                                || world.IndexOf("_backup_", StringComparison.OrdinalIgnoreCase) >= 0) continue;
-
+                            var world = live.Name;
                             var owner = profiles.FirstOrDefault(pr =>
                                 string.Equals(pr.WorldName, world, StringComparison.OrdinalIgnoreCase)
                                 && SameFolder(pr.SaveDataFolderPath, saveFolder));
@@ -1557,68 +1950,40 @@ namespace ValheimBakaLoader.Forms
                                 && Sessions.TryGetValue(owner.ProfileName, out var session)
                                 && session.Server.Status != ServerStatus.Stopped;
 
-                            long liveSize = 0;
-                            try { liveSize += new FileInfo(fwl).Length; } catch { /* ignore */ }
-                            var liveDb = Path.Combine(dir, world + ".db");
-                            try { if (File.Exists(liveDb)) liveSize += new FileInfo(liveDb).Length; } catch { /* ignore */ }
-                            DateTime liveModified;
-                            try { liveModified = File.GetLastWriteTimeUtc(File.Exists(liveDb) ? liveDb : fwl); }
-                            catch { liveModified = DateTime.MinValue; }
-
-                            var layers = new List<(DateTime modified, object dto)>();
+                            var layers = new List<object>();
                             long backupBytes = 0;
-                            void AddLayer(string fwlPath, string dbPath, string kind)
+                            foreach (var layer in WorldStore.EnumerateBackups(saveFolder, sub, world))
                             {
-                                if (!File.Exists(fwlPath)) return;
-                                long size = 0;
-                                try { size += new FileInfo(fwlPath).Length; } catch { /* ignore */ }
-                                var hasDb = File.Exists(dbPath);
-                                try { if (hasDb) size += new FileInfo(dbPath).Length; } catch { /* ignore */ }
-                                DateTime modified;
-                                try { modified = File.GetLastWriteTimeUtc(hasDb ? dbPath : fwlPath); }
-                                catch { modified = DateTime.MinValue; }
-                                backupBytes += size;
-                                layers.Add((modified, new
+                                backupBytes += layer.SizeBytes;
+                                layers.Add(new
                                 {
-                                    file = Path.GetFileName(fwlPath),
-                                    kind,
-                                    sizeBytes = size,
-                                    modifiedUtc = modified,
-                                    day = TryReadWorldDay(dbPath),
-                                    hasDb,
-                                }));
+                                    file = layer.Name,
+                                    kind = WorldStore.KindToken(layer.Kind),
+                                    isDirectory = layer.IsDirectory,
+                                    sizeBytes = layer.SizeBytes,
+                                    modifiedUtc = layer.LastWriteUtc,
+                                    day = TryReadWorldDay(layer.DbPath),
+                                    hasDb = layer.HasDb,
+                                    committed = layer.IsCommitted,
+                                    saveNumber = layer.SaveNumber,
+                                });
                             }
 
-                            string[] snapshots;
-                            try { snapshots = Directory.GetFiles(dir, world + "_backup_*.fwl"); }
-                            catch { snapshots = Array.Empty<string>(); }
-                            foreach (var snap in snapshots)
-                            {
-                                // Precise prefix match so "MyWorld" never swallows "MyWorld2" snapshots.
-                                var snapName = Path.GetFileName(snap);
-                                if (!snapName.StartsWith(world + "_backup_", StringComparison.OrdinalIgnoreCase)) continue;
-                                var stem = Path.Combine(dir, Path.GetFileNameWithoutExtension(snap));
-                                var kind = snapName.IndexOf("_backup_auto-", StringComparison.OrdinalIgnoreCase) >= 0 ? "auto"
-                                    : snapName.IndexOf("_backup_restore-", StringComparison.OrdinalIgnoreCase) >= 0 ? "restore"
-                                    : "other";
-                                AddLayer(snap, stem + ".db", kind);
-                            }
-                            AddLayer(Path.Combine(dir, world + ".fwl.old"), Path.Combine(dir, world + ".db.old"), "old");
-
-                            groups.Add((liveModified, new
+                            groups.Add((live.LastWriteUtc, new
                             {
                                 world,
                                 folder = saveFolder,
                                 sub,
                                 owner = owner?.ProfileName,
                                 running,
-                                sizeBytes = liveSize,
-                                modifiedUtc = liveModified,
-                                day = TryReadWorldDay(liveDb),
-                                backups = layers
-                                    .OrderByDescending(l => l.modified)
-                                    .Select(l => l.dto)
-                                    .ToList(),
+                                format = live.Format == WorldFormat.Chunked ? "chunked" : "legacy",
+                                formatLabel = live.FormatLabel,
+                                committed = live.IsCommitted,
+                                saveNumber = live.SaveNumber,
+                                sizeBytes = live.SizeBytes,
+                                modifiedUtc = live.LastWriteUtc,
+                                day = TryReadWorldDay(live.DbPath),
+                                backups = layers,
                                 backupBytes,
                             }));
                         }
@@ -1635,9 +2000,14 @@ namespace ValheimBakaLoader.Forms
             // safety copy of the current live files ("{world}_backup_restore-<ts>"), so a
             // restore is always reversible from the Barrow itself. Refuses while any server
             // in that save folder is running the world (the game would clobber the files).
-            RegisterRpc("backups.restore", p =>
+            RegisterRpc("backups.restore", async p =>
             {
-                var (dir, world, file) = ValidateBackupRef(p, requireBackupShape: true);
+                var reference = ValidateBackupRef(p, requireBackupShape: true);
+                var saveFolder = reference.SaveFolder;
+                var dir = reference.Dir;
+                var world = reference.World;
+                var file = reference.File;
+                var layer = reference.Layer;
 
                 foreach (var pr in ServerPrefsProvider.LoadPreferences())
                 {
@@ -1648,57 +2018,104 @@ namespace ValheimBakaLoader.Forms
                             $"'{pr.ProfileName}' is running world '{world}' right now - stop it before restoring a backup.");
                 }
 
+                // A 1.0 layer is only safe to copy once its generation is committed: the .ok
+                // marker is written last, so a layer without it is a half-written save.
+                if (layer.IsDirectory && !layer.IsCommitted)
+                    throw new InvalidOperationException(
+                        $"'{layer.Name}' holds no finished save yet, so there is nothing to unearth from it.");
+
+                // Scoped to the layer's OWN subfolder. A name that exists in both worlds_local
+                // and worlds would otherwise resolve to whichever one comes first, and the
+                // safety copy would be taken of one world while the other is overwritten.
+                var live = WorldStore.FindIn(saveFolder, reference.Sub, world);
                 var liveFwl = Path.Combine(dir, world + ".fwl");
                 var liveDb = Path.Combine(dir, world + ".db");
+                var liveDir = Path.Combine(dir, world);
 
-                // Safety layer first: snapshot whatever is live right now.
-                string snapshot = null;
-                if (File.Exists(liveFwl))
+                // Prove it before anything is written: the world being replaced has to be the
+                // one that sits beside the layer being unearthed.
+                if (live != null)
                 {
-                    var ts = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
-                    snapshot = $"{world}_backup_restore-{ts}";
-                    File.Copy(liveFwl, Path.Combine(dir, snapshot + ".fwl"), overwrite: true);
-                    if (File.Exists(liveDb)) File.Copy(liveDb, Path.Combine(dir, snapshot + ".db"), overwrite: true);
+                    var liveParent = live.Format == WorldFormat.Chunked
+                        ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(live.Folder))
+                        : live.Folder;
+
+                    if (!SameFolder(liveParent, dir))
+                        throw new InvalidOperationException(
+                            $"'{world}' resolved to a world in a different save subfolder, so nothing was restored.");
                 }
 
-                // The layer's paired .db: same stem for snapshots, ".db.old" for the .old pair.
-                var srcFwl = Path.Combine(dir, file);
-                var srcDb = file.EndsWith(".fwl.old", StringComparison.OrdinalIgnoreCase)
-                    ? Path.Combine(dir, world + ".db.old")
-                    : Path.Combine(dir, Path.GetFileNameWithoutExtension(file) + ".db");
+                // Safety layer first: snapshot whatever is live right now, in its own format,
+                // so every unearthing stays reversible from the Barrow. A 1.0 world is a whole
+                // directory, so all of this runs off the UI thread.
+                string snapshot = live == null ? null : $"{world}_backup_restore-{DateTime.UtcNow:yyyyMMdd-HHmmss}";
+                var restoredDb = await Task.Run(() =>
+                {
+                    if (live != null)
+                    {
+                        if (live.Format == WorldFormat.Chunked)
+                        {
+                            WorldStore.CopyDirectory(live.Folder, Path.Combine(dir, snapshot));
+                        }
+                        else
+                        {
+                            File.Copy(liveFwl, Path.Combine(dir, snapshot + ".fwl"), overwrite: true);
+                            if (File.Exists(liveDb)) File.Copy(liveDb, Path.Combine(dir, snapshot + ".db"), overwrite: true);
+                        }
+                    }
 
-                File.Copy(srcFwl, liveFwl, overwrite: true);
-                var restoredDb = File.Exists(srcDb);
-                if (restoredDb) File.Copy(srcDb, liveDb, overwrite: true);
+                    if (layer.IsDirectory)
+                    {
+                        // Chunked layer: the live directory keeps its place, its contents are
+                        // replaced wholesale so no stale chunk file from the newer save survives.
+                        if (live != null && live.Format == WorldFormat.Legacy)
+                        {
+                            foreach (var ext in new[] { ".fwl", ".db" })
+                            {
+                                var stale = Path.Combine(dir, world + ext);
+                                if (File.Exists(stale)) File.Delete(stale);
+                            }
+                        }
+                        WorldStore.ReplaceDirectoryContents(layer.Path, liveDir, snapshot);
+                        return true;
+                    }
 
-                Logger.Information("Barrow restore: '{0}' <- '{1}' (db: {2}; safety copy: {3}).",
-                    world, file, restoredDb, snapshot ?? "none");
-                return Task.FromResult<object>(new
+                    // Legacy layer. Onto a 1.0 world this means going back to the pre-conversion
+                    // files: the live directory goes away and the pair returns to the worlds root,
+                    // where the game converts it again on its next save.
+                    if (live != null && live.Format == WorldFormat.Chunked && Directory.Exists(live.Folder))
+                        Directory.Delete(live.Folder, recursive: true);
+
+                    File.Copy(layer.Path, liveFwl, overwrite: true);
+                    if (layer.HasDb) File.Copy(layer.DbPath, liveDb, overwrite: true);
+                    return layer.HasDb;
+                });
+
+                var restored = WorldStore.FindIn(saveFolder, reference.Sub, world);
+                Logger.Information("Barrow restore: '{0}' <- '{1}' (kind: {2}; db: {3}; safety copy: {4}).",
+                    world, file, WorldStore.KindToken(layer.Kind), restoredDb, snapshot ?? "none");
+                return (object)new
                 {
                     ok = true,
                     snapshot,
                     restoredDb,
-                    day = TryReadWorldDay(restoredDb ? liveDb : null),
-                });
+                    format = restored == null ? null : (restored.Format == WorldFormat.Chunked ? "chunked" : "legacy"),
+                    day = TryReadWorldDay(restored?.DbPath),
+                };
             });
 
-            // Deletes one backup layer (its .fwl + paired .db). The live pair can never be
-            // named here - ValidateBackupRef only accepts backup-shaped filenames.
-            RegisterRpc("backups.delete", p =>
+            // Deletes one backup layer: a legacy .fwl plus its paired .db, or a whole 1.0
+            // backup DIRECTORY. The live world can never be named here - ValidateBackupRef
+            // resolves the reference against the world's actual backup layers only.
+            RegisterRpc("backups.delete", async p =>
             {
-                var (dir, world, file) = ValidateBackupRef(p, requireBackupShape: true);
+                var reference = ValidateBackupRef(p, requireBackupShape: true);
+                // A 1.0 layer is a directory tree, so the delete goes off the UI thread.
+                var deleted = await Task.Run(() => WorldStore.DeleteBackup(reference.Layer));
 
-                var deleted = new List<string>();
-                var fwlPath = Path.Combine(dir, file);
-                var dbPath = file.EndsWith(".fwl.old", StringComparison.OrdinalIgnoreCase)
-                    ? Path.Combine(dir, world + ".db.old")
-                    : Path.Combine(dir, Path.GetFileNameWithoutExtension(file) + ".db");
-
-                if (File.Exists(fwlPath)) { File.Delete(fwlPath); deleted.Add(Path.GetFileName(fwlPath)); }
-                if (File.Exists(dbPath)) { File.Delete(dbPath); deleted.Add(Path.GetFileName(dbPath)); }
-
-                Logger.Information("Barrow delete: world '{0}' layer '{1}' ({2} file(s)).", world, file, deleted.Count);
-                return Task.FromResult<object>(new { deleted });
+                Logger.Information("Barrow delete: world '{0}' layer '{1}' ({2} item(s)).",
+                    reference.World, reference.File, deleted.Count);
+                return (object)new { deleted };
             });
 
             // --- The Skald (analytics) ---
@@ -1889,23 +2306,29 @@ namespace ValheimBakaLoader.Forms
                 });
             });
 
-            // World identity from the .fwl (read-only): the typed seed string and the
-            // numeric seed the game derived from it. exists=false means the world has
-            // no .fwl yet (it will be generated - with a random seed - on first launch).
+            // World identity from the world metadata (read-only): the typed seed string and
+            // the numeric seed the game derived from it. Reads the pre-1.0 "{world}.fwl" and
+            // the 1.0 "_main.{N}.fwl2" alike - the fields up to the seed sit in the same
+            // order in both. exists=false means the world has no metadata yet (it will be
+            // generated, with a random seed, on first launch).
             RegisterRpc("world.seed", p =>
             {
                 var world = p.Value<string>("world");
                 if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
 
                 var saveFolder = ResolveSaveDataFolder(null);
+                var stored = WorldStore.Find(saveFolder, world);
                 var info = FwlReader.TryReadWorld(saveFolder, world);
                 return Task.FromResult<object>(new
                 {
                     world,
-                    exists = info != null,
+                    exists = info != null || stored != null,
                     seedName = info?.SeedName ?? "",
                     seed = info?.Seed ?? 0,
                     worldVersion = info?.WorldVersion ?? 0,
+                    worldGenVersion = info?.WorldGenVersion ?? 0,
+                    format = stored == null ? null : (stored.Format == WorldFormat.Chunked ? "chunked" : "legacy"),
+                    saveNumber = stored?.SaveNumber,
                 });
             });
 
@@ -2054,13 +2477,17 @@ namespace ValheimBakaLoader.Forms
                     var world = p.Value<string>("world");
                     if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
 
-                    var fwl = FwlReader.FindWorldFwl(ResolveSaveDataFolder(null), world);
-                    var dbPath = fwl == null ? null : Path.ChangeExtension(fwl, ".db");
+                    var stored = WorldStore.Find(ResolveSaveDataFolder(null), world);
+                    var dbPath = stored?.DbPath;
                     if (dbPath == null || !File.Exists(dbPath))
                         return (object)new { world, hasDb = false };
 
                     var savedAtUtc = File.GetLastWriteTimeUtc(dbPath);
-                    var db = await Task.Run(() => AtlasEngine.WorldDbReader.TryRead(dbPath));
+
+                    // A 1.0 world keeps its ZDOs in sibling .chunk files, so the reader is
+                    // handed the world DIRECTORY; a pre-1.0 world is handed its .db.
+                    var readTarget = stored.Format == WorldFormat.Chunked ? stored.Folder : dbPath;
+                    var db = await Task.Run(() => ReadWorldSave(readTarget));
                     if (db == null)
                         return (object)new { world, hasDb = false };
 
@@ -2147,6 +2574,10 @@ namespace ValheimBakaLoader.Forms
                         eventName = db.EventName,
                         eventX = db.EventPosX,
                         eventZ = db.EventPosZ,
+                        // Anything above zero means portals, builds and the shared map are only
+                        // part of the story, so the map must not be read as the whole world.
+                        chunksTotal = db.ChunksTotal,
+                        chunksSkipped = db.ChunksSkipped,
                     };
                 }
                 finally
@@ -2253,16 +2684,43 @@ namespace ValheimBakaLoader.Forms
             // --- Server lifecycle ---
             RegisterRpc("server.state", p => Task.FromResult<object>(BuildServerState()));
 
+            // Asks the launch guard's question without starting anything, so the Start button
+            // can put a changed build (or a waiting Steam update) to the host first.
+            RegisterRpc("server.launchCheck", async p =>
+            {
+                var prefs = ResolveStartPrefs(p);
+                var profile = string.IsNullOrWhiteSpace(prefs.ProfileName) ? ActiveProfileName : prefs.ProfileName;
+                var options = BuildServerOptions(prefs);
+                // Reading the install can mean hashing the server binaries, so keep it off
+                // the UI thread: the Start button must not stutter to ask this question.
+                return await Task.Run(() => BuildLaunchCheck(profile, options, prefs));
+            });
+
             RegisterRpc("server.start", p =>
             {
                 var prefs = (p["prefs"] ?? throw new ArgumentException("prefs is required"))
                     .ToObject<ServerPreferences>();
                 var session = GetOrCreateSession(
                     string.IsNullOrWhiteSpace(prefs.ProfileName) ? CurrentProfile : prefs.ProfileName);
-                var options = BuildServerOptions(prefs);
+                var options = BuildServerOptions(MergeLaunchHistory(prefs));
                 EnsureNoServerCollisions(session, options);
-                session.Server.Start(options);
+                StageLaunchAnswer(session.ProfileName, p.Value<string>("guard"));
+
+                // Start() does nothing at all when the server is not startable, which would
+                // leave the answer armed for whatever launches next. Take it back.
+                if (!session.Server.CanStart) DropLaunchAnswer(session.ProfileName);
+                else session.Server.Start(options);
+
                 return Task.FromResult<object>(BuildServerState(session));
+            });
+
+            // The host answered the launch guard from the Hearth banner without starting yet
+            // ("Not now"): drop the condition so it stops nagging until the next attempt.
+            RegisterRpc("server.dismissLaunchHold", p =>
+            {
+                var profile = p.Value<string>("profile");
+                ClearLaunchHold(string.IsNullOrWhiteSpace(profile) ? ActiveProfileName : profile);
+                return Task.FromResult<object>(true);
             });
 
             RegisterRpc("server.stop", p =>
@@ -2273,9 +2731,21 @@ namespace ValheimBakaLoader.Forms
 
             RegisterRpc("server.restart", async p =>
             {
+                // A restart stops the server and starts it again, so it meets the same guard.
+                // The host's answer is staged here, before anything goes down.
+                StageLaunchAnswer(ActiveSession.ProfileName, p.Value<string>("guard"));
+
                 // Smart restart: countdown running -> bypass & restart NOW; players online ->
                 // 1-minute warned countdown; empty server -> immediate restart, no broadcast.
                 var restart = await Server.RequestSmartRestart();
+
+                // Nothing was started, so the answer belongs to no launch. Leaving it armed is
+                // how an unattended relaunch minutes later inherits a choice about this one.
+                if (string.Equals(restart, "unavailable", StringComparison.OrdinalIgnoreCase))
+                {
+                    DropLaunchAnswer(ActiveSession.ProfileName);
+                }
+
                 return new { restart, state = BuildServerState() };
             });
 
@@ -2340,8 +2810,11 @@ namespace ValheimBakaLoader.Forms
             RegisterRpc("players.isListed", p =>
             {
                 var (list, id) = RequireListArgs(p);
-                return Task.FromResult<object>(
-                    PlayerListService.IsListed(ResolveSaveDataFolder(null), list, id));
+
+                // null travels to the UI as "unknown", which is what a file we could not read
+                // means. The menu already treats anything that is not true as not listed.
+                bool? listed = PlayerListService.IsListed(ResolveSaveDataFolder(null), list, id);
+                return Task.FromResult<object>(listed);
             });
 
             RegisterRpc("players.setList", p =>
@@ -2694,6 +3167,8 @@ namespace ValheimBakaLoader.Forms
                 var url = target switch
                 {
                     "donate" => DonateUrl,
+                    // Steam's own downloads page, where a waiting server update is applied.
+                    "steam-downloads" => "steam://open/downloads",
                     _ => throw new ArgumentException($"Unknown shell.openUrl target: {target}"),
                 };
 
@@ -2816,6 +3291,12 @@ namespace ValheimBakaLoader.Forms
                 canRestart = server.CanRestart,
                 countdownActive = server.IsCountdownActive,
                 adopted = server.IsAdopted,
+                launchPending = server.LaunchInProgress,
+                // Read from the server's own banner; null until it has printed one.
+                gameVersion = server.GameVersion,
+                networkVersion = server.NetworkVersion,
+                // A launch the guard held, so the banner survives a page reload.
+                launchHold = LaunchHolds.TryGetValue(session.ProfileName, out var hold) ? hold : null,
             };
         }
 
@@ -3033,36 +3514,41 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
-        /// Best-effort in-game day read from a Valheim .db header: int32 worldVersion
-        /// followed by a double netTime in seconds; one day is 1800 seconds (EnvMan).
-        /// Returns null on any doubt - a missing day is better than a wrong one.
+        /// Best-effort in-game day from a world database header: int32 worldVersion followed by
+        /// a double netTime in seconds, one day being 1800 seconds (EnvMan). The first twelve
+        /// bytes mean the same thing in the pre-1.0 ".db" and the 1.0 "_main.{N}.db2", so the
+        /// caller just hands over whichever the world actually has.
         /// </summary>
-        private static long? TryReadWorldDay(string dbPath)
+        private static long? TryReadWorldDay(string dbPath) => WorldStore.TryReadWorldDay(dbPath);
+
+        /// <summary>
+        /// Parses a world save for the Atlas hall. A pre-1.0 world is handed its ".db" path; a
+        /// 1.0 world is handed its DIRECTORY, because its ZDOs live in sibling ".chunk" files
+        /// rather than inside the database.
+        ///
+        /// ONE-LINE SWAP: once Atlas ships WorldDbReader.TryReadAny(string pathOrDirectory),
+        /// this body becomes `return AtlasEngine.WorldDbReader.TryReadAny(pathOrDirectory);`.
+        /// Until then a 1.0 world reads as "no save data" instead of mis-parsing a v41 header
+        /// with the pre-1.0 ZDO layout, which would draw a map full of nonsense.
+        /// </summary>
+        private static AtlasEngine.WorldDbInfo ReadWorldSave(string pathOrDirectory)
         {
-            if (string.IsNullOrWhiteSpace(dbPath)) return null;
-            try
-            {
-                if (!File.Exists(dbPath)) return null;
-                using var stream = File.OpenRead(dbPath);
-                if (stream.Length < 12) return null;
-                using var reader = new BinaryReader(stream);
-                var version = reader.ReadInt32();
-                if (version <= 0 || version >= 100) return null;
-                var netTime = reader.ReadDouble();
-                if (double.IsNaN(netTime) || netTime < 0 || netTime >= 4e9) return null;
-                return (long)(netTime / 1800.0);
-            }
-            catch { return null; }
+            if (string.IsNullOrWhiteSpace(pathOrDirectory)) return null;
+            // Legacy .db path or a 1.0 world directory; the reader dispatches on which it is given.
+            return AtlasEngine.WorldDbReader.TryReadAny(pathOrDirectory);
         }
 
         /// <summary>
-        /// Validates a Barrow backup reference ({world, folder, sub, file}) and resolves it to
-        /// a real on-disk location. Hard rules: no path separators or ".." anywhere, folder must
-        /// be one of the known save folders, sub must be worlds_local/worlds, and (when
-        /// requireBackupShape) the file must be a backup-shaped name for THAT world - either
-        /// "{world}_backup_*.fwl" or "{world}.fwl.old" - so the live pair can never be targeted.
+        /// Validates a Barrow backup reference ({world, folder, sub, file}) and resolves it to a
+        /// real on-disk layer. Hard rules: no path separators, "..", or any character illegal in
+        /// a file name; folder must be one of the known save folders; sub must be
+        /// worlds_local/worlds; and (when requireBackupShape) the reference must resolve to a
+        /// layer the world ACTUALLY owns - a "{world}_backup_*.fwl"/".fwl.old" file or a
+        /// "{world}_backup_*" DIRECTORY. The live world, pair or 1.0 directory, is never
+        /// backup-shaped, so it can never be targeted through here.
         /// </summary>
-        private (string dir, string world, string file) ValidateBackupRef(JObject p, bool requireBackupShape)
+        private (string SaveFolder, string Sub, string Dir, string World, string File, WorldBackupInfo Layer)
+            ValidateBackupRef(JObject p, bool requireBackupShape)
         {
             var world = p.Value<string>("world");
             var folder = p.Value<string>("folder");
@@ -3072,9 +3558,11 @@ namespace ValheimBakaLoader.Forms
             if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
             if (string.IsNullOrWhiteSpace(file)) throw new ArgumentException("file is required");
 
+            // Both pieces must be plain names: anything that could climb out of the worlds
+            // folder (separators, "..", a drive colon, a wildcard) is refused outright.
             foreach (var piece in new[] { world, file })
             {
-                if (piece.IndexOfAny(new[] { '/', '\\' }) >= 0 || piece.Contains(".."))
+                if (!WorldStore.IsSafeReferenceToken(piece))
                     throw new ArgumentException("Invalid characters in backup reference.");
             }
 
@@ -3084,44 +3572,45 @@ namespace ValheimBakaLoader.Forms
             if (string.IsNullOrWhiteSpace(folder) || !KnownSaveFolders().Any(k => SameFolder(k, folder)))
                 throw new ArgumentException("Unknown save folder.");
 
+            var saveFolder = Path.GetFullPath(folder);
+            var dir = Path.Combine(saveFolder, sub);
+            if (!Directory.Exists(dir)) throw new ArgumentException("Save subfolder does not exist.");
+
+            WorldBackupInfo layer = null;
             if (requireBackupShape)
             {
-                var isSnapshot = file.StartsWith(world + "_backup_", StringComparison.OrdinalIgnoreCase)
-                    && file.EndsWith(".fwl", StringComparison.OrdinalIgnoreCase);
-                var isOldPair = string.Equals(file, world + ".fwl.old", StringComparison.OrdinalIgnoreCase);
-                if (!isSnapshot && !isOldPair)
-                    throw new ArgumentException("Not a backup layer of that world.");
+                layer = WorldStore.ResolveBackupLayer(saveFolder, sub, world, file);
+                if (layer == null)
+                    // Tell the two failures apart: a name that was never a layer of this world
+                    // is a bad reference; one that simply vanished is a stale UI.
+                    throw new ArgumentException(WorldStore.IsBackupShapedFor(file, world)
+                        ? "That backup no longer exists."
+                        : "Not a backup layer of that world.");
+            }
+            else if (!File.Exists(Path.Combine(dir, file)) && !Directory.Exists(Path.Combine(dir, file)))
+            {
+                throw new ArgumentException("That backup no longer exists.");
             }
 
-            var dir = Path.Combine(Path.GetFullPath(folder), sub);
-            if (!Directory.Exists(dir)) throw new ArgumentException("Save subfolder does not exist.");
-            if (!File.Exists(Path.Combine(dir, file))) throw new ArgumentException("That backup no longer exists.");
-
-            return (dir, world, file);
+            return (saveFolder, sub, dir, world, file, layer);
         }
 
         /// <summary>
-        /// Copies a world's on-disk files (db/fwl and their .old siblings) from a source save
-        /// folder into a destination save folder's worlds_local subdir, so an adopted world is a
-        /// real independent copy and the original is never moved, altered, or deleted.
+        /// Copies a world into a destination save folder's worlds_local subdir in whichever
+        /// format it already uses - the pre-1.0 file pair with its .old siblings, or the whole
+        /// 1.0 world directory - so an adopted world is a real independent copy and the
+        /// original is never moved, altered, or deleted. The biome data cache travels with it.
         /// </summary>
         private static void CopyWorldFiles(string sourceFolder, string sub, string world, string destSaveFolder)
         {
             if (string.IsNullOrWhiteSpace(sourceFolder) || string.IsNullOrWhiteSpace(world)) return;
 
-            var srcDir = Path.Combine(sourceFolder, string.IsNullOrWhiteSpace(sub) ? "worlds_local" : sub);
-            if (!Directory.Exists(srcDir)) return;
+            var source = WorldStore
+                .EnumerateIn(sourceFolder, string.IsNullOrWhiteSpace(sub) ? WorldStore.WorldSubfolders[0] : sub)
+                .FirstOrDefault(w => string.Equals(w.Name, world, StringComparison.OrdinalIgnoreCase));
+            if (source == null) return;
 
-            // A dedicated server reads its worlds from worlds_local, so land the copy there.
-            var destDir = Path.Combine(destSaveFolder, "worlds_local");
-            Directory.CreateDirectory(destDir);
-
-            foreach (var ext in new[] { ".db", ".fwl", ".db.old", ".fwl.old" })
-            {
-                var src = Path.Combine(srcDir, world + ext);
-                if (!File.Exists(src)) continue;
-                File.Copy(src, Path.Combine(destDir, world + ext), overwrite: true);
-            }
+            WorldStore.CopyWorld(source, destSaveFolder);
         }
 
         /// <summary>
@@ -3151,6 +3640,10 @@ namespace ValheimBakaLoader.Forms
                 candidate = Path.Combine(parent, $"{safe}-{n++}");
 
             Directory.CreateDirectory(candidate);
+
+            // Shape it like a save folder the game made itself: worlds_local plus the cache/
+            // sibling it drops "{world}_biomedatacache.bin" into on every world load.
+            WorldStore.EnsureSaveFolderLayout(candidate);
             return candidate;
         }
 
@@ -3166,6 +3659,10 @@ namespace ValheimBakaLoader.Forms
             return new
             {
                 key = player.Key,
+                // Platform arrives straight from the peer handshake ("Steam", "Xbox",
+                // "PlayStation", "PlayFab", ...). The UI prefers it over guessing from the id,
+                // which stopped being reliable once ids lost their fixed shape.
+                platform = player.Platform,
                 player.Platform,
                 player.PlayerId,
                 player.PlayerName,
@@ -3449,58 +3946,13 @@ namespace ValheimBakaLoader.Forms
                 ? ActiveProfileName
                 : serverPrefs.ProfileName;
 
-            var options = new ValheimServerOptions
-            {
-                Name = serverPrefs.Name,
-                Password = serverPrefs.Password,
-                PasswordValidation = userPrefs.EnablePasswordValidation,
-                WorldName = serverPrefs.WorldName,
-                Public = serverPrefs.Public,
-                Port = serverPrefs.Port,
-                Crossplay = serverPrefs.Crossplay,
-                SaveInterval = serverPrefs.SaveInterval,
-                Backups = serverPrefs.BackupCount,
-                BackupShort = serverPrefs.BackupIntervalShort,
-                BackupLong = serverPrefs.BackupIntervalLong,
-                AdditionalArgs = serverPrefs.AdditionalArgs,
-                ServerExePath = !string.IsNullOrWhiteSpace(serverPrefs.ServerExePath)
-                    ? serverPrefs.ServerExePath
-                    : userPrefs.ServerExePath,
-                SaveDataFolderPath = !string.IsNullOrWhiteSpace(serverPrefs.SaveDataFolderPath)
-                    ? serverPrefs.SaveDataFolderPath
-                    : userPrefs.SaveDataFolderPath,
-                LogToFile = serverPrefs.WriteServerLogsToFile,
-                LogFolderPath = userPrefs.LogsFolderPath,
-                AutoRestart = serverPrefs.AutoRestart,
-                AutoRestartDelay = serverPrefs.AutoRestartDelay,
-                EmptyServerRestart = serverPrefs.EmptyServerRestart,
-                EmptyServerRestartDelayMinutes = serverPrefs.EmptyServerRestartDelayMinutes,
-                ScheduledRestart = serverPrefs.ScheduledRestart,
-                ScheduledRestartHours = serverPrefs.ScheduledRestartHours,
-                RconEnabled = serverPrefs.RconEnabled,
-                RconPort = serverPrefs.RconPort,
-                RconPassword = serverPrefs.RconPassword,
-                LogMessageHandler = line => PostEvent("log.server", new { line, profile = logProfile }),
-            };
-
             var worldName = serverPrefs.WorldName;
-            if (!string.IsNullOrWhiteSpace(worldName))
-            {
-                var worldPrefs = WorldPrefsProvider.LoadPreferences(worldName);
-                if (worldPrefs != null)
-                {
-                    if (!string.IsNullOrEmpty(worldPrefs.Preset))
-                    {
-                        options.WorldPreset = worldPrefs.Preset;
-                    }
-                    else
-                    {
-                        options.WorldModifiers = worldPrefs.Modifiers;
-                    }
+            var worldPrefs = string.IsNullOrWhiteSpace(worldName)
+                ? null
+                : WorldPrefsProvider.LoadPreferences(worldName);
 
-                    options.WorldKeys = worldPrefs.Keys;
-                }
-            }
+            var options = ValheimServerOptions.FromPreferences(serverPrefs, userPrefs, worldPrefs);
+            options.LogMessageHandler = line => PostEvent("log.server", new { line, profile = logProfile });
 
             return options;
         }

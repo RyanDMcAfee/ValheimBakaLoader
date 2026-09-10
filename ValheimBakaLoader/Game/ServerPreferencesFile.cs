@@ -38,6 +38,11 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("valheimSaveDataFolder")] public string SaveDataFolderPath { get; set; }
         [JsonProperty("writeServerLogsToFile")] public bool? WriteServerLogsToFile { get; set; }
 
+        // -- Launch guard (what this profile last actually ran) --
+
+        [JsonProperty("lastLaunchedServerBuild")] public string LastLaunchedServerBuild { get; set; }
+        [JsonProperty("lastLaunchedGameVersion")] public string LastLaunchedGameVersion { get; set; }
+
         // -- Restart automation --
 
         [JsonProperty("autoRestart")] public bool? AutoRestart { get; set; }

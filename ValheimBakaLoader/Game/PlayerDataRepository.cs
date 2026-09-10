@@ -61,6 +61,8 @@ namespace ValheimBakaLoader.Game
 
         PlayerInfo SetPlayerOnline(string characterName, string zdoId, string serverKey = null);
 
+        void SetPlayerNumericId(string characterName, string numericId, string serverKey = null);
+
         void SetPlayerLeaving(PlayerDataQuery query, string serverKey = null);
 
         void SetPlayerOffline(PlayerDataQuery query, string serverKey = null);
@@ -168,6 +170,60 @@ namespace ValheimBakaLoader.Game
             Upsert(player);
 
             return player;
+        }
+
+        /// <summary>
+        /// Records the numeric player id Valheim 1.0 prints for a connected peer
+        /// ("Got player ID from Broheim : 1454938750"). That line carries only the
+        /// character name, so the id lands on the connected player already known by
+        /// that name; if the name has never been seen (a brand-new character) it
+        /// falls back to the single player still connecting, and stays unrecorded
+        /// when several are connecting at once rather than guessing wrong.
+        /// </summary>
+        public void SetPlayerNumericId(string characterName, string numericId, string serverKey = null)
+        {
+            if (string.IsNullOrWhiteSpace(numericId) || string.IsNullOrWhiteSpace(characterName)) return;
+
+            var connected = Data
+                .Where(p => p.PlayerStatus is PlayerStatus.Joining or PlayerStatus.Online)
+                .Where(p => SameServer(p, serverKey))
+                .ToList();
+            if (connected.Count == 0) return;
+
+            var matched = connected.Where(p => KnownByName(p, characterName)).ToList();
+
+            if (matched.Count == 0)
+            {
+                var joining = connected.Where(p => p.PlayerStatus == PlayerStatus.Joining).ToList();
+                if (joining.Count != 1)
+                {
+                    Logger.Information("Player id {id} for {name} could not be matched to a connected player",
+                        numericId, characterName);
+                    return;
+                }
+
+                matched = joining;
+            }
+
+            var changed = matched.Where(p => p.PlayerNumericId != numericId).ToList();
+            if (changed.Count == 0) return;
+
+            foreach (var player in changed)
+            {
+                player.PlayerNumericId = numericId;
+            }
+
+            UpsertBulk(changed);
+            Logger.Information("Player id {id} recorded for {keys}",
+                numericId, string.Join(", ", changed.Select(p => p.Key)));
+        }
+
+        /// <summary>True when this player has ever answered to the given name.</summary>
+        private static bool KnownByName(PlayerInfo player, string name)
+        {
+            return string.Equals(player.LastStatusCharacter, name, StringComparison.Ordinal)
+                || string.Equals(player.PlayerName, name, StringComparison.Ordinal)
+                || player.Characters?.Any(c => c.CharacterName == name) == true;
         }
 
         public void SetPlayerLeaving(PlayerDataQuery query, string serverKey = null)

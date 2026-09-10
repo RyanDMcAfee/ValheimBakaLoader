@@ -18,6 +18,15 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("playerId")] public string PlayerId { get; set; }
         [JsonProperty("playerName")] public string PlayerName { get; set; }
 
+        /// <summary>
+        /// The numeric player id Valheim 1.0 prints next to the character name
+        /// ("Got player ID from Broheim : 1454938750"). Optional: pre-1.0 servers
+        /// never print it and older players.json files have no such field, so it
+        /// stays null there and is left out of the file entirely.
+        /// </summary>
+        [JsonProperty("playerNumericId", NullValueHandling = NullValueHandling.Ignore)]
+        public string PlayerNumericId { get; set; }
+
         /// <summary>When the player's status last flipped (join/leave/etc).</summary>
         [JsonProperty("lastStatusChange")] public DateTimeOffset LastStatusChange { get; set; }
 

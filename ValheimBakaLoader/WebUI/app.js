@@ -52,6 +52,7 @@ const S={
   mods:null, modsScanned:false, modsScanning:false, modsUpdating:false, lastScan:null,
   modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
   extIp:null, intIp:null,
+  gameVersion:null, networkVersion:null,   // read off the server's own startup banner
   domain:null,            // custom join domain (the Waystone) - shown instead of the raw public IP when set
   invite:null,            // crossplay invite code (shown while known; cleared on stop)
   saveDur:[],             // last 10 world-save durations (ms) for the rolling average
@@ -122,6 +123,7 @@ const TERM_PAIRS=[
   ["dousing the embers","shutting down"],
   ["embers doused","server stopped"],
   ["consult the saga","check the console log"],
+  ["Open the Saga hall for the full chronicle","Open the full console log"],
   ["Saga log","console log"],
   ["Join prompt copied · sailing forth","Join prompt copied"],
   ["sailing forth","connecting"],
@@ -248,15 +250,24 @@ const TT=plainify;
 /* Static lore-bearing elements: text nodes only (rune glyphs + pills untouched).
    Dynamic surfaces (#vikSub, #runesSub, hState/hPid, toasts…) route through TT()
    at render time instead - caching their originals would restore stale values. */
-const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,.capshead,#page-vikings th,#page-skald th,#skDeathsSub,#secRites,#page-saga .sub,#page-world .sub,.pitem .k,#waystoneBtn";
+const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,#saveCap,#openSagaChip,.capshead,#page-vikings th,#page-skald th,#skDeathsSub,#secRites,#page-saga .sub,#page-world .sub,.pitem .k,#waystoneBtn";
 const TERM_ORIG=new Map();
+const TERM_TITLE_ORIG=new Map();
 function applyTerms(){
-  $$(TERM_STATIC_SEL).forEach(el=>[...el.childNodes].forEach(n=>{
-    if(n.nodeType!==3||!n.nodeValue.trim()) return;
-    if(!TERM_ORIG.has(n)) TERM_ORIG.set(n,n.nodeValue);
-    const o=TERM_ORIG.get(n);
-    n.nodeValue=PLAIN?plainify(o):o;
-  }));
+  $$(TERM_STATIC_SEL).forEach(el=>{
+    [...el.childNodes].forEach(n=>{
+      if(n.nodeType!==3||!n.nodeValue.trim()) return;
+      if(!TERM_ORIG.has(n)) TERM_ORIG.set(n,n.nodeValue);
+      const o=TERM_ORIG.get(n);
+      n.nodeValue=PLAIN?plainify(o):o;
+    });
+    /* the tooltip is the same lore as the label it hangs off, so it swaps with it -
+       a chip reading "Console" that explains the "Saga hall" reads as a bug */
+    if(!el.title&&!TERM_TITLE_ORIG.has(el)) return;
+    if(!TERM_TITLE_ORIG.has(el)) TERM_TITLE_ORIG.set(el,el.title);
+    const t=TERM_TITLE_ORIG.get(el);
+    el.title=PLAIN?plainify(t):t;
+  });
   [$("#palInput"),$("#cfgEditor")].forEach(el=>{
     if(!el) return;
     if(!TERM_ORIG.has(el)) TERM_ORIG.set(el,el.placeholder);
@@ -266,21 +277,184 @@ function applyTerms(){
   /* refresh the lore-bearing dynamic surfaces so the swap is immediate */
   try{renderHearth();}catch{}
   try{renderCaps();}catch{}
+  try{syncCollapsibleTerms();}catch{}
+  try{renderHearthLog();}catch{}
   try{renderPlayers();}catch{}
   try{if(CFG.files&&CFG.files.length)renderCfgList();}catch{}
   try{if(SKALD)renderSkald();}catch{}
 }
 
+/* ---------- SCROLL CUES ----------
+   Every scrollable pane says so out loud. .can-scroll-down / .can-scroll-up ride
+   the pane itself; the halls also mirror theirs onto .pages, which paints the
+   fade, so a hall's own animation is never re-rasterised behind a mask. Cheap:
+   one passive scroll listener plus a shared ResizeObserver per pane, no polling. */
+const SCROLLCUE_SEL=".page,.atlas-side,.atlas-list,.srvstrip,.modal .mbody,.modal .mono-list,.modal .clist";
+const _cueSeen=new WeakSet();
+function updateScrollCue(el){
+  if(!el||!el.isConnected||!el.clientHeight) return;   // a hidden pane never speaks for its host
+  const max=el.scrollHeight-el.clientHeight;
+  const on=max>4;
+  const down=on&&el.scrollTop<max-2, up=on&&el.scrollTop>2;
+  el.classList.toggle("can-scroll-down",down);
+  el.classList.toggle("can-scroll-up",up);
+  if(el.dataset.cueHost==="parent"&&el.parentElement){
+    el.parentElement.classList.toggle("cue-down",down);
+    el.parentElement.classList.toggle("cue-up",up);
+  }
+}
+const _cueRO=typeof ResizeObserver!=="undefined"
+  ?new ResizeObserver(es=>{
+    const seen=new Set();
+    es.forEach(e=>{
+      const pane=e.target.classList&&e.target.classList.contains("scrollcue")
+        ?e.target:(e.target.closest?e.target.closest(".scrollcue"):null);
+      if(pane&&!seen.has(pane)){seen.add(pane);updateScrollCue(pane);}
+    });
+  })
+  :null;
+function watchScrollCue(el){
+  if(!el) return;
+  if(_cueSeen.has(el)){updateScrollCue(el);return;}
+  _cueSeen.add(el);
+  el.classList.add("scrollcue");
+  if(el.classList.contains("page")) el.dataset.cueHost="parent";
+  else el.classList.add("scrollfade");
+  el.addEventListener("scroll",()=>updateScrollCue(el),{passive:true});
+  if(_cueRO){_cueRO.observe(el);[...el.children].forEach(c=>_cueRO.observe(c));}
+  updateScrollCue(el);
+}
+function rescanScrollCues(){$$(".scrollcue").forEach(updateScrollCue);}
+function refreshScrollCues(){
+  $$(SCROLLCUE_SEL).forEach(watchScrollCue);
+  /* A pane measured the instant it is shown is still mid-layout: fonts have not
+     swapped and the mock/native drivers have not filled it. Re-read once the
+     frame has settled so the cue is right at load, not only after a scroll. */
+  requestAnimationFrame(rescanScrollCues);
+}
+window.addEventListener("resize",rescanScrollCues);
+window.addEventListener("load",()=>{refreshScrollCues();setTimeout(rescanScrollCues,400);});
+if(document.fonts&&document.fonts.ready) document.fonts.ready.then(rescanScrollCues).catch(()=>{});
+
+/* ---------- TOAST LIFT ----------
+   Toasts live at the bottom centre of the content pane. On the Saga hall they
+   ride above the console input row so they never cover what you are typing. */
+function setToastLift(name){
+  let lift=0;
+  if(name==="saga"){
+    const row=$("#page-saga .termin");
+    lift=(row&&row.offsetHeight?row.offsetHeight:36)+18;
+  }
+  document.documentElement.style.setProperty("--toast-lift",lift+"px");
+}
+
+/* ---------- HEARTH: RECENT LOG CARD ----------
+   Mirrors the tail of the Saga chronicle (logLine feeds it). It keeps 30 lines
+   and shows as many as the card is tall enough for (8 on a short window, up to
+   all 30 on a maximised one), so the card fills its space instead of sitting
+   half empty. One rAF-coalesced paint per burst, so a flood of server lines
+   costs the terminal nothing extra. Log text is raw data, never plainified. */
+/* HLOG_ROW mirrors the fixed line-height on .b-log .hlog, so the row count is
+   exact arithmetic rather than an estimate - the card renders only lines that
+   fit and never hides any behind its own edge. */
+const HLOG_BUF=30, HLOG_MIN=4, HLOG_ROW=16;
+let HLOG_MAX=HLOG_MIN;
+const hlogBuf=[];
+let hlogDirty=false, hlogRaf=0;
+function hlogPush(kind,text,time){
+  hlogBuf.push({kind,text,time});
+  if(hlogBuf.length>HLOG_BUF) hlogBuf.shift();
+  if(currentPage!=="hearth"){hlogDirty=true;return;}
+  if(hlogRaf) return;
+  hlogRaf=requestAnimationFrame(()=>{hlogRaf=0;renderHearthLog();});
+}
+function renderHearthLog(){
+  const el=$("#hearthLog"); if(!el) return;
+  hlogDirty=false;
+  const rows=hlogBuf.slice(-HLOG_MAX);
+  el.innerHTML=rows.length
+    ?rows.map(l=>`<div class="ln ${l.kind}" title="${esc(l.time+"  "+l.text)}"><span class="t">${esc(l.time)}</span>  <span class="${l.kind}">${esc(l.text)}</span></div>`).join("")
+    :`<div class="ln info">${esc(TT("Nothing written yet."))}</div>`;
+}
+/* how many whole lines the card can actually show right now */
+function hlogFit(){
+  const el=$("#hearthLog"); if(!el||!el.clientHeight) return;
+  const cs=getComputedStyle(el);
+  const inner=el.clientHeight-(parseFloat(cs.paddingTop)||0)-(parseFloat(cs.paddingBottom)||0);
+  if(inner<=0) return;
+  const n=Math.max(HLOG_MIN,Math.min(HLOG_BUF,Math.floor(inner/HLOG_ROW)));
+  if(n===HLOG_MAX) return;
+  HLOG_MAX=n;
+  renderHearthLog();
+}
+renderHearthLog();
+if(typeof ResizeObserver!=="undefined"){
+  const hlogRO=new ResizeObserver(()=>hlogFit());
+  if($("#hearthLog")) hlogRO.observe($("#hearthLog"));
+}
+window.addEventListener("resize",hlogFit);
+
+/* ---------- COLLAPSIBLE HEADERS ----------
+   One wiring for every foldable header: click or Enter/Space toggles it, the
+   chevron rotates open, and while it is closed the header says how many
+   settings are folded away. The toggle itself is unchanged. */
+const COLLAPSIBLES=[];
+function syncCollapsible(rec){
+  const open=rec.target.classList.contains("open");
+  rec.head.setAttribute("aria-expanded",open?"true":"false");
+  rec.hint.textContent=open?"":TT(rec.count+" settings");
+  /* An open Upkeep card is taller than a fixed bento row, so the last row is
+     told to take its content height while the card is unfolded. */
+  if(rec.target.id==="upkeepCard"){
+    const bento=document.querySelector(".bento");
+    if(bento) bento.classList.toggle("upkeep-open",open);
+  }
+}
+function syncCollapsibleTerms(){COLLAPSIBLES.forEach(syncCollapsible);}
+function wireCollapsible(headId,body,targetEl){
+  const head=document.getElementById(headId); if(!head) return;
+  const target=targetEl||head;
+  const count=body?(body.querySelectorAll(".field").length||body.querySelectorAll(".togglerow").length):0;
+  const hint=document.createElement("span"); hint.className="fs-hint";
+  const chev=document.createElement("span"); chev.className="fs-chev"; chev.textContent="▸";
+  head.insertBefore(hint,head.querySelector("[data-fs-anchor]"));
+  head.appendChild(chev);
+  const rec={head,target,hint,count};
+  COLLAPSIBLES.push(rec);
+  const toggle=()=>{
+    target.classList.toggle("open");
+    syncCollapsible(rec);
+    rescanScrollCues();
+    /* rows revealed below the fold are no use to anyone: bring them up, but
+       only as far as it takes (block:"nearest" leaves a fitting card alone) */
+    if(target.classList.contains("open")) requestAnimationFrame(()=>{
+      try{target.scrollIntoView({block:"nearest"});}catch(_){}
+      rescanScrollCues();
+    });
+  };
+  head.addEventListener("click",toggle);
+  head.addEventListener("keydown",e=>{
+    if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();toggle();}
+  });
+  syncCollapsible(rec);
+}
+
 /* ---------- NAV ---------- */
 let currentPage="hearth";
+/* Halls laid out as a flex column so a child can be handed the pane's real
+   leftover height: the Atlas map, and the Hearth bento. */
+const FLEX_PAGES={"page-atlas":1,"page-hearth":1};
 function goPage(name){
   $$(".navitem").forEach(n=>n.classList.toggle("active",n.dataset.page===name));
   $$(".page").forEach(p=>{
     const on=p.id==="page-"+name;
     p.classList.toggle("active",on);
-    p.style.display=on?(p.id==="page-atlas"?"flex":"block"):"none"; // atlas is a flex column
+    p.style.display=on?(FLEX_PAGES[p.id]?"flex":"block"):"none";
   });
   currentPage=name;
+  setToastLift(name);
+  if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();}
+  refreshScrollCues();
   try{renderEditBar();}catch(_){}
   if(name==="atlas"){try{atlasEnter();}catch(_){}} // also drives the mock preview
   if(name==="skald"){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
@@ -322,7 +496,64 @@ function renderServerChips(){
   html+=`<div class="srvchip arch" id="srvRestore" title="${restoreTip}"><span class="srvinit">↺</span>${archBadge}</div>`;
   el.innerHTML=html;
   const sep=$("#srvSep"); if(sep) sep.style.display=list.length?"":"none";
+  fitServerStrip();
+  requestAnimationFrame(fitServerStrip);   // re-measure once the new chips have laid out
 }
+/* The strip is never allowed to cut a chip in half: its height is always a whole
+   number of chip pitches (40px chip + 7px gap), so any cut lands on a gap. It
+   takes whatever the rail can spare once the nav items have had their say, and
+   the "+N" cue below it names the chips that are still out of view. */
+const CHIP_H=40, CHIP_GAP=7, CHIP_PITCH=CHIP_H+CHIP_GAP, CHIP_MAX=8, CHIP_CUE_H=12;
+function fitServerStrip(){
+  const strip=$("#srvStrip"); if(!strip) return;
+  const side=strip.closest(".side"); if(!side) return;
+  const more=$("#srvMore");
+  const chips=strip.querySelectorAll(".srvchip").length;
+  if(!chips){strip.style.maxHeight="0px";if(more)more.style.display="none";return;}
+  /* Measure the rail with every child frozen at its own size and the strip
+     deliberately OVERFLOWING it. Collapsing the strip instead hands its height
+     to whatever can absorb free space: the footer's margin-top:auto resolves to
+     exactly that leftover, and getComputedStyle hands back the used value, so
+     the rail measured as full and the strip was left a single chip. With no
+     free space there is nothing to absorb and every margin reads as declared. */
+  const kids=[...side.children];
+  const wasFlex=kids.map(k=>k.style.flex);
+  const wasMax=strip.style.maxHeight, wasMin=strip.style.minHeight;
+  kids.forEach(k=>{k.style.flex="none";});
+  strip.style.maxHeight="none"; strip.style.minHeight="4000px";
+  const cs=getComputedStyle(side);
+  const gap=parseFloat(cs.rowGap)||0;
+  let used=(parseFloat(cs.paddingTop)||0)+(parseFloat(cs.paddingBottom)||0);
+  let shown=1;                                     // the cue always keeps its seat
+  kids.forEach(k=>{
+    if(k===more) return;                           // budgeted below, visible or not
+    const ks=getComputedStyle(k);
+    if(ks.display==="none") return;
+    shown++;
+    if(k===strip) return;
+    used+=k.getBoundingClientRect().height+(parseFloat(ks.marginTop)||0)+(parseFloat(ks.marginBottom)||0);
+  });
+  used+=CHIP_CUE_H+gap*Math.max(0,shown-1);
+  const avail=side.clientHeight;
+  strip.style.maxHeight=wasMax;                    // put the rail back before anything paints
+  strip.style.minHeight=wasMin;
+  kids.forEach((k,i)=>{k.style.flex=wasFlex[i];});
+  let k=Math.floor((avail-used+CHIP_GAP)/CHIP_PITCH);
+  k=Math.max(1,Math.min(chips,CHIP_MAX,k));
+  strip.style.maxHeight=(k*CHIP_PITCH-CHIP_GAP)+"px";
+  const hidden=chips-k;
+  if(more){
+    more.style.display=hidden>0?"":"none";
+    more.textContent=hidden>0?"▾ +"+hidden:"▾";
+    more.title=hidden>0
+      ?hidden+" more below. Scroll the strip to reach them."
+      :"More realms below. Scroll the strip to reach them.";
+  }
+  updateScrollCue(strip);
+}
+window.addEventListener("resize",fitServerStrip);
+/* web fonts change the footer's height, which changes what the strip can have */
+if(document.fonts&&document.fonts.ready) document.fonts.ready.then(fitServerStrip).catch(()=>{});
 /* Right-click a chip → per-realm actions. */
 function serverChipMenu(name,x,y){
   const s=(S.servers||[]).find(v=>String(v.name)===String(name)); if(!s) return;
@@ -367,10 +598,10 @@ async function deleteServerFlow(name){
   const hasFiles=(info.hasIsolatedInstall||info.saveFolder)&&info.fileCount>0;
   const dangerLine=hasFiles
     ?`<label class="togglerow" style="cursor:pointer"><span class="tl" style="color:var(--danger,#E8560F)">${esc(TT("Also delete this realm's isolated worlds, backups & install"))}<br><span style="font-size:9.5px;opacity:.7">${info.fileCount} ${esc(TT("files · "))}${esc(sizeStr)}${esc(TT(" · cannot be undone"))}</span></span><div class="toggle" id="delFiles"></div></label>`
-    :`<div class="fieldnote">${esc(TT("This realm shares its install/worlds — no isolated files to remove."))}</div>`;
+    :`<div class="fieldnote">${esc(TT("This realm shares its install and worlds, so there are no isolated files to remove."))}</div>`;
   const m=modalOpen(
     `<div class="mtitle">${esc(TT("Delete realm"))} · ${esc(name)}</div>`+
-    `<div class="mbody"><p>${esc(TT("By default this removes only the saved settings — the realm can be re-adopted later from its world files."))}</p>`+
+    `<div class="mbody"><p>${esc(TT("By default this removes only the saved settings. The realm can be re-adopted later from its world files."))}</p>`+
       dangerLine+
       `<div class="mbody-note" id="delStatus"></div></div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="delCancel">Cancel</button>`+
@@ -382,7 +613,7 @@ async function deleteServerFlow(name){
     const df=delFiles?delFiles.classList.contains("on"):false;
     const ok=m.querySelector("#delOk"); ok.disabled=true; ok.textContent=TT("Deleting…");
     const r=await rpc("profiles.delete",{name,deleteFiles:df});
-    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Delete");const st=m.querySelector("#delStatus");if(st)st.textContent=TT("Delete failed — see the saga log.");return;}
+    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Delete");const st=m.querySelector("#delStatus");if(st)st.textContent=TT("Delete failed, see the saga log.");return;}
     modalClose();
     if(S.profileName===name) S.profileName=null;
     await refreshServers();
@@ -392,14 +623,14 @@ async function deleteServerFlow(name){
     toast(TT("ᛟ Realm deleted"));
   });
 }
-/* Restore surface: (1) archived realms — unarchive or delete for good; (2) past worlds
-   still on disk that no realm owns — adopt each back as its own isolated server. Pull-based:
+/* Restore surface: (1) archived realms, unarchive or delete for good; (2) past worlds
+   still on disk that no realm owns, adopt each back as its own isolated server. Pull-based:
    orphan worlds are only queried here, never on startup, so many old worlds never nag. */
 async function restoreModal(){
   const archived=(S.servers||[]).filter(s=>s.archived);
   const orphans=await rpc("worlds.listOrphans",{});
   const orphanList=Array.isArray(orphans)?orphans:[];
-  if(!archived.length&&!orphanList.length){toast(TT("Nothing to restore — no archived realms or past worlds found."));return;}
+  if(!archived.length&&!orphanList.length){toast(TT("Nothing to restore, no archived realms or past worlds found."));return;}
 
   const archRows=archived.map(s=>
     `<div class="arow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line,#2A2E34)">`+
@@ -422,7 +653,7 @@ async function restoreModal(){
     ?`<div class="mtitle" style="font-size:12px;opacity:.85">${esc(TT("Archived realms"))}</div><div class="mbody">${archRows}</div>`:"";
   const orphanSection=orphanList.length
     ?`<div class="mtitle" style="font-size:12px;opacity:.85${archived.length?";margin-top:10px":""}">${esc(TT("Past worlds on disk"))}</div>`+
-     `<div class="fieldnote" style="margin:2px 0 4px">${esc(TT("Worlds no realm currently owns. Bringing one back makes a fresh isolated server — the original files are left untouched."))}</div>`+
+     `<div class="fieldnote" style="margin:2px 0 4px">${esc(TT("Worlds no realm currently owns. Bringing one back makes a fresh isolated server. The original files are left untouched."))}</div>`+
      `<div class="mbody">${orphanRows}</div>`:"";
 
   const m=modalOpen(
@@ -444,7 +675,7 @@ async function restoreModal(){
   }));
 }
 /* Adopt an orphan world as its own isolated server (own save + install; mods optionally
-   seeded from the active realm, else vanilla — kept distinct to avoid cross-contamination). */
+   seeded from the active realm, else vanilla, kept distinct to avoid cross-contamination). */
 async function adoptWorldFlow(o){
   const taken=new Set((S.servers||[]).map(s=>String(s.name).toLowerCase()));
   const m=modalOpen(
@@ -455,7 +686,7 @@ async function adoptWorldFlow(o){
       `<label class="togglerow" style="cursor:pointer"><span class="tl">${esc(TT("Copy the active realm's mods into it"))}`+
         `<br><span style="font-size:9.5px;opacity:.7">${esc(TT("Off = start this realm vanilla"))}</span></span>`+
         `<div class="toggle on" id="awSeed"></div></label>`+
-      `<div class="fieldnote" id="awStatus">${esc(TT("The world files are copied — the original is left untouched."))}</div>`+
+      `<div class="fieldnote" id="awStatus">${esc(TT("The world files are copied. The original is left untouched."))}</div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="awCancel">Cancel</button>`+
       `<button class="btn btn-ember btn-sm" id="awOk">${esc(TT("Bring back"))}</button></div>`);
@@ -469,7 +700,7 @@ async function adoptWorldFlow(o){
     if(taken.has(name.toLowerCase())){st.textContent=TT("A realm by that name already exists.");return;}
     const ok=m.querySelector("#awOk"); ok.disabled=true; ok.textContent=TT("Bringing back…");
     const r=await rpc("servers.adoptWorld",{world:o.world,folder:o.folder,sub:o.sub,name,seedMods:seed.classList.contains("on")});
-    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Bring back");st.textContent=TT("Could not bring that world back — see the saga log.");return;}
+    if(r===FAIL){ok.disabled=false;ok.textContent=TT("Bring back");st.textContent=TT("Could not bring that world back, see the saga log.");return;}
     modalClose();
     await refreshServers();
     if(r&&r.ProfileName){await switchServer(r.ProfileName);goPage("world");}
@@ -484,6 +715,8 @@ async function switchServer(name){
   S.players=[]; S.invite=null; S.net={conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]};
   S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
   S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
+  /* the previous realm's write times belong to the previous realm */
+  $("#saveAvg").textContent="avg -";
   try{atlasReset();}catch{}
   const st=await rpc("server.state");
   if(st!==FAIL){S.state=null;applyState(st);}
@@ -503,6 +736,7 @@ async function switchServer(name){
   toast(TT("ᛒ Helm turned · ")+prefs.ProfileName);
   if(currentPage==="mods") scanMods();
   if(currentPage==="runes") refreshCfgList(true);
+  renderSaveBars();
 }
 /* New-Server wizard: a realm gets its OWN identity (name, world, free ports) and,
    by default, its OWN isolated install (independent BepInEx/plugins) + save folder,
@@ -530,23 +764,23 @@ async function addServerProfile(){
         `<input type="text" id="wsWorldSeed" placeholder="${esc(TT("random (leave blank)"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote">${esc(TT("only for a brand-new world · fixed forever once created"))}</div></div>`+
       `<div class="togglerow" title="${esc(TT(
-        "ON — this realm gets its own BepInEx: its own mods, mod configs, and cache, fully independent of your other servers. "+
+        "ON: this realm gets its own BepInEx: its own mods, mod configs, and cache, fully independent of your other servers. "+
         "Example: run Epic Loot here while your main server stays vanilla, or trial a mod update without risking the live world. "+
         "The bulky game files are shared behind the scenes, so this does NOT duplicate the multi-gigabyte install.\n\n"+
-        "OFF — the realm runs from the same install and mod folder as the base server: installing, updating, or removing a mod on either one changes both."
+        "OFF: the realm runs from the same install and mod folder as the base server: installing, updating, or removing a mod on either one changes both."
       ))}"><span class="tl">${esc(TT("Separate install (own mods)"))}</span>`+
         `<div class="toggle on" id="wsIso"></div></div>`+
       `<div class="togglerow" title="${esc(TT(
-        "ON — the new realm starts with a copy of the current server's mods and their configs, then goes its own way: updating or removing a mod here never touches the original. "+
+        "ON: the new realm starts with a copy of the current server's mods and their configs, then goes its own way: updating or removing a mod here never touches the original. "+
         "Example: clone your main server's whole mod set to build a matching test server.\n\n"+
-        "OFF — the realm starts clean with no mods; add them later in the MODS hall.\n\n"+
-        "Only applies with a separate install — on a shared install the mods are shared by definition."
+        "OFF: the realm starts clean with no mods; add them later in the MODS hall.\n\n"+
+        "Only applies with a separate install. On a shared install the mods are shared by definition."
       ))}"><span class="tl">${esc(TT("Copy this server's mods to start"))}</span>`+
         `<div class="toggle on" id="wsSeed"></div></div>`+
       `<div class="togglerow" title="${esc(TT(
-        "ON — this realm keeps its worlds and backups in its own save folder, so two servers can never write to the same world file and backups never mix. "+
+        "ON: this realm keeps its worlds and backups in its own save folder, so two servers can never write to the same world file and backups never mix. "+
         "Example: Midgard Two saves under its own folder instead of the shared IronGate\\Valheim one.\n\n"+
-        "OFF — the realm uses the shared Valheim save folder. That works, as long as two realms never host the same world at the same time (BakaLoader warns if they would)."
+        "OFF: the realm uses the shared Valheim save folder. That works, as long as two realms never host the same world at the same time (BakaLoader warns if they would)."
       ))}"><span class="tl">${esc(TT("Separate save folder (own worlds/backups)"))}</span>`+
         `<div class="toggle on" id="wsSaveIso"></div></div>`+
       `<div class="mbody-note" id="wsStatus"></div>`+
@@ -588,7 +822,7 @@ async function addServerProfile(){
     });
     if(created===FAIL||!created){
       okB.disabled=false; okB.textContent=TT("Forge realm");
-      statusN.textContent=TT("Could not forge that realm — see the saga log.");
+      statusN.textContent=TT("Could not forge that realm, see the saga log.");
       return;
     }
     modalClose();
@@ -627,6 +861,7 @@ function renderHearth(){
     hPid.textContent="STOPPED · embers doused · world saved";
     douseBtn.textContent="Kindle";
   }
+  hPid.title=hPid.textContent;
   stokeBtn.disabled=!running;
 }
 function renderHearthNative(){
@@ -646,6 +881,8 @@ function renderHearthNative(){
     hState.textContent=TT("COLD");
     hPid.textContent=TT("STOPPED · embers doused");
   }
+  hPid.title=hPid.textContent;
+  renderHearthVersion();
   douseBtn.textContent=TT(st.canStop?"Douse":"Kindle");
   douseBtn.disabled=!(st.canStart||st.canStop);
   stokeBtn.textContent=st.countdownActive?"Restart NOW":TT("Stoke");
@@ -653,6 +890,25 @@ function renderHearthNative(){
   stokeBtn.disabled=!(st.canStop||st.countdownActive);
   stokeBtn.classList.toggle("btn-ember",!!st.countdownActive);
   stokeBtn.classList.toggle("btn-ghost",!st.countdownActive);
+}
+/* "Valheim 1.0.7 (net 39)" on the status card - the numbers the running server printed
+   itself, never a guess. Falls back to what this profile last ran while it is down, so a
+   host can see which build their worlds are on without starting anything. */
+function renderHearthVersion(){
+  const el=$("#hVer"); if(!el) return;
+  const live=S.gameVersion, net=S.networkVersion;
+  const last=S.prefs?.LastLaunchedGameVersion;
+  if(live){
+    el.textContent="Valheim "+live+(net?" (net "+net+")":"");
+    el.title=TT("Reported by the running server");
+  }else if(last){
+    el.textContent=TT("last ran Valheim ")+last;
+    el.title=TT("The version this server reported the last time it ran");
+  }else{
+    el.style.display="none";
+    return;
+  }
+  el.style.display="";
 }
 function applyState(st){
   if(!st) return;
@@ -671,6 +927,11 @@ function applyState(st){
     $("#saveCountdown").textContent="-:-";
     if(S.invite){S.invite=null;renderNet();} // invite dies with the server
   }
+  // Both versions come from the server's own banner - null until it has printed one.
+  if("gameVersion" in st) S.gameVersion=st.gameVersion||null;
+  if("networkVersion" in st) S.networkVersion=st.networkVersion||null;
+  // A held start rides along with the state, so the banner survives a reload.
+  if("launchHold" in st) setLaunchHold(st.launchHold);
   renderHearthNative();
 }
 douseBtn.addEventListener("click",async e=>{
@@ -682,8 +943,13 @@ douseBtn.addEventListener("click",async e=>{
       if(r!==FAIL){applyState(r);toast("ᛪ Hearth doused · server stopping");logLine("warn","[BakaLoader] stop requested - dousing the embers");}
     }else if(st.canStart){
       if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
-      const r=await rpc("server.start",{prefs:S.prefs});
-      if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
+      // Nothing changed -> straight to the same start call as before. A changed build or a
+      // waiting Steam update puts the choice to the host first, and only then starts.
+      withLaunchGuard(async answer=>{
+        if(answer){startWithAnswer(answer);return;}
+        const r=await rpc("server.start",{prefs:S.prefs});
+        if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
+      });
     }
     return;
   }
@@ -692,8 +958,13 @@ douseBtn.addEventListener("click",async e=>{
   toast(running?"ᚠ Hearth kindled · server starting":"ᛪ Hearth doused · server stopped");
   logLine(running?"ok":"warn",running?"[BakaLoader] server process launched (PID 150428)":"[BakaLoader] graceful shutdown - world saved, embers doused");
 });
+/* A restart stops the server and starts it again, so it meets the same guard as a start.
+   Ask first, then send the answer along with the restart. */
 function smartRestart(){
-  return rpc("server.restart").then(r=>{
+  withLaunchGuard(answer=>{smartRestartNow(answer);});
+}
+function smartRestartNow(answer){
+  return rpc("server.restart",answer?{guard:answer}:{}).then(r=>{
     if(r===FAIL) return;
     applyState(r.state);
     if(r.restart==="countdown"){
@@ -745,6 +1016,26 @@ sailBtn.addEventListener("click",()=>{
   toast("ᛟ Join prompt copied · sailing forth");
 });
 renderHearth();
+
+/* Save-time bars: the last dozen world writes, tallest bar = slowest write.
+   Each bar carries its own value so the chart is readable, not decorative. */
+function renderSaveBars(){
+  const box=$("#saveBars"); if(!box) return;
+  const cap=$("#saveCap");
+  const d=(S.saveDur||[]).slice(-12);
+  if(!d.length){
+    /* An empty chart, never the mock bars: a captioned chart of numbers nothing measured
+       is a reading of save performance the host never had. */
+    box.innerHTML=`<div class="empty">${TT("no writes recorded yet")}</div>`;
+    if(cap) cap.style.display="none";
+    return;
+  }
+  if(cap) cap.style.display="";
+  const max=Math.max.apply(null,d.concat([1]));
+  box.innerHTML=d.map((ms,i)=>
+    `<i class="${i===d.length-1?"hot":""}" style="height:${Math.max(10,Math.round(ms/max*100))}%" title="${esc(ms+" ms")}"></i>`
+  ).join("");
+}
 
 /* ---------- SPARKLINES (shared drawing; mock driver below) ---------- */
 const N=40, cpu=[], ram=[];
@@ -812,6 +1103,9 @@ function renderNet(){
     setTimeout(()=>e.target.textContent="COPY",1400);
   });
 });
+/* Recent-log card header: jump straight to the full chronicle */
+$("#openSagaChip")?.addEventListener("click",e=>{e.stopPropagation();goPage("saga");});
+
 /* open-folder affordances (shell.open - native only) */
 $("#openWorlds").addEventListener("click",e=>{
   e.stopPropagation();
@@ -1135,7 +1429,11 @@ function invokePal(){
       const st=S.state||{};
       if(!st.canStart){toast("ᚦ Start unavailable · already running?");}
       else if(!S.prefs){toast("ᚦ no profile loaded · cannot start");}
-      else rpc("server.start",{prefs:S.prefs}).then(r=>{
+      /* the same gate the Kindle button goes through: a changed build or a waiting
+         Steam update is put to the host here too, not started past silently */
+      else withLaunchGuard(async answer=>{
+        if(answer){startWithAnswer(answer);return;}
+        const r=await rpc("server.start",{prefs:S.prefs});
         if(r!==FAIL){applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));}
       });
     }else if(cmd==="Stop server"){
@@ -1200,14 +1498,18 @@ document.addEventListener("keydown",e=>{
 });
 
 /* ---------- TOASTS ---------- */
+const TOAST_MAX=3, TOAST_LIFE=4800;
 function toast(msg){
   msg=TT(msg); // plain-terminology swap (rune glyph token is never matched)
   const t=document.createElement("div");
   t.className="toast";
   const parts=msg.split(" ");
   t.innerHTML=`<span class="r">${parts[0]}</span><span>${esc(parts.slice(1).join(" "))}</span><span class="tt">${clock()}</span>`;
-  $("#toasts").appendChild(t);
-  setTimeout(()=>{t.classList.add("out");setTimeout(()=>t.remove(),320);},4200);
+  const box=$("#toasts");
+  box.appendChild(t);
+  /* three at a time, oldest first out - a taller stack just buries the controls */
+  while(box.children.length>TOAST_MAX) box.firstElementChild.remove();
+  setTimeout(()=>{t.classList.add("out");setTimeout(()=>t.remove(),320);},TOAST_LIFE);
 }
 
 /* ---------- SAGA TERMINAL ---------- */
@@ -1251,6 +1553,7 @@ function logLine(kind,text,time){
   d.innerHTML=`<span class="t">${esc(t)}</span>  <span class="${kind}">${esc(text)}</span>`;
   d.style.display=lnVisible(d)?"":"none";
   termAppend(d);
+  hlogPush(kind,text,t);   // Hearth hall keeps a mirror of the last few lines
 }
 /* horizontal rule with a label - marks session starts and helm turns */
 function logDivider(text){
@@ -1330,7 +1633,7 @@ async function vellumModal(){
       `<label class="togglerow" style="cursor:pointer"><span class="tl">${esc(TT("Keep BakaLoader's own log"))}`+
         `<br><span style="font-size:9.5px;opacity:.7">ApplicationLogs_&lt;day&gt;.txt · ${esc(TT("30-day keep"))}</span></span>`+
         `<div class="toggle${(up?up.WriteApplicationLogsToFile:true)?" on":""}" id="vlApp"></div></label>`+
-      `<div class="fieldnote">${esc(TT("each server session writes its own scroll — ServerLogs-<realm>-<start time>.txt — pruned after 30 days. Per-realm writing is the 'Write server logs to file' rune in the realm's settings."))}</div>`+
+      `<div class="fieldnote">${esc(TT("each server session writes its own scroll, ServerLogs-<realm>-<start time>.txt, pruned after 30 days. Per-realm writing is the 'Write server logs to file' rune in the realm's settings."))}</div>`+
       `<div class="fieldnote" id="vlStatus"></div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="vlCancel">Cancel</button>`+
@@ -1345,7 +1648,7 @@ async function vellumModal(){
       LogsFolderPath:m.querySelector("#vlPath").value.trim(),
       WriteApplicationLogsToFile:tApp.classList.contains("on"),
     }});
-    if(r===FAIL){st.textContent=TT("could not save — the folder must be a full, writable path (e.g. D:\\ValheimLogs)");return;}
+    if(r===FAIL){st.textContent=TT("could not save, the folder must be a full, writable path (e.g. D:\\ValheimLogs)");return;}
     modalClose();
     toast(TT("ᚹ Vellum inscribed · log settings saved"));
   });
@@ -1418,12 +1721,12 @@ $("#capsInstallBtn")?.addEventListener("click",async()=>{
 $$("[data-t]").forEach(t=>t.addEventListener("click",()=>{t.classList.toggle("on");syncAdvGates();}));
 
 /* ---------- UPKEEP (app self-update + start with Windows) ---------- */
-$("#upkeepHead").addEventListener("click",()=>$("#upkeepCard").classList.toggle("open"));
+wireCollapsible("upkeepHead",$("#upkeepBody"),$("#upkeepCard"));
 
 /* WORLD hall: World Modifiers + Advanced Rites + Directories fold like the Upkeep card */
 ["secWorldMods","secRites","secDirs"].forEach(id=>{
   const el=document.getElementById(id);
-  el.addEventListener("click",()=>el.classList.toggle("open"));
+  wireCollapsible(id,el?el.nextElementSibling:null,el);
 });
 async function initUpkeep(){
   const up=await rpc("userprefs.get");
@@ -1575,6 +1878,7 @@ modalBg.addEventListener("mousedown",e=>{if(e.target===modalBg)modalClose();});
 function modalOpen(html){
   modalBg.innerHTML=`<div class="modal">${html}</div>`;
   modalBg.classList.add("open");
+  refreshScrollCues();
   return modalBg.firstElementChild;
 }
 function promptModal(title,placeholder,onOk){
@@ -1597,6 +1901,117 @@ function confirmModal(title,bodyHtml,okLabel,onOk){
   m.querySelector("#mOk").addEventListener("click",()=>{try{onOk(m);}finally{modalClose();}});
   m.querySelector("#mCancel").addEventListener("click",modalClose);
 }
+/* ---------- LAUNCH GUARD (build changed / Steam update waiting) ----------
+   Valheim 1.0 upgrades a world the first time it saves it, and there is no way back:
+   an older server cannot read the world afterwards. So a start on a build this profile
+   has not run before is put to the host first, and an unattended start (auto-start,
+   scheduled restart, empty-server restart, crash recovery) is HELD until they answer.
+   The banner below is that question when nobody was at the keyboard to see the prompt. */
+function guardMb(bytes){const n=Number(bytes)||0;return Math.max(1,Math.round(n/1048576));}
+function guardBuildLabel(g){
+  const to=g.currentBuildShort||"a new build";
+  const from=g.lastBuildShort
+    ?(g.lastVersion?`build ${g.lastBuildShort} (${g.lastVersion})`:`build ${g.lastBuildShort}`)
+    :TT("a build it has not recorded");
+  return {from,to};
+}
+/* The prompt body, shared by the modal and the banner tooltip. */
+function guardBody(g){
+  if(g.outcome==="updatePending")
+    return TT(`Steam has a Valheim server update waiting (${guardMb(g.pendingBytes)} MB). `)+
+           TT("Starting now runs the old build, and players who already updated cannot join.");
+  const b=guardBuildLabel(g);
+  return TT(`The Valheim server changed from ${b.from} to build ${b.to}. `)+
+         TT("Starting will upgrade your worlds to the new version. Older servers cannot read upgraded worlds.");
+}
+/* Puts the question to the host. onPick gets "proceed", "backup" or null (not now). */
+function launchGuardModal(g,onPick){
+  const pending=g.outcome==="updatePending";
+  const title=pending?TT("A server update is waiting"):TT("The server build changed");
+  const pick=v=>{modalClose();onPick(v);};
+  const buttons=pending
+    ?`<button class="btn btn-ghost btn-sm" id="mSteam">ᛊ&nbsp; ${esc(TT("Open Steam"))}</button>`+
+     `<button class="btn btn-ghost btn-sm" id="mAnyway">${esc(TT("Start anyway"))}</button>`+
+     `<button class="btn btn-ember btn-sm" id="mLater">${esc(TT("Not now"))}</button>`
+    :`<button class="btn btn-ember btn-sm" id="mBackup">${esc(TT("Back up worlds and start"))}</button>`+
+     `<button class="btn btn-ghost btn-sm" id="mAnyway">${esc(TT("Start without backup"))}</button>`+
+     `<button class="btn btn-ghost btn-sm" id="mLater">${esc(TT("Not now"))}</button>`;
+  const m=modalOpen(
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛊ</span>${esc(title)}</div>`+
+    `<div class="mbody">`+
+    `<div style="margin-bottom:8px">${esc(guardBody(g))}</div>`+
+    (g.hasWorlds&&!pending
+      ?`<div class="subval" style="margin-bottom:6px">${esc(TT("A backup copies every world in this server's save folder aside first, and the Barrow can put one back."))}</div>`
+      :"")+
+    (g.manifest?`<div class="subval mono" style="word-break:break-all">${esc(g.manifest)}</div>`:"")+
+    `</div>`+
+    `<div class="mbtns">${buttons}</div>`);
+  m.querySelector("#mSteam")?.addEventListener("click",()=>{
+    rpc("shell.openUrl",{target:"steam-downloads"});
+    toast("ᛊ Steam downloads opened · apply the update, then start again");
+  });
+  m.querySelector("#mBackup")?.addEventListener("click",()=>pick("backup"));
+  m.querySelector("#mAnyway")?.addEventListener("click",()=>pick("proceed"));
+  m.querySelector("#mLater")?.addEventListener("click",()=>pick(null));
+}
+/* Runs the guard for a start-shaped action. Calls go(answer) once the host has decided;
+   answer is null for a normal start, or the token the native side stages for this launch. */
+function withLaunchGuard(go){
+  if(!Native.available){go(null);return;}
+  rpc("server.launchCheck",S.prefs?{prefs:S.prefs}:{}).then(g=>{
+    if(g===FAIL||!g||g.outcome==="proceed"){go(null);return;}
+    launchGuardModal(g,answer=>{ if(answer) go(answer); });
+  });
+}
+
+/* The held-start banner: the same question, kept on screen because the start that
+   raised it happened with nobody watching. */
+let LAUNCH_HOLD=null;
+function renderLaunchHold(){
+  const bar=$("#launchHold"); if(!bar) return;
+  const g=LAUNCH_HOLD;
+  if(!g||!isActiveProfile(g.profile)){bar.style.display="none";return;}
+  const pending=g.outcome==="updatePending";
+  bar.innerHTML=
+    `<span class="hbrune">ᛊ</span>`+
+    `<span class="hbtitle">${esc(pending?TT("Update waiting"):TT("Build changed"))}</span>`+
+    `<span class="hbmsg">${esc(guardBody(g))}</span>`+
+    `<span class="hbacts">`+
+    (pending?`<button class="btn btn-ghost btn-sm" id="lhSteam">${esc(TT("Open Steam"))}</button>`:"")+
+    (pending?"":`<button class="btn btn-ember btn-sm" id="lhBackup">${esc(TT("Back up worlds and start"))}</button>`)+
+    `<button class="btn btn-ghost btn-sm" id="lhAnyway">${esc(pending?TT("Start anyway"):TT("Start without backup"))}</button>`+
+    `<button class="btn btn-ghost btn-sm" id="lhLater">${esc(TT("Not now"))}</button>`+
+    `</span>`;
+  bar.style.display="flex";
+  bar.querySelector("#lhSteam")?.addEventListener("click",()=>{
+    rpc("shell.openUrl",{target:"steam-downloads"});
+    toast("ᛊ Steam downloads opened · apply the update, then start again");
+  });
+  bar.querySelector("#lhBackup")?.addEventListener("click",()=>startWithAnswer("backup"));
+  bar.querySelector("#lhAnyway")?.addEventListener("click",()=>startWithAnswer("proceed"));
+  bar.querySelector("#lhLater")?.addEventListener("click",()=>{
+    const profile=LAUNCH_HOLD?.profile;
+    clearLaunchHold();
+    rpc("server.dismissLaunchHold",{profile});
+    toast("ᛊ Left as it is · the server stays down until you start it");
+  });
+}
+function setLaunchHold(g){LAUNCH_HOLD=g||null;renderLaunchHold();}
+function clearLaunchHold(){LAUNCH_HOLD=null;renderLaunchHold();}
+/* Start the server carrying the host's answer to the guard. */
+function startWithAnswer(answer){
+  if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
+  clearLaunchHold();
+  rpc("server.start",{prefs:S.prefs,guard:answer}).then(r=>{
+    if(r===FAIL) return;
+    applyState(r);
+    toast(answer==="backup"
+      ?"ᚠ Worlds copied aside · server starting"
+      :"ᚠ Hearth kindled · server starting");
+    logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?")+" · "+answer);
+  });
+}
+
 /* Server-console picker: curated commands the modded server understands
    (BakaLoaderCommander natives + devcommands staples). Clicking a complete
    command sends it; commands that take arguments prefill the input instead. */
@@ -1666,6 +2081,11 @@ function netModal(){
     (S.invite?addrRow("Crossplay invite",S.invite,true):"")+
     addrRow("RCON",S.prefs?.RconEnabled?"127.0.0.1:"+(S.prefs.RconPort??25575):"off",false)+
     addrRow("Steam query port",String(port+1),false)+
+    // Clients must match the network version exactly, so it belongs next to the addresses.
+    addrRow(TT("Game version"),
+      S.gameVersion||S.prefs?.LastLaunchedGameVersion||"-",false)+
+    addrRow(TT("Network version"),
+      S.networkVersion?S.networkVersion+" "+TT("(clients must match)"):"-",false)+
     `<div class="dsec">Traffic <span class="subval" style="text-transform:none;letter-spacing:0">· reported by the server every ~10 min${asOf?" · as of "+pad(asOf.getHours())+":"+pad(asOf.getMinutes()):""}</span></div>`+
     `<div class="dstats">`+
       stat("connections",n.conns??"-")+
@@ -1727,21 +2147,44 @@ async function savesModal(){
 /* Preview-mode stand-in data so the whole flow can be walked without the app. */
 const BARROW_MOCK=[
   {world:"Midgard",folder:"C:/Users/you/AppData/LocalLow/IronGate/Valheim",sub:"worlds_local",
-   owner:"Default",running:true,sizeBytes:48234567,day:412,
+   owner:"Default",running:true,sizeBytes:48234567,day:412,format:"chunked",formatLabel:"1.0",
    modifiedUtc:new Date(Date.now()-7*60000).toISOString(),backupBytes:139460000,
    backups:[
-     {file:"Midgard_backup_auto-20260711-060000.fwl",kind:"auto",sizeBytes:47102003,day:411,hasDb:true,modifiedUtc:new Date(Date.now()-5*3600000).toISOString()},
-     {file:"Midgard.fwl.old",kind:"old",sizeBytes:46990111,day:410,hasDb:true,modifiedUtc:new Date(Date.now()-26*3600000).toISOString()},
-     {file:"Midgard_backup_restore-20260708-193045.fwl",kind:"restore",sizeBytes:45367886,day:398,hasDb:true,modifiedUtc:new Date(Date.now()-3*86400000-4.25*3600000).toISOString()},
+     {file:"Midgard_backup_auto-20260711-060000",kind:"auto",isDirectory:true,committed:true,sizeBytes:47102003,day:411,hasDb:true,modifiedUtc:new Date(Date.now()-5*3600000).toISOString()},
+     {file:"Midgard_backup_20260710-101500.fwl",kind:"legacy",isDirectory:false,committed:true,sizeBytes:46990111,day:410,hasDb:true,modifiedUtc:new Date(Date.now()-26*3600000).toISOString()},
+     {file:"Midgard_backup_restore-20260708-193045",kind:"restore",isDirectory:true,committed:true,sizeBytes:45367886,day:398,hasDb:true,modifiedUtc:new Date(Date.now()-3*86400000-4.25*3600000).toISOString()},
    ]},
   {world:"Trialgrounds",folder:"C:/Users/you/AppData/LocalLow/BakaLoader/servers/proving",sub:"worlds_local",
-   owner:null,running:false,sizeBytes:9034120,day:23,
+   owner:null,running:false,sizeBytes:9034120,day:23,format:"legacy",formatLabel:"Legacy",
    modifiedUtc:new Date(Date.now()-12*86400000).toISOString(),backupBytes:8877001,
    backups:[
-     {file:"Trialgrounds_backup_auto-20260629-120000.fwl",kind:"auto",sizeBytes:8877001,day:22,hasDb:true,modifiedUtc:new Date(Date.now()-12*86400000-3600000).toISOString()},
+     {file:"Trialgrounds_backup_auto-20260629-120000.fwl",kind:"auto",isDirectory:false,committed:true,sizeBytes:8877001,day:22,hasDb:true,modifiedUtc:new Date(Date.now()-12*86400000-3600000).toISOString()},
+     {file:"Trialgrounds.fwl.old",kind:"old",isDirectory:false,committed:true,sizeBytes:8790224,day:21,hasDb:true,modifiedUtc:new Date(Date.now()-13*86400000).toISOString()},
    ]},
 ];
-const BARROW_KIND={auto:"AUTO SNAPSHOT",old:"LAST GOOD",restore:"PRE-RESTORE",other:"BACKUP"};
+/* "legacy" is the untouched pre-conversion pair Valheim renames aside the first time it
+   saves an older world into the 1.0 directory format. */
+const BARROW_KIND={auto:"AUTO SNAPSHOT",old:"LAST GOOD",restore:"PRE-RESTORE",
+  legacy:"PRE-1.0 ORIGINAL",cloud:"CLOUD COPY",preupdate:"PRE-UPDATE SNAPSHOT",other:"BACKUP"};
+/* Extra warning under the unearth prompt, when this layer needs one. */
+function barrowUnearthNote(g,b){
+  const warn=t=>" <span style='color:var(--warn,#e0a35c)'>"+esc(TT(t))+"</span>";
+  if(b.isDirectory&&b.committed===false)
+    return warn("This snapshot holds no finished save, so there is nothing to restore from it yet.");
+  if(b.kind==="legacy"&&g.format==="chunked")
+    return warn("This is the world as it was before Valheim 1.0. Restoring it puts the old files back, and the game converts the world again on its next save.");
+  if(b.kind==="preupdate")
+    return warn("This is the world as it was just before the server ran a newer build. Restoring it undoes everything played since then.");
+  if(!b.isDirectory&&!b.hasDb)
+    return warn("This layer has no .db - only the world seed and settings are restored.");
+  return "";
+}
+/* "1.0" = the world is a directory of chunks; "Legacy" = the older .fwl and .db pair. */
+function worldFormatLabel(g){
+  if(!g) return "";
+  if(g.formatLabel) return g.formatLabel;
+  return g.format==="chunked"?"1.0":(g.format==="legacy"?"Legacy":"");
+}
 function barrowFolderLabel(g){
   const parts=String(g.folder||"").split(/[\\/]/).filter(Boolean);
   const i=parts.findIndex(x=>x.toLowerCase()==="servers");
@@ -1762,7 +2205,7 @@ async function barrowModal(){
     `<span class="dv">${g.owner?esc(g.owner):"<span style='opacity:.55'>unclaimed</span>"}${g.running?` <span style="color:var(--ok,#7dc98f)">● ${esc(TT("raiding"))}</span>`:""}</span>`+
     `<span class="dv mono">${(g.backups||[]).length} ${TT((g.backups||[]).length===1?"layer":"layers")} · ${fmtBytes((g.sizeBytes||0)+(g.backupBytes||0))}</span>`+
     `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span>`+
-    `</div><div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(g))}${g.day!=null?" · day "+g.day:""}</div>`
+    `</div><div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(g))}${worldFormatLabel(g)?" · "+esc(worldFormatLabel(g)):""}${g.day!=null?" · day "+g.day:""}</div>`
   ).join(""):`<div class="subval" style="padding:6px 2px">no worlds found on disk yet</div>`;
   const m=modalOpen(
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᛝ</span>${esc(TT("The Barrow"))}</div>`+
@@ -1776,8 +2219,8 @@ async function barrowModal(){
 function barrowWorldModal(g){
   const layerRow=(b,i)=>
     `<div class="drow"><span class="dk mono" style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(b.file)}</span>`+
-    `<span class="dv" style="flex:0 0 auto">${BARROW_KIND[b.kind]||"BACKUP"}</span>`+
-    `<span class="dv mono" style="flex:0 0 auto">${fmtBytes(b.sizeBytes)}${b.day!=null?" · day "+b.day:""}</span>`+
+    `<span class="dv" style="flex:0 0 auto">${esc(TT(BARROW_KIND[b.kind]||"BACKUP"))}</span>`+
+    `<span class="dv mono" style="flex:0 0 auto">${fmtBytes(b.sizeBytes)}${b.isDirectory?" · "+esc(TT("folder")):""}${b.day!=null?" · day "+b.day:""}</span>`+
     `<span class="dv" style="flex:0 0 auto">${agoAt(b.modifiedUtc)}</span>`+
     `<span class="copychip bUnearth" data-i="${i}"${g.running?` style="opacity:.4;cursor:not-allowed" title="stop the server first"`:""}>${esc(TT("UNEARTH"))}</span>`+
     `<span class="copychip bDrop" data-i="${i}" style="color:var(--warn,#e0a35c)">✕</span>`+
@@ -1787,8 +2230,8 @@ function barrowWorldModal(g){
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᛝ</span>${esc(TT("The Barrow"))} · ${esc(g.world)}</div>`+
     `<div class="mbody">`+
     `<div class="dsec">Live</div>`+
-    `<div class="drow"><span class="dk mono">${esc(g.world)}.fwl + .db</span>`+
-    `<span class="dv mono">${fmtBytes(g.sizeBytes)}${g.day!=null?" · day "+g.day:""}</span>`+
+    `<div class="drow"><span class="dk mono">${esc(g.world)}${g.format==="chunked"?"/":".fwl + .db"}</span>`+
+    `<span class="dv mono">${worldFormatLabel(g)?esc(worldFormatLabel(g))+" · ":""}${fmtBytes(g.sizeBytes)}${g.day!=null?" · day "+g.day:""}</span>`+
     `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span></div>`+
     (g.running?`<div class="subval" style="padding:2px 2px 6px;color:var(--warn,#e0a35c)">${esc(TT("this realm is raiding right now - stop the server to unearth a layer"))}</div>`:"")+
     `<div class="dsec">${esc(TT("Layers"))} <span class="subval" style="text-transform:none;letter-spacing:0">· ${bks.length} on disk · ${fmtBytes(g.backupBytes||0)}</span></div>`+
@@ -1807,11 +2250,12 @@ function barrowWorldModal(g){
     if(g.running){toast("ᚦ "+TT("Stop the server first - the live realm would clobber the restored files"));return;}
     const b=bks[+c.dataset.i];
     confirmModal(TT("Unearth this layer?"),
-      `<div class="subval">${esc(TT("The live realm is copied to a fresh safety layer first, then"))} <span class="mono">${esc(b.file)}</span> ${esc(TT("replaces the live files. Every unearthing is reversible from the Barrow."))}${b.hasDb?"":" <span style='color:var(--warn,#e0a35c)'>"+esc(TT("This layer has no .db - only the world seed/meta is restored."))+"</span>"}</div>`,
+      `<div class="subval">${esc(TT("The live realm is copied to a fresh safety layer first, then"))} <span class="mono">${esc(b.file)}</span> ${esc(TT("replaces the live files. Every unearthing is reversible from the Barrow."))}${barrowUnearthNote(g,b)}</div>`,
       TT("Unearth"),async()=>{
         if(!Native.available){
           const ts=new Date();
-          g.backups.unshift({file:g.world+"_backup_restore-"+ts.getFullYear()+pad(ts.getMonth()+1)+pad(ts.getDate())+"-"+pad(ts.getHours())+pad(ts.getMinutes())+"00.fwl",kind:"restore",sizeBytes:g.sizeBytes,day:g.day,hasDb:true,modifiedUtc:ts.toISOString()});
+          const stamp=g.world+"_backup_restore-"+ts.getFullYear()+pad(ts.getMonth()+1)+pad(ts.getDate())+"-"+pad(ts.getHours())+pad(ts.getMinutes())+"00";
+          g.backups.unshift({file:g.format==="chunked"?stamp:stamp+".fwl",kind:"restore",isDirectory:g.format==="chunked",committed:true,sizeBytes:g.sizeBytes,day:g.day,hasDb:true,modifiedUtc:ts.toISOString()});
           toast("ᛝ "+TT("Layer unearthed")+" · preview only");
           setTimeout(()=>barrowWorldModal(g),0); // confirmModal closes itself right after onOk
           return;
@@ -1826,7 +2270,7 @@ function barrowWorldModal(g){
   m.querySelectorAll(".bDrop").forEach(c=>c.addEventListener("click",()=>{
     const b=bks[+c.dataset.i];
     confirmModal(TT("Delete this layer?"),
-      `<div class="subval"><span class="mono">${esc(b.file)}</span>${b.hasDb?" "+esc(TT("and its paired .db")):""} ${esc(TT("will be deleted from disk. This cannot be undone."))}</div>`,
+      `<div class="subval"><span class="mono">${esc(b.file)}</span>${b.isDirectory?" "+esc(TT("and everything inside it")):(b.hasDb?" "+esc(TT("and its paired .db")):"")} ${esc(TT("will be deleted from disk. This cannot be undone."))}</div>`,
       "Delete",async()=>{
         if(!Native.available){
           g.backups=g.backups.filter(x=>x!==b);
@@ -1914,20 +2358,25 @@ function renderSkald(){
   if((u.crashes||0)>0){cp.style.display="";cp.textContent=u.crashes+(u.crashes===1?" crash":" crashes");}
   else cp.style.display="none";
   $("#skVikings").textContent=(d.players||[]).length;
-  $("#skVikingsSub").textContent=TT("unique souls")+" · "+(t.sessions??0)+" "+TT("visits");
+  const vsub=TT("unique souls")+" · "+(t.sessions??0)+" "+TT("visits");
+  $("#skVikingsSub").textContent=vsub; $("#skVikingsSub").title=vsub;
   $("#skDeaths").textContent=t.deaths??0;
   $("#skModUps").textContent=t.modUpdates??0;
-  $("#skModUpsSub").textContent="updates · "+(t.modInstalls??0)+" installs";
+  const msub="updates · "+(t.modInstalls??0)+" installs";
+  $("#skModUpsSub").textContent=msub; $("#skModUpsSub").title=msub;
   $("#skaldSub").textContent=TT((d.since?"chronicled since "+new Date(d.since).toLocaleDateString()+" · ":"")
     +"counted on this machine only, nothing leaves it");
   /* playtime per viking */
-  const rows=(d.players||[]).map(p=>
-    `<tr><td><span class="vdot ${p.online?"on":"off"}" style="display:inline-block;margin-right:8px"></span>`+
-    `<span class="vname">${esc(p.name||p.character||p.key)}</span>`+
-    (p.character&&p.character!==p.name?` <span class="subval">(${esc(p.character)})</span>`:"")+`</td>`+
-    `<td class="mono">${skDur(p.playSec)}</td><td class="mono">${p.sessions??0}</td><td class="mono">${p.deaths??0}</td>`+
-    `<td class="mono">${p.online?`<span style="color:var(--moss)">${esc(TT("raiding now"))}</span>`:agoAt(p.lastSeen)}</td></tr>`
-  ).join("");
+  const rows=(d.players||[]).map(p=>{
+    const nm=p.name||p.character||p.key||"";
+    const ch=(p.character&&p.character!==p.name)?p.character:"";
+    const seen=agoAt(p.lastSeen);
+    return `<tr><td title="${esc(nm+(ch?" ("+ch+")":""))}"><span class="vdot ${p.online?"on":"off"}" style="display:inline-block;margin-right:8px"></span>`+
+    `<span class="vname">${esc(nm)}</span>`+
+    (ch?` <span class="subval">(${esc(ch)})</span>`:"")+`</td>`+
+    `<td class="mono" title="${esc(skDur(p.playSec))}">${skDur(p.playSec)}</td><td class="mono">${p.sessions??0}</td><td class="mono">${p.deaths??0}</td>`+
+    `<td class="mono" title="${p.online?"":esc(seen)}">${p.online?`<span style="color:var(--moss)">${esc(TT("raiding now"))}</span>`:seen}</td></tr>`;
+  }).join("");
   $("#skPlayerTable").innerHTML=rows
     ||`<tr><td colspan="5" style="padding:10px 12px" class="skempty">${esc(TT("No vikings have set sail for this realm yet."))}</td></tr>`;
   /* happenings feed */
@@ -1952,6 +2401,32 @@ function renderSkald(){
 }
 
 /* ---------- VIKINGS (players) ---------- */
+/* Short platform tag off the id the roster already carries. Steam accounts are a
+   bare 17-digit id; crossplay accounts arrive as "<Platform>_<id>". Anything that
+   matches neither shape gets no guess, just a dash. */
+const PLATFORM_NAMES={steam:"Steam",v:"Steam",xbox:"Xbox",xboxlive:"Xbox",microsoft:"Xbox",x:"Xbox",
+  playstation:"PlayStation",psn:"PlayStation",s:"PlayStation",nintendo:"Switch",switch:"Switch",n:"Switch",
+  gamecenter:"Game Center",a:"Game Center",playfab:"PlayFab",epic:"Epic"};
+/* Own keys only. A player id such as "constructor_123" or "toString_9" would otherwise
+   find a function on Object.prototype and print it as the player's platform. */
+function platformName(key){
+  const k=String(key==null?"":key).toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PLATFORM_NAMES,k)?PLATFORM_NAMES[k]:"";
+}
+function platformTag(id){
+  const v=String(id==null?"":id).trim(); if(!v) return "";
+  const u=v.indexOf("_");
+  if(u>0){const pre=v.slice(0,u);return platformName(pre)||pre;}
+  return /^\d{17}$/.test(v)?"Steam":"";
+}
+/* The roster now carries the platform the peer actually joined on, so use it and keep the
+   id guess only as a fallback. Ids stopped having a fixed shape, so guessing can be wrong. */
+function playerPlatform(p){
+  const named=String((p&&p.platform)||(p&&p.Platform)||"").trim();
+  if(named) return platformName(named)||named;
+  return platformTag(p&&p.PlayerId);
+}
+
 /* RCON target mirrors MainWindow.GetRconTargetName: LastStatusCharacter || PlayerName.
    The DTO embeds the character as "Name (Char)" in displayName. */
 function playerTarget(p){
@@ -1965,7 +2440,7 @@ function renderPlayers(){
   const online=list.filter(p=>p.status==="Online").length;
   $("#vikSub").textContent=TT(online+" of "+list.length+" raiding · right-click a viking for deeds");
   $("#homeVikPill").textContent=online+" online";
-  $("#homeVik").innerHTML=list.slice(0,3).map(p=>{
+  $("#homeVik").innerHTML=list.slice(0,4).map(p=>{
     const on=p.status==="Online";
     return `<div class="vrow"${on?"":' style="opacity:.4"'}><span class="vdot ${on?"on":"off"}"></span><span class="vname">${esc(p.displayName)}</span><span class="vsub">${on?"joined":"seen"} ${fmtT(p.lastStatusChange)}</span></div>`;
   }).join("")||`<div class="vrow" style="opacity:.5"><span class="vdot off"></span><span class="vname">${TT("No vikings yet")}</span><span class="vsub">awaiting arrivals</span></div>`;
@@ -1975,10 +2450,11 @@ function renderPlayers(){
     return `<tr data-i="${i}"${p.status==="Offline"?' class="dim"':""}>`+
       `<td><span class="vdot ${p.status==="Online"?"on":"off"}" style="display:inline-block;margin-right:9px"></span><strong>${esc(p.displayName)}</strong></td>`+
       `<td><span class="pill ${pill}">${esc(p.status)}</span></td>`+
+      `<td class="mono">${esc(playerPlatform(p))||"-"}</td>`+
       `<td class="mono">${fmtT(p.lastStatusChange)}</td>`+
       `<td class="mono">-</td>`+
       `<td class="mono" style="color:var(--ember)">⋯</td></tr>`;
-  }).join("")||`<tr><td colspan="5" class="mono" style="color:var(--bone-dim)">${TT("No vikings have set sail for this realm yet.")}</td></tr>`;
+  }).join("")||`<tr><td colspan="6" class="mono" style="color:var(--bone-dim)">${TT("No vikings have set sail for this realm yet.")}</td></tr>`;
   tb._list=list;
 }
 async function refreshPlayers(){
@@ -2033,14 +2509,16 @@ async function doPlayerAct(method,params,okMsg){
   logLine("cmd","> "+method.replace("players.","")+" "+(params.target||params.playerName||""));
 }
 async function setPlayerList(p,list,on){
+  const who=p.displayName||p.PlayerId;
   const r=await rpc("players.setList",{list,id:p.PlayerId,on});
-  if(r===FAIL) return;
-  toast("ᚨ "+(on?"Added to":"Removed from")+" "+list.toLowerCase()+" list · "+(p.displayName||p.PlayerId));
-  logLine("info","[BakaLoader] "+list.toLowerCase()+" list "+(on?"+ ":"- ")+(p.displayName||p.PlayerId));
+  /* a write that failed must never read as done - the list on disk is unchanged */
+  if(r===FAIL){toast("ᚦ "+list.toLowerCase()+" list not written · "+who+" is unchanged");return;}
+  toast("ᚨ "+(on?"Added to":"Removed from")+" "+list.toLowerCase()+" list · "+who);
+  logLine("info","[BakaLoader] "+list.toLowerCase()+" list "+(on?"+ ":"- ")+who);
 }
 async function doBan(p,unban,tgt){
   const r=await rpc("players.setList",{list:"Banned",id:p.PlayerId,on:!unban});
-  if(r===FAIL) return;
+  if(r===FAIL){toast("ᚦ banned list not written · "+tgt+" is unchanged");return;}
   toast(unban?("ᛉ Unbanned "+tgt):("ᛉ Banned "+tgt));
   logLine(unban?"info":"warn","[BakaLoader] "+(unban?"unbanned ":"banned ")+(p.displayName||p.PlayerId));
   if(!unban&&S.caps.rcon&&p.status==="Online"){
@@ -3038,8 +3516,8 @@ async function atlasEnter(){
   atlasResize();
   if(!Native.available){atlasMock();return;}
   const world=atlasWorldName();
-  $("#atlasWorldName").textContent=world||"—";
-  if(!world){atlasMsg("No world chosen yet — pick one in the World hall.");return;}
+  $("#atlasWorldName").textContent=world||"-";
+  if(!world){atlasMsg("No world chosen yet, pick one in the World hall.");return;}
   if(ATLAS.world!==world){
     ATLAS.world=world; ATLAS.mapImg=null; ATLAS.mapReady=false;
     ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.fogMask=null; ATLAS.info=null; ATLAS.cam.ppm=0;
@@ -3055,7 +3533,7 @@ async function atlasRenderMap(force){
   ATLAS.rendering=false;
   if(seq!==ATLAS.seq) return;
   if(r===FAIL||!r||!r.url){
-    atlasMsg("The map could not be drawn — set a seed or start the server once first.");
+    atlasMsg("The map could not be drawn. Set a seed or start the server once first.");
     return;
   }
   ATLAS.mapExtent=Number(r.edge)||10500;
@@ -3092,11 +3570,11 @@ async function atlasRefreshInfo(){
 }
 function renderAtlasSide(){
   const info=ATLAS.info;
-  $("#atlasWorldName").textContent=ATLAS.world||"—";
+  $("#atlasWorldName").textContent=ATLAS.world||"-";
   if(!info||!info.hasDb){
-    $("#atlasDay").textContent="—";
-    $("#atlasClock").textContent="no save file yet — the clock starts with the first launch";
-    $("#atlasSaved").textContent="—"; $("#atlasExplored").textContent="—"; $("#atlasEvent").textContent="—";
+    $("#atlasDay").textContent="-";
+    $("#atlasClock").textContent="no save file yet, the clock starts with the first launch";
+    $("#atlasSaved").textContent="-"; $("#atlasExplored").textContent="-"; $("#atlasEvent").textContent="-";
   }else{
     $("#atlasDay").textContent="Day "+info.day;
     const frac=((Number(info.netTime)%1800)+1800)%1800/1800;
@@ -3108,6 +3586,17 @@ function renderAtlasSide(){
       : "no shared map yet";
     $("#atlasEvent").textContent=info.eventName?info.eventName:"quiet skies";
   }
+  /* A world read with chunks missing has fewer portals, builds and pins than the world
+     really has, so say so rather than let an empty list read as "there are none". */
+  const cn=$("#atlasChunkNote");
+  if(cn){
+    const skipped=info&&info.hasDb?(info.chunksSkipped||0):0;
+    cn.style.display=skipped>0?"":"none";
+    if(skipped>0) cn.textContent=TT(skipped+" of "+(info.chunksTotal||skipped)
+      +" chunks could not be read, so portals and build sites may be missing");
+  }
+  const sn=$("#atlasShapeNote");
+  if(sn) sn.textContent=TT("Ashlands shape is approximate");
   /* roster: who's online (mod-free maps can't place them) */
   const roster=$("#atlasRoster");
   if(roster){
@@ -3131,6 +3620,7 @@ function renderAtlasSide(){
     wp._rows=rows;
   }
   renderWeather();
+  refreshScrollCues();
 }
 function atlasAge(sec){
   sec=Number(sec)||0;
@@ -3251,7 +3741,7 @@ function renderWeather(){
   }
   $("#wxForecast").innerHTML=rows.join("");
   $("#wxAnchor").textContent=nt.paused
-    ?TT("Time stands still — no vikings ashore.")
+    ?TT("Time stands still, no vikings ashore.")
     :TT("Anchored to the last world save.");
 }
 /* biome picker pills */
@@ -3447,7 +3937,7 @@ function atlasDraw(){
       }
       if(!wipe){
         g.font="11px 'IBM Plex Mono',monospace"; g.textAlign="center"; g.textBaseline="middle";
-        g.fillText("ᚾ unexplored — no cartography table has shared the realm yet",s.w/2,s.h/2);
+        g.fillText("ᚾ unexplored, no cartography table has shared the realm yet",s.w/2,s.h/2);
         g.textAlign="start";
       }
     }
@@ -3551,10 +4041,10 @@ $$(".lchip").forEach(ch=>ch.addEventListener("click",()=>{
   const layer=ch.dataset.layer;
   const turningOn=!ATLAS.layers[layer];
   if(layer==="fog"&&turningOn&&Native.available&&(!ATLAS.info||!ATLAS.info.hasSharedMap)){
-    toast(TT("ᚾ No shared map yet — the realm stays veiled until a viking presses 'Record discoveries' on a cartography table."));
+    toast(TT("ᚾ No shared map yet. The realm stays veiled until a viking presses 'Record discoveries' on a cartography table."));
   }
   if(layer==="pins"&&turningOn&&Native.available&&ATLAS.info&&ATLAS.info.hasDb&&!(ATLAS.info.pins||[]).length){
-    toast(TT("ᛘ No table pins yet — pins ride the cartography table's shared map."));
+    toast(TT("ᛘ No table pins yet. Pins ride the cartography table's shared map."));
     return;
   }
   ATLAS.layers[layer]=turningOn;
@@ -3617,11 +4107,68 @@ if(Native.available){
     toast("ᛉ World saved · "+ms+"ms");
     $("#lastSave").textContent=clock()+" · "+ms+"ms";
     S.lastSaveAt=new Date();
-    S.saveDur.push(ms); if(S.saveDur.length>10)S.saveDur.shift();
+    S.saveDur.push(ms); if(S.saveDur.length>12)S.saveDur.shift();
     const avg=S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length;
     $("#saveAvg").textContent="avg "+Math.round(avg)+"ms";
+    renderSaveBars();
     S.saveSec=S.saveInterval;
     if(currentPage==="atlas") atlasRefreshInfo(); // fresh .db on disk = fresh atlas facts/fog
+  });
+  /* A save that FAILED. Everything played since the last good one is only in memory,
+     so this is loud and it stays in the log. */
+  Native.on("server.worldSaveFailed",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    const ms=Math.round(Number(d?.durationMs)||0);
+    toast("ᚦ World save FAILED after "+ms+"ms · check the Saga log");
+    logLine("err","[BakaLoader] the server reported a FAILED world save after "+ms+
+      "ms - everything since the last good save is only in memory. Check free disk space and "+
+      "whether anything else has the world files open.");
+  });
+  /* The world on disk is still pre-1.0. The next save converts it and there is no way back. */
+  Native.on("server.legacyWorld",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    toast("ᛉ "+TT("Old world format · the next save converts it"));
+    logLine("warn","[BakaLoader] "+(d?.world||"this world")+" is in the old format. The next save "+
+      "converts it to the 1.0 format and keeps the old files as a backup. Older servers will not "+
+      "be able to load it afterwards.");
+  });
+  /* The version banner: the only place the real game and network versions come from. */
+  Native.on("server.version",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    S.gameVersion=d?.version||null;
+    S.networkVersion=d?.network||null;
+    renderHearthVersion();
+    logLine("ok","[BakaLoader] server is running Valheim "+(d?.version||"?")+
+      (d?.network?" (network version "+d.network+")":""));
+  });
+  /* A start BakaLoader held back because nobody was there to answer for it. */
+  Native.on("server.launchHold",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    setLaunchHold(d);
+    toast("ᛊ "+TT("Start held · ")+(d?.message||TT("the server build changed")));
+    logLine("warn","[BakaLoader] start held - "+(d?.message||"the launch guard did not clear it"));
+  });
+  Native.on("server.launchHoldCleared",d=>{
+    if(isActiveProfile(d?.profile)) clearLaunchHold();
+  });
+  /* A start that ended before the server came up - a bad exe path, an unreachable save
+     folder, a check that could not run. The state event that follows re-enables Kindle. */
+  Native.on("server.launchFailed",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    toast("ᚦ "+TT("Could not start the server · ")+(d?.message||TT("see the log for what stopped it")));
+    logLine("err","[BakaLoader] the server was not started: "+(d?.message||"unknown error"));
+  });
+  /* The pre-update world snapshot finished (or could not be made, which stops the start). */
+  Native.on("server.worldsBackedUp",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    if(d?.ok){
+      toast("ᛝ "+d.count+" "+TT(d.count===1?"world":"worlds")+" copied aside · "+fmtBytes(d.bytes));
+      logLine("ok","[BakaLoader] copied "+d.count+" world(s) aside before starting ("+fmtBytes(d.bytes)+")");
+      (d.skipped||[]).forEach(s=>logLine("warn","[BakaLoader] not copied aside: "+s));
+    }else{
+      toast("ᚦ "+TT("Could not copy the worlds aside · server not started"));
+      logLine("err","[BakaLoader] the pre-update world copy failed, so the server was not started: "+(d?.error||"unknown error"));
+    }
   });
   Native.on("atlas.renderProgress",d=>{
     if(currentPage==="atlas"&&d&&d.world===ATLAS.world&&ATLAS.rendering)
@@ -3673,6 +4220,10 @@ if(Native.available){
     $("#saveCountdown").textContent="-:-";
     $("#tickVal").textContent="-";
     $("#sbMods").textContent="- mods";
+    /* the mock save chart from index.html is design filler, not a measurement */
+    $("#saveBars").innerHTML="";
+    $("#saveAvg").textContent="avg -";
+    renderSaveBars();
     tIn.placeholder="console command… (Enter to send)";
     /* Forge Load: real CPU/RAM sampled from the tracked server process every 3s.
        Quiet Native.call (no rpc() wrapper) so a hiccup never toast-spams the poll. */
@@ -3791,11 +4342,14 @@ if(!Native.available){
   $("#homeVik").innerHTML=
     `<div class="vrow"><span class="vdot on"></span><span class="vname">Smithix</span><span class="vsub">joined 22:12</span></div>`+
     `<div class="vrow"><span class="vdot on"></span><span class="vname">Van Hoenhiem</span><span class="vsub">joined 22:14</span></div>`+
-    `<div class="vrow" style="opacity:.4"><span class="vdot off"></span><span class="vname">Ragnhild</span><span class="vsub">last seen 19:40</span></div>`;
+    `<div class="vrow" style="opacity:.4"><span class="vdot off"></span><span class="vname">Ragnhild</span><span class="vsub">last seen 19:40</span></div>`+
+    `<div class="vrow" style="opacity:.4"><span class="vdot off"></span><span class="vname">Bjornulf</span><span class="vsub">last seen Tue</span></div>`;
+  /* platform column preview: one Steam id, one crossplay Xbox id, one PlayStation */
   $("#vikTable").innerHTML=
     `<tr>
       <td><span class="vdot on" style="display:inline-block;margin-right:9px"></span><strong>Smithix</strong></td>
       <td><span class="pill green">Online</span></td>
+      <td class="mono">${platformTag("76561198012345678")||"-"}</td>
       <td class="mono">22:12</td>
       <td class="mono">3959, −1361, 35</td>
       <td class="mono" style="color:var(--ember)">⋯</td>
@@ -3803,6 +4357,7 @@ if(!Native.available){
     <tr style="background:var(--ember-dim)">
       <td><span class="vdot on" style="display:inline-block;margin-right:9px"></span><strong>Van Hoenhiem</strong></td>
       <td><span class="pill green">Online</span></td>
+      <td class="mono">${platformTag("Xbox_2814639011776000")||"-"}</td>
       <td class="mono">22:14</td>
       <td class="mono">−212, 887, 41</td>
       <td class="mono" style="color:var(--ember)">⋯</td>
@@ -3810,12 +4365,14 @@ if(!Native.available){
     <tr class="dim">
       <td><span class="vdot off" style="display:inline-block;margin-right:9px"></span>Ragnhild</td>
       <td><span class="pill blue">Offline</span></td>
+      <td class="mono">${platformTag("PlayStation_5001234567")||"-"}</td>
       <td class="mono">-</td>
       <td class="mono">last seen 19:40</td><td></td>
     </tr>
     <tr class="dim">
       <td><span class="vdot off" style="display:inline-block;margin-right:9px"></span>Bjornulf</td>
       <td><span class="pill blue">Offline</span></td>
+      <td class="mono">${platformTag("76561198087654321")||"-"}</td>
       <td class="mono">-</td>
       <td class="mono">last seen Tue</td><td></td>
     </tr>`;
@@ -3873,6 +4430,11 @@ maxPacketSize = 4096`,
   };
   refreshCfgList(false);
 
+  /* world-save write times: a dozen plausible runs so the bars carry real tooltips */
+  S.saveDur=[198,214,205,232,209,241,218,236,252,224,268,214];
+  $("#saveAvg").textContent="avg "+Math.round(S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length)+"ms";
+  renderSaveBars();
+
   /* uptime tick */
   setInterval(()=>{ if(running){upMin++;renderHearth();} },60000);
 
@@ -3883,8 +4445,12 @@ maxPacketSize = 4096`,
     saveSec--;
     if(saveSec<0){
       saveSec=600;
+      const ms=190+Math.floor(Math.random()*90);
+      S.saveDur.push(ms); if(S.saveDur.length>12)S.saveDur.shift();
+      $("#saveAvg").textContent="avg "+Math.round(S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length)+"ms";
+      renderSaveBars();
       toast("ᛉ World saved · "+clock());
-      logLine("ok","World saved ( Final_Sunset.db )  8.42 MB  in 214 ms");
+      logLine("ok","World saved ( Final_Sunset.db )  8.42 MB  in "+ms+" ms");
     }
     $("#saveCountdown").textContent=
       String(Math.floor(saveSec/60)).padStart(2,"0")+":"+String(saveSec%60).padStart(2,"0");

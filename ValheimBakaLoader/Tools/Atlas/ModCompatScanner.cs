@@ -31,7 +31,7 @@ namespace ValheimBakaLoader.Tools.Atlas
         /// <summary>Expand World Data yaml directory, when present (consumed by the weather engine for env-table overrides).</summary>
         public string ExpandWorldDataDir;
 
-        /// <summary>Mods detected that the renderer/forecast cannot model — shown verbatim in the UI badge.</summary>
+        /// <summary>Mods detected that the renderer/forecast cannot model: shown verbatim in the UI badge.</summary>
         public readonly List<string> Warnings = new List<string>();
 
         public bool IsVanilla => !HasExpandWorldSize && !HasExpandWorldData && Warnings.Count == 0;
@@ -40,7 +40,7 @@ namespace ValheimBakaLoader.Tools.Atlas
     /// <summary>
     /// Scans BepInEx/plugins of a server install for mods known to change
     /// map/seed generation or weather dynamics, so the Atlas can adapt where
-    /// possible and warn honestly where not. No mods are required — a vanilla
+    /// possible and warn honestly where not. No mods are required: a vanilla
     /// or unmodded install returns a clean vanilla result.
     /// </summary>
     public static class ModCompatScanner
@@ -48,9 +48,9 @@ namespace ValheimBakaLoader.Tools.Atlas
         // Tier 2: detected → explicit warning, no adaptation possible.
         private static readonly (string Token, string Warning)[] WarnMods =
         {
-            ("bettercontinents", "Better Continents — world layout is custom; the rendered map may not match."),
-            ("seasons", "Seasons — weather/environment cycles are modified; forecasts may differ."),
-            ("seasonality", "Seasonality — weather/environment visuals are modified; forecasts may differ."),
+            ("bettercontinents", "Better Continents: world layout is custom; the rendered map may not match."),
+            ("seasons", "Seasons: weather/environment cycles are modified; forecasts may differ."),
+            ("seasonality", "Seasonality: weather/environment visuals are modified; forecasts may differ."),
         };
 
         public static ModCompatResult Scan(string serverInstallDir)
@@ -117,11 +117,11 @@ namespace ValheimBakaLoader.Tools.Atlas
                 if (Directory.Exists(ewdDir))
                 {
                     result.ExpandWorldDataDir = ewdDir;
-                    // Biome-layout yaml can redraw the entire biome map — not modelable.
+                    // Biome-layout yaml can redraw the entire biome map: not modelable.
                     string biomesYaml = Path.Combine(ewdDir, "expand_biomes.yaml");
                     if (File.Exists(biomesYaml) && !IsEffectivelyEmpty(biomesYaml))
                     {
-                        result.Warnings.Add("Expand World Data — custom biome layout; the rendered map may not match.");
+                        result.Warnings.Add("Expand World Data: custom biome layout; the rendered map may not match.");
                     }
                 }
             }

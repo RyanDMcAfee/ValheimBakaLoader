@@ -28,8 +28,26 @@ body{
 }
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-track{background:var(--iron-deeper)}
-::-webkit-scrollbar-thumb{background:#2C3036;border-radius:5px;border:2px solid var(--iron-deeper)}
-::-webkit-scrollbar-thumb:hover{background:#3D4249}
+::-webkit-scrollbar-thumb{background:#4B515A;border-radius:5px;border:2px solid var(--iron-deeper)}
+::-webkit-scrollbar-thumb:hover{background:#5E656F}
+
+/* ============ SCROLL CUES ============
+   app.js flags every scrollable pane with .can-scroll-down / .can-scroll-up.
+   Panes that carry a live animation (the halls, because of the hearth flame)
+   get a painted overlay on their parent so the animation is never re-masked;
+   the small quiet panes fade their own edge with a mask instead. */
+.scrollfade.can-scroll-down{
+  -webkit-mask-image:linear-gradient(180deg,#000 calc(100% - 28px),transparent);
+          mask-image:linear-gradient(180deg,#000 calc(100% - 28px),transparent);
+}
+.scrollfade.can-scroll-up{
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 20px);
+          mask-image:linear-gradient(180deg,transparent,#000 20px);
+}
+.scrollfade.can-scroll-up.can-scroll-down{
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 20px,#000 calc(100% - 28px),transparent);
+          mask-image:linear-gradient(180deg,transparent,#000 20px,#000 calc(100% - 28px),transparent);
+}
 
 /* ============ APP WINDOW (fills the real window; WinForms is the chrome) ============ */
 .app{
@@ -92,9 +110,9 @@ body{
   border-right:1px solid var(--bronze);
 }
 .navitem{
-  width:64px;height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  width:64px;height:58px;flex:0 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:5px;border-radius:9px;cursor:pointer;position:relative;color:var(--bone-dim);
-  transition:all .2s var(--ease);
+  transition:background .2s var(--ease),color .2s var(--ease);
 }
 .navitem .rune{font-size:19px;line-height:1;transition:all .2s var(--ease)}
 .navitem .lbl{font-size:8.5px;letter-spacing:1.8px;text-transform:uppercase;font-weight:600}
@@ -104,11 +122,17 @@ body{
 .navitem.active{color:var(--ember-hi);background:var(--ember-dim)}
 .navitem.active .rune{text-shadow:0 0 12px rgba(255,122,26,.9);transform:scale(1.08)}
 .navitem.active::before{background:var(--ember);box-shadow:0 0 12px rgba(255,122,26,.8)}
-.side-foot{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:6px;
+/* Footer: one tidy stack pinned to the bottom. flex:none so it never eats a nav
+   item, and the moon rides on the same line as the version so the rail keeps
+   its height down on short windows. */
+.side-foot{margin-top:auto;flex:none;width:100%;padding:0 3px;
+  display:flex;flex-direction:column;align-items:center;gap:5px;
   color:var(--bone-faint);font-family:var(--mono);font-size:9.5px;letter-spacing:1px}
-.side-foot .moon{font-size:15px;color:var(--cold);text-shadow:0 0 8px rgba(91,122,140,.5)}
-.side-foot .mead{margin-top:3px;padding-top:7px;text-align:center;line-height:1.35;
-  color:var(--amber);cursor:pointer;text-decoration:none;letter-spacing:.4px;
+.side-foot .foot-ver{display:flex;align-items:center;justify-content:center;gap:5px;
+  line-height:1;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-foot .moon{font-size:14px;line-height:1;color:var(--cold);text-shadow:0 0 8px rgba(91,122,140,.5)}
+.side-foot .mead{display:block;width:100%;margin-top:2px;padding-top:6px;text-align:center;line-height:1.3;
+  color:var(--amber);cursor:pointer;text-decoration:none;letter-spacing:.2px;font-size:9px;
   border-top:1px solid rgba(140,109,63,.18);transition:color .18s var(--ease),text-shadow .18s var(--ease)}
 /* per-character ember smoulder - app.js wraps each letter in a .mc span with its own
    randomized duration/phase (--dur/--del), so every letter breathes on its own clock.
@@ -143,11 +167,20 @@ body{
 /* ============ MAIN ============ */
 .main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--iron)}
 .pages{flex:1;min-height:0;position:relative}
+/* hall scroll cue: a soft fade over the pane edge whenever more content sits
+   above or below the fold. Painted on .pages so the halls' own animations are
+   never re-rasterised; app.js mirrors the active hall's state onto these. */
+.pages::before,.pages::after{content:"";position:absolute;left:0;right:0;height:28px;
+  z-index:5;opacity:0;pointer-events:none;transition:opacity .18s var(--ease)}
+.pages::before{top:0;background:linear-gradient(0deg,rgba(26,29,33,0),rgba(26,29,33,.85) 55%,#121418)}
+.pages::after{bottom:0;background:linear-gradient(180deg,rgba(26,29,33,0),rgba(26,29,33,.85) 55%,#121418)}
+.pages.cue-up::before{opacity:1}
+.pages.cue-down::after{opacity:1}
 .page{position:absolute;inset:0;padding:20px 22px;overflow-y:auto;display:none;
   animation:pageIn .28s var(--ease)}
 .page.active{display:block}
 @keyframes pageIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.pagehead{display:flex;align-items:baseline;gap:14px;margin-bottom:16px}
+.pagehead{flex:none;display:flex;align-items:baseline;gap:14px;margin-bottom:16px}
 .pagehead h1{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:4px;color:var(--bone)}
 .pagehead h1 .r{color:var(--ember);margin-right:8px;text-shadow:0 0 10px rgba(255,122,26,.6)}
 .pagehead .sub{font-size:11px;color:var(--bone-dim);letter-spacing:.5px}
@@ -181,6 +214,8 @@ body{
 .b-mods::before{content:"ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᚱ"}
 .b-forge::before{content:"ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ   ᛊ ᛗ ᛁ ᚦ ᛃ ᚨ"}
 .b-upkeep::before{content:"ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ   ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ   ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ   ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ   ᚹ ᚨ ᚱ ᚦ ᚹ ᛖ ᛁ ᛏ ᚨ"}
+/* annall=the chronicle (recent log) */
+.b-log::before{content:"ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ   ᚨ ᚾ ᚾ ᚨ ᛚ ᛚ"}
 .card.ctxwrap::before{content:"ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ   ᚺ ᛁ ᚱ ᚦ"}
 #page-mods .card::before{content:"ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᛊ ᛏ ᚨ ᚠ ᛁ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᛊ ᛏ ᚨ ᚠ ᛁ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᛊ ᛏ ᚨ ᚠ ᛁ ᚱ   ᚷ ᚨ ᛚ ᛞ ᚱ ᚨ ᛊ ᛏ ᚨ ᚠ ᛁ ᚱ"}
 #page-world .card::before{content:"ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ   ᚺ ᛖ ᛁ ᛗ ᚱ"}
@@ -201,19 +236,40 @@ body{
 .bigval{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:22px;font-weight:700;color:var(--bone)}
 .subval{font-family:var(--mono);font-size:11px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
 
-/* ============ HEARTH BENTO ============ */
-.bento{display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:178px;gap:12px}
+/* ============ HEARTH BENTO ============
+   The hall is a flex column, so the bento is handed the pane's real leftover
+   height instead of guessing at it with a percentage (which mis-measured the
+   header and pushed the last row under the fold). Rows 1 and 2 grow to at most
+   240px and shrink back toward 178px before anything overflows; row 3 takes
+   exactly what is left and the Recent log renders only the lines that fit. */
+#page-hearth{flex-direction:column}
+.bento{display:grid;grid-template-columns:repeat(6,1fr);
+  grid-template-rows:repeat(2,minmax(178px,240px)) minmax(178px,1fr);
+  grid-auto-rows:minmax(178px,auto);
+  gap:12px;flex:1 1 auto;min-height:0}
+/* Rows 1 and 2 stop growing at 240px so the Vikings / Network / Mods cards never
+   hollow out on a tall window; the leftover height goes to the last row, where
+   the Recent log card turns it into more lines. */
+.bento.upkeep-open{grid-template-rows:repeat(2,minmax(178px,240px)) minmax(min-content,1fr)}
 .b-hearth{grid-column:span 2;grid-row:span 2}
-.b-vikings{grid-column:span 2}
-.b-saves{grid-column:span 2}
+.b-vikings{grid-column:span 2;display:flex;flex-direction:column}
+.b-saves{grid-column:span 2;display:flex;flex-direction:column}
 .b-forge{grid-column:span 1}
 .b-mods{grid-column:span 1}
 .b-net{grid-column:span 2}
 .b-upkeep{grid-column:span 2;align-self:start}
+.b-log{grid-column:span 4;display:flex;flex-direction:column;min-height:0}
 .b-upkeep .togglerow{margin-top:6px}
-.upkeep-head{cursor:pointer;user-select:none;margin-bottom:0}
-/* The card's leading Othala doubles as the expand indicator: it smoulders like
-   the mead link (emberW) and rotates -90deg (closed) -> 0deg (open). */
+.upkeep-head{cursor:pointer;user-select:none}
+@media (max-width:1264px){
+  .bento{grid-template-columns:repeat(4,1fr);
+    grid-template-rows:repeat(3,minmax(190px,auto)) minmax(168px,1fr)}
+  .bento.upkeep-open{grid-template-rows:repeat(3,minmax(190px,auto)) minmax(min-content,1fr)}
+  .b-log{grid-column:span 2}
+}
+/* The card's leading Othala smoulders like the mead link (emberW) and rotates
+   -90deg (closed) -> 0deg (open); the chevron on the right end is the explicit
+   expand affordance (see .fs-chev below). */
 .upkeep-head .r{display:inline-block;color:var(--amber);
   font-size:19px;line-height:1;align-self:center;
   animation:emberW 4.8s ease-in-out infinite;
@@ -222,15 +278,39 @@ body{
 .upkeep-body{display:none}
 .b-upkeep.open .upkeep-body{display:block;margin-top:4px}
 
+/* ============ COLLAPSIBLE HEADER AFFORDANCE ============
+   Every foldable header (Upkeep card, World hall sections) carries a chevron
+   that rotates open, a hover highlight across the whole row, and, while closed,
+   a dim count of what is folded away. */
+.fs-chev{flex:none;display:inline-block;width:16px;text-align:center;
+  font-size:12px;line-height:1;color:var(--bone-dim);
+  transform:rotate(0deg);transition:transform .18s var(--ease),color .18s var(--ease)}
+.fs-hint{flex:none;font-family:var(--sans);font-size:10px;font-weight:500;letter-spacing:.5px;
+  text-transform:none;color:var(--bone-dim);white-space:nowrap}
+.formsec.collapsible.open .fs-chev,.b-upkeep.open .upkeep-head .fs-chev{
+  transform:rotate(90deg);color:var(--ember-hi)}
+.upkeep-head{min-height:28px;border-radius:7px;margin:2px -6px 0;padding:4px 6px;
+  transition:background .15s var(--ease),color .15s var(--ease)}
+.upkeep-head:hover{background:rgba(255,255,255,.04);color:var(--bone)}
+.upkeep-head:hover .fs-chev{color:var(--ember-hi)}
+.upkeep-head:focus-visible{outline:1px solid var(--ember);outline-offset:1px}
+
 /* ============ HERALD (Discord sharing) ============ */
 .herald-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;align-items:start}
 .b-herald{grid-row:span 2}
 .herald-grid .togglerow{margin-top:4px}
 
-/* ============ SKALD (local analytics) ============ */
-.skald-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:12px}
+/* ============ SKALD (local analytics) ============
+   The five stat cards keep a readable floor and wrap 3+2 rather than squeezing
+   their subtitles onto two lines at the minimum width. */
+.skald-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:12px}
+.skald-stats .subval{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .skald-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;align-items:start}
 .skald-grid .sk-players{grid-row:span 2}
+/* fixed layout so every playtime row stays one line and truncates instead */
+.sk-players table{table-layout:fixed}
+#skPlayerTable td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#skPlayerTable .vname{font-weight:600;color:var(--bone)}
 .skfeed{display:flex;flex-direction:column;gap:2px;max-height:320px;overflow-y:auto;padding-right:4px}
 .skrow{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-family:var(--mono);font-size:11px;
   color:var(--bone-dim);font-variant-numeric:tabular-nums;border-bottom:1px solid rgba(140,109,63,.12)}
@@ -281,12 +361,19 @@ body{
 .hearth-card.cold .t2{background:linear-gradient(180deg,#5B7A8C,#2C4450);animation-duration:2.8s;height:26px}
 .hearth-card.cold .t3{background:linear-gradient(180deg,#8FB4C9,#4A6675);animation-duration:2.4s;height:12px}
 .hearth-card.cold .spark{display:none}
-.hearth-meta{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
-.hstatus{display:flex;flex-direction:column;gap:3px}
+/* Status text and the two buttons share one row while there is room; below that
+   the buttons wrap onto their own line rather than being clipped off the card. */
+.hearth-meta{display:flex;align-items:flex-end;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.hstatus{display:flex;flex-direction:column;gap:3px;flex:1 1 150px;min-width:0}
+.hearth-meta .btn{flex:none}
 .hstate{font-family:var(--serif);font-size:17px;font-weight:700;letter-spacing:3px;color:var(--ember-hi);
-  text-shadow:0 0 14px rgba(255,122,26,.5)}
+  text-shadow:0 0 14px rgba(255,122,26,.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hearth-card.cold .hstate{color:var(--cold-hi);text-shadow:0 0 12px rgba(91,122,140,.5)}
-.hpid{font-family:var(--mono);font-size:10.5px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+.hpid{font-family:var(--mono);font-size:10.5px;color:var(--bone-dim);font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Game + network version, straight off the server's startup banner. */
+.hver{font-family:var(--mono);font-size:10px;color:var(--bone-faint);font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* buttons */
 .btn{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 16px;border-radius:7px;
@@ -309,10 +396,26 @@ body{
 .vname{font-weight:600;color:var(--bone)}
 .vsub{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
 
-/* Saves */
-.savebars{display:flex;align-items:flex-end;gap:3px;height:26px;margin-top:8px}
+/* Saves - the bar chart takes whatever height the card is given */
+#homeVik{flex:1;min-height:0;overflow:hidden}
+.savebars{display:flex;align-items:flex-end;gap:3px;flex:1;min-height:26px;max-height:120px;margin-top:10px}
+.savecap{font-size:9px;letter-spacing:.6px;color:var(--bone-faint);margin-top:5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.savebars .empty{align-self:center;font-size:11.5px;color:var(--bone-faint);font-family:var(--sans)}
 .savebars i{flex:1;background:linear-gradient(180deg,var(--bronze-hi),rgba(140,109,63,.25));border-radius:2px 2px 0 0}
 .savebars i.hot{background:linear-gradient(180deg,var(--ember-hi),var(--ember));box-shadow:0 0 8px rgba(255,122,26,.4)}
+
+/* Recent log card - the last few Saga lines, same mono + level colours */
+/* flex-basis 0 with a small floor: the log fills whatever height the row hands
+   it without its own line count ever driving that row taller */
+/* line-height is a whole number of px and app.js#HLOG_ROW matches it, so the
+   card can render exactly the rows that fit; overflow is hidden because it
+   never renders one that does not. */
+.b-log .hlog{flex:1 1 0;min-height:72px;padding:4px 2px;font-size:10.5px;line-height:16px;
+  overflow:hidden}
+.b-log .hlog .ln{height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:none}
+.b-log .microlabel{margin:2px 0 4px}
+.b-log .copychip{flex:none}
 
 /* Forge sparklines */
 .sparkrow{display:flex;align-items:center;gap:10px;margin-top:4px}
@@ -369,6 +472,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 
 /* ============ WORLD FORM ============ */
 .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+/* three narrow fields sharing one full-width row, so both columns end level */
+.formgrid3{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px}
 .field label{display:block;font-size:9.5px;letter-spacing:2.2px;text-transform:uppercase;
   color:var(--bone-dim);font-weight:600;margin-bottom:6px}
 .field input[type=text],.field input[type=password],.field select{
@@ -394,8 +499,15 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .formsec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--bronze),transparent)}
 .formsec .r{color:var(--bronze-hi)}
 /* World hall: Advanced Rites + Directories fold like the Upkeep card - the section
-   rune smoulders (emberW) and rotates -90deg (closed) -> 0deg (open). */
-.formsec.collapsible{cursor:pointer;user-select:none}
+   rune smoulders (emberW) and rotates -90deg (closed) -> 0deg (open), and the
+   chevron at the far right of the row is the explicit expand affordance. */
+.formsec.collapsible{cursor:pointer;user-select:none;min-height:28px;margin:20px -8px 10px;padding:4px 8px;
+  border-radius:7px;transition:background .15s var(--ease),color .15s var(--ease)}
+.formsec.collapsible:hover{background:rgba(255,255,255,.04);color:var(--bone)}
+.formsec.collapsible:hover .fs-chev{color:var(--ember-hi)}
+.formsec.collapsible:focus-visible{outline:1px solid var(--ember);outline-offset:1px}
+.formsec.collapsible::after{order:1}
+.formsec.collapsible .fs-chev{order:2}
 .formsec.collapsible .r{display:inline-block;color:var(--amber);font-size:14px;line-height:1;
   animation:emberW 4.8s ease-in-out infinite;
   transform:rotate(-90deg);transition:transform .18s ease}
@@ -499,9 +611,14 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   color:var(--bone-faint);display:flex;gap:14px}
 .palette .pfoot kbd{font-family:var(--mono);font-size:9px;border:1px solid #33383F;border-radius:3px;padding:0 4px}
 
-/* ============ TOASTS ============ */
-.toasts{position:absolute;right:16px;bottom:42px;z-index:70;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
-.toast{display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:240px;
+/* ============ TOASTS ============
+   Bottom-centre of the content pane (clear of the sidebar), lifted above the
+   status bar and, on the Saga hall, above the console input row via
+   --toast-lift, which app.js measures when that hall opens. */
+.toasts{position:absolute;left:84px;right:0;bottom:calc(42px + var(--toast-lift,0px));z-index:88;
+  display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;
+  transition:bottom .2s var(--ease)}
+.toast{pointer-events:auto;display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:240px;
   background:linear-gradient(180deg,#23272D,#1B1E23);border:1px solid var(--bronze-hi);border-radius:9px;
   box-shadow:0 12px 32px rgba(0,0,0,.6),0 0 18px rgba(255,122,26,.08);
   font-size:11.5px;color:var(--bone);animation:toastIn .3s var(--ease);position:relative;overflow:hidden}
@@ -510,8 +627,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .toast .r{color:var(--ember);font-size:14px;text-shadow:0 0 8px rgba(255,122,26,.5)}
 .toast .tt{font-family:var(--mono);font-size:10px;color:var(--bone-dim);margin-left:auto;font-variant-numeric:tabular-nums}
 .toast.out{animation:toastOut .3s var(--ease) forwards}
-@keyframes toastIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
-@keyframes toastOut{to{opacity:0;transform:translateX(30px)}}
+@keyframes toastIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes toastOut{to{opacity:0;transform:translateY(14px)}}
 
 /* ============ NATIVE STATES (disabled controls) ============ */
 .btn:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(.4) brightness(.85)}
@@ -551,7 +668,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .modal .mrow label{font-size:9.5px;letter-spacing:2px;text-transform:uppercase;
   color:var(--bone-dim);font-weight:600;flex:none}
 .modal .mrow input{width:80px;flex:none}
-.modal .mbtns{display:flex;justify-content:flex-end;gap:8px}
+.modal .mbtns{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.modal .mbtns .btn{flex:none;white-space:nowrap}
 .modal .mbody{font-size:11.5px;color:var(--bone-dim);line-height:1.6;overflow-y:auto;min-height:0}
 .modal .mono-list{font-family:var(--mono);font-size:10.5px;color:var(--bone-dim);line-height:1.8;
   background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:7px;
@@ -694,9 +812,17 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .cfg-editor::placeholder{color:var(--bone-faint)}
 
 /* ---------- MULTI-SERVER CHIP STRIP (sidebar top) ---------- */
-.srvstrip{display:flex;flex-direction:column;align-items:center;gap:7px;width:100%;
-  max-height:220px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+/* The strip never gets shrunk by the rail (flex:none) and its height is always a
+   whole number of chip pitches (40px chip + 7px gap), so a cut can only ever
+   land on a gap. app.js#fitServerStrip picks the pitch count that fits. */
+.srvstrip{display:flex;flex-direction:column;align-items:center;gap:7px;width:100%;flex:none;
+  max-height:181px;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
 .srvstrip::-webkit-scrollbar{display:none}
+/* "more below" cue under the strip: shown only when a chip is out of view */
+.srvmore{flex:none;height:12px;line-height:12px;font-family:var(--mono);font-size:9px;
+  letter-spacing:.5px;color:var(--bone-faint);user-select:none;cursor:default;
+  transition:color .15s var(--ease)}
+.srvmore:hover{color:var(--ember-hi)}
 .srvchip{width:40px;height:40px;border-radius:14px;position:relative;cursor:pointer;flex:none;
   display:flex;align-items:center;justify-content:center;
   background:rgba(255,255,255,.04);border:1px solid rgba(140,109,63,.28);
@@ -715,6 +841,35 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .srvchip.add:hover{color:var(--ember-hi);border-color:var(--ember)}
 .srvsep{width:44px;height:1px;background:rgba(140,109,63,.25);margin:2px 0 4px;flex:none}
 
+/* ---------- COMPACT RAIL LADDER ----------
+   On short windows the nav rail gives up its own padding, gaps and height
+   before the server strip is allowed to lose a chip. Each step is sized so a
+   2-server realm (2 chips + add + restore = 4 chips = 181px) still fits whole. */
+@media (max-height:1000px){
+  .side{padding:12px 0 10px;gap:3px}
+  .navitem{height:52px;gap:4px}
+  .side-foot{gap:4px}
+}
+@media (max-height:900px){
+  .side{padding:10px 0 8px;gap:2px}
+  .navitem{height:45px;gap:3px}
+  .navitem .rune{font-size:17px}
+  .navitem .lbl{font-size:8px;letter-spacing:1.5px}
+  .side-foot{gap:3px}
+  .side-foot .moon{font-size:12px}
+  .side-foot .mead{padding-top:5px;margin-top:1px}
+}
+@media (max-height:780px){
+  .side{padding:8px 0 6px;gap:0}
+  .navitem{height:36px;gap:1px}
+  .navitem .rune{font-size:16px}
+  .navitem .lbl{font-size:7.5px;letter-spacing:1.1px}
+  .navitem::before{top:7px;bottom:7px}
+  .side-foot{gap:2px;font-size:9px}
+  .side-foot .moon{font-size:11px}
+  .side-foot .mead{padding-top:4px;margin-top:0;font-size:8.5px;line-height:1.25}
+}
+
 /* ---------- EDIT BAR: which realm every hall is editing + live conflict warnings ---------- */
 .editbar{display:flex;align-items:center;gap:9px;padding:5px 16px;font-family:var(--sans);
   font-size:11.5px;color:var(--bone-dim);background:var(--iron-deep);
@@ -727,6 +882,15 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .editbar .ebwarn{margin-left:auto;color:var(--amber);font-weight:600;cursor:help;
   padding:2px 8px;border:1px solid rgba(232,169,60,.4);border-radius:6px;
   background:rgba(232,169,60,.08)}
+
+/* A start BakaLoader held back. Amber, because nothing is broken - it is waiting on a person. */
+.holdbar{background:rgba(232,169,60,.08);border-bottom:1px solid rgba(232,169,60,.4);
+  color:var(--bone);flex-wrap:wrap;padding:7px 16px}
+.holdbar .hbrune{color:var(--amber);font-size:13px;line-height:1}
+.holdbar .hbtitle{font-family:var(--serif);letter-spacing:.14em;text-transform:uppercase;
+  font-size:9px;color:var(--amber)}
+.holdbar .hbmsg{color:var(--bone-dim);min-width:0;flex:1 1 260px}
+.holdbar .hbacts{display:flex;align-items:center;gap:7px;margin-left:auto;flex:none}
 
 /* ---------- ATLAS (webmap + skies) ---------- */
 #page-atlas{display:none;flex-direction:column;height:100%}
@@ -754,8 +918,10 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   color:var(--bone-faint);background:rgba(8,12,18,.6);padding:2px 8px;border-radius:6px;
   pointer-events:none;font-variant-numeric:tabular-nums}
 .atlas-side{display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto}
-.atlas-side .card{flex:none}
-.atlas-side .atlas-waycard{flex:1;min-height:120px;display:flex;flex-direction:column}
+.atlas-side .card{flex:0 0 auto}
+/* Waypoints: grow into spare height, never shrink below its own content. A fixed
+   min-height was 6px short of the header plus the four-row list and clipped it. */
+.atlas-side .atlas-waycard{flex:1 0 auto;min-height:0;display:flex;flex-direction:column}
 .atlas-facts{display:flex;flex-direction:column;gap:4px;margin-top:10px}
 .afact{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;font-family:var(--sans)}
 .afact .ak{color:var(--bone-faint);letter-spacing:.04em}
@@ -763,7 +929,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .atlas-roster{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .atlas-roster .vrow{padding:4px 0}
 .atlas-roster .empty{font-size:11.5px;color:var(--bone-faint);font-family:var(--sans)}
-.atlas-list{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:8px}
+/* at least four waypoint rows before the list starts scrolling */
+.atlas-list{flex:1;min-height:110px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:8px}
 .atlas-list .wp{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;
   cursor:pointer;font-family:var(--sans);font-size:11.5px;color:var(--bone-dim);
   transition:background .15s var(--ease)}
@@ -793,3 +960,23 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .wxf .wxfw{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);
   font-variant-numeric:tabular-nums}
 #wxNow .wxfr{margin-right:4px}
+
+/* ============ HIT TARGETS (WCAG 2.5.8, 24x24 minimum) ============
+   The chips stay exactly the size they are drawn. A transparent inset overlay
+   carries the pointer target out to 24px instead, so nothing about the look
+   changes. Where an overlay cannot help (text fields, list rows) the element
+   takes a real min-height and the surrounding padding gives the height back. */
+.copychip,.lchip,.fpill,.wxb,#termNew{position:relative}
+.copychip::before,.lchip::before,.fpill::before,.wxb::before,#termNew::before{
+  content:"";position:absolute;background:transparent;border-radius:8px}
+.copychip::before{inset:-5px -3px}   /* 15px tall drawn -> 25px target */
+.lchip::before{inset:-2px}           /* 20px -> 24px */
+.fpill::before{inset:-3px -2px}      /* 19px -> 25px */
+.wxb::before{inset:-4px -2px}        /* 16px -> 24px */
+#termNew::before{inset:-5px -3px}    /* 14px -> 24px */
+.toggle::before{content:"";position:absolute;inset:-2px 0;background:transparent;border-radius:20px}
+.termsearch{min-height:24px}
+.termin input{min-height:24px}
+/* the scroll row keeps its 28px height: 24px of name plus tighter padding */
+.cfg-item{padding:2px 10px}
+.cfg-item .cfgname{min-height:24px;line-height:24px}

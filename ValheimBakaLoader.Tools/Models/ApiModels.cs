@@ -42,21 +42,64 @@ namespace ValheimBakaLoader.Tools.Models
     {
         public const string Steam = "Steam";
         public const string Xbox = "Xbox";
+        public const string PlayStation = "PlayStation";
+        public const string Nintendo = "Nintendo";
+        public const string GameCenter = "GameCenter";
+        public const string PlayFab = "PlayFab";
 
         /// <summary>
         /// Normalizes a platform token from the server log to its canonical
-        /// casing. False when the token isn't a platform we know.
+        /// casing.
+        ///
+        /// Valheim 1.0 no longer has a fixed platform list: the platform is a
+        /// plain string, and the game also prints a one-letter form of it
+        /// (V, X, S, N, A) in some places. So the only token this rejects is an
+        /// empty one; anything unrecognised is kept exactly as the server wrote
+        /// it, which means a player on a platform we have never seen still gets
+        /// tracked instead of being silently dropped.
         /// </summary>
         public static bool TryGetValidPlatform(string input, out string platform)
         {
-            platform = input?.Trim().ToLowerInvariant() switch
+            var token = input?.Trim();
+
+            if (string.IsNullOrEmpty(token))
             {
-                "steam" => Steam,
-                "xbox" => Xbox,
-                _ => null,
+                platform = null;
+                return false;
+            }
+
+            platform = token.ToLowerInvariant() switch
+            {
+                "steam" or "v" => Steam,
+                "xbox" or "x" => Xbox,
+                "playstation" or "psn" or "s" => PlayStation,
+                "nintendo" or "switch" or "n" => Nintendo,
+                "gamecenter" or "a" => GameCenter,
+                "playfab" => PlayFab,
+                _ => token,
             };
 
-            return platform != null;
+            return true;
+        }
+
+        /// <summary>
+        /// The label to show a human for a platform token. Unknown tokens come
+        /// back as written so the UI still says something useful.
+        /// </summary>
+        public static string DisplayName(string platform)
+        {
+            if (!TryGetValidPlatform(platform, out var canonical)) return string.Empty;
+
+            return canonical switch
+            {
+                Steam => "Steam",
+                Xbox => "Xbox",
+                PlayStation => "PlayStation",
+                Nintendo => "Nintendo Switch",
+                GameCenter => "Apple Game Center",
+                PlayFab => "Crossplay",
+                _ => canonical,
+            };
         }
     }
 }

@@ -21,6 +21,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Real save files captured off a live server, so the parsers are proved against the
+         bytes the game actually writes rather than against our own idea of the layout. -->
+    <None Include="Resources\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ValheimBakaLoader\ValheimBakaLoader.csproj" />
   </ItemGroup>
 

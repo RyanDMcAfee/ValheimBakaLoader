@@ -58,6 +58,20 @@ namespace ValheimBakaLoader.Game
 
         public bool WriteServerLogsToFile { get; set; } = true;
 
+        /// <summary>
+        /// The Steam build id (or, on an install Steam does not track, the binary
+        /// fingerprint) of the server this profile last actually started. Null until the
+        /// profile has been launched once, which is what makes the first start after a
+        /// game update noticeable.
+        /// </summary>
+        public string LastLaunchedServerBuild { get; set; }
+
+        /// <summary>
+        /// The game version that server reported once it was up ("1.0.7"), read from its
+        /// own banner. Null until a launched server has printed one.
+        /// </summary>
+        public string LastLaunchedGameVersion { get; set; }
+
         public bool AutoRestart { get; set; }
 
         public int AutoRestartDelay { get; set; } = 10;
@@ -114,6 +128,8 @@ namespace ValheimBakaLoader.Game
                 ServerExePath = file.ServerExePath ?? defaults.ServerExePath,
                 SaveDataFolderPath = file.SaveDataFolderPath ?? defaults.SaveDataFolderPath,
                 WriteServerLogsToFile = file.WriteServerLogsToFile ?? defaults.WriteServerLogsToFile,
+                LastLaunchedServerBuild = file.LastLaunchedServerBuild ?? defaults.LastLaunchedServerBuild,
+                LastLaunchedGameVersion = file.LastLaunchedGameVersion ?? defaults.LastLaunchedGameVersion,
                 AutoRestart = file.AutoRestart ?? defaults.AutoRestart,
                 AutoRestartDelay = file.AutoRestartDelay ?? defaults.AutoRestartDelay,
                 EmptyServerRestart = file.EmptyServerRestart ?? defaults.EmptyServerRestart,
@@ -148,6 +164,8 @@ namespace ValheimBakaLoader.Game
             ServerExePath = ServerExePath,
             SaveDataFolderPath = SaveDataFolderPath,
             WriteServerLogsToFile = WriteServerLogsToFile,
+            LastLaunchedServerBuild = LastLaunchedServerBuild,
+            LastLaunchedGameVersion = LastLaunchedGameVersion,
             AutoRestart = AutoRestart,
             AutoRestartDelay = AutoRestartDelay,
             EmptyServerRestart = EmptyServerRestart,

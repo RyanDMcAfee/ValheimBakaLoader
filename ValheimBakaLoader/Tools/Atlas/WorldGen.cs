@@ -28,10 +28,13 @@ namespace ValheimBakaLoader.Tools.Atlas
     /// spec; float/double mixing deliberately mirrors the game's arithmetic so
     /// results match pixel-for-pixel.
     ///
-    /// Known approximation: live Ashlands terrain uses a cellular-noise
-    /// crescent (FastNoise) that only affects intra-biome texture/lava; this
-    /// port renders Ashlands with the pregeneration formula plus the gap
-    /// moats, which is correct for coastline/biome shape at map scale.
+    /// Known approximation: Ashlands. The live game builds its Ashlands terrain
+    /// from a different function entirely (a FastNoise cellular fractal, a
+    /// simplex fractal, a blend overlay and an outer edge fade), and this port
+    /// renders Ashlands with the pregeneration formula plus the gap moats. That
+    /// moves the land and water boundary, not just the texture, so the Ashlands
+    /// COASTLINE ON THE MAP IS APPROXIMATE and must not be read as the shape a
+    /// player will find. Every other biome is exact.
     /// </summary>
     public sealed class WorldGen
     {
@@ -128,7 +131,8 @@ namespace ValheimBakaLoader.Tools.Atlas
         {
             FindLakes();
             PlaceRivers();
-            PlaceStreams();
+            PlaceStreams(isDeepNorth: false);
+            PlaceStreams(isDeepNorth: true);
         }
 
         // ---------------------------------------------------------------
@@ -300,17 +304,23 @@ namespace ValheimBakaLoader.Tools.Atlas
         // Streams
         // ---------------------------------------------------------------
 
-        private void PlaceStreams()
+        /// <summary>
+        /// Valheim 1.0 runs the stream pass twice: once for the world outside
+        /// the Deep North and once for the Deep North alone, each keeping only
+        /// the streams whose start point falls on its side
+        /// (decomp_new PlaceStreams :150469, RenderRivers :150665).
+        /// </summary>
+        private void PlaceStreams(bool isDeepNorth)
         {
             _rng.InitState(_streamSeed);
             var streams = new List<River>();
             for (int i = 0; i < 3000; i++)
             {
-                if (FindStreamStartPoint(100, 26f, 31f, out Vec2 start)
-                    && FindStreamEndPoint(100, 36f, 44f, start, 80f, 200f, out Vec2 end))
+                if (FindStreamStartPoint(100, 26f, 31f, out Vec2 start, !isDeepNorth)
+                    && FindStreamEndPoint(100, 36f, 44f, start, 80f, 200f, out Vec2 end, !isDeepNorth))
                 {
                     Vec2 center = (start + end) * 0.5f;
-                    float midHeight = GetPregenerationHeight(center.X, center.Y);
+                    float midHeight = GetPregenerationHeight(center.X, center.Y, !isDeepNorth);
                     if (!(midHeight < 26f) && !(midHeight > 44f))
                     {
                         var stream = new River
@@ -328,16 +338,16 @@ namespace ValheimBakaLoader.Tools.Atlas
                     }
                 }
             }
-            RenderRivers(streams);
+            RenderRivers(streams, isDeepNorth ? RiverAdd.OnlyDeepNorth : RiverAdd.SkipDeepNorth);
         }
 
-        private bool FindStreamStartPoint(int iterations, float minHeight, float maxHeight, out Vec2 p)
+        private bool FindStreamStartPoint(int iterations, float minHeight, float maxHeight, out Vec2 p, bool riverPreGen)
         {
             for (int i = 0; i < iterations; i++)
             {
                 float wx = _rng.Range(-10000f, 10000f);
                 float wy = _rng.Range(-10000f, 10000f);
-                float h = GetPregenerationHeight(wx, wy);
+                float h = GetPregenerationHeight(wx, wy, riverPreGen);
                 if (h > minHeight && h < maxHeight)
                 {
                     p = new Vec2(wx, wy);
@@ -348,7 +358,7 @@ namespace ValheimBakaLoader.Tools.Atlas
             return false;
         }
 
-        private bool FindStreamEndPoint(int iterations, float minHeight, float maxHeight, Vec2 start, float minLength, float maxLength, out Vec2 end)
+        private bool FindStreamEndPoint(int iterations, float minHeight, float maxHeight, Vec2 start, float minLength, float maxLength, out Vec2 end, bool riverPreGen)
         {
             float shrink = (float)(((double)maxLength - (double)minLength) / iterations);
             float radius = maxLength;
@@ -357,7 +367,7 @@ namespace ValheimBakaLoader.Tools.Atlas
                 radius = (float)((double)radius - (double)shrink);
                 float angle = _rng.Range(0f, MathF.PI * 2f);
                 Vec2 candidate = start + new Vec2((float)Math.Sin(angle), (float)Math.Cos(angle)) * radius;
-                float h = GetPregenerationHeight(candidate.X, candidate.Y);
+                float h = GetPregenerationHeight(candidate.X, candidate.Y, riverPreGen);
                 if (h > minHeight && h < maxHeight)
                 {
                     end = candidate;
@@ -372,11 +382,31 @@ namespace ValheimBakaLoader.Tools.Atlas
         // River rasterization into the 64 m grid
         // ---------------------------------------------------------------
 
-        private void RenderRivers(List<River> rivers)
+        /// <summary>Which side of the Deep North boundary a river pass keeps.</summary>
+        private enum RiverAdd
+        {
+            All,
+            SkipDeepNorth,
+            OnlyDeepNorth,
+        }
+
+        private void RenderRivers(List<River> rivers, RiverAdd addRule = RiverAdd.All)
         {
             var accumulated = new Dictionary<GridPos, List<RiverPoint>>();
             foreach (River river in rivers)
             {
+                if (addRule != RiverAdd.All)
+                {
+                    // Skipping happens BEFORE the width draws below, so the
+                    // filtered pass consumes a different RNG stream - exactly
+                    // like the game (decomp_new RenderRivers :150673).
+                    bool deepNorth = IsDeepnorth(river.P0.X, river.P0.Y);
+                    if ((deepNorth && addRule == RiverAdd.SkipDeepNorth)
+                        || (!deepNorth && addRule == RiverAdd.OnlyDeepNorth))
+                    {
+                        continue;
+                    }
+                }
                 float step = (float)((double)river.WidthMin / 8.0);
                 Vec2 dir = (river.P1 - river.P0).Normalized;
                 Vec2 perp = new Vec2(0f - dir.Y, dir.X);
@@ -533,12 +563,11 @@ namespace ValheimBakaLoader.Tools.Atlas
             {
                 return Biome.Ocean;
             }
+            // Valheim 1.0 dropped the "high Deep North ground becomes Mountain"
+            // promotion, so the whole polar cap is Deep North now
+            // (decomp_new WorldGenerator.GetBiome :150931-150934).
             if (IsDeepnorth(wx, wy))
             {
-                if (baseHeight > 0.4f)
-                {
-                    return Biome.Mountain;
-                }
                 return Biome.DeepNorth;
             }
             if (baseHeight > 0.4f)
@@ -646,13 +675,20 @@ namespace ValheimBakaLoader.Tools.Atlas
             return GetBiomeHeight(biome, wx, wy);
         }
 
-        public float GetPregenerationHeight(float wx, float wy)
+        /// <summary>
+        /// Height used during pregeneration (rivers and streams). Valheim 1.0
+        /// added the riverPreGen flag: the Deep North stream pass runs with
+        /// riverPreGen = false, which raises the Deep North pregeneration
+        /// terrain by 0.1 so streams can settle there
+        /// (decomp_new WorldGenerator.GetPregenerationHeight :151138).
+        /// </summary>
+        public float GetPregenerationHeight(float wx, float wy, bool riverPreGen)
         {
             Biome biome = GetBiome(wx, wy);
-            return GetBiomeHeight(biome, wx, wy, preGeneration: true);
+            return GetBiomeHeight(biome, wx, wy, preGeneration: true, riverPreGen);
         }
 
-        public float GetBiomeHeight(Biome biome, float wx, float wy, bool preGeneration = false)
+        public float GetBiomeHeight(Biome biome, float wx, float wy, bool preGeneration = false, bool riverPreDN = true)
         {
             float mult = preGeneration
                 ? HeightMultiplier
@@ -666,6 +702,10 @@ namespace ValheimBakaLoader.Tools.Atlas
                 case Biome.Swamp:
                     return (float)((double)GetMarshHeight(wx, wy) * (double)mult);
                 case Biome.DeepNorth:
+                    if (preGeneration)
+                    {
+                        return (float)((double)GetDeepNorthHeightPregenerate(wx, wy, riverPreDN) * (double)mult);
+                    }
                     return (float)((double)GetDeepNorthHeight(wx, wy) * (double)mult);
                 case Biome.Mountain:
                     return (float)((double)GetSnowMountainHeight(wx, wy) * (double)mult);
@@ -674,8 +714,10 @@ namespace ValheimBakaLoader.Tools.Atlas
                 case Biome.Ocean:
                     return (float)((double)GetBaseHeight(wx, wy) * (double)mult);
                 case Biome.AshLands:
-                    // Live Ashlands uses cellular noise for intra-biome texture; the
-                    // pregeneration formula is the correct coastline/shape at map scale.
+                    // The pregeneration formula, which is NOT what the live game uses here.
+                    // The real one is a separate noise stack that shifts the land and water
+                    // boundary, so the Ashlands shape this draws is approximate. The Atlas
+                    // says so on screen; do not treat this coastline as the game's.
                     return (float)((double)GetAshlandsHeightPregenerate(wx, wy) * (double)mult);
                 case Biome.Plains:
                     return (float)((double)GetPlainsHeight(wx, wy) * (double)mult);
@@ -848,11 +890,21 @@ namespace ValheimBakaLoader.Tools.Atlas
             return (float)((double)h + (double)UnityPerlin.Noise(x * 0.20000000298023224, y * 0.20000000298023224) * 2.0 * (double)tilt);
         }
 
-        private float GetDeepNorthHeight(float wx, float wy)
+        /// <summary>
+        /// Pre-1.0 Deep North shape, kept in 1.0 for the pregeneration
+        /// (river/stream) pass only. riverPregen = false lifts the base by 0.1
+        /// so the Deep North stream pass sees higher ground
+        /// (decomp_new GetDeepNorthHeightPregenerate :151458).
+        /// </summary>
+        private float GetDeepNorthHeightPregenerate(float wx, float wy, bool riverPregen)
         {
             float origX = wx;
             float origY = wy;
             float h = GetBaseHeight(wx, wy);
+            if (!riverPregen)
+            {
+                h += 0.1f;
+            }
             wx = (float)((double)wx + 100000.0 + (double)_offset3);
             wy = (float)((double)wy + 100000.0 + (double)_offset3);
             double x = wx;
@@ -864,10 +916,46 @@ namespace ValheimBakaLoader.Tools.Atlas
             h = (float)((double)h + (double)bump * 0.20000000298023224);
             h = (float)((double)h * 1.2000000476837158);
             h = AddRivers(origX, origY, h);
-            // Detail noise here multiplies in FLOAT before widening — a quirk of
-            // the game's DeepNorth path that differs from every other biome.
+            // Detail noise here multiplies in FLOAT before widening - a quirk of
+            // the game's DeepNorth pregeneration path that differs from every
+            // other biome, and one the 1.0 rewrite below does NOT keep.
             h = (float)((double)h + (double)UnityPerlin.Noise((double)(wx * 0.1f), (double)(wy * 0.1f)) * 0.009999999776482582);
             return (float)((double)h + (double)UnityPerlin.Noise((double)(wx * 0.4f), (double)(wy * 0.4f)) * 0.003000000026077032);
+        }
+
+        /// <summary>
+        /// Valheim 1.0 Deep North terrain (decomp_new GetDeepNorthHeight
+        /// :151482-151509). Flatter and lower than the old shape: the base is
+        /// lifted a flat 0.1 with no Max(base - 0.4) doubling, the bump noise
+        /// contributes 0.1 instead of 0.2, everything above 0.15 is pulled back
+        /// down by (1 - clamp01(base / 0.4)) * 0.75, the old * 1.2 gain is gone
+        /// and the two detail-noise terms widen to double before the multiply.
+        /// The Fbm colour mask the game also produces here is cosmetic (it
+        /// tints the ground texture) and is not needed for a map render.
+        /// </summary>
+        private float GetDeepNorthHeight(float wx, float wy)
+        {
+            float origX = wx;
+            float origY = wy;
+            float baseHeight = GetBaseHeight(wx, wy) + 0.1f;
+            wx = (float)((double)wx + 100000.0 + (double)_offset3);
+            wy = (float)((double)wy + 100000.0 + (double)_offset3);
+            double x = wx;
+            double y = wy;
+            float bump = (float)((double)UnityPerlin.Noise(x * 0.009999999776482582, y * 0.009999999776482582) * (double)UnityPerlin.Noise(x * 0.019999999552965164, y * 0.019999999552965164));
+            bump = (float)((double)bump + (double)UnityPerlin.Noise(x * 0.05000000074505806, y * 0.05000000074505806) * (double)UnityPerlin.Noise(x * 0.10000000149011612, y * 0.10000000149011612) * (double)bump * 0.5);
+            float h = baseHeight;
+            h = (float)((double)h + (double)bump * 0.10000000149011612);
+            float plateau = 0.15f;
+            float over = (float)((double)h - (double)plateau);
+            float lift = (float)Clamp01((double)baseHeight / 0.4000000059604645);
+            if (over > 0f)
+            {
+                h = (float)((double)h - (double)over * ((1.0 - (double)lift) * 0.75));
+            }
+            h = AddRivers(origX, origY, h);
+            h = (float)((double)h + (double)UnityPerlin.Noise(x * 0.10000000149011612, y * 0.10000000149011612) * 0.009999999776482582);
+            return (float)((double)h + (double)UnityPerlin.Noise(x * 0.4000000059604645, y * 0.4000000059604645) * 0.003000000026077032);
         }
 
         private static double CreateAshlandsGap(float wx, float wy)

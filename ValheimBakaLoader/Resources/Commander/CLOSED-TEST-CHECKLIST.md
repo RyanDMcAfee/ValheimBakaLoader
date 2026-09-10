@@ -60,6 +60,54 @@ ZNetScene hash lookup against the modded ObjectDB).
 - [ ] Edit `BindAddress = 0.0.0.0` in `com.baka.commander.cfg`, restart server via
   BakaLoader → the app rewrites Port/Password but **BindAddress stays 0.0.0.0**.
 
+## Valheim 1.0 recheck
+
+Valheim 1.0 broke two things these plugins rely on, and both faults only surface at
+runtime, so neither a clean build nor a server that starts without complaint proves
+anything on its own.
+
+`Terminal.ConsoleCommand` gained a new optional argument in the MIDDLE of its
+parameter list, which means every DLL compiled before 1.0 calls a constructor that no
+longer exists and throws MissingMethodException inside Awake. That killed `baka_spawn`
+and `baka_killall` outright: the plugin loaded, the command never registered.
+`ZRoutedRpc.Everybody` stopped being a field and became a constant, so Commander's
+compiled field read threw MissingFieldException the first time somebody ran
+`broadcast`. Everything else kept working, which is exactly what makes it easy to miss.
+
+The fix was to rebuild all of the bundled plugins against the 1.0 server assemblies and
+to write the broadcast target as a plain 0 instead of reading the field. The commands
+are also registered as ordinary server-only commands now rather than cheat commands,
+because from 1.0 the game refuses to run a cheat-flagged command unless the world is
+already flagged as cheated.
+
+One consequence worth knowing before you roll this out. The constructor argument that
+1.0 inserted is baked into the call site at compile time, so a plugin can match the old
+game or the new one but not both. These DLLs are built for 1.0, which means `baka_spawn`
+and `baka_killall` will throw MissingMethodException on a server still running the June
+2026 build. Update the server first, then the plugins. Commander itself is not affected:
+its broadcast now uses a plain 0 rather than a compiled field read, and that is correct
+on every version.
+
+Run this on a closed 1.0 server after the rebuild.
+
+- [ ] Start the server, then read `BepInEx/LogOutput.log` end to end. There must be no
+      MissingMethodException and no MissingFieldException anywhere in it.
+- [ ] The same log shows `BakaLoader Commander v1.1.0` and its listening line,
+      `BakaLoader Spawn Helper v1.2.0 loaded - 'baka_spawn' command registered.` and
+      `BakaLoader KillAll v1.3.0 loaded - 'baka_killall' command registered.`
+      A missing registration line is the tell that the constructor threw again.
+- [ ] `broadcast center hello` puts the message on a joined player's screen and replies
+      "Broadcasting message: hello". This is the one that used to throw, and it threw on
+      first use rather than at load, so it has to be actually run.
+- [ ] `baka_spawn Boar <x,z,y>` and `baka_killall` sent over RCON both take effect
+      (Commander answers these itself, without going through the console).
+- [ ] Type `baka_spawn` and `baka_killall` directly into the server console window. Both
+      must run instead of answering with the confirm-cheat message.
+- [ ] The world stays clean: nothing in the log says the world or the profile was
+      flagged as cheated or modded, and players keep their achievements.
+- [ ] Repeat the whole command table above once on 1.0. The rebuild changed which
+      constructor overload is called, so every command is worth one more pass.
+
 ## Sign-off
 
 When all items pass, the third-party trio can be permanently removed from the

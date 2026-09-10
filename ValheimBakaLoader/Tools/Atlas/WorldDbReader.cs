@@ -7,12 +7,18 @@ using System.Threading;
 namespace ValheimBakaLoader.Tools.Atlas
 {
     /// <summary>
-    /// Parsed summary of a Valheim world .db save (read-only, mod-free).
-    /// Byte layout verified against the dedicated server assembly (world
-    /// version 37; ZNet.LoadWorld / ZDOMan.Load / ZDO.Load / ZoneSystem.Load /
-    /// RandEventSystem.Load). Layout is unchanged since version 33; versions
-    /// 31-32 differ only in the typed-block count byte; pre-31 files degrade
-    /// gracefully (header + zone/location data only, ZDO records skipped).
+    /// Parsed summary of a Valheim world save (read-only, mod-free), from
+    /// either a pre-1.0 single .db file or a Valheim 1.0 chunked world folder.
+    ///
+    /// Byte layouts verified against the dedicated server assembly
+    /// (ZNet.LoadWorld / ZDOMan.Load / ZDO.Load / ZoneSystem.Load /
+    /// RandEventSystem.Load). For the .db format the layout held from version
+    /// 33 through 39; versions 31-32 differ only in the typed-block count byte;
+    /// pre-31 files degrade gracefully (header + zone/location data only, ZDO
+    /// records skipped). World version 40 (ChunkedSave) replaced the single
+    /// .db with a directory and changed the ZDO record itself, so those saves
+    /// go through <see cref="ChunkedWorldReader"/> instead. Supported range is
+    /// 9 to 41 (41 = World.DeepNorth, the version Valheim 1.0.7 writes).
     /// </summary>
     public sealed class WorldDbInfo
     {
@@ -46,6 +52,19 @@ namespace ValheimBakaLoader.Tools.Atlas
         public string EventName = "";
         public float EventPosX;
         public float EventPosZ;
+
+        /// <summary>
+        /// Chunk files the committed save's index named, for a 1.0 world. Zero for a pre-1.0
+        /// world, which is one file and has no chunks.
+        /// </summary>
+        public int ChunksTotal;
+
+        /// <summary>
+        /// Chunk files that could not be read, so their objects are missing from Portals,
+        /// MapTables and BuildClusters. Anything above zero means the map is incomplete and has
+        /// to say so: an empty list of portals reads as "this server has no portals".
+        /// </summary>
+        public int ChunksSkipped;
     }
 
     public sealed class DbLocation
@@ -193,24 +212,57 @@ namespace ValheimBakaLoader.Tools.Atlas
     }
 
     /// <summary>
-    /// Read-only parser for Valheim world .db saves. Opens with
+    /// Read-only parser for Valheim world saves. Opens with
     /// FileShare.ReadWrite (the server may be mid-save) and retries once on
-    /// the atomic .db.new→.db swap window. Never writes anything.
+    /// the atomic .db.new to .db swap window. Never writes anything.
+    ///
+    /// <see cref="TryReadAny"/> is the entry point that handles both save
+    /// shapes: a Valheim 1.0 world directory and a pre-1.0 .db file. The .db
+    /// path stays in service for old saves and for the
+    /// <c>&lt;name&gt;_backup_&lt;stamp&gt;.db</c> files the 1.0 game leaves
+    /// behind when it converts a legacy world.
     /// </summary>
     public static class WorldDbReader
     {
-        // ZDO key/prefab hashes (game's StableHashCode, same as FwlWriter's).
-        private static readonly int HashTag = FwlWriter.GetStableHashCode("tag");
-        private static readonly int HashCreator = FwlWriter.GetStableHashCode("creator");
-        private static readonly int HashData = FwlWriter.GetStableHashCode("data");
-        private static readonly int HashCartographyTable = FwlWriter.GetStableHashCode("piece_cartographytable");
+        /// <summary>Oldest world version this reader will touch.</summary>
+        internal const int MinWorldVersion = 9;
 
-        private static readonly HashSet<int> PortalPrefabHashes = new HashSet<int>
+        /// <summary>
+        /// Version.World.ChunkedSave. At and above this the world is a folder
+        /// and the ZDO record dropped its sector field, so a .db claiming this
+        /// version is rejected rather than mis-parsed.
+        /// </summary>
+        internal const int ChunkedSaveVersion = 40;
+
+        /// <summary>Version.World.DeepNorth, what Valheim 1.0.7 writes.</summary>
+        internal const int MaxWorldVersion = 41;
+
+        // ZDO key/prefab hashes (game's StableHashCode, same as FwlWriter's,
+        // and byte-identical to 1.0's Utils.GetStableHashCode).
+        internal static readonly int HashTag = FwlWriter.GetStableHashCode("tag");
+        internal static readonly int HashCreator = FwlWriter.GetStableHashCode("creator");
+        internal static readonly int HashData = FwlWriter.GetStableHashCode("data");
+        internal static readonly int HashCartographyTable = FwlWriter.GetStableHashCode("piece_cartographytable");
+
+        internal static readonly HashSet<int> PortalPrefabHashes = new HashSet<int>
         {
             FwlWriter.GetStableHashCode("portal_wood"),
             FwlWriter.GetStableHashCode("portal_stone"),
             FwlWriter.GetStableHashCode("portal"),
         };
+
+        /// <summary>
+        /// Optional sink for the reason a save was rejected (unsupported
+        /// version, missing commit marker, unreadable chunk). Wire it up once
+        /// at startup to route it into the app log; unset it just discards.
+        /// </summary>
+        public static Action<string> DiagnosticSink;
+
+        private static void Report(string message)
+        {
+            System.Diagnostics.Debug.WriteLine("WorldDbReader: " + message);
+            DiagnosticSink?.Invoke(message);
+        }
 
         /// <summary>Build-cluster grid cell size in meters.</summary>
         private const float ClusterCellSize = 32f;
@@ -218,9 +270,82 @@ namespace ValheimBakaLoader.Tools.Atlas
         /// <summary>Minimum creator-stamped pieces for a cluster to count as a build site.</summary>
         private const int ClusterMinPieces = 8;
 
+        /// <summary>
+        /// Reads whichever save shape the path points at and returns the same
+        /// summary either way.
+        ///
+        /// A DIRECTORY is a Valheim 1.0 chunked world: the highest generation
+        /// whose _main.N.fwl2/.db2/.chunks/.ok all exist is read, and a
+        /// generation missing its .ok is skipped as uncommitted. A .db FILE
+        /// goes to the pre-1.0 reader. Pointing at any single file inside a
+        /// chunked world (_main.N.anything, or a .chunk) reads that world's
+        /// folder, and a .fwl reads the .db beside it.
+        ///
+        /// Returns null when the path holds no readable world; the reason goes
+        /// to <see cref="DiagnosticSink"/>.
+        /// </summary>
+        public static WorldDbInfo TryReadAny(string pathOrDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(pathOrDirectory)) return null;
+            string path = pathOrDirectory.Trim();
+
+            try
+            {
+                if (Directory.Exists(path))
+                {
+                    return ChunkedWorldReader.TryRead(path, Report);
+                }
+
+                string name = Path.GetFileName(path) ?? "";
+                string extension = Path.GetExtension(path) ?? "";
+
+                // A member of a chunked world: read the world folder it sits in.
+                if (name.StartsWith("_main.", StringComparison.OrdinalIgnoreCase)
+                    || extension.Equals(".chunk", StringComparison.OrdinalIgnoreCase))
+                {
+                    string folder = Path.GetDirectoryName(path);
+                    if (string.IsNullOrEmpty(folder))
+                    {
+                        Report($"cannot resolve the world folder for {path}");
+                        return null;
+                    }
+                    return ChunkedWorldReader.TryRead(folder, Report);
+                }
+
+                // A .db (present, or briefly absent during the save swap that
+                // TryRead retries through) is the pre-1.0 format.
+                if (extension.Equals(".db", StringComparison.OrdinalIgnoreCase))
+                {
+                    return TryRead(path);
+                }
+
+                if (extension.Equals(".fwl", StringComparison.OrdinalIgnoreCase))
+                {
+                    return TryRead(Path.ChangeExtension(path, ".db"));
+                }
+
+                Report(File.Exists(path)
+                    ? $"{name}: not a world save this reader understands"
+                    : $"{path}: no such world save");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Report($"{path}: {ex.GetType().Name}: {ex.Message}");
+                return null;
+            }
+        }
+
         /// <summary>Locates the .db beside a world's .fwl and parses it. Null when absent or unreadable.</summary>
         public static WorldDbInfo TryReadWorld(string saveDataFolder, string worldName)
         {
+            // Both save formats: a 1.0 world is a directory, a pre-1.0 world is a .fwl/.db pair.
+            var stored = WorldStore.Find(saveDataFolder, worldName);
+            if (stored != null)
+            {
+                return TryReadAny(stored.Format == WorldFormat.Chunked ? stored.Folder : stored.DbPath);
+            }
+
             var fwl = FwlReader.FindWorldFwl(saveDataFolder, worldName);
             if (fwl == null) return null;
             return TryRead(Path.ChangeExtension(fwl, ".db"));
@@ -258,7 +383,21 @@ namespace ValheimBakaLoader.Tools.Atlas
             var info = new WorldDbInfo();
 
             info.WorldVersion = br.ReadInt32();
-            if (info.WorldVersion < 9 || info.WorldVersion > 200) return null;
+            if (info.WorldVersion < MinWorldVersion || info.WorldVersion > MaxWorldVersion)
+            {
+                Report($"world version {info.WorldVersion} is outside the supported range "
+                    + $"{MinWorldVersion}-{MaxWorldVersion}");
+                return null;
+            }
+            if (info.WorldVersion >= ChunkedSaveVersion)
+            {
+                // ChunkedSave dropped the sector field from every ZDO record,
+                // so seeking past it here would misalign the whole file. These
+                // worlds are folders and belong to ChunkedWorldReader.
+                Report($"world version {info.WorldVersion} is a chunked save; "
+                    + "read the world folder instead of a .db file");
+                return null;
+            }
 
             if (info.WorldVersion >= 4)
             {
@@ -485,13 +624,22 @@ namespace ValheimBakaLoader.Tools.Atlas
             }
         }
 
-        /// <summary>ZPackage.ReadNumItems (v≥33) / raw byte (v31-32).</summary>
+        /// <summary>ZPackage.ReadNumItems (v>=33) / raw byte (v31-32).</summary>
         private static int ReadNumItems(BinaryReader br, int version)
         {
             if (version < 33)
             {
                 return br.ReadByte();
             }
+            return ReadNumItems(br);
+        }
+
+        /// <summary>
+        /// ZPackage.ReadNumItems: one byte, or a 15-bit big-endian count when
+        /// the high bit is set. Unchanged by the chunked save format.
+        /// </summary>
+        internal static int ReadNumItems(BinaryReader br)
+        {
             int b0 = br.ReadByte();
             if ((b0 & 0x80) != 0)
             {
@@ -501,7 +649,7 @@ namespace ValheimBakaLoader.Tools.Atlas
         }
 
         /// <summary>Skips a BinaryWriter string (7-bit varint length + UTF-8 bytes).</summary>
-        private static void SkipString(BinaryReader br)
+        internal static void SkipString(BinaryReader br)
         {
             int length = 0;
             int shift = 0;
@@ -523,7 +671,7 @@ namespace ValheimBakaLoader.Tools.Atlas
         /// 8-neighbor flood fill, clusters of ≥8 pieces reported with a
         /// piece-weighted center and covering radius.
         /// </summary>
-        private static void ClusterBuilds(List<(float X, float Z)> pieces, List<DbBuildCluster> output)
+        internal static void ClusterBuilds(List<(float X, float Z)> pieces, List<DbBuildCluster> output)
         {
             if (pieces.Count == 0) return;
 

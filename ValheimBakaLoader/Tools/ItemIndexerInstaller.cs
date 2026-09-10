@@ -75,6 +75,13 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
+        /// <summary>
+        /// True when the installed plugin is not the bundled one. Size settles it in nearly
+        /// every case; when the sizes match the bytes are compared. Neither size nor date on
+        /// its own is dependable: a rebuilt plugin can land on the same length, and a file
+        /// copy carries the source's timestamp forward, so a reinstall of an older BakaLoader
+        /// can leave a stale DLL looking current.
+        /// </summary>
         private static bool NeedsCopy(string source, string target)
         {
             if (!File.Exists(target)) return true;
@@ -83,13 +90,36 @@ namespace ValheimBakaLoader.Tools
             {
                 var src = new FileInfo(source);
                 var dst = new FileInfo(target);
-                // Copy when the bundled DLL is a different size or newer than the installed one.
-                return src.Length != dst.Length || src.LastWriteTimeUtc > dst.LastWriteTimeUtc;
+                if (src.Length != dst.Length) return true;
+                return !SameContent(source, target);
             }
             catch
             {
+                // Unreadable for any reason (locked, permissions) - assume it needs replacing.
+                // The copy itself is what defers when the server is running and holds the DLL.
                 return true;
             }
+        }
+
+        /// <summary>Byte-for-byte comparison, opened shared so a running server cannot break it.</summary>
+        private static bool SameContent(string a, string b)
+        {
+            var bytesA = ReadAllShared(a);
+            var bytesB = ReadAllShared(b);
+            if (bytesA.Length != bytesB.Length) return false;
+
+            for (var i = 0; i < bytesA.Length; i++)
+                if (bytesA[i] != bytesB[i]) return false;
+
+            return true;
+        }
+
+        private static byte[] ReadAllShared(string path)
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            return memory.ToArray();
         }
     }
 }

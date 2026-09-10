@@ -354,8 +354,7 @@ MigrationBackup/
 # Temp verification build output (never commit)
 /Build-temp/
 /BuildRelease/
-# Companion BepInEx plugin binaries: source-only convention — the .cs is tracked,
-# the compiled .dll is built locally / bundled at release, never committed.
-ValheimBakaLoader/Resources/SpawnHelper/BakaLoaderSpawnHelper.dll
+/ReleaseStage/
+# Companion BepInEx plugin binaries (Resources/**/*.dll) are tracked so a fresh clone builds and ships them.
 # Local convenience shortcut into the gitignored /Build/ folder (user-specific)
 ValheimBakaLoader.lnk

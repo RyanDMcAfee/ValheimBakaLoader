@@ -1,4 +1,4 @@
-// BakaLoader MaxPlayers v1.0.0 - compiled against SERVER assembly_valheim.
+// BakaLoader MaxPlayers v1.1.0 - compiled against SERVER assembly_valheim.
 // Raises Valheim's built-in 10-player cap so BakaLoader no longer depends on a
 // third-party mod for the World hall's Max Players setting.
 //
@@ -37,7 +37,7 @@ namespace BakaLoaderMaxPlayers
     {
         public const string PluginGuid = "com.baka.maxplayers";
         public const string PluginName = "BakaLoader MaxPlayers";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.1.0";
 
         private static ManualLogSource Log;
         private static ConfigEntry<int> MaxPlayers;

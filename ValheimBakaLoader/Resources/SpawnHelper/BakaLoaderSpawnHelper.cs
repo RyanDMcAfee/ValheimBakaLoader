@@ -1,4 +1,4 @@
-// BakaLoader Spawn Helper - headless-server-safe spawn via main-thread dispatch.
+// BakaLoader Spawn Helper v1.2.0 - headless-server-safe spawn via main-thread dispatch.
 //
 // WHY THIS EXISTS:
 // WEC's "spawn_object" crashes dedicated servers because RCON commands execute on a
@@ -37,7 +37,7 @@ namespace BakaLoaderSpawnHelper
     {
         private const string PluginGuid = "com.baka.spawnhelper";
         private const string PluginName = "BakaLoader Spawn Helper";
-        private const string PluginVersion = "1.1.0";
+        private const string PluginVersion = "1.2.0";
 
         private static ManualLogSource Log;
 
@@ -110,12 +110,21 @@ namespace BakaLoaderSpawnHelper
 
                     args.Context.AddString($"Queued spawn: {amount}x {prefabName} (level {level}) at ({xVal:F1}, {zVal:F1}, {yVal:F1})");
                 },
-                isCheat: true,
+                // isCheat MUST stay false. From Valheim 1.0 the game refuses to run any
+                // cheat-flagged console command unless the world is already flagged as
+                // cheated, and running one flags the profile as having used cheats. This
+                // command is a server-operator tool, so it is registered as a plain
+                // server-only command and never taints the world or the achievements.
+                isCheat: false,
                 isNetwork: false,
-                onlyServer: true
+                onlyServer: true,
+                // hideBehindDevCommands is new in Valheim 1.0 and sits between
+                // allowInDevBuild and optionsFetcher. Every argument here is named, so the
+                // insertion cannot silently shift a value into the wrong slot.
+                hideBehindDevCommands: false
             );
 
-            Log.LogInfo("BakaLoader Spawn Helper loaded - 'baka_spawn' command registered.");
+            Log.LogInfo("BakaLoader Spawn Helper v" + PluginVersion + " loaded - 'baka_spawn' command registered.");
         }
 
         private void Update()

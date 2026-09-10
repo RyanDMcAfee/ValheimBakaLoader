@@ -18,6 +18,15 @@ namespace ValheimBakaLoader.Tools
         public int Seed { get; init; }
 
         public int WorldVersion { get; init; }
+
+        /// <summary>The world's unique id (the game's own uid field).</summary>
+        public long Uid { get; init; }
+
+        /// <summary>Worldgen algorithm version the save was generated with (2 in both 0.2x and 1.0).</summary>
+        public int WorldGenVersion { get; init; }
+
+        /// <summary>On-disk shape the identity was read from.</summary>
+        public WorldFormat Format { get; init; }
     }
 
     /// <summary>
@@ -65,12 +74,26 @@ namespace ValheimBakaLoader.Tools
 
                 if (string.IsNullOrEmpty(name)) return null;
 
+                // uid + worldGenVersion sit right behind the seed in BOTH layouts. They are
+                // read defensively: a truncated tail must never cost us the seed we came for.
+                long uid = 0;
+                var worldGenVersion = 0;
+                try
+                {
+                    uid = br.ReadInt64();
+                    worldGenVersion = br.ReadInt32();
+                }
+                catch (EndOfStreamException) { /* older/short file: identity above is still good */ }
+
                 return new FwlWorldInfo
                 {
                     WorldName = name,
                     SeedName = seedName,
                     Seed = seed,
                     WorldVersion = worldVersion,
+                    Uid = uid,
+                    WorldGenVersion = worldGenVersion,
+                    Format = IsFwl2Path(fwlPath) ? WorldFormat.Chunked : WorldFormat.Legacy,
                 };
             }
             catch
@@ -79,22 +102,40 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
+        /// <summary>True for a Valheim 1.0 "_main.{N}.fwl2" metadata file.</summary>
+        public static bool IsFwl2Path(string path)
+            => !string.IsNullOrWhiteSpace(path)
+               && path.EndsWith(".fwl2", StringComparison.OrdinalIgnoreCase);
+
         /// <summary>
-        /// Looks for "{world}.fwl" under a save folder's worlds_local/ then worlds/
-        /// subdirs (the same two the game and the rest of the app scan) and parses it.
-        /// Returns null when the world has no .fwl anywhere under that folder.
+        /// World identity for a named world under a save folder, in EITHER save format:
+        /// the pre-1.0 "{world}.fwl" or the committed "_main.{N}.fwl2" inside a 1.0 world
+        /// directory. Returns null when no such world exists under that folder.
         /// </summary>
         public static FwlWorldInfo TryReadWorld(string saveFolder, string worldName)
         {
-            var path = FindWorldFwl(saveFolder, worldName);
+            var path = FindWorldMeta(saveFolder, worldName);
             return path == null ? null : TryRead(path);
         }
 
-        /// <summary>Full path of the world's .fwl under the save folder, or null.</summary>
+        /// <summary>
+        /// Full path of the world's metadata file under the save folder, whichever format it
+        /// is in ("{world}.fwl", or the world directory's committed "_main.{N}.fwl2"). Null
+        /// when the world does not exist.
+        /// </summary>
+        public static string FindWorldMeta(string saveFolder, string worldName)
+            => WorldStore.Find(saveFolder, worldName)?.MetaPath;
+
+        /// <summary>
+        /// Full path of the world's LEGACY .fwl under the save folder, or null. Deliberately
+        /// blind to 1.0 world directories: callers that pair the .fwl with a sibling ".db" by
+        /// extension only work on the legacy layout. Use <see cref="FindWorldMeta"/> for a
+        /// format-agnostic lookup.
+        /// </summary>
         public static string FindWorldFwl(string saveFolder, string worldName)
         {
             if (string.IsNullOrWhiteSpace(saveFolder) || string.IsNullOrWhiteSpace(worldName)) return null;
-            foreach (var sub in new[] { "worlds_local", "worlds" })
+            foreach (var sub in WorldStore.WorldSubfolders)
             {
                 var candidate = Path.Combine(saveFolder, sub, worldName + ".fwl");
                 if (File.Exists(candidate)) return candidate;
@@ -109,9 +150,12 @@ namespace ValheimBakaLoader.Tools
     /// pre-existing .fwl instead of generating one. Written in the verified
     /// worldVersion-37 layout (see <see cref="FwlReader"/>).
     ///
-    /// HARD INVARIANT: never touches an existing world. If a .fwl for the world
-    /// already exists under the save folder (worlds_local/ or worlds/), the write
-    /// is refused - an existing world's seed must never be overwritten.
+    /// Valheim 1.0 still accepts this v37 layout and converts the world to its own
+    /// directory format on the first save, so BakaLoader never hand-writes a .fwl2.
+    ///
+    /// HARD INVARIANT: never touches an existing world. If the world already exists
+    /// under the save folder in EITHER format (a legacy "{world}.fwl", or a 1.0 world
+    /// directory), the write is refused - an existing world's seed must never change.
     /// </summary>
     public static class FwlWriter
     {
@@ -164,11 +208,13 @@ namespace ValheimBakaLoader.Tools
             if (worldName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
                 throw new ArgumentException("The world name contains characters that can't be used in a file name.", nameof(worldName));
 
-            // THE guard: an existing world's seed must never be overwritten.
-            var existing = FwlReader.FindWorldFwl(saveFolder, worldName);
-            if (existing != null)
+            // THE guard: an existing world's seed must never be overwritten. A Valheim 1.0
+            // world is a DIRECTORY, so a name check that only looked for "{world}.fwl" would
+            // happily write a second, conflicting seed beside a live chunked world.
+            var existingWorld = WorldStore.Find(saveFolder, worldName);
+            if (existingWorld != null)
                 throw new InvalidOperationException(
-                    $"World '{worldName}' already exists ({existing}) - the seed of an existing world can't be changed.");
+                    $"World '{worldName}' already exists ({existingWorld.Folder}) - the seed of an existing world can't be changed.");
 
             seedName = (seedName ?? "").Trim();
             if (seedName.Length == 0) seedName = RandomSeedName();

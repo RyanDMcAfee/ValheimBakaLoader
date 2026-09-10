@@ -42,6 +42,15 @@ namespace ValheimBakaLoader.Game
         // Custom folder for the session log files; null/blank = the app default.
         string LogFolderPath { get; }
 
+        /// <summary>
+        /// Steam build id (or binary fingerprint) of the server this profile last started.
+        /// Null before the first guarded launch. Read by the launch guard, never by the game.
+        /// </summary>
+        string LastLaunchedServerBuild { get; }
+
+        /// <summary>Game version that server reported ("1.0.7"), or null when unknown.</summary>
+        string LastLaunchedGameVersion { get; }
+
         bool AutoRestart { get; }
 
         int AutoRestartDelay { get; }
@@ -73,6 +82,78 @@ namespace ValheimBakaLoader.Game
 
     public class ValheimServerOptions : IValheimServerOptions
     {
+        /// <summary>
+        /// The whole profile preferences to runtime options mapping, with the user level
+        /// fallbacks for the exe and save folder and the world's generation rules folded in.
+        /// The caller adds the log handler, which is the only part that needs a live window.
+        /// <para>
+        /// This lives here rather than inline in the bridge so the mapping itself is covered:
+        /// a field that is persisted but never copied across, such as the launch history the
+        /// guard reads, looks fine in both halves and is still broken in the middle.
+        /// </para>
+        /// </summary>
+        public static ValheimServerOptions FromPreferences(
+            ServerPreferences serverPrefs,
+            UserPreferences userPrefs,
+            WorldPreferences worldPrefs)
+        {
+            if (serverPrefs == null) throw new ArgumentNullException(nameof(serverPrefs));
+            if (userPrefs == null) throw new ArgumentNullException(nameof(userPrefs));
+
+            var options = new ValheimServerOptions
+            {
+                Name = serverPrefs.Name,
+                Password = serverPrefs.Password,
+                PasswordValidation = userPrefs.EnablePasswordValidation,
+                WorldName = serverPrefs.WorldName,
+                Public = serverPrefs.Public,
+                Port = serverPrefs.Port,
+                Crossplay = serverPrefs.Crossplay,
+                SaveInterval = serverPrefs.SaveInterval,
+                Backups = serverPrefs.BackupCount,
+                BackupShort = serverPrefs.BackupIntervalShort,
+                BackupLong = serverPrefs.BackupIntervalLong,
+                AdditionalArgs = serverPrefs.AdditionalArgs,
+                ServerExePath = !string.IsNullOrWhiteSpace(serverPrefs.ServerExePath)
+                    ? serverPrefs.ServerExePath
+                    : userPrefs.ServerExePath,
+                SaveDataFolderPath = !string.IsNullOrWhiteSpace(serverPrefs.SaveDataFolderPath)
+                    ? serverPrefs.SaveDataFolderPath
+                    : userPrefs.SaveDataFolderPath,
+                LogToFile = serverPrefs.WriteServerLogsToFile,
+                LogFolderPath = userPrefs.LogsFolderPath,
+                AutoRestart = serverPrefs.AutoRestart,
+                AutoRestartDelay = serverPrefs.AutoRestartDelay,
+                EmptyServerRestart = serverPrefs.EmptyServerRestart,
+                EmptyServerRestartDelayMinutes = serverPrefs.EmptyServerRestartDelayMinutes,
+                ScheduledRestart = serverPrefs.ScheduledRestart,
+                ScheduledRestartHours = serverPrefs.ScheduledRestartHours,
+                RconEnabled = serverPrefs.RconEnabled,
+                RconPort = serverPrefs.RconPort,
+                RconPassword = serverPrefs.RconPassword,
+                // The launch guard compares these against the build on disk. Leaving them out
+                // makes every launch look like the first one on a changed build.
+                LastLaunchedServerBuild = serverPrefs.LastLaunchedServerBuild,
+                LastLaunchedGameVersion = serverPrefs.LastLaunchedGameVersion,
+            };
+
+            if (worldPrefs != null)
+            {
+                if (!string.IsNullOrEmpty(worldPrefs.Preset))
+                {
+                    options.WorldPreset = worldPrefs.Preset;
+                }
+                else
+                {
+                    options.WorldModifiers = worldPrefs.Modifiers;
+                }
+
+                options.WorldKeys = worldPrefs.Keys;
+            }
+
+            return options;
+        }
+
         public string Name { get; set; }
 
         public string Password { get; set; }
@@ -104,6 +185,10 @@ namespace ValheimBakaLoader.Game
         public bool LogToFile { get; set; }
 
         public string LogFolderPath { get; set; }
+
+        public string LastLaunchedServerBuild { get; set; }
+
+        public string LastLaunchedGameVersion { get; set; }
 
         public bool AutoRestart { get; set; }
 

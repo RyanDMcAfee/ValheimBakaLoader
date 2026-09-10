@@ -1,4 +1,4 @@
-# BakaLoaderMaxPlayers — closed-server test checklist
+# BakaLoaderMaxPlayers, closed-server test checklist
 
 Run these on a closed/test server (never the live one). The plugin replaces the
 third-party Azumatt-MaxPlayerCount mod from 0.9.34 on; BakaLoader migrates old
@@ -42,7 +42,7 @@ max-players change while the server is stopped).
 - [ ] Deferred variant: with the old mod installed and the server RUNNING,
       save a new count (e.g. 16). Nothing should be deleted yet (old DLL is
       file-locked) and `Azumatt.MaxPlayerCount.cfg` should now say 16. Stop and
-      start the server — migration completes and `com.baka.maxplayers.cfg`
+      start the server. Migration completes and `com.baka.maxplayers.cfg`
       carries the 16.
 
 ## 5. Config change semantics
@@ -55,3 +55,16 @@ max-players change while the server is stopped).
 - [ ] Delete `BepInEx/plugins/BakaLoaderMaxPlayers/` while stopped, set Max
       Players back to 10, start: server runs vanilla with the 10 cap and
       BakaLoader does not reinstall the plugin (it's install-on-demand only).
+
+## 7. Valheim 1.0 recheck
+
+The plugin was rebuilt against the 1.0 server assemblies. Its three patch points
+(the admission check inside `ZNet.RPC_PeerInfo`, `SteamGameServer.SetMaxPlayerCount`,
+and the two `ZPlayFabMatchmaking` lobby methods) all still exist on 1.0 and still carry
+the constants the patches look for, but the patches are found by scanning instructions,
+so a silent miss is possible and only the log will say.
+
+- [ ] With the cap raised, the log shows `ZNet.RPC_PeerInfo: admission cap 10 -> <n>`.
+- [ ] The log contains no "expected IL pattern not found" warning for RPC_PeerInfo,
+      CreateLobby or CreateAndJoinNetwork.
+- [ ] The log shows `BakaLoader MaxPlayers 1.1.0 loaded`.

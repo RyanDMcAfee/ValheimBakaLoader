@@ -20,9 +20,14 @@ namespace BakaLoaderItemIndexer
     {
         public const string PluginGuid = "com.bakaloader.itemindexer";
         public const string PluginName = "BakaLoader Item Indexer";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.1.0";
 
-        private static bool _written;
+        /// <summary>
+        /// How many entries the file on disk currently holds. A later pass only rewrites when
+        /// it has MORE than this, which is what lets a plugin that adds prefabs in a later
+        /// ObjectDB.Awake postfix still make it into the catalog. Zero means nothing written.
+        /// </summary>
+        private static int _writtenCount;
 
         private void Awake()
         {
@@ -33,15 +38,19 @@ namespace BakaLoaderItemIndexer
 
         // ObjectDB.Awake runs once the item database is populated. We additionally require
         // ZNetScene for creature prefabs, so we try after both have initialised.
+        //
+        // Both Awake methods are private on the game's shipped assemblies, so they are named
+        // by string rather than nameof - the same approach BakaLoaderMaxPlayers uses. Naming
+        // them any other way does not compile against the raw, non-publicized server DLLs.
         [HarmonyPostfix]
-        [HarmonyPatch(typeof(ObjectDB), nameof(ObjectDB.Awake))]
+        [HarmonyPatch(typeof(ObjectDB), "Awake")]
         private static void OnObjectDbAwake()
         {
             TryWriteCatalog();
         }
 
         [HarmonyPostfix]
-        [HarmonyPatch(typeof(ZNetScene), nameof(ZNetScene.Awake))]
+        [HarmonyPatch(typeof(ZNetScene), "Awake")]
         private static void OnZNetSceneAwake()
         {
             TryWriteCatalog();
@@ -49,28 +58,59 @@ namespace BakaLoaderItemIndexer
 
         private static void TryWriteCatalog()
         {
-            if (_written) return;
-
             var odb = ObjectDB.instance;
             if (odb == null || odb.m_items == null || odb.m_items.Count == 0) return;
+
+            // Both halves or nothing. Awake order across ObjectDB and ZNetScene is Unity
+            // component order, not a guarantee, so writing on whichever fires first can pin a
+            // catalog with every creature missing - and the picker would never show one again.
+            if (ZNetScene.instance == null || ZNetScene.instance.m_prefabs == null) return;
 
             try
             {
                 var entries = new List<CatalogEntry>();
                 CollectItems(odb, entries);
+                var items = entries.Count;
                 CollectCreatures(entries);
+                var creatures = entries.Count - items;
 
                 if (entries.Count == 0) return;
 
-                var path = Path.Combine(Paths.BepInExRootPath, "items.json");
-                File.WriteAllText(path, Serialize(entries), Encoding.UTF8);
+                // Another plugin adding prefabs in a later postfix is exactly the case this
+                // catalog exists for, so a bigger catalog always replaces a smaller one.
+                if (entries.Count <= _writtenCount) return;
 
-                _written = true;
-                Debug.Log($"[{PluginName}] Wrote {entries.Count} entries to {path}");
+                var path = Path.Combine(Paths.BepInExRootPath, "items.json");
+                WriteAtomically(path, Serialize(entries));
+
+                _writtenCount = entries.Count;
+                Debug.Log($"[{PluginName}] Wrote {entries.Count} entries ({items} items, {creatures} creatures) to {path}");
             }
             catch (Exception e)
             {
                 Debug.LogWarning($"[{PluginName}] Failed to write items.json: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Writes through a sibling temp file and then renames, so BakaLoader can never read a
+        /// half-written catalog and cache it.
+        /// </summary>
+        private static void WriteAtomically(string path, string content)
+        {
+            var temp = path + ".tmp";
+
+            try
+            {
+                File.WriteAllText(temp, content, Encoding.UTF8);
+
+                if (File.Exists(path)) File.Replace(temp, path, null);
+                else File.Move(temp, path);
+            }
+            catch
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                throw;
             }
         }
 
