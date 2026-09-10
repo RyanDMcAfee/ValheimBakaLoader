@@ -229,7 +229,7 @@ namespace ValheimBakaLoader.Tools
 
             if (reference == null) return Fail("No mod reference supplied.");
             if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
-                return Fail("BepInEx plugins folder not found - set a valid server .exe path first.");
+                return Fail("BepInEx plugins folder not found. Set a valid server .exe path first.");
 
             // --- Resolve the download URL + concrete version ---
             string downloadUrl;

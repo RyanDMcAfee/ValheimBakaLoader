@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Threading.Tasks;
+using ValheimBakaLoader.Game;
 using ValheimBakaLoader.Tools.Http;
 using ValheimBakaLoader.Tools.Logging;
 
@@ -44,22 +45,42 @@ namespace ValheimBakaLoader.Tools
 
         private readonly IGitHubClient GitHub;
         private readonly IHttpClientProvider HttpClientProvider;
+        private readonly IUserPreferencesProvider Prefs;
         private readonly IApplicationLogger Logger;
 
         public AppUpdateService(
             IGitHubClient gitHub,
             IHttpClientProvider httpClientProvider,
+            IUserPreferencesProvider prefs,
             IApplicationLogger logger)
         {
             GitHub = gitHub;
             HttpClientProvider = httpClientProvider;
+            Prefs = prefs;
             Logger = logger;
         }
+
+        /// <summary>
+        /// Whether BakaLoader may go and look for a newer release of itself right now. Both
+        /// switches have to be on: the one that lets it ask GitHub at all, and the one that
+        /// lets it install what it finds. Installing while the host has turned checking off
+        /// would be the one path that still reaches out after they said not to, which is why
+        /// the rule sits here rather than in each of the two callers.
+        /// </summary>
+        public static bool MaySelfUpdate(bool checkForUpdates, bool autoUpdateBakaLoader)
+            => checkForUpdates && autoUpdateBakaLoader;
 
         public async Task<bool> CheckAndStageUpdateAsync()
         {
             try
             {
+                var prefs = Prefs?.LoadPreferences();
+                if (prefs != null && !MaySelfUpdate(prefs.CheckForUpdates, prefs.AutoUpdateBakaLoader))
+                {
+                    Logger.Information("Self-update: switched off in settings, so nothing was checked.");
+                    return false;
+                }
+
                 var release = await GitHub.GetLatestReleaseAsync();
                 if (release == null)
                 {

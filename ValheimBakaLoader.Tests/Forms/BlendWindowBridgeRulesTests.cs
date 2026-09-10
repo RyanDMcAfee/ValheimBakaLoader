@@ -226,6 +226,94 @@ namespace ValheimBakaLoader.Tests.Forms
                 () => BlendWindow.ValidateWorldSourceRef("Midgard", @"C:\Windows\System32", "worlds_local", known));
         }
 
+        // ---------------------------------------------------------------- W-17 (deleting a world)
+
+        /// <summary>
+        /// The last gate in front of an irreversible delete. Whitespace either side is forgiven
+        /// because a name copied off the screen usually brings some; a different capitalisation
+        /// is not, because the whole point of the box is that the host reads the name.
+        /// </summary>
+        [Theory]
+        [InlineData("Midgard", "Midgard", true)]
+        [InlineData("Midgard", "  Midgard  ", true)]
+        [InlineData("Midgard", "midgard", false)]
+        [InlineData("Midgard", "MIDGARD", false)]
+        [InlineData("Midgard", "Midgar", false)]      // one letter short of the name
+        [InlineData("Midgard", "Midgard2", false)]    // the neighbour with a similar name
+        [InlineData("Midgard", "", false)]
+        [InlineData("Midgard", "   ", false)]
+        [InlineData("Midgard", null, false)]
+        [InlineData("", "", false)]
+        [InlineData(null, "Midgard", false)]
+        public void A_world_goes_only_when_its_own_name_was_written_out(string world, string typed, bool confirmed)
+        {
+            Assert.Equal(confirmed, BlendWindow.DeleteWorldNameConfirmed(world, typed));
+        }
+
+        [Fact]
+        public void A_realm_with_no_save_folder_of_its_own_still_claims_the_world_it_is_pointed_at()
+        {
+            // The one that would have hurt: a blank SaveDataFolderPath means "the shared
+            // user-level folder", not "somewhere else". Read as somewhere else, nothing claims
+            // the world and the delete takes it out from under a realm that is merely stopped.
+            var userSave = Path.Combine(Path.GetTempPath(), "vbl-user-worlds");
+            var all = new List<ServerPreferences>
+            {
+                new() { ProfileName = "Default", WorldName = "Midgard", SaveDataFolderPath = null },
+            };
+
+            var claimant = BlendWindow.ProfileSelectingWorld(all, "Midgard", userSave, userSave);
+
+            Assert.NotNull(claimant);
+            Assert.Equal("Default", claimant.ProfileName);
+        }
+
+        [Fact]
+        public void A_realm_keeping_its_worlds_elsewhere_does_not_claim_a_world_of_the_same_name()
+        {
+            var userSave = Path.Combine(Path.GetTempPath(), "vbl-user-worlds");
+            var isolated = Path.Combine(Path.GetTempPath(), "vbl-user-worlds", "servers", "proving");
+            var all = new List<ServerPreferences>
+            {
+                new() { ProfileName = "Proving", WorldName = "Midgard", SaveDataFolderPath = isolated },
+            };
+
+            // Two worlds, same name, different folders. Only the realm's own copy is claimed.
+            Assert.Null(BlendWindow.ProfileSelectingWorld(all, "Midgard", userSave, userSave));
+            Assert.Equal("Proving",
+                BlendWindow.ProfileSelectingWorld(all, "Midgard", isolated, userSave)?.ProfileName);
+        }
+
+        [Fact]
+        public void An_archived_realm_claims_its_world_too_and_a_capital_does_not_hide_it()
+        {
+            // Archived is "put away", not "given up": bringing one back onto a world that is no
+            // longer there is exactly what this stops. World names are file names on Windows,
+            // so the match ignores case the way the file system does.
+            var folder = Path.Combine(Path.GetTempPath(), "vbl-user-worlds");
+            var all = new List<ServerPreferences>
+            {
+                new() { ProfileName = "Old raid", WorldName = "MIDGARD", SaveDataFolderPath = folder, Archived = true },
+            };
+
+            Assert.Equal("Old raid",
+                BlendWindow.ProfileSelectingWorld(all, "midgard", folder, folder)?.ProfileName);
+        }
+
+        [Fact]
+        public void A_world_no_realm_is_pointed_at_is_free_to_delete()
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "vbl-user-worlds");
+            var all = new List<ServerPreferences>
+            {
+                new() { ProfileName = "Default", WorldName = "Midgard", SaveDataFolderPath = folder },
+            };
+
+            Assert.Null(BlendWindow.ProfileSelectingWorld(all, "Eikthyr", folder, folder));
+            Assert.Null(BlendWindow.ProfileSelectingWorld(null, "Midgard", folder, folder));
+            Assert.Null(BlendWindow.ProfileSelectingWorld(all, "", folder, folder));
+        }
+
         // ---------------------------------------------------------------- W-16
 
         [Theory]

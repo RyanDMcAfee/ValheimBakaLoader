@@ -56,7 +56,7 @@ namespace ValheimBakaLoader.Tools
             {
                 Author = "AviiNL",
                 ModName = "RCON",
-                Description = "RCON (Remote Console) interface - lets BakaLoader send commands to the running server.",
+                Description = "RCON (Remote Console) interface. It lets BakaLoader send commands to the running server.",
                 ThunderstoreUrl = "https://thunderstore.io/c/valheim/p/AviiNL/RCON/",
                 RequiredFor = "All remote server control (broadcasts, spawning, player management)"
             },

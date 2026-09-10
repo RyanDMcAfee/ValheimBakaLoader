@@ -86,13 +86,13 @@ namespace ValheimBakaLoader.Tools
                         out reference, out error);
                 }
 
-                error = "Unrecognized ror2mm link - expected ror2mm://v1/install/thunderstore.io/{owner}/{mod}/{version}/.";
+                error = "Unrecognized ror2mm link. Expected ror2mm://v1/install/thunderstore.io/{owner}/{mod}/{version}/.";
                 return false;
             }
 
             if (scheme != "http" && scheme != "https")
             {
-                error = $"Unsupported link type \"{scheme}://\" - paste a thunderstore.io or ror2mm:// link.";
+                error = $"Unsupported link type \"{scheme}://\". Paste a thunderstore.io or ror2mm:// link.";
                 return false;
             }
 
@@ -123,7 +123,7 @@ namespace ValheimBakaLoader.Tools
                     if (path.Length >= 5)
                         return Build(path[2], path[3], path[4], out reference, out error);
 
-                    error = "Download links need owner, mod name, and version - e.g. /package/download/denikson/BepInExPack_Valheim/5.4.2333/.";
+                    error = "Download links need owner, mod name, and version, for example /package/download/denikson/BepInExPack_Valheim/5.4.2333/.";
                     return false;
                 }
 
@@ -141,7 +141,7 @@ namespace ValheimBakaLoader.Tools
                 }
             }
 
-            error = "Couldn't find an owner/mod in that link - paste the mod's Thunderstore page or download link.";
+            error = "Couldn't find an owner/mod in that link. Paste the mod's Thunderstore page or download link.";
             return false;
         }
 

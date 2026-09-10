@@ -404,6 +404,11 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .btn-cold:hover{background:#233440;box-shadow:0 0 14px rgba(91,122,140,.3)}
 .btn-ghost{background:transparent;color:var(--bone-dim);border-color:var(--bronze)}
 .btn-ghost:hover{color:var(--bone);border-color:var(--bronze-hi);background:rgba(255,255,255,.03)}
+/* The one button shape for something that cannot be taken back. Outlined rather than
+   filled: it has to read as a warning without competing with the ember button that
+   carries the ordinary action on the same row. */
+.btn-blood{background:transparent;color:var(--blood);border-color:rgba(213,69,60,.55)}
+.btn-blood:hover{color:#F0736B;border-color:rgba(213,69,60,.9);background:rgba(213,69,60,.1)}
 .btn-sm{height:26px;padding:0 11px;font-size:10px}
 
 /* Vikings mini card */
@@ -549,6 +554,11 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   background:var(--bone-dim);transition:all .2s var(--ease)}
 .toggle.on{background:linear-gradient(180deg,#E8560F,#B4430C);border-color:var(--ember)}
 .toggle.on::after{left:20px;background:#FFE9CF;box-shadow:0 0 8px rgba(255,122,26,.8)}
+/* A switch that can do nothing until the one it depends on is turned on. It keeps its
+   own stored value and shows it: the row is dimmed and refuses the click, rather than
+   pretending the setting has changed. */
+.togglerow.gated{opacity:.45}
+.togglerow.gated .toggle{cursor:not-allowed}
 .formsec{font-family:var(--serif);font-size:12px;letter-spacing:3px;color:var(--bone-dim);
   margin:20px 0 10px;display:flex;align-items:center;gap:10px}
 .formsec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--bronze),transparent)}

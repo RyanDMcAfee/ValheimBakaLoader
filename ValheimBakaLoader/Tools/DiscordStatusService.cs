@@ -228,9 +228,9 @@ namespace ValheimBakaLoader.Tools
                 using var response = await client.GetAsync(url);
 
                 if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.Unauthorized)
-                    return new DiscordStatusResult { Error = "Discord says that webhook does not exist. It may have been deleted - create a new one and paste the fresh URL." };
+                    return new DiscordStatusResult { Error = "Discord says that webhook does not exist. It may have been deleted, so create a new one and paste the fresh URL." };
                 if (!response.IsSuccessStatusCode)
-                    return new DiscordStatusResult { Error = $"Discord answered {(int)response.StatusCode} - try again in a moment." };
+                    return new DiscordStatusResult { Error = $"Discord answered {(int)response.StatusCode}. Try again in a moment." };
 
                 var info = JObject.Parse(await response.Content.ReadAsStringAsync());
                 return new DiscordStatusResult { Ok = true, Detail = info.Value<string>("name") ?? "webhook" };

@@ -1537,7 +1537,7 @@ namespace ValheimBakaLoader.Game
                 {
                     // "Restart NOW" - the user skipped the rest of the countdown.
                     CountdownBypassRequested = false;
-                    ApplicationLogger.Information("Restart countdown bypassed - restarting now.");
+                    ApplicationLogger.Information("Restart countdown bypassed. Restarting now.");
                     try
                     {
                         await SendCountdownBroadcastAsync($"Server restarting NOW!{updateNote}");

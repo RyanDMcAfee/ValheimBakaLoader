@@ -387,7 +387,7 @@ namespace ValheimBakaLoader.Forms
                     throw new InvalidOperationException(
                         $"Server install clash with running server '{other.ProfileName}': two servers can't " +
                         "share one valheim_server.exe (their BepInEx mods and configs would collide). " +
-                        "Give each profile its own copy of the server folder - a renamed exe works.");
+                        "Give each profile its own copy of the server folder. A renamed exe works.");
 
                 if (!string.IsNullOrWhiteSpace(options.WorldName)
                     && string.Equals(options.WorldName, theirs.WorldName, StringComparison.OrdinalIgnoreCase)
@@ -494,7 +494,7 @@ namespace ValheimBakaLoader.Forms
                     : $"another BakaLoader (PID {other.Id})";
 
                 Logger.Warning(
-                    "Server PID {serverPid} is managed by another BakaLoader instance (PID {otherPid}) - this instance will close",
+                    "Server PID {serverPid} is managed by another BakaLoader instance (PID {otherPid}), so this instance will close",
                     existing.Id, other.Id);
 
                 var page = new TaskDialogPage
@@ -504,7 +504,7 @@ namespace ValheimBakaLoader.Forms
                     Text =
                         $"A Valheim dedicated server (PID {existing.Id}) is already running and " +
                         $"{otherLabel} is managing it.{nl}{nl}" +
-                        $"That BakaLoader stays in charge - it cannot be closed automatically, because " +
+                        $"That BakaLoader stays in charge. It cannot be closed automatically, because " +
                         $"closing it shuts down the server it is running.{nl}{nl}" +
                         $"This new window will close. To switch to this version, stop the server in the " +
                         $"old BakaLoader, close it, then launch this one again.",
@@ -727,7 +727,7 @@ namespace ValheimBakaLoader.Forms
             _closeShutdownInProgress = true;
             try
             {
-                Logger.Information("Close requested while server(s) are running - saving worlds and shutting down first");
+                Logger.Information("Close requested while server(s) are running, saving worlds and shutting down first");
 
                 // Bounded wait so a wedged server can never trap the user in a window
                 // that refuses to close. Stop() is a graceful close request, so Valheim
@@ -1161,6 +1161,47 @@ namespace ValheimBakaLoader.Forms
                 other != null
                 && !string.Equals(other.ProfileName, profileName, StringComparison.OrdinalIgnoreCase)
                 && SameFolder(other.SaveDataFolderPath, saveFolder));
+        }
+
+        /// <summary>
+        /// The last gate in front of a world delete: the host has to write the world's own
+        /// name out. Whitespace on either side is forgiven, because a name copied off the
+        /// screen often brings some with it. A different capitalisation is not forgiven: the
+        /// whole point of the box is that the host reads the name and types it back, and
+        /// "midgard" for "Midgard" is the sign of someone who has not read it.
+        /// </summary>
+        public static bool DeleteWorldNameConfirmed(string world, string typed)
+        {
+            if (string.IsNullOrWhiteSpace(world) || typed == null) return false;
+
+            return string.Equals(world.Trim(), typed.Trim(), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// The realm that still has this world chosen, or null when nothing points at it.
+        /// <para>
+        /// A realm with no save folder of its own keeps its worlds in the user-level folder, so
+        /// a blank path means "the shared folder", not "somewhere else". Reading a blank as
+        /// somewhere else is how a delete would take the world out from under a realm that is
+        /// simply stopped, which is the whole reason this rule exists.
+        /// </para>
+        /// <para>
+        /// Archived realms count too. An archived realm is one the host means to bring back,
+        /// and it would come back pointed at a world that is no longer there.
+        /// </para>
+        /// </summary>
+        public static ServerPreferences ProfileSelectingWorld(
+            IEnumerable<ServerPreferences> all, string world, string saveFolder, string userSaveFolder)
+        {
+            if (all == null || string.IsNullOrWhiteSpace(world) || string.IsNullOrWhiteSpace(saveFolder))
+                return null;
+
+            return all.FirstOrDefault(pr =>
+                pr != null
+                && string.Equals(pr.WorldName, world, StringComparison.OrdinalIgnoreCase)
+                && SameFolder(
+                    string.IsNullOrWhiteSpace(pr.SaveDataFolderPath) ? userSaveFolder : pr.SaveDataFolderPath,
+                    saveFolder));
         }
 
         /// <summary>
@@ -2155,7 +2196,7 @@ namespace ValheimBakaLoader.Forms
                 if (Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped)
                     throw new InvalidOperationException($"Stop the server '{name}' before deleting it.");
                 if (CountNonArchivedProfiles() <= 1 && !prefs.Archived)
-                    throw new InvalidOperationException("This is your only active server - archive it instead of deleting the last one.");
+                    throw new InvalidOperationException("This is your only active server. Archive it instead of deleting the last one.");
 
                 if (deleteFiles)
                 {
@@ -2385,7 +2426,7 @@ namespace ValheimBakaLoader.Forms
                         .FirstOrDefault(w => string.Equals(w.Name, world, StringComparison.OrdinalIgnoreCase));
                 if (sourceWorld == null)
                     throw new ArgumentException(
-                        $"World '{world}' was not found under '{sourceFolder ?? "<null>"}\\{sub}' - nothing was adopted.");
+                        $"World '{world}' was not found under '{sourceFolder ?? "<null>"}\\{sub}', so nothing was adopted.");
 
                 var name = (p.Value<string>("name") ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(name)) name = world;
@@ -2467,13 +2508,13 @@ namespace ValheimBakaLoader.Forms
 
                     if (SamePath(exe, other.ServerExePath))
                         warnings.Add(new { kind = "install", other = other.ProfileName,
-                            message = $"Shares its install (valheim_server.exe) with '{other.ProfileName}' - their mods and configs would collide. Give this realm its own install." });
+                            message = $"Shares its install (valheim_server.exe) with '{other.ProfileName}', so their mods and configs would collide. Give this realm its own install." });
 
                     if (!string.IsNullOrWhiteSpace(world)
                         && string.Equals(world, other.WorldName, StringComparison.OrdinalIgnoreCase)
                         && SamePath(save ?? "", EffectiveSave(other) ?? ""))
                         warnings.Add(new { kind = "world", other = other.ProfileName,
-                            message = $"World '{world}' sits in the same save folder as '{other.ProfileName}' - both can't load it at once." });
+                            message = $"World '{world}' sits in the same save folder as '{other.ProfileName}', and both can't load it at once." });
                 }
                 return Task.FromResult<object>(warnings);
             });
@@ -2689,10 +2730,23 @@ namespace ValheimBakaLoader.Forms
                     }
                 }
 
+                // Who has this world spoken for. The delete control on the page needs the same
+                // answer the delete itself will give, or it would offer an action that can only
+                // come back refused.
+                var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
+                var claimant = ProfileSelectingWorld(
+                    ServerPrefsProvider.LoadPreferences(), world, saveFolder.FullName, userSave);
+                var claimantRunning = claimant != null
+                    && Sessions.TryGetValue(claimant.ProfileName, out var claimantSession)
+                    && claimantSession.Server.Status != ServerStatus.Stopped;
+
                 return Task.FromResult<object>(new
                 {
                     world,
                     folder = saveFolder.FullName,
+                    sub = found?.Sub,
+                    owner = claimant?.ProfileName,
+                    running = claimantRunning,
                     format = found == null ? null : (found.Format == WorldFormat.Chunked ? "chunked" : "legacy"),
                     files,
                     backups,
@@ -2808,7 +2862,7 @@ namespace ValheimBakaLoader.Forms
                     if (Sessions.TryGetValue(pr.ProfileName, out var session)
                         && session.Server.Status != ServerStatus.Stopped)
                         throw new InvalidOperationException(
-                            $"'{pr.ProfileName}' is running world '{world}' right now - stop it before restoring a backup.");
+                            $"'{pr.ProfileName}' is running world '{world}' right now. Stop it before restoring a backup.");
                 }
 
                 // Everything that touches the files, including the safety copy, in one place a
@@ -2843,6 +2897,72 @@ namespace ValheimBakaLoader.Forms
                 Logger.Information("Barrow delete: world '{0}' layer '{1}' ({2} item(s)).",
                     reference.World, reference.File, deleted.Count);
                 return (object)new { deleted };
+            });
+
+            // Deletes a whole world: the 1.0 world directory (or the pre-1.0 ".fwl" and ".db"
+            // pair), the same-named world hiding in the sibling worlds subfolder, and the
+            // biome cache the game keys on the world's stored name. Backup layers are left
+            // alone unless the host asks for those too.
+            //
+            // Four things have to be true before a byte moves: the reference names a save
+            // folder BakaLoader knows and one of the game's two worlds subfolders, the host
+            // typed the world's own name, nothing is running the world, and no realm still has
+            // it selected. The last one is what stops a delete from pulling the world out from
+            // under a realm that is merely stopped rather than gone.
+            RegisterRpc("worlds.delete", async p =>
+            {
+                var world = p.Value<string>("world");
+                var folder = p.Value<string>("folder");
+                var sub = p.Value<string>("sub");
+                var includeBackups = p.Value<bool?>("includeBackups") ?? false;
+
+                if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+                if (!WorldStore.IsSafeReferenceToken(world))
+                    throw new ArgumentException("Invalid characters in world reference.");
+                if (sub != "worlds_local" && sub != "worlds")
+                    throw new ArgumentException("Invalid save subfolder.");
+                if (string.IsNullOrWhiteSpace(folder) || !KnownSaveFolders().Any(k => SameFolder(k, folder)))
+                    throw new ArgumentException("Unknown save folder.");
+
+                if (!DeleteWorldNameConfirmed(world, p.Value<string>("confirmName")))
+                    throw new ArgumentException(
+                        $"Type the world's name exactly as it is spelled ('{world}') to delete it.");
+
+                var saveFolder = Path.GetFullPath(folder);
+                var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
+
+                // A live server holds the files open and writes the world back out as it saves,
+                // so a delete underneath one leaves half a world and a running game on top of it.
+                foreach (var session in Sessions.Values)
+                {
+                    if (session.Server.Status == ServerStatus.Stopped) continue;
+
+                    var live = session.Server.Options;
+                    var liveFolder = string.IsNullOrWhiteSpace(live?.SaveDataFolderPath)
+                        ? userSave
+                        : live.SaveDataFolderPath;
+
+                    if (string.Equals(live?.WorldName, world, StringComparison.OrdinalIgnoreCase)
+                        && SameFolder(liveFolder, saveFolder))
+                        throw new InvalidOperationException(
+                            $"'{session.ProfileName}' is running world '{world}' right now. Stop it before deleting the world.");
+                }
+
+                var claimant = ProfileSelectingWorld(
+                    ServerPrefsProvider.LoadPreferences(), world, saveFolder, userSave);
+                if (claimant != null)
+                    throw new InvalidOperationException(
+                        $"'{claimant.ProfileName}' still has '{world}' chosen as its world. Point that realm at another world first, or delete the realm.");
+
+                // A 1.0 world is a whole directory tree, so the delete goes off the UI thread.
+                var removed = await Task.Run(() => WorldStore.DeleteWorld(saveFolder, world, includeBackups));
+                if (removed.Count == 0)
+                    throw new ArgumentException($"There is no world named '{world}' in that save folder any more.");
+
+                Logger.Warning("Deleted world '{0}' from {1} ({2} item(s); backup layers {3}).",
+                    world, saveFolder, removed.Count, includeBackups ? "deleted too" : "kept");
+
+                return (object)new { world, folder = saveFolder, sub, deleted = removed, includeBackups };
             });
 
             // --- The Skald (analytics) ---
@@ -3033,6 +3153,23 @@ namespace ValheimBakaLoader.Forms
                 });
             });
 
+            // Starts the statistics journal again from nothing. The journal on disk is moved
+            // aside as "analytics.json.bak-<stamp>" and one such copy is kept, so a host who
+            // clears the numbers now and then does not leave a folder of old journals behind.
+            // Every realm's numbers live in the one journal, so this clears all of them.
+            RegisterRpc("analytics.reset", p =>
+            {
+                var kept = Analytics.Reset();
+                Logger.Warning("Statistics journal reset from the interface ({0}).",
+                    kept == null ? "no journal on disk to keep" : "kept as " + Path.GetFileName(kept));
+
+                return Task.FromResult<object>(new
+                {
+                    ok = true,
+                    kept = kept == null ? null : Path.GetFileName(kept),
+                });
+            });
+
             // World identity from the world metadata (read-only): the typed seed string and
             // the numeric seed the game derived from it. Reads the pre-1.0 "{world}.fwl" and
             // the 1.0 "_main.{N}.fwl2" alike - the fields up to the seed sit in the same
@@ -3145,7 +3282,7 @@ namespace ValheimBakaLoader.Forms
                     var info = FwlReader.TryReadWorld(ResolveSaveDataFolder(null), world);
                     if (info == null)
                         throw new InvalidOperationException(
-                            $"World '{world}' has no .fwl yet - choose a seed or start the server once first.");
+                            $"World '{world}' has no .fwl yet. Choose a seed or start the server once first.");
 
                     // Adapt to worldgen mods where possible; warn honestly where not.
                     var exePath = GetServerExePath();
@@ -3878,14 +4015,14 @@ namespace ValheimBakaLoader.Forms
                 };
 
                 if (_modUpdateInProgress)
-                    return FailDto("A mod update is already in progress - try again in a moment.");
+                    return FailDto("A mod update is already in progress. Try again in a moment.");
 
                 if (!ThunderstoreUrlParser.TryParse(p.Value<string>("url"), out var reference, out var parseError))
                     return FailDto(parseError);
 
                 var pluginsDir = GetPluginsDirectory();
                 if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
-                    return FailDto("BepInEx plugins folder not found - set a valid server .exe path first.");
+                    return FailDto("BepInEx plugins folder not found. Set a valid server .exe path first.");
 
                 _modUpdateInProgress = true;
                 try
@@ -3965,7 +4102,7 @@ namespace ValheimBakaLoader.Forms
                 var pluginsDir = GetPluginsDirectory();
                 if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
                     throw new DirectoryNotFoundException(
-                        "BepInEx plugins folder not found - set a valid server .exe path first.");
+                        "BepInEx plugins folder not found. Set a valid server .exe path first.");
 
                 _requiredModInstallInProgress = true;
                 try

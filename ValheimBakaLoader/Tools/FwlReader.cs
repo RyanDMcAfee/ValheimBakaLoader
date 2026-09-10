@@ -225,7 +225,7 @@ namespace ValheimBakaLoader.Tools
             var existingPath = existingWorld?.Folder ?? WorldStore.FindWorldFilesOnDisk(saveFolder, worldName);
             if (existingPath != null)
                 throw new InvalidOperationException(
-                    $"World '{worldName}' already exists ({existingPath}) - the seed of an existing world can't be changed.");
+                    $"World '{worldName}' already exists ({existingPath}), and the seed of an existing world can't be changed.");
 
             seedName = (seedName ?? "").Trim();
             if (seedName.Length == 0) seedName = RandomSeedName();

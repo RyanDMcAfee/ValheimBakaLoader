@@ -86,7 +86,7 @@ namespace ValheimBakaLoader.Tools
         {
             if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
                 throw new DirectoryNotFoundException(
-                    "BepInEx plugins folder not found - set a valid server .exe path first.");
+                    "BepInEx plugins folder not found. Set a valid server .exe path first.");
 
             if (!File.Exists(BundledDll))
                 throw new FileNotFoundException(

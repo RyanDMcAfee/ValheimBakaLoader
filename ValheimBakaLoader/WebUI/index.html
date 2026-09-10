@@ -39,8 +39,8 @@
       <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Discord</span><span class="norse">Herald</span></div>
       <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Statistics</span><span class="norse">Skald</span></div>
       <div class="side-foot">
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.1</span></span>
-        <a class="mead" id="meadLink" title="Support BakaLoader - pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.2</span></span>
+        <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
 
@@ -136,7 +136,7 @@
               <div class="netline"><span id="netLoc">127.0.0.1:2456</span><span class="copychip" id="copyLoc">COPY</span></div>
               <div class="netline" id="netInviteLine" style="display:none"><span id="netInvite">invite -</span><span class="copychip" id="copyInv">COPY</span></div>
               <div class="netline" id="netRconLine"><span id="netRcon">RCON 127.0.0.1:25575</span></div>
-              <div style="margin-top:8px;display:flex;align-items:center;gap:8px"><span class="pill green" id="netPill">rcon bound</span><span class="copychip" id="waystoneBtn" title="Raise a Waystone - give the server a name (like valheim.your-domain.com) so friends join by name instead of a raw IP. Guided setup with per-step DNS instructions. Needs a domain you own, or a free dynamic-DNS name.">DOMAIN</span></div>
+              <div style="margin-top:8px;display:flex;align-items:center;gap:8px"><span class="pill green" id="netPill">rcon bound</span><span class="copychip" id="waystoneBtn" title="Raise a Waystone. Give the server a name (like valheim.your-domain.com) so friends join by name instead of a raw IP. Guided setup with per-step DNS instructions. Needs a domain you own, or a free dynamic-DNS name.">DOMAIN</span></div>
             </div>
 
             <!-- MODS -->
@@ -166,9 +166,15 @@
             <div class="card b-upkeep" id="upkeepCard">
               <div class="microlabel upkeep-head" id="upkeepHead" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᛟ</span>Upkeep<span style="margin-left:auto" class="subval" id="blVersion" data-fs-anchor>v-</span></div>
               <div class="upkeep-body" id="upkeepBody">
-                <div class="togglerow"><span class="tl">Auto-update BakaLoader</span><span class="toggle" id="tAutoUpdApp" data-t></span></div>
+                <div class="togglerow"><span class="tl">Check for BakaLoader updates</span><span class="toggle on" id="tCheckUpd" data-t></span></div>
+                <div class="subval" style="margin:2px 0 4px">Asks GitHub for a newer release at launch and before a scheduled restart. Nothing is installed unless the switch below is on.</div>
+                <div class="togglerow" id="rowAutoUpdApp"><span class="tl">Auto-update BakaLoader</span><span class="toggle" id="tAutoUpdApp" data-t></span></div>
                 <div class="subval" id="upkeepMsg" style="margin:2px 0 4px">Fetches new releases at launch and on restarts.</div>
+                <div class="togglerow"><span class="tl">Update mods at scheduled restarts</span><span class="toggle" id="tAutoUpdMods" data-t></span></div>
+                <div class="subval" style="margin:2px 0 4px">Installs waiting Thunderstore updates during a scheduled restart, and once the server has sat empty for ten minutes.</div>
                 <div class="togglerow"><span class="tl">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
+                <div class="togglerow"><span class="tl">Start minimized</span><span class="toggle" id="tStartMin" data-t></span></div>
+                <div class="subval" style="margin:2px 0 4px">The window opens minimized to the taskbar. BakaLoader has no tray icon, so it waits there rather than in the notification area.</div>
                 <div class="togglerow"><span class="tl">Share anonymous usage stats</span><span class="toggle" id="tShareStats" data-t></span></div>
                 <div class="togglerow"><span class="tl">Show Norse names</span><span class="toggle on" id="tPlainTerms" data-t title="On: every plain label keeps its Norse name as a caption. Off: plain English only."></span></div>
                 <div class="subval" style="margin:2px 0 0">Keeps Hearth, Vikings and Saga beside their plain names.</div>
@@ -193,7 +199,7 @@
           </div>
           <!-- missing required-mods banner (native only; hidden when all mods present) -->
           <div class="capsbanner" id="capsBanner" style="display:none">
-            <div class="capshead"><span class="r">ᚦ</span>Some actions are unavailable - the server is missing required mods</div>
+            <div class="capshead"><span class="r">ᚦ</span>Some actions are unavailable because the server is missing required mods</div>
             <div class="capslist" id="capsList"></div>
             <div class="capsact">
               <button class="btn btn-ember btn-sm" id="capsInstallBtn">ᚠ&nbsp; Install missing mods</button>
@@ -262,10 +268,12 @@
               </div>
               <div class="field"><label>Password</label>
                 <div class="pathrow"><input type="password" id="fPassword" value=""><span class="copychip" id="eyePw" title="Show / hide password">SHOW</span></div>
+                <div class="togglerow"><span class="tl">Require a 5 character password</span><span class="toggle on" id="tPwCheck" data-t></span></div>
+                <div class="fieldnote">Valheim itself wants at least 5 characters and turns down a password holding the server or the world name. With this on, BakaLoader stops the start and says which rule was broken; with it off, it starts anyway and leaves the last word to the game. Applies to every realm.</div>
               </div>
               <div class="field"><label>Port</label><input type="text" id="fPort" value="2456"></div>
               <div class="field"><label>Visibility</label>
-                <div class="togglerow"><span class="tl">Public - listed in community browser</span><span class="toggle on" id="tPublic" data-t></span></div>
+                <div class="togglerow"><span class="tl">Public, listed in community browser</span><span class="toggle on" id="tPublic" data-t></span></div>
               </div>
               <div class="field"><label>Crossplay</label>
                 <div class="togglerow"><span class="tl">Enable crossplay backend</span><span class="toggle" id="tCrossplay" data-t></span></div>
@@ -274,8 +282,8 @@
               <!-- the three backup dials share one full-width row so both columns end level -->
               <div class="formgrid3">
                 <div class="field"><label>Backups Kept</label><input type="text" id="fBackups" value="50"></div>
-                <div class="field"><label>Backup Interval - Short (s)</label><input type="text" id="fBackShort" value="600"></div>
-                <div class="field"><label>Backup Interval - Long (s)</label><input type="text" id="fBackLong" value="43200"></div>
+                <div class="field"><label>Backup Interval: Short (s)</label><input type="text" id="fBackShort" value="600"></div>
+                <div class="field"><label>Backup Interval: Long (s)</label><input type="text" id="fBackLong" value="43200"></div>
               </div>
             </div>
 
@@ -333,7 +341,7 @@
                 <div class="pathrow"><input type="text" id="fServerExe" value=""><button class="btn btn-ghost btn-sm" id="btnOpenSrv" title="Open the server folder in Explorer">Open</button></div>
               </div>
               <div class="field" style="grid-column:1/-1"><label>Save Data Folder</label>
-                <div class="pathrow"><input type="text" id="fSaveDir" value="" placeholder="default - %USERPROFILE%\AppData\LocalLow\IronGate\Valheim"><button class="btn btn-ghost btn-sm" id="btnOpenSave" title="Open the save data folder in Explorer">Open</button></div>
+                <div class="pathrow"><input type="text" id="fSaveDir" value="" placeholder="default: %USERPROFILE%\AppData\LocalLow\IronGate\Valheim"><button class="btn btn-ghost btn-sm" id="btnOpenSave" title="Open the save data folder in Explorer">Open</button></div>
               </div>
               <div class="field" style="grid-column:1/-1"><label>Additional Launch Args</label><input type="text" id="fArgs" value=""></div>
             </div>
@@ -487,7 +495,7 @@
             <!-- THE HERALD: master switch + webhook -->
             <div class="card b-herald">
               <div class="microlabel">Discord sharing<span class="cnorse">Herald</span></div>
-              <div class="subval" style="margin:2px 0 10px">BakaLoader keeps <strong>one</strong> status post in your Discord channel and quietly edits it whenever the realm changes - players joining, mods updating, the next restart drawing near. One post, forever fresh. No spam.</div>
+              <div class="subval" style="margin:2px 0 10px">BakaLoader keeps <strong>one</strong> status post in your Discord channel and quietly edits it whenever the realm changes: players joining, mods updating, the next restart drawing near. One post, forever fresh. No spam.</div>
               <div class="togglerow"><span class="tl">Share this server on Discord</span><span class="toggle" id="tHerald" data-t title="Master switch. On: the status post keeps itself up to date. Off: nothing is ever sent."></span></div>
               <div class="field" style="margin-top:10px"><label>Webhook URL <span class="r" title="In Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL. The setup wizard walks you through it.">ᛟ</span></label>
                 <input type="text" id="heraldUrl" spellcheck="false" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></div>
@@ -500,8 +508,8 @@
               <div class="microlabel">What the post carries</div>
               <div class="subval" style="margin:2px 0 8px">Always: server name, status, players online, world, mod count, last mod update, next restart. Optional extras:</div>
               <div class="togglerow"><span class="tl">Join address (IP:port)</span><span class="toggle" id="tHeraldAddr" data-t title="Include the server's public IP and port so friends copy it straight from Discord."></span></div>
-              <div class="togglerow"><span class="tl">Server password</span><span class="toggle" id="tHeraldPass" data-t title="Include the password in the post. Anyone who can read the channel sees it - only for private channels."></span></div>
-              <div class="subval" style="margin:2px 0 4px;color:var(--amber)">ᚦ the password is visible to everyone in that channel - trusted halls only</div>
+              <div class="togglerow"><span class="tl">Server password</span><span class="toggle" id="tHeraldPass" data-t title="Include the password in the post. Anyone who can read the channel sees it, so use it only for private channels."></span></div>
+              <div class="subval" style="margin:2px 0 4px;color:var(--amber)">ᚦ the password is visible to everyone in that channel, so trusted halls only</div>
               <div class="togglerow"><span class="tl">Event posts</span><span class="toggle" id="tHeraldEvents" data-t title="Also send one-off messages when the server starts, stops or crashes, and when vikings join or leave. These are separate messages, not edits of the status post."></span></div>
               <div class="subval" style="margin:2px 0 0">one-off messages for start · stop · crash · join · leave</div>
             </div>
@@ -510,8 +518,8 @@
               <div class="microlabel">The post</div>
               <div class="subval" id="heraldPostStat" style="margin:2px 0 12px">no post yet · publish to place the Herald in your channel</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn btn-ember btn-sm" id="heraldPublish" title="Create the status post now - or refresh it immediately if it already exists">ᛒ&nbsp; Publish now</button>
-                <button class="btn btn-ghost btn-sm" id="heraldRemove" title="Delete the status post from Discord. Settings stay - publish again any time.">ᛪ&nbsp; Remove post</button>
+                <button class="btn btn-ember btn-sm" id="heraldPublish" title="Create the status post now, or refresh it immediately if it already exists">ᛒ&nbsp; Publish now</button>
+                <button class="btn btn-ghost btn-sm" id="heraldRemove" title="Delete the status post from Discord. Settings stay, so you can publish again any time.">ᛪ&nbsp; Remove post</button>
               </div>
             </div>
           </div>
@@ -523,6 +531,8 @@
             <h1><span class="r">ᛏ</span>STATISTICS</h1>
             <span class="hnorse">Skald</span>
             <span class="sub" id="skaldSub">the realm's story in numbers · counted on this machine only, nothing leaves it</span>
+            <div class="grow"></div>
+            <button class="btn btn-blood btn-sm" id="skResetBtn" title="Clear every counted number and start the journal again">ᛪ&nbsp; Reset statistics</button>
           </div>
           <div class="skald-stats">
             <div class="card">
@@ -576,7 +586,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.1</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.2</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>

@@ -56,6 +56,13 @@ namespace ValheimBakaLoader.Tools
         /// safe to iterate while new events keep arriving.
         /// </summary>
         List<AnalyticsEvent> EventsFor(string serverKey);
+
+        /// <summary>
+        /// Starts the journal again from nothing: every counted event is dropped and the
+        /// file on disk is moved aside. Answers the name of the set-aside copy, or null when
+        /// there was no journal on disk to move.
+        /// </summary>
+        string Reset();
     }
 
     /// <summary>
@@ -110,6 +117,76 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
+        /// <summary>
+        /// What a set-aside journal is called: the journal's own name with a stamp on the end.
+        /// Local time, because it is a name a person reads off their own folder.
+        /// </summary>
+        public static string JournalBackupName(string journalPath, DateTime when)
+            => journalPath + ".bak-" + when.ToString("yyyyMMdd-HHmmss");
+
+        /// <summary>
+        /// The search pattern that finds every journal already set aside. It has to match
+        /// everything <see cref="JournalBackupName"/> can produce, or "one copy is kept"
+        /// quietly turns into "every copy is kept forever".
+        /// </summary>
+        public static string JournalBackupPattern(string journalPath)
+            => Path.GetFileName(journalPath) + ".bak-*";
+
+        /// <summary>
+        /// Moves a journal file aside and clears out any copy set aside before it, so exactly
+        /// one is ever kept. Answers the copy's path, or null when there was no journal there.
+        /// <para>
+        /// It takes the path rather than reading the field so a test can drive it against a
+        /// folder of its own: the live journal sits in the host's profile, beside their save
+        /// data, and is not something to practise on.
+        /// </para>
+        /// </summary>
+        public static string SetJournalAside(string journalPath, DateTime when)
+        {
+            if (string.IsNullOrWhiteSpace(journalPath) || !File.Exists(journalPath)) return null;
+
+            var folder = Path.GetDirectoryName(journalPath);
+            if (!string.IsNullOrEmpty(folder))
+            {
+                foreach (var older in Directory.GetFiles(folder, JournalBackupPattern(journalPath)))
+                {
+                    try { File.Delete(older); }
+                    catch { /* a locked older copy must not stop the one that matters */ }
+                }
+            }
+
+            var moved = JournalBackupName(journalPath, when);
+            File.Move(journalPath, moved);
+            return moved;
+        }
+
+        public string Reset()
+        {
+            lock (Gate)
+            {
+                // Whatever is on disk is about to be moved away, so there is nothing left to
+                // read back in: say the journal is loaded and let the empty list stand.
+                Events.Clear();
+                Loaded = true;
+
+                try
+                {
+                    var moved = SetJournalAside(ExpandedPath, DateTime.Now);
+                    if (moved != null)
+                        Logger.Information("Statistics journal cleared; the old one is kept as {name}",
+                            Path.GetFileName(moved));
+                    return moved;
+                }
+                catch (Exception e)
+                {
+                    // The counters are already empty in memory, so the host gets what they
+                    // asked for either way; only the kept copy is missing.
+                    Logger.Warning("Could not set the old statistics journal aside: {msg}", e.Message);
+                    return null;
+                }
+            }
+        }
+
         private string ExpandedPath => Environment.ExpandEnvironmentVariables(FilePath);
 
         private void EnsureLoaded()
@@ -148,21 +225,24 @@ namespace ValheimBakaLoader.Tools
             _ = Task.Run(async () =>
             {
                 await Task.Delay(SaveDebounce);
-                string json;
+
+                // The snapshot and the write share one gate. Taking the snapshot under the
+                // gate and writing it outside leaves a gap a Reset can land in, and the
+                // events it just cleared would be written straight back over the cleared file.
                 lock (Gate)
                 {
                     SavePending = false;
-                    json = JsonConvert.SerializeObject(new AnalyticsFile { Events = Events.ToList() });
-                }
-                try
-                {
-                    var path = ExpandedPath;
-                    Directory.CreateDirectory(Path.GetDirectoryName(path));
-                    File.WriteAllText(path, json);
-                }
-                catch (Exception e)
-                {
-                    Logger.Warning("Could not save the analytics journal: {msg}", e.Message);
+                    var json = JsonConvert.SerializeObject(new AnalyticsFile { Events = Events.ToList() });
+                    try
+                    {
+                        var path = ExpandedPath;
+                        Directory.CreateDirectory(Path.GetDirectoryName(path));
+                        File.WriteAllText(path, json);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Warning("Could not save the analytics journal: {msg}", e.Message);
+                    }
                 }
             });
         }

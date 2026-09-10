@@ -27,6 +27,10 @@
 
 ---
 
+## What is new in 1.0.2
+
+Update checking is now its own switch, separate from installing, and it runs before a scheduled restart as well as at launch. One switch drives both automatic mod update paths. The window can start minimized. A switch under the password box holds you to Valheim's own password rule instead of letting the game turn the start down. Worlds can be deleted from the app, with a typed confirmation and the backups kept unless you say otherwise. Statistics can be reset, with the old journal set aside rather than thrown away. Full list in the [release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
 ## What is new in 1.0.1
 
 **Update the Valheim server from the app.** When Steam has a server update queued, the start prompt offers **Update and start**: BakaLoader copies your worlds aside, runs the update, then starts the server. A server installed through your Steam library is updated by Steam itself, which BakaLoader then watches until the download is whole. A standalone install is updated with steamcmd, which BakaLoader downloads once and asks Windows to verify Valve's signature on. A failed update keeps the server stopped and tells you why. While it runs, every way of starting the server is refused, and closing BakaLoader waits until it is done, so nothing ever starts out of a folder that is halfway through being replaced.
