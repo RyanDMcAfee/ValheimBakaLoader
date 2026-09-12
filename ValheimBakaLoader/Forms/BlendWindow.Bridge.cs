@@ -3913,6 +3913,10 @@ namespace ValheimBakaLoader.Forms
                             var package = await ThunderstoreClient.GetLatestAsync(mod.Author, mod.ModName);
                             mod.LatestVersion = package?.LatestVersion;
 
+                            // When the newest release was published, used to hint whether a mod
+                            // predates the last game update. Null stays null (column blank).
+                            mod.LatestReleasedUtc = package?.Latest?.DateCreated;
+
                             // Keep the identity the index answered with, not the folder name we
                             // asked with: a row only offers its Thunderstore page when there is
                             // a real package behind it.
@@ -3929,7 +3933,11 @@ namespace ValheimBakaLoader.Forms
                     // on restore/export (kept distinct so servers never cross-contaminate).
                     RecordModManifest(CurrentProfile, mods);
 
-                    return mods.Select(BuildModDto).ToList();
+                    // Steam's "last updated" stamp for this install, read once and shared by every
+                    // row (it is the same game for all of them). Null when there is no manifest.
+                    var gameUpdatedUtc = ReadGameLastUpdatedUtc();
+
+                    return mods.Select(m => BuildModDto(m, gameUpdatedUtc)).ToList();
                 }
                 finally
                 {
@@ -3947,6 +3955,26 @@ namespace ValheimBakaLoader.Forms
                         ?? throw new InvalidOperationException("Server exe path is not configured");
                     var mods = ModScanner.ScanPlugins(pluginsDir);
 
+                    // Push the same shape of progress the server update already streams: a bar
+                    // that follows the run and a status per mod. PostEvent marshals each report
+                    // to the UI thread in order (see SynchronousProgress).
+                    var progress = new SynchronousProgress<ModUpdateProgress>(pr => PostEvent(
+                        "mods.updateProgress",
+                        new
+                        {
+                            index = pr.Index,
+                            total = pr.Total,
+                            mod = pr.Mod,
+                            phase = pr.Phase,
+                            fromVersion = pr.FromVersion,
+                            toVersion = pr.ToVersion,
+                            error = pr.Error,
+                        }));
+
+                    // One indeterminate "checking" step while the latest versions are fetched:
+                    // the count of updatable mods is not known until this finishes.
+                    ((IProgress<ModUpdateProgress>)progress).Report(new ModUpdateProgress { Phase = "checking" });
+
                     await Task.WhenAll(mods.Select(async mod =>
                     {
                         try
@@ -3958,7 +3986,7 @@ namespace ValheimBakaLoader.Forms
                     }));
 
                     var updatable = mods.Where(m => m.UpdateAvailable).ToList();
-                    var results = await ModUpdateService.UpdateModsAsync(updatable);
+                    var results = await ModUpdateService.UpdateModsAsync(updatable, progress);
 
                     RecordModUpdates(ActiveProfileName, results);
 
@@ -3977,10 +4005,78 @@ namespace ValheimBakaLoader.Forms
                 }
             });
 
+            // Update one mod from its row menu. Same lock and the same per-mod progress
+            // events the bulk update streams, so the row shows the update in place.
+            RegisterRpc("mods.update", async p =>
+            {
+                if (_modUpdateInProgress) throw new InvalidOperationException("A mod update is already in progress");
+                _modUpdateInProgress = true;
+                try
+                {
+                    var mod = FindInstalledMod(p);
+
+                    var progress = new SynchronousProgress<ModUpdateProgress>(pr => PostEvent(
+                        "mods.updateProgress",
+                        new
+                        {
+                            index = pr.Index,
+                            total = pr.Total,
+                            mod = pr.Mod,
+                            phase = pr.Phase,
+                            fromVersion = pr.FromVersion,
+                            toVersion = pr.ToVersion,
+                            error = pr.Error,
+                        }));
+
+                    var results = await ModUpdateService.UpdateModsAsync(new[] { mod }, progress);
+                    RecordModUpdates(ActiveProfileName, results);
+
+                    var r = results[0];
+                    return new
+                    {
+                        mod = r.Mod.FullName,
+                        r.Updated,
+                        r.FromVersion,
+                        r.ToVersion,
+                        r.Error,
+                    };
+                }
+                finally
+                {
+                    _modUpdateInProgress = false;
+                }
+            });
+
             RegisterRpc("mods.findConfigs", p =>
             {
                 var mod = FindInstalledMod(p);
                 return Task.FromResult<object>(ModRemovalService.FindConfigFiles(mod));
+            });
+
+            // The installed mods that depend on a given one, directly or through a chain, so
+            // removing a mod can offer to take its now-orphaned dependents with it. All local:
+            // it reads the manifests already on disk, no Thunderstore call. The list is ordered
+            // dependents-first so removing in that order never orphans a still-installed mod
+            // midway, and a visited set keeps a cycle or a shared core from looping.
+            RegisterRpc("mods.dependents", p =>
+            {
+                var result = new List<object>();
+                var target = p?.Value<string>("fullName");
+                var pluginsDir = GetPluginsDirectory();
+                if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(pluginsDir))
+                    return Task.FromResult<object>(result);
+
+                var mods = ModScanner.ScanPlugins(pluginsDir);
+                foreach (var mod in Tools.ModScanner.FindDependents(mods, target))
+                {
+                    result.Add(new
+                    {
+                        fullName = mod.FullName,
+                        displayName = string.IsNullOrWhiteSpace(mod.ModName) ? mod.FullName : mod.ModName,
+                    });
+                }
+
+                return Task.FromResult<object>(result);
             });
 
             RegisterRpc("mods.remove", p =>
@@ -5076,8 +5172,34 @@ namespace ValheimBakaLoader.Forms
         /// a scan. The three thunderstore keys are camel case on purpose: they are a new
         /// contract with the page, while the older keys keep the casing the page already reads.
         /// </summary>
-        public static object BuildModDto(Tools.Models.InstalledMod mod)
+        /// <summary>
+        /// An <see cref="IProgress{T}"/> that runs its callback inline on the reporting thread
+        /// instead of posting it to a captured context. Reports then reach PostEvent in the
+        /// exact order they are made (PostEvent marshals each to the UI thread FIFO), so the
+        /// bar never sees a "done" before its "updating". <see cref="Progress{T}"/> posts
+        /// asynchronously and can reorder, which a progress bar must not do.
+        /// </summary>
+        private sealed class SynchronousProgress<T> : IProgress<T>
         {
+            private readonly Action<T> _handler;
+            public SynchronousProgress(Action<T> handler) { _handler = handler; }
+            public void Report(T value) => _handler(value);
+        }
+
+        public static object BuildModDto(Tools.Models.InstalledMod mod) => BuildModDto(mod, null);
+
+        /// <summary>
+        /// Builds the row a mod scan hands the UI. <paramref name="gameUpdatedUtc"/> is the
+        /// game's last update time (same for every row); with it and the mod's latest release
+        /// date the "possibly outdated" hint is computed: the newest Thunderstore release came
+        /// out strictly before the game last updated. Either date unknown leaves it false.
+        /// </summary>
+        public static object BuildModDto(Tools.Models.InstalledMod mod, DateTime? gameUpdatedUtc)
+        {
+            var modUpdatedUtc = mod.LatestReleasedUtc?.ToUniversalTime();
+            var gameUtc = gameUpdatedUtc?.ToUniversalTime();
+            var possiblyOutdated = modUpdatedUtc != null && gameUtc != null && modUpdatedUtc < gameUtc;
+
             return new
             {
                 mod.Author,
@@ -5092,7 +5214,23 @@ namespace ValheimBakaLoader.Forms
                 thunderstoreNamespace = mod.ThunderstoreNamespace,
                 thunderstoreName = mod.ThunderstoreName,
                 thunderstoreUrl = ThunderstorePageUrl(mod.ThunderstoreNamespace, mod.ThunderstoreName),
+                // "Possibly outdated": a hint, not proof. Dates are ISO 8601 (round-trip) or null.
+                possiblyOutdated,
+                modUpdatedUtc = modUpdatedUtc?.ToString("o"),
+                gameUpdatedUtc = gameUtc?.ToString("o"),
             };
+        }
+
+        /// <summary>
+        /// The game install's Steam "last updated" time for the current profile, or null when
+        /// there is no manifest to read it from (a hand copy). Never throws.
+        /// </summary>
+        private DateTime? ReadGameLastUpdatedUtc()
+        {
+            var exe = GetServerExePath();
+            if (string.IsNullOrWhiteSpace(exe)) return null;
+            try { return Tools.ServerBuildTracker.Probe(exe).LastUpdatedUtc; }
+            catch { return null; }
         }
 
         // A Thunderstore namespace or package name: letters, digits, underscore, hyphen and

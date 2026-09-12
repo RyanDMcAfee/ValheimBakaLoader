@@ -1,4 +1,5 @@
 using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using ValheimBakaLoader.Tools.Logging;
@@ -107,6 +108,8 @@ namespace ValheimBakaLoader.Tools
                     ModName = modName,
                     InstalledVersion = UnknownVersion,
                     PluginDirectory = modDirectory,
+                    // No manifest means no declared dependencies; keep the array empty, not null.
+                    Dependencies = Array.Empty<string>(),
                 };
             }
 
@@ -136,6 +139,7 @@ namespace ValheimBakaLoader.Tools
                         : manifest.VersionNumber.Trim(),
                     Website = manifest.WebsiteUrl,
                     PluginDirectory = modDirectory,
+                    Dependencies = ParseDependencyFullNames(manifest.Dependencies),
                 };
             }
             catch (JsonException ex)
@@ -148,6 +152,112 @@ namespace ValheimBakaLoader.Tools
                 Logger.Warning("Could not read manifest.json in '{0}', skipping: {1}", folderName, ex.Message);
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Turns Thunderstore manifest dependency strings ("Namespace-Name-Version") into
+        /// the depended-on mods' full names ("Namespace-Name"). A namespace and a name carry
+        /// no hyphen, so the version is the final hyphen segment and dropping it leaves the
+        /// full name. Blank or malformed entries are skipped. Never returns null.
+        /// </summary>
+        public static string[] ParseDependencyFullNames(string[] dependencies)
+        {
+            if (dependencies == null || dependencies.Length == 0) return Array.Empty<string>();
+
+            var result = new List<string>();
+            foreach (var dependency in dependencies)
+            {
+                if (string.IsNullOrWhiteSpace(dependency)) continue;
+
+                var trimmed = dependency.Trim();
+                var lastHyphen = trimmed.LastIndexOf('-');
+                var fullName = lastHyphen > 0 ? trimmed.Substring(0, lastHyphen) : trimmed;
+                if (!string.IsNullOrWhiteSpace(fullName)) result.Add(fullName);
+            }
+
+            return result.ToArray();
+        }
+
+        /// <summary>
+        /// Over a set of installed mods, returns the ones that depend on
+        /// <paramref name="targetFullName"/>, directly or transitively (a mod that depends on
+        /// a mod that depends on the target counts). The result excludes the target itself and
+        /// is ordered dependents-first: a mod always appears before any mod it depends on, so
+        /// removing the list in order never orphans a still-installed mod midway. A visited set
+        /// makes the walk safe against dependency cycles and a widely-depended-on core, so
+        /// nothing loops or is listed twice.
+        /// </summary>
+        public static List<InstalledMod> FindDependents(IEnumerable<InstalledMod> mods, string targetFullName)
+        {
+            var ordered = new List<InstalledMod>();
+            if (mods == null || string.IsNullOrWhiteSpace(targetFullName)) return ordered;
+
+            var list = new List<InstalledMod>();
+            foreach (var mod in mods)
+                if (mod != null) list.Add(mod);
+
+            // First installed mod for each full name (folder names are unique, but guard anyway).
+            var byFullName = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
+            foreach (var mod in list)
+                if (!string.IsNullOrWhiteSpace(mod.FullName) && !byFullName.ContainsKey(mod.FullName))
+                    byFullName[mod.FullName] = mod;
+
+            // 1) Transitive dependent set, by reverse reachability from the target: mods whose
+            //    dependencies reach the current frontier, growing the frontier each round.
+            var dependents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var frontier = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { targetFullName };
+            while (frontier.Count > 0)
+            {
+                var next = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var mod in list)
+                {
+                    var name = mod.FullName;
+                    if (string.IsNullOrWhiteSpace(name)) continue;
+                    if (string.Equals(name, targetFullName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (dependents.Contains(name)) continue;
+
+                    var deps = mod.Dependencies ?? Array.Empty<string>();
+                    foreach (var dep in deps)
+                    {
+                        if (dep != null && frontier.Contains(dep))
+                        {
+                            dependents.Add(name);
+                            next.Add(name);
+                            break;
+                        }
+                    }
+                }
+                frontier = next;
+            }
+
+            if (dependents.Count == 0) return ordered;
+
+            // 2) Order dependents-first with a depth-first post-order over the depends-on graph
+            //    restricted to the dependent set, then reversed: post-order lists a mod's
+            //    dependencies before the mod, so the reverse lists dependents before what they
+            //    depend on. The visited set both dedupes and breaks cycles.
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var postOrder = new List<string>();
+
+            void Visit(string name)
+            {
+                if (!visited.Add(name)) return;
+                if (byFullName.TryGetValue(name, out var mod))
+                {
+                    var deps = mod.Dependencies ?? Array.Empty<string>();
+                    foreach (var dep in deps)
+                        if (dep != null && dependents.Contains(dep)) Visit(dep);
+                }
+                postOrder.Add(name);
+            }
+
+            foreach (var name in dependents) Visit(name);
+
+            for (var i = postOrder.Count - 1; i >= 0; i--)
+                if (byFullName.TryGetValue(postOrder[i], out var mod))
+                    ordered.Add(mod);
+
+            return ordered;
         }
 
         /// <summary>

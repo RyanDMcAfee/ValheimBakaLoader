@@ -511,6 +511,9 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
    position first. app.js reads the live layout to say which ones went. */
 @media (max-width:1292px){#page-vikings .vik-pos{display:none}}
 @media (max-width:1160px){#page-vikings .vik-deaths{display:none}}
+/* The "Possibly outdated" hint folds away first on a narrow window so the mods table never
+   overflows; it is the least essential of the columns. */
+@media (max-width:1100px){#page-mods .mod-po{display:none}}
 
 /* context menu mock */
 .ctxwrap{position:relative}
@@ -1027,18 +1030,24 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 /* A server update is the one condition with a measurable amount left to run, so it
    carries a real bar. A phase that cannot report bytes sweeps instead of lying about
    a percentage. */
-.holdbar .hbprog{flex:0 0 160px;height:6px;border-radius:4px;overflow:hidden;
+.holdbar .hbprog,.modprog .hbprog{flex:0 0 160px;height:6px;border-radius:4px;overflow:hidden;
   background:rgba(255,255,255,.08);border:1px solid rgba(140,109,63,.35)}
-.holdbar .hbprog i{display:block;height:100%;width:0;border-radius:4px;
+.holdbar .hbprog i,.modprog .hbprog i{display:block;height:100%;width:0;border-radius:4px;
   background:linear-gradient(90deg,#B4430C,var(--ember));transition:width .25s var(--ease)}
-.holdbar .hbprog.indet i{width:40%;animation:hbsweep 1.4s var(--ease) infinite}
+.holdbar .hbprog.indet i,.modprog .hbprog.indet i{width:40%;animation:hbsweep 1.4s var(--ease) infinite}
 @keyframes hbsweep{from{margin-left:-40%}to{margin-left:100%}}
-.holdbar .hbpct{flex:none;font-family:var(--mono);font-size:10px;color:var(--bone-dim);
+.holdbar .hbpct,.modprog .hbpct{flex:none;font-family:var(--mono);font-size:10px;color:var(--bone-dim);
   font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion:reduce){
-  .holdbar .hbprog.indet i{animation:none;width:100%;opacity:.45}
-  .holdbar .hbprog i{transition:none}
+  .holdbar .hbprog.indet i,.modprog .hbprog.indet i{animation:none;width:100%;opacity:.45}
+  .holdbar .hbprog i,.modprog .hbprog i{transition:none}
 }
+/* The bulk mod update carries the same measurable bar the server update uses, shown in the
+   Mods page while Update all runs. Hidden until the run starts (JS sets display:flex). */
+.modprog{display:none;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;
+  padding:8px 12px;border-radius:8px;background:var(--ember-dim);
+  border:1px solid rgba(255,122,26,.3)}
+.modprog .hbmsg{flex:1 1 200px;min-width:0;font-size:12px;color:var(--bone-dim)}
 
 /* ---------- ATLAS (webmap + skies) ---------- */
 #page-atlas{display:none;flex-direction:column;height:100%}

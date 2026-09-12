@@ -1,3 +1,4 @@
+using System;
 using Newtonsoft.Json;
 
 namespace ValheimBakaLoader.Tools.Models
@@ -43,5 +44,13 @@ namespace ValheimBakaLoader.Tools.Models
 
         [JsonProperty("full_name")]
         public string FullName { get; set; }
+
+        /// <summary>
+        /// When this version was published to Thunderstore, from the API's
+        /// <c>date_created</c> field. Null when the response carried no date.
+        /// Used to tell whether a mod's newest release predates the last game update.
+        /// </summary>
+        [JsonProperty("date_created")]
+        public DateTime? DateCreated { get; set; }
     }
 }

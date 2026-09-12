@@ -32,6 +32,23 @@ namespace ValheimBakaLoader.Tools
     }
 
     /// <summary>
+    /// One step of a bulk update, reported so the UI can show a determinate bar and a
+    /// per-mod status. <see cref="Phase"/> is "updating" before a mod is worked on, then
+    /// "done" (updated or already current) or "failed" after it. <see cref="Index"/> is
+    /// 1-based within a run of <see cref="Total"/> mods.
+    /// </summary>
+    public class ModUpdateProgress
+    {
+        public int Index { get; init; }
+        public int Total { get; init; }
+        public string Mod { get; init; }
+        public string Phase { get; init; }
+        public string FromVersion { get; init; }
+        public string ToVersion { get; init; }
+        public string Error { get; init; }
+    }
+
+    /// <summary>
     /// Result of installing a mod from a pasted Thunderstore link.
     /// </summary>
     public class ModInstallResult
@@ -58,8 +75,10 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// Updates every supplied mod that has a newer version available on Thunderstore.
+        /// When <paramref name="progress"/> is given, reports one "updating" step before each
+        /// mod and one "done"/"failed" step after it, so a caller can follow the run live.
         /// </summary>
-        Task<List<ModUpdateResult>> UpdateModsAsync(IEnumerable<InstalledMod> mods);
+        Task<List<ModUpdateResult>> UpdateModsAsync(IEnumerable<InstalledMod> mods, IProgress<ModUpdateProgress> progress = null);
 
         /// <summary>
         /// Installs a mod from a parsed Thunderstore reference into the given
@@ -99,14 +118,48 @@ namespace ValheimBakaLoader.Tools
             Logger = logger;
         }
 
-        public async Task<List<ModUpdateResult>> UpdateModsAsync(IEnumerable<InstalledMod> mods)
+        public async Task<List<ModUpdateResult>> UpdateModsAsync(IEnumerable<InstalledMod> mods, IProgress<ModUpdateProgress> progress = null)
         {
             var results = new List<ModUpdateResult>();
             if (mods == null) return results;
 
-            foreach (var mod in mods)
+            // Materialize so Total is known up front and the source is only walked once.
+            var list = new List<InstalledMod>(mods);
+            var total = list.Count;
+            var index = 0;
+
+            foreach (var mod in list)
             {
-                results.Add(await UpdateModAsync(mod));
+                index++;
+                progress?.Report(new ModUpdateProgress
+                {
+                    Index = index,
+                    Total = total,
+                    Mod = mod?.FullName,
+                    Phase = "updating",
+                });
+
+                var result = await UpdateModAsync(mod);
+                results.Add(result);
+
+                progress?.Report(result.Error != null
+                    ? new ModUpdateProgress
+                    {
+                        Index = index,
+                        Total = total,
+                        Mod = mod?.FullName,
+                        Phase = "failed",
+                        Error = result.Error,
+                    }
+                    : new ModUpdateProgress
+                    {
+                        Index = index,
+                        Total = total,
+                        Mod = mod?.FullName,
+                        Phase = "done",
+                        FromVersion = result.FromVersion,
+                        ToVersion = result.ToVersion,
+                    });
             }
 
             return results;

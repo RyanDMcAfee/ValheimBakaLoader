@@ -1634,6 +1634,69 @@ function wireSort(sel,state,onChange){
 const MOD_DESC_FIRST=new Set(["installed","latest"]);
 function renderModSortMarks(){renderSortMarks("#page-mods th.sortable",S.modSort,MOD_DESC_FIRST);}
 wireSort("#page-mods th.sortable",S.modSort,()=>renderMods());
+/* The "Possibly outdated" hint, said plainly: a nudge to check, never a verdict. */
+const MOD_PO_TIP="The newest version on Thunderstore came out before Valheim last updated, so it may not account for the current game version. It is a hint, not proof the mod is broken.";
+const MOD_PO_TIP_UNKNOWN="Valheim's last update date could not be read for this server, so this hint is left blank for every mod.";
+/* The transient status a row shows while a bulk update runs. Cleared by the fresh scan
+   that follows the run, so it never lingers into the resting table. */
+function renderRowStatus(st){
+  if(!st) return "";
+  if(st.phase==="queued") return `<span class="pill" style="opacity:.5">${esc(TT("Queued"))}</span>`;
+  if(st.phase==="updating") return `<span class="pill ember">${esc(TT("Updating"))}</span>`;
+  if(st.phase==="done"){
+    const move=(st.from||"?")+" → "+(st.to||"?");
+    return `<span class="pill green" title="${esc(move)}">✓ ${esc(move)}</span>`;
+  }
+  if(st.phase==="failed")
+    return `<span class="pill" style="color:var(--blood);border-color:var(--blood)" title="${esc(st.error||"")}">${esc(TT("Failed")+": "+(st.error||TT("unknown")))}</span>`;
+  return "";
+}
+/* The bulk-update bar's own record: how many mods, how many finished, which one is running.
+   Kept apart from the row map so the bar and the rows can update from one event. */
+let MOD_UPD=null;
+function renderModUpdateProgress(){
+  const wrap=$("#modUpdProg"); if(!wrap) return;
+  if(!MOD_UPD){wrap.style.display="none";wrap.innerHTML="";return;}
+  const u=MOD_UPD;
+  wrap.style.display="flex";
+  if(u.phase==="checking"){
+    wrap.innerHTML=
+      `<span class="hbmsg">${esc(TT("Checking Thunderstore"))}</span>`+
+      `<span class="hbprog indet" role="progressbar" aria-label="${esc(TT("Mod update progress"))}" title="${esc(TT("Working"))}"><i></i></span>`;
+    return;
+  }
+  const total=u.total||0;
+  const pct=total>0?Math.max(0,Math.min(100,Math.round((u.done||0)/total*100))):0;
+  const label=(u.phase==="updating"&&u.current)
+    ? TT("Updating ")+u.current+" ("+u.index+" "+TT("of")+" "+total+")"
+    : TT("Updating mods")+" ("+(u.done||0)+" "+TT("of")+" "+total+")";
+  wrap.innerHTML=
+    `<span class="hbmsg">${esc(label)}</span>`+
+    `<span class="hbprog" role="progressbar" aria-label="${esc(TT("Mod update progress"))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" title="${pct}%"><i style="width:${pct}%"></i></span>`+
+    `<span class="hbpct">${pct}%</span>`;
+}
+/* One inbound mods.updateProgress event: advance the bar and flip the named row. A light
+   re-render only; the fresh scan at the end of the run is what re-reads the folder. */
+function onModUpdateProgress(d){
+  if(!d) return;
+  S.modsUpdating=true;
+  S.modRowStatus=S.modRowStatus||{};
+  const phase=d.phase;
+  if(phase==="checking"){
+    MOD_UPD={phase:"checking",total:0,done:0,current:null,index:0};
+  }else if(phase==="updating"){
+    MOD_UPD={phase:"updating",total:d.total||0,done:(MOD_UPD&&MOD_UPD.done)||0,current:d.mod,index:d.index||0};
+    if(d.mod) S.modRowStatus[d.mod]={phase:"updating"};
+  }else if(phase==="done"||phase==="failed"){
+    const done=((MOD_UPD&&MOD_UPD.done)||0)+1;
+    MOD_UPD={phase:phase,total:d.total||0,done:done,current:null,index:d.index||done};
+    if(d.mod) S.modRowStatus[d.mod]=(phase==="done")
+      ?{phase:"done",from:d.fromVersion,to:d.toVersion}
+      :{phase:"failed",error:d.error};
+  }
+  renderModUpdateProgress();
+  renderMods();
+}
 function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
@@ -1647,7 +1710,7 @@ function renderMods(){
   $("#sbMods").textContent=(scanned?mods.length:"-")+" mods";
   renderModSortMarks();
   if(!scanned){
-    $("#modTable").innerHTML=`<tr><td colspan="4">${S.modsScanning
+    $("#modTable").innerHTML=`<tr><td colspan="5">${S.modsScanning
       ?emptyState({mark:"ᛋ",title:"Scanning Thunderstore",reason:"Reading the community index and matching it against the installed plugins."})
       :emptyState({mark:"ᚱ",title:"Mods have not been scanned",
           reason:"A scan reads this server's BepInEx folder and checks Thunderstore for newer versions.",
@@ -1658,15 +1721,24 @@ function renderMods(){
     $("#modsSub").textContent="Thunderstore index · "+(S.modsScanning?"scanning…":"not yet scanned");
     return;
   }
+  const anyGameDate=mods.some(m=>m.gameUpdatedUtc);
+  const th=$("#thPossiblyOutdated");
+  if(th) th.title=(scanned&&mods.length&&!anyGameDate)?MOD_PO_TIP_UNKNOWN:MOD_PO_TIP;
   $("#modTable").innerHTML=mods.map((m,i)=>{
     const has=!!m.UpdateAvailable;
     const pill=m.Bundled?`<span class="pill ember">Bundled</span>`
       :`<span class="pill ${has?"amber":"green"}">${has?"Update":"Current"}</span>`;
+    const st=S.modRowStatus&&S.modRowStatus[m.FullName];
+    const statusCell=st?renderRowStatus(st):pill;
+    const po=m.possiblyOutdated
+      ?`<td class="mod-po" style="color:var(--amber)" title="${esc(MOD_PO_TIP)}">${esc(TT("Yes"))}</td>`
+      :`<td class="mod-po"></td>`;
     return `<tr data-i="${i}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span></td>`+
       `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
       `<td class="mono"${has?' style="color:var(--amber)"':""}>${esc(m.LatestVersion||"-")}</td>`+
-      `<td>${pill}</td></tr>`;
-  }).join("")||`<tr><td colspan="4">${emptyState({mark:"ᚱ",title:"No mods installed",
+      `<td>${statusCell}</td>`+
+      po+`</tr>`;
+  }).join("")||`<tr><td colspan="5">${emptyState({mark:"ᚱ",title:"No mods installed",
       reason:"Nothing was found in this server's BepInEx plugins folder. Check the server path in Settings, or add a mod from Thunderstore.",
       action:{name:"addMod",label:"Add from Thunderstore"}})}</td></tr>`;
   esWire($("#modTable"));
@@ -1693,10 +1765,19 @@ async function scanMods(){
 }
 async function doUpdateAll(){
   if(S.modsUpdating||S.modsScanning) return;
-  S.modsUpdating=true; renderMods();
+  S.modsUpdating=true;
+  /* Seed every mod that has an update as queued, so a row can flip queued -> updating ->
+     done as the progress events arrive. The bar opens on the indeterminate check. */
+  S.modRowStatus={};
+  (S.mods||[]).filter(m=>m.UpdateAvailable).forEach(m=>{S.modRowStatus[m.FullName]={phase:"queued"};});
+  MOD_UPD={phase:"checking",total:0,done:0,current:null,index:0};
+  renderModUpdateProgress(); renderMods();
   toast("ᚱ Updating mods · fetching from Thunderstore…");
   const r=await rpc("mods.updateAll");
   S.modsUpdating=false;
+  /* The run is over: drop the transient bar and row states so the fresh scan renders the
+     resting table, not leftover queued rows. */
+  MOD_UPD=null; S.modRowStatus={}; renderModUpdateProgress();
   if(r===FAIL||!Array.isArray(r)){renderMods();return;}
   const okN=r.filter(x=>x.Updated).length, errN=r.filter(x=>x.Error).length;
   r.forEach(x=>logLine(x.Updated?"ok":"warn","[Thunderstore] "+x.mod+" "+(x.Updated?(x.FromVersion+" → "+x.ToVersion):("failed: "+(x.Error||"unknown")))));
@@ -1735,12 +1816,32 @@ function openThunderstorePage(mod){
 /* right-click a mod row → its Thunderstore page, or remove */
 function modRowItems(mod){
   const onStore=!!(mod.thunderstoreNamespace&&mod.thunderstoreName);
+  const canUpd=!!mod.UpdateAvailable;
   return [
+    {r:"ᚱ",label:"Update mod",disabled:!canUpd,tip:TT("This mod is already up to date."),
+      fn:()=>doUpdateOne(mod)},
     {r:"ᛋ",label:"Open Thunderstore page",disabled:!onStore,tip:TT("Not on Thunderstore"),
       fn:()=>openThunderstorePage(mod)},
     "hr",
     {r:"ᛪ",label:"Remove mod…",danger:true,fn:()=>removeModFlow(mod)},
   ];
+}
+/* Update a single mod from its row menu. The bridge streams the same mods.updateProgress
+   events the bulk path uses, so the row flips updating -> done in place; no server is
+   stopped or restarted, so a new version only loads on the next restart. */
+async function doUpdateOne(mod){
+  if(S.modsUpdating||S.modsScanning) return;
+  S.modsUpdating=true;
+  S.modRowStatus={}; S.modRowStatus[mod.FullName]={phase:"queued"};
+  renderMods();
+  toast("ᚱ "+TT("Updating")+" "+mod.FullName+" …");
+  const r=await rpc("mods.update",{fullName:mod.FullName});
+  S.modsUpdating=false;
+  MOD_UPD=null; S.modRowStatus={}; renderModUpdateProgress();
+  if(r===FAIL||!r){renderMods();return;}
+  logLine(r.Updated?"ok":"warn","[Thunderstore] "+r.mod+" "+(r.Updated?(r.FromVersion+" → "+r.ToVersion):("failed: "+(r.Error||"unknown"))));
+  toast(r.Updated?("ᚱ "+TT("Updated")+" "+r.mod):(r.Error?("ᚦ "+r.mod+" "+TT("failed")):("ᚱ "+r.mod+" "+TT("already up to date"))));
+  await scanMods();
 }
 $("#modTable").addEventListener("contextmenu",e=>{
   if(!Native.available) return;
@@ -1750,31 +1851,54 @@ $("#modTable").addEventListener("contextmenu",e=>{
   ctxOpen(e.clientX,e.clientY,mod.FullName,modRowItems(mod));
 });
 async function removeModFlow(mod){
-  const files=await rpc("mods.findConfigs",{fullName:mod.FullName});
+  /* Config files and the mods that depend on this one, both read locally. Dependents come
+     back ordered so removing them ahead of the mod never orphans one midway. */
+  const [files,deps]=await Promise.all([
+    rpc("mods.findConfigs",{fullName:mod.FullName}),
+    rpc("mods.dependents",{fullName:mod.FullName}),
+  ]);
   if(files===FAIL) return;
   const cfgs=Array.isArray(files)?files:[];
+  const dependents=(deps===FAIL||!Array.isArray(deps))?[]:deps;
+  const depBlock=dependents.length
+    ?`<div class="mbody-note" style="margin-top:10px">These installed mods depend on ${esc(mod.ModName)} and may stop working:</div>`+
+     `<label class="mchk"><input type="checkbox" id="mDepAll"> Also remove these ${dependents.length} mod${dependents.length===1?"":"s"}</label>`+
+     `<div class="mono-list">${dependents.map(d=>esc(d.displayName||d.fullName)).join("<br>")}</div>`
+    :"";
   const body=
     `<div class="mbody-note">The plugin folder is backed up to BepInEx\\.bakaloader-removed, then removed.</div>`+
     (cfgs.length
       ?`<label class="mchk"><input type="checkbox" id="mIncCfg" checked> Also delete ${cfgs.length} config file${cfgs.length===1?"":"s"}:</label><div class="mono-list">${cfgs.map(f=>esc(String(f).split(/[\\/]/).pop())).join("<br>")}</div>`
       :`<div class="mbody-note">No config files found for this mod.</div>`)+
+    depBlock+
     ((S.state?.status==="Running")
       ?`<div class="mwarn">⚠ The server is RUNNING. Removal does not stop it, and locked files may fail. Stopping first is recommended.</div>`:"");
   confirmModal("Remove "+mod.FullName+"?",body,"Remove",m=>{
     const includeConfig=!!m.querySelector("#mIncCfg")?.checked;
-    doRemoveMod(mod,includeConfig);
+    const alsoRemove=!!m.querySelector("#mDepAll")?.checked;
+    doRemoveMod(mod,includeConfig,alsoRemove?dependents:[]);
   });
 }
-async function doRemoveMod(mod,includeConfig){
-  toast("ᛪ Removing "+mod.FullName+"…");
-  const r=await rpc("mods.remove",{fullName:mod.FullName,includeConfig});
-  if(r===FAIL) return;
-  if(r.Removed){
-    toast("ᛪ Removed "+r.mod+" · backup kept");
-    logLine("warn","[BakaLoader] removed mod "+r.mod+(r.BackupDirectory?" (backup: "+r.BackupDirectory+")":""));
-  }else{
-    toast("ᚦ Remove failed · "+(r.Error||"unknown"));
+async function doRemoveMod(mod,includeConfig,dependents){
+  dependents=dependents||[];
+  /* Dependents first (they were ordered for it), then the mod itself. Each reuses the
+     one-mod remove RPC and carries the same delete-config choice. */
+  const targets=dependents.map(d=>d.fullName).concat([mod.FullName]);
+  toast("ᛪ Removing "+(targets.length>1?targets.length+" mods":mod.FullName)+"…");
+  let okN=0,failN=0,lastErr="";
+  for(const fullName of targets){
+    const r=await rpc("mods.remove",{fullName,includeConfig});
+    if(r===FAIL){failN++;continue;}
+    if(r.Removed){
+      okN++;
+      logLine("warn","[BakaLoader] removed mod "+r.mod+(r.BackupDirectory?" (backup: "+r.BackupDirectory+")":""));
+    }else{
+      failN++; lastErr=r.Error||"unknown";
+      logLine("warn","[BakaLoader] remove failed "+fullName+": "+lastErr);
+    }
   }
+  if(failN) toast("ᚦ Removed "+okN+" · "+failN+" failed"+(lastErr?" · "+lastErr:""));
+  else toast("ᛪ Removed "+okN+" mod"+(okN===1?"":"s")+" · backup kept");
   scanMods();
 }
 /* ---- Add a mod from any pasted Thunderstore link ---- */
@@ -2805,6 +2929,19 @@ window.BakaPreview={
   updateFailed:onUpdateFailed,
   launchGuard:(g,cb)=>Promise.resolve(launchGuardModal(g||{outcome:"updatePending"},cb||(()=>{}))),
   launchHold:g=>setLaunchHold(g),
+  /* The bulk mod update seam: seed the queued rows, feed the same mods.updateProgress
+     events the native host feeds, then end the run (what the RPC returning does live). */
+  modUpdateStart:fullNames=>{
+    S.modsUpdating=true; S.modRowStatus={};
+    (fullNames||[]).forEach(fn=>{S.modRowStatus[fn]={phase:"queued"};});
+    MOD_UPD={phase:"checking",total:0,done:0,current:null,index:0};
+    renderModUpdateProgress(); renderMods();
+  },
+  modUpdateProgress:onModUpdateProgress,
+  modUpdateEnd:()=>{
+    S.modsUpdating=false; MOD_UPD=null; S.modRowStatus={};
+    renderModUpdateProgress(); renderMods();
+  },
 };
 /* Dashboard Server card: the waiting update, said once, where the state is said. */
 function renderUpdatePill(){
@@ -5674,6 +5811,9 @@ if(Native.available){
   Native.on("server.updateProgress",onUpdateProgress);
   Native.on("server.updateDone",onUpdateDone);
   Native.on("server.updateFailed",onUpdateFailed);
+  /* The bulk mod update streams per-mod progress the same way. The bar and the row states
+     follow it; the run's own completion (the RPC returning) clears them. */
+  Native.on("mods.updateProgress",onModUpdateProgress);
   Native.on("server.countdown",d=>{if(d?.message&&isActiveProfile(d?.profile))toast("ᚨ "+d.message);});
   Native.on("player.updated",p=>{
     if(!p) return;
@@ -5882,11 +6022,25 @@ if(!Native.available){
   /* A scan is what pairs a plugin with its Thunderstore page, so the preview carries
      the same three fields the real scan adds. The bundled helper ships inside
      BakaLoader and has no page, which is the row that shows the menu item greyed. */
+  /* The scan also carries the "possibly outdated" hint: the game's last update date (one
+     value for every row) against each mod's newest release date. One row reads Yes (its
+     release predates the game update), one reads blank (released after), and one is blank
+     because its release date is unknown. */
+  const demoGameUpdated="2026-09-01T00:00:00Z";
+  const demoModDates={
+    "JereKuusela-WorldEditCommands":"2026-06-15T00:00:00Z", // before the game update -> Yes
+    "shudnal-ExtraSlots":"2026-09-08T00:00:00Z",            // after the game update -> blank
+    "RandyKnapp-EpicLoot":null,                             // release date unknown -> blank
+  };
   S.mods.forEach(m=>{
     const on=!m.Bundled;
     m.thunderstoreNamespace=on?m.Author:null;
     m.thunderstoreName=on?m.ModName:null;
     m.thunderstoreUrl=on?("https://thunderstore.io/c/valheim/p/"+m.Author+"/"+m.ModName+"/"):null;
+    const md=(m.FullName in demoModDates)?demoModDates[m.FullName]:"2026-09-10T00:00:00Z";
+    m.gameUpdatedUtc=on?demoGameUpdated:null;
+    m.modUpdatedUtc=on?md:null;
+    m.possiblyOutdated=!!(m.modUpdatedUtc&&m.gameUpdatedUtc&&new Date(m.modUpdatedUtc)<new Date(m.gameUpdatedUtc));
   });
   S.modsScanned=true; S.lastScan="21:38";
   renderMods();

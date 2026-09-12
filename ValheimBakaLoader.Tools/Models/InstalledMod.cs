@@ -1,3 +1,5 @@
+using System;
+
 namespace ValheimBakaLoader.Tools.Models
 {
     /// <summary>
@@ -22,6 +24,20 @@ namespace ValheimBakaLoader.Tools.Models
 
         /// <summary>Latest available version from Thunderstore, or null if not yet checked / unknown.</summary>
         public string LatestVersion { get; set; }
+
+        /// <summary>
+        /// When the latest Thunderstore release of this mod was published, or null when it
+        /// has not been looked up or the index carried no date. Compared against the game's
+        /// last update to hint whether a mod's newest release predates it.
+        /// </summary>
+        public DateTime? LatestReleasedUtc { get; set; }
+
+        /// <summary>
+        /// Full names ("Author-ModName") of the mods this one declares a dependency on, read
+        /// from the manifest's <c>dependencies</c> array with the trailing version stripped.
+        /// Never null; empty when the manifest declared none or could not be read.
+        /// </summary>
+        public string[] Dependencies { get; set; } = Array.Empty<string>();
 
         /// <summary>Optional Thunderstore dependency string ("Author-Mod-1.0.0"), if known.</summary>
         public string DependencyString { get; set; }

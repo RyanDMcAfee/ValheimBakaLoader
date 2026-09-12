@@ -39,7 +39,7 @@
       <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Discord</span><span class="norse">Herald</span></div>
       <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Statistics</span><span class="norse">Skald</span></div>
       <div class="side-foot">
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.2</span></span>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.3</span></span>
         <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
@@ -235,6 +235,7 @@
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>
             <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
           </div>
+          <div class="modprog" id="modUpdProg" role="status" aria-live="polite"></div>
           <div class="subval" id="modsPluginNote" style="display:none;margin:0 0 12px;font-family:inherit;font-size:11.5px;line-height:1.55;letter-spacing:.3px;color:var(--warn,#e0a35c)"></div>
           <div class="card" style="padding:0"><div style="height:6px"></div>
             <table>
@@ -243,6 +244,7 @@
                 <th class="sortable" data-sort="installed" title="Sort by installed version">Installed<span class="sortmark"></span></th>
                 <th class="sortable" data-sort="latest" title="Sort by latest version">Latest<span class="sortmark"></span></th>
                 <th class="sortable" data-sort="status" title="Sort by update status">Status<span class="sortmark"></span></th>
+                <th class="mod-po" id="thPossiblyOutdated" title="The newest version on Thunderstore came out before Valheim last updated, so it may not account for the current game version. It is a hint, not proof the mod is broken.">Possibly outdated</th>
               </tr></thead>
               <tbody id="modTable"></tbody>
             </table>
@@ -586,7 +588,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.2</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.3</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>
