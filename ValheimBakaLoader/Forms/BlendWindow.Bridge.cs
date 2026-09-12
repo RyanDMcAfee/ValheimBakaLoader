@@ -1233,6 +1233,28 @@ namespace ValheimBakaLoader.Forms
             => WorldStore.IsBackupShapedFor(file, world);
 
         /// <summary>
+        /// Turns a caller-supplied world-modifier map into the validated set BakaLoader stores.
+        /// Every dial is checked against the game's own vocabulary (<see cref="WorldGen.Modifiers"/>);
+        /// a missing, empty, or "normal" value means "game default" and drops the key so no
+        /// -modifier argument is ever emitted for it, while an unknown dial or an out-of-range
+        /// value throws with a message the UI can show. Both realm creation and Save Config run
+        /// through this one gate so the two can never validate the same thing differently.
+        /// </summary>
+        public static Dictionary<string, string> ParseWorldModifiers(JObject raw)
+        {
+            var modifiers = new Dictionary<string, string>();
+            foreach (var prop in raw ?? new JObject())
+            {
+                var value = prop.Value?.Value<string>();
+                if (string.IsNullOrWhiteSpace(value) || value == "normal") continue;
+                if (!WorldGen.Modifiers.TryGetValue(prop.Key, out var allowed) || !allowed.Contains(value))
+                    throw new ArgumentException($"'{value}' is not a valid {prop.Key} setting");
+                modifiers[prop.Key] = value;
+            }
+            return modifiers;
+        }
+
+        /// <summary>
         /// The restore safety layer's name. Local time on purpose: the game names its own
         /// restore layers with the local clock, BakaLoader's pre-update layers are local, and
         /// the Barrow reads all of them back as a wall clock.
@@ -2270,6 +2292,11 @@ namespace ValheimBakaLoader.Forms
                         .Any(x => string.Equals(x.ProfileName, name, StringComparison.OrdinalIgnoreCase)))
                     throw new InvalidOperationException($"A server named '{name}' already exists. Pick a different name.");
 
+                // Optional world-generation dials for the NEW world, validated up front (shared
+                // with worldgen.save) so an invalid value is refused before any install is
+                // provisioned. Empty / Normal dials drop out, leaving an empty map.
+                var worldModifiers = ParseWorldModifiers(p["modifiers"] as JObject);
+
                 var isolateInstall = p.Value<bool?>("isolateInstall") ?? true;
                 var seedMods = p.Value<bool?>("seedMods") ?? true;
                 var isolateSaveFolder = p.Value<bool?>("isolateSaveFolder") ?? true;
@@ -2338,6 +2365,21 @@ namespace ValheimBakaLoader.Forms
                 }
 
                 ServerPrefsProvider.SavePreferences(created);
+
+                // Persist the chosen difficulty to the NEW world so it is born this way on its
+                // very first launch, rather than starting Normal until the host opens Save Config.
+                // Keyed by world name exactly like worldgen.save, under the same gated store.
+                if (worldModifiers.Count > 0)
+                {
+                    var worldPrefs = WorldPrefsProvider.LoadPreferences(world)
+                        ?? new WorldPreferences { WorldName = world };
+                    worldPrefs.Preset = null; // individual dials replace any preset (mutually exclusive)
+                    worldPrefs.Modifiers = worldModifiers;
+                    WorldPrefsProvider.SavePreferences(worldPrefs);
+                    Logger.Information("New world '{0}' created with modifiers: {1}", world,
+                        string.Join(", ", worldModifiers.Select(kv => kv.Key + "=" + kv.Value)));
+                }
+
                 CurrentProfile = created.ProfileName;   // switch the UI to the new server
                 PostEvent("servers.changed", BuildServersList());
                 return created;
@@ -3244,16 +3286,8 @@ namespace ValheimBakaLoader.Forms
 
                 // Every dial is validated against the game's own vocabulary; a missing,
                 // empty, or "normal" value means "game default" and drops the key so no
-                // -modifier arg is emitted for it.
-                var modifiers = new Dictionary<string, string>();
-                foreach (var prop in (p["modifiers"] as JObject) ?? new JObject())
-                {
-                    var value = prop.Value?.Value<string>();
-                    if (string.IsNullOrWhiteSpace(value) || value == "normal") continue;
-                    if (!WorldGen.Modifiers.TryGetValue(prop.Key, out var allowed) || !allowed.Contains(value))
-                        throw new ArgumentException($"'{value}' is not a valid {prop.Key} setting");
-                    modifiers[prop.Key] = value;
-                }
+                // -modifier arg is emitted for it. Shared with realm creation.
+                var modifiers = ParseWorldModifiers(p["modifiers"] as JObject);
 
                 var prefs = WorldPrefsProvider.LoadPreferences(world) ?? new WorldPreferences { WorldName = world };
                 prefs.Preset = null; // individual dials replace any preset (mutually exclusive)
@@ -5188,17 +5222,30 @@ namespace ValheimBakaLoader.Forms
 
         public static object BuildModDto(Tools.Models.InstalledMod mod) => BuildModDto(mod, null);
 
+        public static object BuildModDto(Tools.Models.InstalledMod mod, DateTime? gameUpdatedUtc) =>
+            BuildModDto(mod, gameUpdatedUtc, DateTime.UtcNow);
+
+        /// <summary>
+        /// The window after a Valheim update during which no mod is flagged possibly outdated,
+        /// so authors have time to publish before the whole list lights up.
+        /// </summary>
+        public static readonly TimeSpan PossiblyOutdatedGrace = TimeSpan.FromDays(7);
+
         /// <summary>
         /// Builds the row a mod scan hands the UI. <paramref name="gameUpdatedUtc"/> is the
-        /// game's last update time (same for every row); with it and the mod's latest release
-        /// date the "possibly outdated" hint is computed: the newest Thunderstore release came
-        /// out strictly before the game last updated. Either date unknown leaves it false.
+        /// game's last update time (same for every row). The "possibly outdated" hint reads
+        /// true only when the mod's newest Thunderstore release came out before the game last
+        /// updated AND that update is itself older than <see cref="PossiblyOutdatedGrace"/>, so
+        /// the column stays quiet for the first week after a patch instead of flagging every
+        /// mod at once. Either date unknown leaves it false.
         /// </summary>
-        public static object BuildModDto(Tools.Models.InstalledMod mod, DateTime? gameUpdatedUtc)
+        public static object BuildModDto(Tools.Models.InstalledMod mod, DateTime? gameUpdatedUtc, DateTime nowUtc)
         {
             var modUpdatedUtc = mod.LatestReleasedUtc?.ToUniversalTime();
             var gameUtc = gameUpdatedUtc?.ToUniversalTime();
-            var possiblyOutdated = modUpdatedUtc != null && gameUtc != null && modUpdatedUtc < gameUtc;
+            var patchIsOldEnough = gameUtc != null && gameUtc < nowUtc.ToUniversalTime() - PossiblyOutdatedGrace;
+            var possiblyOutdated = modUpdatedUtc != null && gameUtc != null
+                && patchIsOldEnough && modUpdatedUtc < gameUtc;
 
             return new
             {

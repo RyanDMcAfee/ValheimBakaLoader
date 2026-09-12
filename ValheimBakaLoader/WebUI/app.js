@@ -59,6 +59,12 @@ const S={
   lastSaveAt:null,        // Date of the last observed world save
   net:{conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]}, // parsed "Connections N ZDOS:… sent:… recv:…" server stats
   servers:[],             // multi-server chip strip: [{name,status,running,playersOnline,active}]
+  /* The world-generation dials the host is editing, kept out of the DOM so a re-render never
+     drops an unsaved pick. {world, mods:{combat,deathpenalty,...}} for the loaded world, or
+     null before any world is loaded. mods:{} means "the host chose Normal for everything",
+     which is different from "the dials were never populated for this world" (world mismatch
+     or null) - only the former is allowed to clear a stored difficulty on save. */
+  worldMods:null,
   crashed:false,          // the last stop was a crash, and nothing has started since
   journal:{},             // player key -> {playSec,deaths,sessions} from the Skald journal
   vikSort:{col:null,dir:0}, // roster sort: name|status|platform|session|playtime|seen|deaths|pos
@@ -885,15 +891,11 @@ async function switchServer(name){
    so a second server is genuinely separate rather than a shadow of the first. The
    heavy lifting (provisioning the isolated install) happens in servers.create. */
 async function addServerProfile(){
-  if(!Native.available){
-    // Mock/preview: keep the old lightweight add so the UI is explorable offline.
-    promptModal(TT("Name the new realm"),"e.g. Midgard Two",name=>{
-      name=(name||"").trim(); if(!name) return;
-      S.servers=[...(S.servers||[]),{name,status:"Stopped",running:false,playersOnline:0,active:false}];
-      renderServerChips();
-    });
-    return;
-  }
+  // The realm-forge dials for a brand-new world: their own ids so they never collide with the
+  // settings-page fMod* dials. Every dial defaults to Normal ("").
+  const wsModsHtml=Object.entries(WORLDGEN).map(([key,def])=>
+    `<div class="field"><label>${esc(TT(def.label))}</label>`+
+      `<select id="wsMod_${key}">${wgOptions(key,"")}</select></div>`).join("");
   const m=modalOpen(
     `<div class="mtitle">${esc(TT("Found a new realm"))}</div>`+
     `<div class="mbody" style="display:flex;flex-direction:column;gap:2px">`+
@@ -905,6 +907,8 @@ async function addServerProfile(){
       `<div class="field"><label>${esc(TT("World seed"))}</label>`+
         `<input type="text" id="wsWorldSeed" placeholder="${esc(TT("random (leave blank)"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote">${esc(TT("only for a brand-new world · fixed forever once created"))}</div></div>`+
+      `<div class="fieldnote" style="margin:2px 0 0">${esc(TT("World difficulty · leave on Normal for the standard game, or set it now so the realm is born this way on its first launch"))}</div>`+
+      wsModsHtml+
       `<div class="togglerow" title="${esc(TT(
         "ON: this realm gets its own BepInEx: its own mods, mod configs, and cache, fully independent of your other servers. "+
         "Example: run Epic Loot here while your main server stays vanilla, or trial a mod update without risking the live world. "+
@@ -941,11 +945,22 @@ async function addServerProfile(){
     if(t===iso){ if(!on(iso)){seed.classList.remove("on");seed.style.opacity=".4";} else {seed.style.opacity="";} }
   }));
 
+  // Read the difficulty dials back into a modifiers map (Normal dropped) at forge time.
+  const collectWsMods=()=>{
+    const mods={};
+    for(const key of Object.keys(WORLDGEN)){const v=m.querySelector("#wsMod_"+key).value;if(v)mods[key]=v;}
+    return mods;
+  };
+
   let ports=null;
-  rpc("servers.suggestPort",{}).then(r=>{
-    if(r&&r!==FAIL){ports=r; portsN.textContent=TT("will claim game port ")+r.gamePort+" (+"+(r.gamePort+1)+") · RCON "+r.rconPort;}
-    else portsN.textContent=TT("ports will be auto-assigned");
-  });
+  if(Native.available){
+    rpc("servers.suggestPort",{}).then(r=>{
+      if(r&&r!==FAIL){ports=r; portsN.textContent=TT("will claim game port ")+r.gamePort+" (+"+(r.gamePort+1)+") · RCON "+r.rconPort;}
+      else portsN.textContent=TT("ports will be auto-assigned");
+    });
+  }else{
+    portsN.textContent=TT("ports will be auto-assigned");
+  }
 
   m.querySelector("#wsCancel").addEventListener("click",modalClose);
   okB.addEventListener("click",async()=>{
@@ -954,6 +969,15 @@ async function addServerProfile(){
     if((S.servers||[]).some(s=>String(s.name).toLowerCase()===name.toLowerCase())){
       statusN.textContent=TT("A realm by that name already burns."); return;
     }
+    const modifiers=collectWsMods();
+    if(!Native.available){
+      // Mock/preview: no native host to forge against, so add a local chip so the strip
+      // stays explorable offline. The chosen difficulty is cosmetic here (nothing persists).
+      S.servers=[...(S.servers||[]),{name,status:"Stopped",running:false,playersOnline:0,active:false}];
+      renderServerChips();
+      modalClose();
+      return;
+    }
     okB.disabled=true; okB.textContent=TT("Forging…");
     statusN.textContent=on(iso)?TT("provisioning a separate install (this can take a moment)…"):TT("saving…");
     const created=await rpc("servers.create",{
@@ -961,6 +985,7 @@ async function addServerProfile(){
       worldSeed:m.querySelector("#wsWorldSeed").value.trim(),
       isolateInstall:on(iso), seedMods:on(iso)&&on(seed), isolateSaveFolder:on(saveIso),
       port:ports?ports.gamePort:null, rconPort:ports?ports.rconPort:null,
+      modifiers,
     });
     if(created===FAIL||!created){
       okB.disabled=false; okB.textContent=TT("Forge realm");
@@ -1635,7 +1660,7 @@ const MOD_DESC_FIRST=new Set(["installed","latest"]);
 function renderModSortMarks(){renderSortMarks("#page-mods th.sortable",S.modSort,MOD_DESC_FIRST);}
 wireSort("#page-mods th.sortable",S.modSort,()=>renderMods());
 /* The "Possibly outdated" hint, said plainly: a nudge to check, never a verdict. */
-const MOD_PO_TIP="The newest version on Thunderstore came out before Valheim last updated, so it may not account for the current game version. It is a hint, not proof the mod is broken.";
+const MOD_PO_TIP="The newest version on Thunderstore came out before Valheim last updated, and that update is at least a week old, so the mod may not account for the current game version. The column stays blank for the first week after a Valheim update so authors can catch up. It is a hint, not proof the mod is broken.";
 const MOD_PO_TIP_UNKNOWN="Valheim's last update date could not be read for this server, so this hint is left blank for every mod.";
 /* The transient status a row shows while a bulk update runs. Cleared by the fresh scan
    that follows the run, so it never lingers into the resting table. */
@@ -4244,15 +4269,38 @@ const WORLDGEN={
 };
 const wgOptions=(key,val)=>WORLDGEN[key].opts.map(([v,l])=>
   `<option value="${v}"${v===val?" selected":""}>${esc(l)}</option>`).join("");
+/* Paint the five dials from a modifiers map (missing key == Normal == ""). */
+function applyWorldModDials(mods){
+  mods=mods||{};
+  for(const [key,def] of Object.entries(WORLDGEN))
+    $("#"+def.sel).innerHTML=wgOptions(key,mods[key]||"");
+}
+/* Read the five dials back into a modifiers map, dropping Normal (""). */
+function scrapeWorldModDials(){
+  const mods={};
+  for(const [key,def] of Object.entries(WORLDGEN)){const v=$("#"+def.sel).value;if(v)mods[key]=v;}
+  return mods;
+}
+let _worldModsSeq=0;
+/* Render the difficulty dials for the selected world. The host's pick lives in S.worldMods,
+   NOT in the DOM, so a re-render (an event, a Save, a helm turn) never discards an unsaved
+   edit: while S.worldMods already holds THIS world, its values are re-painted as-is. Only a
+   genuine change of world reloads the stored values from disk. */
 async function renderWorldMods(){
   const world=$("#fWorld").value||S.prefs?.WorldName||"";
+  // Same world we already hold: keep the host's (possibly unsaved) dials, no reload, no clobber.
+  if(S.worldMods&&S.worldMods.world===world){ applyWorldModDials(S.worldMods.mods); return; }
+  // A different world (or first load): pull its stored values fresh, guarded so a slow
+  // lookup for an older world can never overwrite a newer one.
+  const seq=++_worldModsSeq;
   let cur={};
   if(Native.available&&world){
     const r=await rpc("worldgen.get",{world});
+    if(seq!==_worldModsSeq) return; // a newer world selection superseded this lookup
     if(r!==FAIL&&r?.modifiers) cur=r.modifiers;
   }
-  for(const [key,def] of Object.entries(WORLDGEN))
-    $("#"+def.sel).innerHTML=wgOptions(key,cur[key]||"");
+  S.worldMods={world,mods:{...cur}};
+  applyWorldModDials(cur);
 }
 /* World seed: read-only identity from the world's .fwl. A seed is fixed at world
    creation and can NEVER change (the field is locked); a world with no .fwl yet
@@ -4277,6 +4325,13 @@ $("#copySeed").addEventListener("click",()=>{
   toast(TT("ᛟ seed copied · ")+v);
 });
 $("#fWorld").addEventListener("change",()=>{renderWorldMods();renderWorldSeed();});
+/* A dial the host turns updates the intended state for the selected world at once, so the
+   value survives any later re-render and Save Config sends exactly what is on screen. */
+for(const def of Object.values(WORLDGEN))
+  $("#"+def.sel).addEventListener("change",()=>{
+    const world=$("#fWorld").value||S.prefs?.WorldName||"";
+    S.worldMods={world,mods:scrapeWorldModDials()};
+  });
 renderWorldMods(); // seed the dials with Normal defaults (both modes)
 renderWorldSeed();
 /* Max players: server-wide, not per-world. 10 = vanilla cap (no plugin); above 10 the
@@ -4317,10 +4372,14 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   };
   const r=await rpc("profiles.save",{name,prefs});
   if(r===FAIL) return;
-  // world dials ride along with Save Config, keyed to the selected world
-  if(prefs.WorldName){
-    const modifiers={};
-    for(const [key,def] of Object.entries(WORLDGEN)){const v=$("#"+def.sel).value;if(v)modifiers[key]=v;}
+  // World dials ride along with Save Config, keyed to the selected world. Only write them
+  // when S.worldMods actually holds THIS world's dials: that way an unpopulated or
+  // stale-world dial set can never wipe a stored difficulty, while an intentional all-Normal
+  // choice (mods:{}) still clears it. The dials are scraped once more here so the on-screen
+  // value is authoritative even if a change event was missed.
+  if(prefs.WorldName&&S.worldMods&&S.worldMods.world===prefs.WorldName){
+    const modifiers=scrapeWorldModDials();
+    S.worldMods.mods=modifiers;
     await rpc("worldgen.save",{world:prefs.WorldName,modifiers});
   }
   // max players rides along too - >10 auto-installs the bundled max-players plugin
