@@ -35,7 +35,10 @@ namespace ValheimBakaLoader.Properties
         internal const string UserPrefsFilePathV2 = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\userprefs.json";
 
         // Remote endpoints and update cadence.
-        internal const string UpdateCheckInterval = "1.00:00:00";
+        // How long an automatic check waits before it asks GitHub again. The app now keeps
+        // looking while it runs rather than only at launch, so this is the floor that keeps a
+        // machine left on for a week to four requests a day instead of one per timer tick.
+        internal const string UpdateCheckInterval = "06:00:00";
         internal const string UrlDotnetDownload = "https://dotnet.microsoft.com/download/dotnet/6.0";
         internal const string UrlExternalIpLookup = "https://api.ipify.org?format=json";
         internal const string UrlGithubApi = "https://api.github.com/repos/RyanDMcAfee/ValheimBakaLoader";

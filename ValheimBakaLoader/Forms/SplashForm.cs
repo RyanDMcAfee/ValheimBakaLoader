@@ -42,6 +42,12 @@ namespace ValheimBakaLoader.Forms
         // (no server has been auto-started/adopted yet, so nothing gets killed).
         private volatile bool AppUpdateStaged;
 
+        // Set when a self-update staged while the app was already open has asked every window
+        // to close. The watchdog starts writing over the install whether this process has gone
+        // or not, so from that point the exit cannot rest on this form happening to be the one
+        // that ends the message loop.
+        private volatile bool SelfUpdateExitRequested;
+
         private readonly IFormProvider FormProvider;
         private readonly IIpAddressProvider IpAddressProvider;
         private readonly ISoftwareUpdateProvider SoftwareUpdateProvider;
@@ -155,6 +161,18 @@ namespace ValheimBakaLoader.Forms
             CreateNewMainWindow(fresh.ProfileName, false);
         }
 
+        /// <summary>
+        /// A newer BakaLoader has been staged and every window has been asked to close, so this
+        /// process is meant to end. Said here because this form is the one that outlives the
+        /// windows: it is the application's main form, it stays alive hidden behind them, and it
+        /// is where "the last one has gone" is noticed.
+        /// </summary>
+        public void RequestExitForSelfUpdate()
+        {
+            SelfUpdateExitRequested = true;
+            Logger.Information("A staged BakaLoader update asked the application to close.");
+        }
+
         private void OnMainWindowClosed(object sender, FormClosedEventArgs e)
         {
             if (InvokeRequired)
@@ -178,6 +196,16 @@ namespace ValheimBakaLoader.Forms
 
             Logger.Debug("All windows closed, shutting down application");
             Close();
+
+            // Closing this form ends the message loop, because it is the form the application
+            // was run on. A staged update gets the explicit end as well: the watchdog is already
+            // counting down to writing over the install, so "the loop probably ends here" is not
+            // a good enough answer for the one case where the process staying up corrupts it.
+            if (SelfUpdateExitRequested)
+            {
+                Logger.Information("The staged update closed every window; ending the application.");
+                Application.Exit();
+            }
         }
 
         #endregion
@@ -295,6 +323,11 @@ namespace ValheimBakaLoader.Forms
                 Close();
                 return;
             }
+
+            // From here the app is open for as long as the host leaves it open, which on a server
+            // box is weeks. The launch check alone would mean a release that ships tomorrow is
+            // never mentioned, so the quiet re-check starts now and runs on its own throttle.
+            SoftwareUpdateProvider.StartPeriodicChecks();
 
             var startMinimized = UserPrefsProvider.LoadPreferences().StartMinimized;
             foreach (var window in MainWindows)

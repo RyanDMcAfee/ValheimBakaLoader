@@ -26,7 +26,7 @@ namespace ValheimBakaLoader.Forms
     ///   C# -> JS RPC reply:        { id: 1, ok: true, result: ... } | { id, ok: false, error }
     ///   C# -> JS event push:       { event: "...", data: ... }
     /// </summary>
-    public partial class BlendWindow : Form, IMainAppWindow
+    public partial class BlendWindow : Form, IMainAppWindow, ISelfUpdateClosable
     {
         private readonly ILogger Logger;
 

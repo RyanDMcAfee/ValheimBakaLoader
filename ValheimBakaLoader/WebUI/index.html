@@ -39,7 +39,9 @@
       <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Discord</span><span class="norse">Herald</span></div>
       <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Statistics</span><span class="norse">Skald</span></div>
       <div class="side-foot">
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.6</span></span>
+        <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
+             (glowing, clickable) while an update is waiting. app.js owns both states. -->
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.7</span></span>
         <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
@@ -101,6 +103,10 @@
                 <!-- Says once, where the state is said, that Steam has a server update
                      waiting. Disabled while the server is up: an update needs it stopped. -->
                 <button type="button" class="pill amber updpill" id="hUpdPill" style="display:none">Update available</button>
+                <!-- The app's own new version, said beside the server's so neither is mistaken
+                     for the other: this one is ember and names the version, the Valheim one is
+                     amber and does not. app.js fills the text and lights the embers. -->
+                <button type="button" class="pill ember updpill" id="hAppUpdPill" style="display:none">BakaLoader ready</button>
                 <button class="btn btn-ghost btn-sm" id="stokeBtn" title="Stoke the hearth: restarts the server, warning players in-game first">Restart</button>
                 <button class="btn btn-cold btn-sm" id="douseBtn" title="Douse the hearth: stops the server">Stop</button>
               </div>
@@ -589,7 +595,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.6</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.7</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>

@@ -840,6 +840,19 @@ namespace ValheimBakaLoader.Game
         public bool LaunchRetryArmed => LaunchRetryCts != null;
 
         /// <summary>
+        /// True when this server is on its way back up even though no process is running yet.
+        /// <para>
+        /// Three shapes land here. A restart between the old process exiting and the relaunch
+        /// firing, which is where a crash with auto restart on sits: the status is already
+        /// Stopped and the relaunch is scheduled. A launch the guard has not answered yet, which
+        /// has no status of its own. And a held automatic launch whose retry is armed, which will
+        /// ask again on its own. Anything deciding "is this server finished with" has to count
+        /// all three, or it reads a Stopped server a moment before it starts itself again.
+        /// </para>
+        /// </summary>
+        public bool RelaunchPending => IsRestarting || LaunchPending || LaunchRetryArmed;
+
+        /// <summary>
         /// The single door every launch goes through. With no guard wired the process starts
         /// synchronously exactly as it always did; with one, the guard is asked first and the
         /// launch happens (or does not) once it answers.

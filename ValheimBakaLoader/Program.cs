@@ -95,6 +95,11 @@ namespace ValheimBakaLoader
             services.AddSingleton<IStartupArgsProvider>(new StartupArgsProvider(args));
             services.AddTransient<ValheimServer>();
 
+            // Every live server session in the app, across every window. One singleton, because
+            // the question it answers (may BakaLoader replace itself right now?) is about the
+            // process, and a per-window answer misses the world running in the window next door.
+            services.AddSingleton<IServerSessionRegistry, ServerSessionRegistry>();
+
             // Windows: one splash for the app, one BlendWindow per server profile.
             services.AddSingleton<IFormProvider, FormProvider>();
             services.AddSingleton<SplashForm>();

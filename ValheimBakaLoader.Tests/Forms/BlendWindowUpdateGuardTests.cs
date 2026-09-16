@@ -120,5 +120,78 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         private static DateTime Now => new(2026, 9, 10, 12, 0, 0, DateTimeKind.Utc);
+
+        // ---------------------------------------------------------------- the self-update close
+
+        /// <summary>
+        /// A staged self-update has to close the WHOLE application, and both of the two paths
+        /// that stage one have to do it.
+        /// <para>
+        /// Staging arms a watchdog that waits two minutes for this process to exit and then
+        /// writes the new release over the install whether it has exited or not. BakaLoader opens
+        /// one window per auto-start profile and stays up while any of them remain, so a caller
+        /// that closed its own window left the process running: the swap went over a live install
+        /// and then failed on the locked exe, leaving it half old and half new, with no relaunch
+        /// and nothing said. Both callers now go through the application-wide close.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Both_self_update_callers_close_every_window_and_not_just_their_own()
+        {
+            var source = File.ReadAllText(BridgeSourcePath());
+
+            var rpc = Slice(source, "RegisterRpc(\"app.selfUpdateNow\"", "return new { ok = true };");
+            Assert.True(ClosesEveryWindow(rpc),
+                "app.selfUpdateNow closes only its own window, so the app stays up under the watchdog");
+
+            var hook = Slice(source, "session.Server.CheckForAppUpdateOnRestart = async () =>", "return true;");
+            Assert.True(ClosesEveryWindow(hook),
+                "the restart hook closes only its own window, so the app stays up under the watchdog");
+
+            // And the application-wide close is the thing that reaches every window and then
+            // makes sure the process really ends.
+            var close = Slice(source, "private void RunSelfUpdateShutdown()", "}");
+            Assert.Contains("ShutDownAllWindowsForSelfUpdate", close);
+            Assert.Contains("OpenServerWindows()", close);
+            Assert.Contains("RequestExitForSelfUpdate", close);
+            Assert.Contains("Application.Exit", close);
+        }
+
+        /// <summary>
+        /// The same check against the shape this replaced, so the guard is known to catch it. The
+        /// text below is what both callers used to say, verbatim: one window, closed on its own,
+        /// while the other windows kept the process alive right through the file swap.
+        /// </summary>
+        [Fact]
+        public void The_guard_turns_down_the_single_window_close_it_replaced()
+        {
+            const string preFix = @"
+                // An update is staged; close the app so the watchdog can take over.
+                BeginInvoke(new Action(ShutDownAllServersThenClose));
+                return new { ok = true };";
+
+            Assert.False(ClosesEveryWindow(preFix));
+        }
+
+        /// <summary>
+        /// Whether one self-update caller closes the whole application or only the window it was
+        /// clicked in. Written once so the live source and the shape it replaced are held to the
+        /// same rule.
+        /// </summary>
+        private static bool ClosesEveryWindow(string callerBody)
+            => callerBody.Contains("CloseEveryWindowForSelfUpdate", StringComparison.Ordinal)
+                && !callerBody.Contains("ShutDownAllServersThenClose", StringComparison.Ordinal);
+
+        /// <summary>The source between one marker and the first end marker after it.</summary>
+        private static string Slice(string source, string from, string to)
+        {
+            var start = source.IndexOf(from, StringComparison.Ordinal);
+            Assert.True(start >= 0, "BlendWindow.Bridge.cs no longer contains " + from);
+
+            var end = source.IndexOf(to, start, StringComparison.Ordinal);
+            Assert.True(end > start, "BlendWindow.Bridge.cs no longer contains " + to + " after " + from);
+
+            return source[start..(end + to.Length)];
+        }
     }
 }

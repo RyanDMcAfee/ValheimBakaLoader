@@ -48,6 +48,7 @@ namespace ValheimBakaLoader.Forms
         private IAnalyticsService Analytics;
         private ISoftwareUpdateProvider SoftwareUpdates;
         private IServerUpdateService ServerUpdates;
+        private IServerSessionRegistry SessionRegistry;
         private IApplicationLogger AppLogger;
 
         // One cancellation source per profile with an update in flight. It is the app's own
@@ -176,6 +177,7 @@ namespace ValheimBakaLoader.Forms
             Analytics = serviceProvider.GetRequiredService<IAnalyticsService>();
             SoftwareUpdates = serviceProvider.GetRequiredService<ISoftwareUpdateProvider>();
             ServerUpdates = serviceProvider.GetRequiredService<IServerUpdateService>();
+            SessionRegistry = serviceProvider.GetRequiredService<IServerSessionRegistry>();
             AppLogger = appLogger;
 
             // The Herald: single self-editing Discord status post (gated on prefs inside the service).
@@ -227,8 +229,59 @@ namespace ValheimBakaLoader.Forms
                 WireLaunchGuard(session);
 
                 Sessions[profileName] = session;
+
+                // And into the application-wide registry, which is what the self update reads.
+                // A window only ever sees its own profiles; the update closes every window.
+                SessionRegistry?.Register(session);
                 return session;
             }
+        }
+
+        /// <summary>
+        /// Every session in the whole application: the registry's, plus this window's own in
+        /// case one was created before the registry was resolved. The union can only ever
+        /// over-report, and over-reporting here means an update waits when it need not have,
+        /// while under-reporting means a live world goes down under a file swap.
+        /// </summary>
+        private IReadOnlyCollection<ServerSession> AllSessions()
+        {
+            var mine = Sessions.Values.ToList();
+
+            var registered = SessionRegistry?.All;
+            if (registered == null || registered.Count == 0) return mine;
+
+            var all = new List<ServerSession>(registered);
+            foreach (var session in mine)
+            {
+                if (!registered.Contains(session)) all.Add(session);
+            }
+
+            return all;
+        }
+
+        /// <summary>
+        /// Drops a session from the application-wide registry. Called wherever this window is
+        /// finished with one: a removed profile, a renamed one, and the window itself closing.
+        /// </summary>
+        private void ForgetSession(ServerSession session) => SessionRegistry?.Unregister(session);
+
+        /// <summary>
+        /// The window is gone, so its sessions are nobody's business any more. Leaving them in
+        /// the registry would mean a closed window's last status pinned the self update shut for
+        /// the rest of the process.
+        /// </summary>
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            try
+            {
+                foreach (var session in Sessions.Values) ForgetSession(session);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not drop this window's sessions from the registry");
+            }
+
+            base.OnFormClosed(e);
         }
 
         /// <summary>
@@ -755,6 +808,69 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
+        /// <summary>
+        /// The self update's way in to this window: stop whatever it is holding and close, on
+        /// this window's own UI thread. Posted rather than run inline, exactly as the close
+        /// always was, because the caller is either an RPC whose answer still has to reach the
+        /// page or a restart hook that has to return before the app goes down.
+        /// </summary>
+        public void BeginShutDownAndClose()
+        {
+            if (IsHandleCreated)
+            {
+                BeginInvoke(new Action(ShutDownAllServersThenClose));
+                return;
+            }
+
+            // No handle means no UI thread of its own to post to. A window in that state has
+            // never been shown and holds no running server, so closing it directly is safe and
+            // is better than leaving it behind to hold the process open.
+            ShutDownAllServersThenClose();
+        }
+
+        /// <summary>
+        /// A newer BakaLoader has been staged, so the whole application closes: every window,
+        /// not just this one.
+        /// <para>
+        /// The watchdog that swaps the files is launched the moment staging succeeds and waits
+        /// two minutes for this process to exit before it starts writing. BakaLoader opens one
+        /// window per auto-start profile and stays up while any of them remain, so closing the
+        /// window the host clicked in left the process running, and the swap went over a live
+        /// install and then failed on the locked exe: half old, half new, and no relaunch.
+        /// </para>
+        /// </summary>
+        private void CloseEveryWindowForSelfUpdate()
+        {
+            // Posted onto the UI thread, which is where the window list lives: one caller is an
+            // RPC whose answer still has to reach the page, and the other is a restart hook that
+            // runs on whichever thread the server exited on.
+            if (IsHandleCreated)
+            {
+                BeginInvoke(new Action(RunSelfUpdateShutdown));
+                return;
+            }
+
+            RunSelfUpdateShutdown();
+        }
+
+        /// <summary>The shutdown itself, on the UI thread. Idempotent: the second ask is a no-op.</summary>
+        private void RunSelfUpdateShutdown()
+        {
+            AppShutdown.Current.ShutDownAllWindowsForSelfUpdate(
+                OpenServerWindows(),
+                () => (ServiceProvider?.GetService(typeof(SplashForm)) as SplashForm)?.RequestExitForSelfUpdate(),
+                Application.Exit,
+                (ex, what) => Logger.Warning(ex, what));
+        }
+
+        /// <summary>
+        /// Every open window that can hold a live server, this one included. Read off the
+        /// application's own list rather than off anything a window keeps, so a window opened
+        /// by a path nobody remembers is still asked to close.
+        /// </summary>
+        private static IReadOnlyList<ISelfUpdateClosable> OpenServerWindows()
+            => Application.OpenForms.OfType<ISelfUpdateClosable>().ToList();
+
         #endregion
 
         /// <summary>StartProfile's saved preferences, or defaults when the profile is missing.</summary>
@@ -785,20 +901,29 @@ namespace ValheimBakaLoader.Forms
 
                 // Never self-update while ANOTHER server is still running: swapping the app
                 // files closes every session, not just the one that happens to be restarting.
-                var othersLive = Sessions.Values.Any(s =>
-                    !ReferenceEquals(s, session) && s.Server.Status != ServerStatus.Stopped);
+                // Every session in the application, not merely this window's: BakaLoader opens
+                // one window per auto-start profile, and the swap closes all of them.
+                var othersLive = UpdateGate.AnyServerBusy(
+                    AllSessions().Where(s => !ReferenceEquals(s, session)));
                 if (othersLive) return false;
+
+                // Same reason a steamcmd run blocks the button: closing now abandons a rewrite
+                // of an install this app is holding open, and a half written install cannot be
+                // undone.
+                if (AnyServerUpdateRunning()) return false;
 
                 var staged = await AppUpdateService.CheckAndStageUpdateAsync();
                 if (!staged) return false;
 
-                // An update is staged; close the app so the watchdog can take over. Marshal to
-                // the UI thread and defer the close so this hook returns first and the restart
-                // is cleanly abandoned. Go through the graceful shutdown path: it saves the
-                // world and stops the server before closing (a bare Close() would be cancelled
-                // by the close guard - unattended dialog - and the old behavior let the job
-                // object hard-kill the server with no final save).
-                BeginInvoke(new Action(ShutDownAllServersThenClose));
+                // An update is staged; close the app so the watchdog can take over. Every window
+                // goes, not just this one: the watchdog is already counting down to writing over
+                // the install, and a second window left open keeps the process alive right
+                // through that. The ask is deferred so this hook returns first and the restart
+                // is cleanly abandoned, and each window goes through its own graceful shutdown
+                // path, which saves the world and stops the server before closing (a bare
+                // Close() would be cancelled by the close guard, unattended dialog and all, and
+                // the old behavior let the job object hard-kill the server with no final save).
+                CloseEveryWindowForSelfUpdate();
                 return true;
             };
         }
@@ -1578,6 +1703,189 @@ namespace ValheimBakaLoader.Forms
             catch (Exception ex) { Logger.Warning(ex, "Could not replay the available app update"); }
         }
 
+        /// <summary>
+        /// Everything any screen needs to say the same thing about a waiting BakaLoader release:
+        /// the sidebar, the Hearth pill, the standing row and the dialog all read this one answer,
+        /// and it comes off the very object the push event is built from, so none of them can
+        /// disagree with another about whether there is an update or what version it is.
+        /// </summary>
+        private object BuildAppUpdateStatus()
+        {
+            var prefs = LoadUserPrefsOrNull();
+
+            return BuildAppUpdateStatusDto(
+                SoftwareUpdates?.LatestAvailable,
+                AssemblyHelper.GetApplicationVersion(),
+                autoUpdateOnRestart: prefs?.AutoUpdateBakaLoader == true,
+                checkEnabled: prefs?.CheckForUpdates == true,
+                anyServerRunning: AnyServerRunning());
+        }
+
+        /// <summary>
+        /// The user preferences, or null if reading them ever throws. The provider answers with
+        /// defaults rather than failing, so this is the belt on top of that: a status payload is
+        /// not worth taking a window down for.
+        /// </summary>
+        private UserPreferences LoadUserPrefsOrNull()
+        {
+            try { return UserPrefsProvider?.LoadPreferences(); }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "Could not read the user preferences for the app update status");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The wire shape, built from the found release and nothing else. Separated so the
+        /// answer can be checked against a real <see cref="AppUpdateAvailability"/> without a
+        /// window: the point of this payload is that it agrees with the push event, and a shape
+        /// only the running app can produce is a shape nothing can hold to that.
+        /// </summary>
+        public static object BuildAppUpdateStatusDto(
+            AppUpdateAvailability latest,
+            string installedVersion,
+            bool autoUpdateOnRestart,
+            bool checkEnabled,
+            bool anyServerRunning)
+        {
+            var version = latest?.Version;
+            var available = !string.IsNullOrWhiteSpace(version);
+
+            return new
+            {
+                installedVersion,
+                latestVersion = available ? version : null,
+                updateAvailable = available,
+                // The page of the release this check actually found, or null when the check did
+                // not hand one over. Null is the honest answer there, and the page has somewhere
+                // to send the host either way: with an address the app opens that release, and
+                // without one it opens the releases page.
+                releaseUrl = SpecificAppReleaseUrl(latest?.NotesUrl),
+                autoUpdateOnRestart,
+                checkEnabled,
+                anyServerRunning,
+            };
+        }
+
+        /// <summary>
+        /// True while ANY server in the whole application is running, stopping, starting, or on
+        /// its way back up.
+        /// <para>
+        /// This used to read only the sessions belonging to this window, and BakaLoader opens one
+        /// window per auto-start profile. A second window whose own profile was stopped answered
+        /// "nothing is running" while the first had a live world, and the self update went ahead
+        /// on that answer: the file swap starts the moment staging succeeds, the process never
+        /// exits because the other window keeps it alive, and the install ends up half old and
+        /// half new with no relaunch. The registry is the whole-app answer.
+        /// </para>
+        /// </summary>
+        private bool AnyServerRunning()
+        {
+            try { return UpdateGate.AnyServerBusy(AllSessions()); }
+            catch (Exception ex)
+            {
+                // Unreadable means treat it as live: the only thing this answer gates is whether
+                // the app may close itself, and closing on a maybe is how a world gets lost.
+                Logger.Warning(ex, "Could not work out whether a server is still running");
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Why an asked-for self-update is being turned down, or null when it may go ahead.
+        /// <para>
+        /// Updating BakaLoader means closing BakaLoader, and the server is the app's own child
+        /// process, so a running server would go down with it. That is the host's call to make
+        /// from the server controls, never a side effect of a button about the app, which is why
+        /// this refuses rather than offering to stop anything. A stopped profile whose install is
+        /// mid rewrite counts as busy for the same reason: steamcmd is writing files that belong
+        /// to a server this app is holding open.
+        /// </para>
+        /// </summary>
+        public static string SelfUpdateRefusal(bool checkEnabled, bool anyServerRunning, bool anyServerUpdateRunning)
+            => SelfUpdateRefusal(checkEnabled, anyServerRunning, anyServerUpdateRunning, onCooldown: false);
+
+        /// <summary>
+        /// The same refusal, plus the one answer that is about the app rather than the servers.
+        /// <para>
+        /// The cooldown comes last, because it is the only one that clears itself: a host told "a
+        /// server is running" needs that sentence even if they also clicked twice in a row.
+        /// </para>
+        /// </summary>
+        public static string SelfUpdateRefusal(
+            bool checkEnabled, bool anyServerRunning, bool anyServerUpdateRunning, bool onCooldown)
+        {
+            if (!checkEnabled) return "checkingOff";
+            if (anyServerRunning || anyServerUpdateRunning) return "serverBusy";
+            if (onCooldown) return "cooldown";
+            return null;
+        }
+
+        /// <summary>
+        /// What the page is told when the check the host asked for staged nothing. The service
+        /// knows the difference between a machine with no internet and a machine that is already
+        /// current, and this is where that difference becomes a sentence: an offline app used to
+        /// answer "nothing newer came back", which it had no way of knowing.
+        /// </summary>
+        public static string SelfUpdateReason(StageOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case StageOutcome.Staged: return null;
+                case StageOutcome.NetworkError: return "offline";
+                case StageOutcome.SwitchedOff: return "checkingOff";
+
+                // AlreadyCurrent and NoRelease both mean the same thing to the host: GitHub was
+                // reached and there is nothing there to install.
+                default: return "notAvailable";
+            }
+        }
+
+        /// <summary>
+        /// How long the asked-for update waits before it will go out to GitHub again. The button
+        /// bypasses the six-hour floor the quiet checks run on, which is right for a host who
+        /// just clicked it and wrong for a host holding the mouse down: this is the floor under
+        /// the bypass.
+        /// </summary>
+        public static readonly TimeSpan SelfUpdateCooldown = TimeSpan.FromSeconds(60);
+
+        /// <summary>
+        /// Whether an asked-for update is still inside the cooldown. Static and given both times,
+        /// so the rule can be proved without waiting a minute for it.
+        /// </summary>
+        public static bool SelfUpdateOnCooldown(DateTime lastAttemptUtc, DateTime nowUtc)
+            => nowUtc - lastAttemptUtc < SelfUpdateCooldown;
+
+        /// <summary>
+        /// When the last asked-for self update actually went out to GitHub. Static because the
+        /// throttle is the process's, not the window's: every window's button reaches the same
+        /// GitHub. Only stamped once a request is really about to be made, so a refusal (a
+        /// running server, checking switched off) never spends the host's minute for them.
+        /// </summary>
+        private static DateTime LastSelfUpdateAttemptUtc = DateTime.MinValue;
+
+        /// <summary>
+        /// The release page the "View release notes" button opens. GitHub's own address for the
+        /// exact release the check found, so the notes match the version the host was offered,
+        /// and only when it really is a release page on this repository: the page never sends a
+        /// URL, and neither does anything else get to aim the host's browser through here.
+        /// </summary>
+        public static string AppReleaseNotesUrl(string notesUrl)
+            => SpecificAppReleaseUrl(notesUrl) ?? ReleasesUrl;
+
+        /// <summary>
+        /// The same address without the fallback: the page for the exact release the check found,
+        /// or null when the check handed over nothing, or handed over something that is not a
+        /// release page on this repository. The page reads this one to know whether it has a
+        /// specific release to offer or only the releases list.
+        /// </summary>
+        public static string SpecificAppReleaseUrl(string notesUrl)
+            => !string.IsNullOrWhiteSpace(notesUrl)
+                && notesUrl.StartsWith(ReleaseNotesPrefix, StringComparison.OrdinalIgnoreCase)
+                ? notesUrl
+                : null;
+
         #endregion
 
         #region Server update (Steam or steamcmd, driven from the app)
@@ -2070,6 +2378,58 @@ namespace ValheimBakaLoader.Forms
                 });
             });
 
+            // What the page asks whenever it is about to say something about a newer BakaLoader.
+            // Read only, cheap, and always the same answer for every surface on the page.
+            RegisterRpc("app.updateStatus", p => Task.FromResult<object>(BuildAppUpdateStatus()));
+
+            // The host asked for the update by name. This stages it and closes the app so the
+            // watchdog can swap the files; it never stops a server to get there. A server that is
+            // up, or an install that steamcmd is still writing, is a refusal with a reason the
+            // page can put into a sentence.
+            RegisterRpc("app.selfUpdateNow", async p =>
+            {
+                var prefs = LoadUserPrefsOrNull();
+                var refusal = SelfUpdateRefusal(
+                    prefs?.CheckForUpdates == true, AnyServerRunning(), AnyServerUpdateRunning(),
+                    onCooldown: SelfUpdateOnCooldown(LastSelfUpdateAttemptUtc, DateTime.UtcNow));
+
+                if (refusal != null)
+                {
+                    Logger.Information("The self-update the host asked for was turned down: {reason}", refusal);
+                    return new { ok = false, reason = refusal };
+                }
+
+                // Stamped here and nowhere else: past every refusal, so a host who was told to
+                // wait for their server is not also made to wait out a cooldown they never spent,
+                // and before the request, so a slow one cannot be asked for twice.
+                LastSelfUpdateAttemptUtc = DateTime.UtcNow;
+
+                StageOutcome outcome;
+                try
+                {
+                    outcome = await AppUpdateService.TryStageUpdateAsync(userInitiated: true);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "The self-update the host asked for could not reach GitHub");
+                    outcome = StageOutcome.NetworkError;
+                }
+
+                if (outcome != StageOutcome.Staged)
+                {
+                    var why = SelfUpdateReason(outcome);
+                    Logger.Information("The self-update the host asked for staged nothing: {reason}", why);
+                    return new { ok = false, reason = why };
+                }
+
+                // Staged, and the watchdog is already counting down to writing over the install,
+                // so the whole application closes rather than this one window: each window goes
+                // through its own graceful path, which saves and stops whatever it is holding,
+                // and the process ends when the last of them has gone.
+                CloseEveryWindowForSelfUpdate();
+                return new { ok = true };
+            });
+
             // --- Profiles (ServerPreferences) ---
             RegisterRpc("profiles.list", p => Task.FromResult<object>(
                 ServerPrefsProvider.LoadPreferences()
@@ -2110,7 +2470,7 @@ namespace ValheimBakaLoader.Forms
                 if (CurrentProfile == name) CurrentProfile = null;
 
                 // Drop the dead session so its server unsubscribes from the player repo.
-                if (Sessions.TryRemove(name, out var removed)) removed.Server.Dispose();
+                if (Sessions.TryRemove(name, out var removed)) { ForgetSession(removed); removed.Server.Dispose(); }
 
                 PostEvent("servers.changed", BuildServersList());
                 return Task.FromResult<object>(true);
@@ -2141,7 +2501,7 @@ namespace ValheimBakaLoader.Forms
                 ServerPrefsProvider.RemovePreferences(name);
 
                 // Retire any (stopped) session under the old key so the registry stays consistent.
-                if (Sessions.TryRemove(name, out var removed)) removed.Server.Dispose();
+                if (Sessions.TryRemove(name, out var removed)) { ForgetSession(removed); removed.Server.Dispose(); }
                 if (string.Equals(CurrentProfile, name, StringComparison.OrdinalIgnoreCase))
                     CurrentProfile = newName;
 
@@ -2257,7 +2617,7 @@ namespace ValheimBakaLoader.Forms
                 }
 
                 ServerPrefsProvider.RemovePreferences(name);
-                if (Sessions.TryRemove(name, out var removed)) removed.Server.Dispose();
+                if (Sessions.TryRemove(name, out var removed)) { ForgetSession(removed); removed.Server.Dispose(); }
                 if (string.Equals(CurrentProfile, name, StringComparison.OrdinalIgnoreCase))
                     CurrentProfile = FirstActiveProfileExcept(name);
 
@@ -4360,6 +4720,22 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(true);
             });
 
+            // The notes for the exact release the update check found, rather than whatever is
+            // newest on the repository today. The page sends nothing at all: the address comes
+            // off the found release and is only used when it really is a release page on this
+            // repository, so what the host reads is the version they were just offered.
+            RegisterRpc("shell.openAppRelease", p =>
+            {
+                var url = AppReleaseNotesUrl(SoftwareUpdates?.LatestAvailable?.NotesUrl);
+
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true,
+                });
+                return Task.FromResult<object>(true);
+            });
+
             // Opens one mod's own page on Thunderstore, which is what the right-click on a mod
             // row offers. The page sends the matched package identity and never a URL: the
             // address is built here from two validated segments, so nothing the page says can
@@ -4473,10 +4849,18 @@ namespace ValheimBakaLoader.Forms
         private const string DonateUrl = "https://ko-fi.com/bakaloader";
 
         /// <summary>
-        /// The release page behind the "See what changed" action on the app update row. Same
-        /// repository the update check queries, so the two can never point at different notes.
+        /// The release page behind the update dialog's notes button when the check did not hand
+        /// back an address of its own. Same repository the update check queries, so the two can
+        /// never point at different notes.
         /// </summary>
         private const string ReleasesUrl = "https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest";
+
+        /// <summary>
+        /// The only addresses the notes button may open. GitHub hands back the release page for
+        /// whatever it found, and that string is what this opens, so the check being pointed
+        /// somewhere else one day cannot turn into the app opening somewhere else.
+        /// </summary>
+        private const string ReleaseNotesPrefix = "https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/";
 
         #endregion
 

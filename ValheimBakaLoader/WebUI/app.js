@@ -316,6 +316,10 @@ function applyTerms(){
   try{renderHearth();}catch{}
   try{renderAppBar();}catch{}
   try{renderConditionBar();}catch{}
+  /* The two surfaces that say which BakaLoader is waiting. Both write their text through
+     TT() at render time, so the swap only reaches them if they are re-rendered here. */
+  try{renderAppUpdatePill();}catch{}
+  try{renderSideVer();}catch{}
   try{renderCaps();}catch{}
   try{syncCollapsibleTerms();}catch{}
   try{renderHearthLog();}catch{}
@@ -1395,7 +1399,9 @@ function applyState(st){
   /* Whether an update can run at all depends on the run state, so the cached answer is
      stale the moment the server starts or stops. Re-ask on the transition rather than
      leaving the pill greyed with "Stop the server to update it." after it was stopped. */
-  if(prev!==st.status){try{refreshUpdateInfo();}catch(_){}}
+  /* BakaLoader's own update reads the same transition: what the dialog may offer turns on
+     whether a server is up, so a stop is the moment "update now" becomes possible. */
+  if(prev!==st.status){try{refreshUpdateInfo();}catch(_){} try{refreshAppUpdateInfo();}catch(_){}}
   renderHearthNative();
 }
 douseBtn.addEventListener("click",e=>{e.stopPropagation();lifecycleToggle();});
@@ -1610,6 +1616,194 @@ $("#meadLink").addEventListener("click",e=>{
   if(Native.available){ rpc("shell.openUrl",{target:"donate"}); toast("ᛥ Skål! Opening the mead hall…"); }
   else toast("ᛥ A horn of mead · preview only");
 });
+
+/* ---------- BAKALOADER'S OWN UPDATE ----------
+   One answer, read by every surface that mentions it: the sidebar version, the Hearth
+   pill, the standing row and the dialog. They all come off app.updateStatus, which the
+   app builds from the same record it pushes on app.updateAvailable, so no two of them
+   can say different things about whether there is an update or which version it is.
+   When there is nothing newer, none of them show anything at all. */
+let APP_UPD=null;
+/* The shipped version as index.html carries it. Kept so the sidebar has something
+   honest to fall back to before app.info has answered, and so clearing the update
+   state puts the line back exactly the way it was. */
+const SIDE_VER_PLAIN=($("#sideVer")?.textContent||"").trim();
+function sideVerBase(){
+  const v=S.version||(APP_UPD&&APP_UPD.installedVersion)||"";
+  return v?"v"+v:SIDE_VER_PLAIN;
+}
+/* The version the app reported, written everywhere it is shown. Named so the boot
+   handler is not the only thing that can run it: the sidebar has two states now, and a
+   plain textContent write would drop the ember spans and leave the glow dead. */
+function applyAppVersion(v){
+  if(v) S.version=v;
+  const sb=$("#sbVersion"); if(sb) sb.textContent="v"+(S.version||"");
+  renderSideVer();
+}
+async function refreshAppUpdateInfo(){
+  if(Native.available){
+    const r=await Native.call("app.updateStatus",{}).catch(()=>null);
+    if(r&&typeof r==="object"){
+      APP_UPD=r;
+      if(r.installedVersion) S.version=r.installedVersion;
+    }
+  }
+  renderAppUpdatePill();
+  renderSideVer();
+  /* Nothing newer any more (the update went in, or the release was pulled): the standing
+     row is about something that is no longer true, so it goes with the rest of it. */
+  if(APP_UPD&&!APP_UPD.updateAvailable){
+    try{if(CONDITIONS.has("appUpdate")){APP_UPDATE_V=null;clearCondition("appUpdate");}}catch(_){}
+  }else{
+    /* Still waiting, and what the row may promise turns on whether a world is up. This runs
+       on every server start and stop, so the sentence follows the hearth rather than keeping
+       whatever was true when the release was first found. */
+    try{if(CONDITIONS.has("appUpdate")) conditionAppUpdate(APP_UPDATE_V);}catch(_){}
+  }
+  return APP_UPD;
+}
+/* The sidebar's version line. Two states and nothing in between: the shipped version on
+   its own, or the shipped version, the waiting one, and a glow that says so. */
+function renderSideVer(){
+  const el=$("#sideVer"); if(!el) return;
+  const foot=el.closest(".foot-ver"); if(!foot) return;
+  const u=APP_UPD||{};
+  if(u.updateAvailable&&u.latestVersion){
+    foot.classList.add("upd");
+    foot.setAttribute("role","button");
+    foot.setAttribute("tabindex","0");
+    foot.title=TT("A newer BakaLoader is ready. Open it for what happens next.");
+    el.textContent=sideVerBase()+" · "+u.latestVersion+" "+TT("ready");
+    emberize(el);   /* AFTER the write, always: textContent replaces the ember spans */
+  }else{
+    foot.classList.remove("upd");
+    foot.removeAttribute("role");
+    foot.removeAttribute("tabindex");
+    foot.removeAttribute("title");
+    el.textContent=sideVerBase();
+  }
+}
+/* The Hearth pill, beside the Valheim server's own. Ember and named so the two are never
+   mistaken for each other: this one says which BakaLoader is waiting. */
+function renderAppUpdatePill(){
+  const el=$("#hAppUpdPill"); if(!el) return;
+  const u=APP_UPD||{};
+  if(!u.updateAvailable||!u.latestVersion){el.style.display="none";return;}
+  el.style.display="";
+  el.textContent=TT("BakaLoader")+" "+u.latestVersion+" "+TT("ready");
+  emberize(el);   /* AFTER the write, every time, or the pill sits there unlit */
+  el.title=u.anyServerRunning
+    ?TT("A newer BakaLoader is ready. Open it to choose when it installs.")
+    :TT("A newer BakaLoader is ready. Open it to install now.");
+}
+/* A plain sentence for every way an asked-for update can be turned down. Each reason the
+   app can send gets its own, because they call for different things: one waits, one turns
+   a switch back on, one is a file the app could not read. Built on demand rather than once,
+   so the terminology switch reaches them too. */
+function appUpdRefusal(reason){
+  if(reason==="serverBusy")
+    return TT("A server or a Steam update is still running. Try again once it has finished.");
+  if(reason==="checkingOff")
+    return TT("Update checking is off in Upkeep. Turn it back on and BakaLoader can fetch this.");
+  if(reason==="cooldown")
+    return TT("BakaLoader just checked. Give it a minute and try again.");
+  if(reason==="notAvailable")
+    return TT("Nothing newer came back. BakaLoader is already on the newest release it can see, or the release has not finished publishing yet.");
+  if(reason==="offline")
+    return TT("BakaLoader could not reach GitHub. Check the connection and try again.");
+  return TT("BakaLoader could not fetch the update right now. Try again later.");
+}
+/* The one place that offers to do something about a waiting release. What it offers turns
+   on whether a server is up: installing means closing BakaLoader, and the server is this
+   app's own child process, so a live world would go down with it. That is the host's call
+   to make from the server controls. This dialog never offers to stop anything. */
+async function appUpdateModal(){
+  const u=(await refreshAppUpdateInfo())||APP_UPD||{};
+  const v=u.latestVersion||"";
+  const running=!!u.anyServerRunning;
+  const body=running
+    ?`<div style="margin-bottom:8px">${esc(TT("Installing it restarts BakaLoader, and that stops your server, so BakaLoader will not do it while a world is up."))}</div>`+
+     `<div class="subval">${esc(TT("Set it for the next restart and the new version installs itself the next time BakaLoader closes."))}</div>`
+    :`<div style="margin-bottom:8px">${esc(TT("Nothing is running, so this can happen now. BakaLoader closes, swaps itself for the new version and opens again."))}</div>`+
+     `<div class="subval">${esc(TT("Your profiles, worlds and mods are left alone."))}</div>`;
+  const primary=running?TT("Update on the next restart"):TT("Update and relaunch now");
+  const m=modalOpen(
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛟ</span>`+
+      `${esc(TT("BakaLoader")+(v?" "+v:"")+" "+TT("is ready"))}</div>`+
+    `<div class="mbody">`+body+
+      `<div class="subval" id="auWhy" style="margin-top:8px;display:none"></div>`+
+    `</div>`+
+    `<div class="mbtns">`+
+      `<button class="btn btn-ember btn-sm" id="auGo">${esc(primary)}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="auNotes">${esc(TT("View release notes"))}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="auLater">${esc(TT("Later"))}</button>`+
+    `</div>`);
+  const why=m.querySelector("#auWhy");
+  const say=text=>{why.textContent=text;why.style.display="";};
+  /* The one way the button cannot work whatever the host clicks, said here rather than
+     after a click that fails. */
+  if(u.checkEnabled===false){
+    const go=m.querySelector("#auGo");
+    go.disabled=true;
+    go.title=TT("Update checking is off in Upkeep.");
+    say(appUpdRefusal("checkingOff"));
+  }
+  m.querySelector("#auLater").addEventListener("click",modalClose);
+  /* The notes for the release the app actually found, not whatever is newest on the
+     repository today: the app holds that address and opens it, so what the host reads is
+     the version the dialog just offered them. When the check handed over no address of its
+     own, the button still has somewhere honest to go: the releases page. */
+  m.querySelector("#auNotes").addEventListener("click",()=>{
+    if(!Native.available){toast("ᛟ "+TT("Release notes open in the app"));return;}
+    const open=u.releaseUrl
+      ?Native.call("shell.openAppRelease",{})
+      :Native.call("shell.openUrl",{target:"releases"});
+    open.catch(()=>{
+      say(TT("The release page could not be opened from here."));
+    });
+  });
+  m.querySelector("#auGo").addEventListener("click",async e=>{
+    const btn=e.currentTarget;
+    btn.disabled=true;
+    if(running){
+      /* The switch in Upkeep is the mechanism, so this flips that switch rather than
+         inventing a second way to say the same thing. */
+      if(Native.available){
+        const r=await rpc("userprefs.save",{prefs:{AutoUpdateBakaLoader:true}});
+        if(r===FAIL){btn.disabled=false;say(TT("That setting could not be saved. Try the Upkeep card."));return;}
+      }
+      $("#tAutoUpdApp")?.classList.add("on");
+      try{syncUpkeepGates();}catch(_){}
+      modalClose();
+      toast("ᛟ "+TT("BakaLoader installs the new version the next time it closes"));
+      await refreshAppUpdateInfo();
+      if(CONDITIONS.has("appUpdate")) conditionAppUpdate(APP_UPDATE_V);
+      return;
+    }
+    if(!Native.available){btn.disabled=false;say(TT("Updating runs in the app."));return;}
+    const r=await Native.call("app.selfUpdateNow",{}).catch(()=>null);
+    if(r&&r.ok){
+      toast("ᛟ "+TT("Fetched. BakaLoader closes and opens again on the new version"));
+      return;   /* the app closes itself from here; leave the dialog as it is */
+    }
+    btn.disabled=false;
+    say(appUpdRefusal(r&&r.reason));
+    await refreshAppUpdateInfo();
+  });
+}
+$("#hAppUpdPill")?.addEventListener("click",e=>{e.stopPropagation();appUpdateModal();});
+/* The sidebar version line opens the same dialog while an update is waiting, by click or
+   by keyboard. It is only a button in that state, so a plain version string stays inert. */
+(()=>{
+  const foot=$("#sideVer")?.closest(".foot-ver"); if(!foot) return;
+  foot.addEventListener("click",()=>{if(foot.classList.contains("upd"))appUpdateModal();});
+  foot.addEventListener("keydown",e=>{
+    if(!foot.classList.contains("upd")) return;
+    if(e.key!=="Enter"&&e.key!==" ") return;
+    e.preventDefault();
+    appUpdateModal();
+  });
+})();
 
 /* ---------- MODS: scan / update-all / render / sort / remove ---------- */
 /* numeric-aware version compare (1.2.10 > 1.2.9); missing/dash versions sort lowest */
@@ -2456,12 +2650,15 @@ async function initUpkeep(){
     /* the standing update row says whether it installs itself, and with checking off it
        installs nothing at all, so the row has to follow this switch too */
     if(CONDITIONS.has("appUpdate")) conditionAppUpdate(APP_UPDATE_V);
+    /* the dialog reads both switches off the app, not off these elements */
+    refreshAppUpdateInfo();
   });
   $("#tAutoUpdApp").addEventListener("click",()=>{
     save();
     /* the standing update row says whether it installs itself, so it has to follow
        the switch rather than keep whatever was true when it was raised */
     if(CONDITIONS.has("appUpdate")) conditionAppUpdate(APP_UPDATE_V);
+    refreshAppUpdateInfo();
   });
   $("#tAutoUpdMods").addEventListener("click",save);
   $("#tStartWin").addEventListener("click",save);
@@ -3196,24 +3393,28 @@ function conditionAppUpdate(v){
   const read=id=>{try{return T(id);}catch(_){return false;}};
   const checking=read("tCheckUpd"), installs=read("tAutoUpdApp");
   const auto=checking&&installs;
+  /* Installing means closing BakaLoader, which takes the server with it, so what this row
+     can promise turns on whether a world is up as much as on the two switches. The run state
+     comes off the same answer every other surface reads, and the row is drawn again whenever
+     that answer changes. */
+  const running=!!(APP_UPD&&APP_UPD.anyServerRunning);
+  const notAuto=running
+    ?TT("It will not install while a world is up. Open Update BakaLoader to set it for the next restart, or turn auto-update on in Upkeep.")
+    :TT("It will not install on its own. Install it now with Update BakaLoader, or turn auto-update on in Upkeep and it goes in the next time you close the app.");
   setCondition("appUpdate",{sev:"info",title:TT("BakaLoader update"),
     msg:(v?TT("BakaLoader ")+v+TT(" is available."):TT("A newer BakaLoader is available."))+" "+
         (auto?TT("It installs the next time you close the app.")
-             :checking?TT("Auto-update is off, so it waits until you turn that on in Upkeep.")
+             :checking?notAuto
                       :TT("Update checking is off in Upkeep, so nothing installs itself until you turn it back on.")),
     actionsHtml:
-      `<button class="btn btn-ghost btn-sm" id="cbChanges">${esc(TT("See what changed"))}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="cbChanges">${esc(TT("Update BakaLoader"))}</button>`+
       `<button class="btn btn-ghost btn-sm" id="cbUpkeep">${esc(TT("Upkeep settings"))}</button>`,
     wire:bar=>{
-      /* The release page is a shell target the host owns. A host that does not carry
-         it yet leaves the Upkeep card as the place to go, rather than an error. */
-      bar.querySelector("#cbChanges").addEventListener("click",()=>{
-        if(!Native.available){openUpkeepCard();toast("ᛟ "+TT("Release notes open in the app"));return;}
-        Native.call("shell.openUrl",{target:"releases"}).catch(()=>{
-          openUpkeepCard();
-          toast("ᛟ "+TT("Release notes are not reachable from here · Upkeep opened instead"));
-        });
-      });
+      /* This opens the dialog, which is where the release notes are offered along with the
+         one thing the host can safely do about the release from here. Sending them straight
+         to the browser skipped the part where they find out what updating would cost them,
+         so the button says what it actually does. */
+      bar.querySelector("#cbChanges").addEventListener("click",()=>{appUpdateModal();});
       bar.querySelector("#cbUpkeep").addEventListener("click",openUpkeepCard);
     },
   });
@@ -6172,10 +6373,13 @@ if(Native.available){
       logLine("err","[BakaLoader] server process crashed");
     }
   });
-  /* The host posts this when a newer BakaLoader release is staged and waiting to be
-     applied on the next close. Nothing raises it yet (see the report): the self-update
-     runs unattended at launch, so this is the seam it would arrive on. */
-  Native.on("app.updateAvailable",d=>conditionAppUpdate(d&&d.version));
+  /* The host posts this when a check has found a newer BakaLoader release. The check runs
+     at launch and again every few hours for as long as the app is open, so this can arrive
+     at any point in a session. The standing row and every other surface follow it. */
+  Native.on("app.updateAvailable",d=>{
+    conditionAppUpdate(d&&d.version);
+    refreshAppUpdateInfo();
+  });
   /* The server update, from the service that runs it. Progress is a bar, not toasts. */
   Native.on("server.updateProgress",onUpdateProgress);
   Native.on("server.updateDone",onUpdateDone);
@@ -6254,10 +6458,11 @@ if(Native.available){
 
     const info=await rpc("app.info");
     if(info!==FAIL&&info){
-      S.version=info.version||"";
-      $("#sbVersion").textContent="v"+S.version;
-      $("#sideVer").textContent="v"+S.version;
+      /* Written through applyAppVersion so the sidebar keeps whichever of its two states
+         it is in: a bare textContent write here would drop the ember spans. */
+      applyAppVersion(info.version||"");
     }
+    await refreshAppUpdateInfo();   // quiet: lights the sidebar and the Hearth pill, or neither
     const profs=await rpc("profiles.list");
     let profName="Default";
     if(profs!==FAIL&&Array.isArray(profs)&&profs.length){
@@ -6331,6 +6536,19 @@ if(!Native.available){
     {name:"Midgard Test",status:"Stopped",running:false,playersOnline:0,active:false},
   ];
   renderServerChips();
+
+  /* BakaLoader's own update, preview side. The waiting-release state is the one worth
+     looking at, so it is the default; index.html#uptodate walks the quiet one, where
+     none of these surfaces show anything at all. */
+  APP_UPD=location.hash==="#uptodate"
+    ?{installedVersion:"1.0.7",latestVersion:null,updateAvailable:false,releaseUrl:null,
+      autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true}
+    :{installedVersion:"1.0.7",latestVersion:"1.0.8",updateAvailable:true,
+      releaseUrl:"https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest",
+      autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true};
+  renderAppUpdatePill();
+  renderSideVer();
+  if(APP_UPD.updateAvailable) conditionAppUpdate(APP_UPD.latestVersion);
 
   /* first-launch wizard preview: open index.html#wizard to walk the panes */
   if(location.hash==="#wizard"){
