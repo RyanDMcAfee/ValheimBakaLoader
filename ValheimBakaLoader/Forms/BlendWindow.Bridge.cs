@@ -5256,6 +5256,10 @@ namespace ValheimBakaLoader.Forms
                 mod.LatestVersion,
                 mod.UpdateAvailable,
                 mod.PluginDirectory,
+                // Patcher-type mods (BepInEx/patchers). IsPatcher marks a patcher-ONLY row, which
+                // the UI can remove but not update; a mod that ships both parts is not a patcher row.
+                mod.IsPatcher,
+                mod.PatcherDirectory,
                 // Null unless the Thunderstore index actually matched this folder, so a row
                 // never offers a page that would land on a 404.
                 thunderstoreNamespace = mod.ThunderstoreNamespace,

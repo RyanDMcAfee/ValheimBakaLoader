@@ -2568,8 +2568,27 @@ namespace ValheimBakaLoader.Game
             if (!string.IsNullOrWhiteSpace(options.Password)) parts.Add(@$"-password ""{options.Password}""");
             if (options.Crossplay) parts.Add("-crossplay");
 
-            // A preset overrides individual modifiers; the game ignores -modifier
-            // flags when -preset is present, so don't emit both.
+            // BakaLoader owns a world's difficulty, so every start begins by clearing it.
+            // The game keeps those settings as keys in the world's .fwl and never clears a
+            // category on its own: "-modifier <category> default" writes no keys at all, so
+            // a key left over from an earlier choice (deathdeleteunequipped from a world that
+            // used to be Hard, say) would quietly stay in force, and value keys such as
+            // "resourcerate 150" pile up beside their replacements instead of being replaced.
+            // -resetmodifiers empties that starting-key list, and the whole intended set is
+            // written back by the flags below. It reaches only the server-option keys; world
+            // progression (the defeated_* boss keys) is out of its range.
+            //
+            // It must come FIRST of the world flags. The game applies -resetmodifiers,
+            // -preset, -modifier and -setkey in one pass over the command line in the order
+            // they appear, so a reset sitting after them would wipe exactly what they set and
+            // the world would launch vanilla. Emitted even when nothing is configured, which
+            // is the case that needs it most: an all-Normal profile is a request for a world
+            // with no modifiers on it, and only the reset can deliver that.
+            parts.Add("-resetmodifiers");
+
+            // A preset and individual modifiers are never emitted together: the game takes
+            // whichever comes last on the command line, so sending both would make the order
+            // decide the difficulty.
             if (!string.IsNullOrWhiteSpace(options.WorldPreset))
             {
                 parts.Add($"-preset {options.WorldPreset}");
@@ -2608,6 +2627,12 @@ namespace ValheimBakaLoader.Game
             {
                 ["-demomode"] = "it turns off all world saving, so every minute played would be thrown away when the server stops",
                 ["-joinserverwithcharacter"] = "it makes the game try to join a server as a player instead of hosting one, which a dedicated server cannot do",
+                // The game reads -resetmodifiers, -preset, -modifier and -setkey in one pass
+                // over the command line in the order they appear, and the extra arguments are
+                // appended last. A second reset down there would land after the flags above
+                // and clear the starting keys they had just written, so the world would come
+                // up with no modifiers on it at all.
+                ["-resetmodifiers"] = "BakaLoader already resets and writes back the world modifiers at every start, so a second reset would wipe the settings it had just applied",
             };
 
         /// <summary>

@@ -894,8 +894,11 @@ async function addServerProfile(){
   // The realm-forge dials for a brand-new world: their own ids so they never collide with the
   // settings-page fMod* dials. Every dial defaults to Normal ("").
   const wsModsHtml=Object.entries(WORLDGEN).map(([key,def])=>
-    `<div class="field"><label>${esc(TT(def.label))}</label>`+
-      `<select id="wsMod_${key}">${wgOptions(key,"")}</select></div>`).join("");
+    `<div class="field"><label>${esc(TT(def.label))}`+
+      `<button type="button" class="wginfo" id="wsInfo_${key}" aria-controls="wgTip" `+
+        `aria-label="${esc(TT("What each "+def.label+" option does"))}">?</button></label>`+
+      `<select id="wsMod_${key}">${wgOptions(key,"")}</select>`+
+      `<div class="fieldnote wgnote" id="wsNote_${key}"></div></div>`).join("");
   const m=modalOpen(
     `<div class="mtitle">${esc(TT("Found a new realm"))}</div>`+
     `<div class="mbody" style="display:flex;flex-direction:column;gap:2px">`+
@@ -909,6 +912,7 @@ async function addServerProfile(){
         `<div class="fieldnote">${esc(TT("only for a brand-new world · fixed forever once created"))}</div></div>`+
       `<div class="fieldnote" style="margin:2px 0 0">${esc(TT("World difficulty · leave on Normal for the standard game, or set it now so the realm is born this way on its first launch"))}</div>`+
       wsModsHtml+
+      `<div class="fieldnote" style="margin:6px 0 2px">${esc(TT(WORLDGEN_OWN_NOTE))}</div>`+
       `<div class="togglerow" title="${esc(TT(
         "ON: this realm gets its own BepInEx: its own mods, mod configs, and cache, fully independent of your other servers. "+
         "Example: run Epic Loot here while your main server stays vanilla, or trial a mod update without risking the live world. "+
@@ -944,6 +948,12 @@ async function addServerProfile(){
     // Seeding mods only makes sense with a separate install: dim it when install is shared.
     if(t===iso){ if(!on(iso)){seed.classList.remove("on");seed.style.opacity=".4";} else {seed.style.opacity="";} }
   }));
+
+  // Every forge dial gets the same live sentence and hover panel as the settings page,
+  // painted from the same table, so a realm is founded on the wording it will keep.
+  for(const key of Object.keys(WORLDGEN))
+    wireWorldDialHelp(key,m.querySelector("#wsMod_"+key),
+      m.querySelector("#wsNote_"+key),m.querySelector("#wsInfo_"+key));
 
   // Read the difficulty dials back into a modifiers map (Normal dropped) at forge time.
   const collectWsMods=()=>{
@@ -1755,10 +1765,14 @@ function renderMods(){
       :`<span class="pill ${has?"amber":"green"}">${has?"Update":"Current"}</span>`;
     const st=S.modRowStatus&&S.modRowStatus[m.FullName];
     const statusCell=st?renderRowStatus(st):pill;
-    const po=m.possiblyOutdated
+    /* Patcher-only mods are not update-tracked (the install path is plugins-oriented), so the
+       possibly-outdated hint stays blank for them. */
+    const po=(m.possiblyOutdated&&!m.IsPatcher)
       ?`<td class="mod-po" style="color:var(--amber)" title="${esc(MOD_PO_TIP)}">${esc(TT("Yes"))}</td>`
       :`<td class="mod-po"></td>`;
-    return `<tr data-i="${i}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span></td>`+
+    const patcherTag=m.IsPatcher
+      ?` <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(TT("patcher"))}</span>`:"";
+    return `<tr data-i="${i}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span>${patcherTag}</td>`+
       `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
       `<td class="mono"${has?' style="color:var(--amber)"':""}>${esc(m.LatestVersion||"-")}</td>`+
       `<td>${statusCell}</td>`+
@@ -1841,9 +1855,11 @@ function openThunderstorePage(mod){
 /* right-click a mod row → its Thunderstore page, or remove */
 function modRowItems(mod){
   const onStore=!!(mod.thunderstoreNamespace&&mod.thunderstoreName);
-  const canUpd=!!mod.UpdateAvailable;
+  const isPatcher=!!mod.IsPatcher;
+  const canUpd=!!mod.UpdateAvailable&&!isPatcher;
   return [
-    {r:"ᚱ",label:"Update mod",disabled:!canUpd,tip:TT("This mod is already up to date."),
+    {r:"ᚱ",label:"Update mod",disabled:!canUpd,
+      tip:isPatcher?TT("Patcher mods are not updated here."):TT("This mod is already up to date."),
       fn:()=>doUpdateOne(mod)},
     {r:"ᛋ",label:"Open Thunderstore page",disabled:!onStore,tip:TT("Not on Thunderstore"),
       fn:()=>openThunderstorePage(mod)},
@@ -2578,6 +2594,7 @@ window.addEventListener("blur",ctxClose);
 /* ---------- MODALS ---------- */
 const modalBg=$("#modalBg");
 function modalClose(){
+  wgTipClose();               // a dial panel must not outlive the dialog that opened it
   releaseModalScrollCues();   // let go of this modal's panes before the nodes are dropped
   modalBg.classList.remove("open");
   modalBg.innerHTML="";
@@ -4250,30 +4267,318 @@ async function renderWorldSelect(){
   renderWorldSeed();
 }
 /* World-generation dials. value "" = Normal = game default (no -modifier arg emitted).
-   Every non-empty value must match Game/WorldGen.cs exactly - the C# save validates. */
-const WORLDGEN={
-  combat:{sel:"fModCombat",label:"Combat",opts:[
-    ["veryeasy","Very easy"],["easy","Easy"],["","Normal"],["hard","Hard"],["veryhard","Very hard"]]},
-  deathpenalty:{sel:"fModDeath",label:"Death penalty",opts:[
-    ["casual","Casual, no skill or item loss"],["veryeasy","Very easy, keep equipped items"],
-    ["easy","Easy"],["","Normal"],["hard","Hard"],["hardcore","Hardcore, permadeath"]]},
-  resources:{sel:"fModResources",label:"Resources",opts:[
-    ["muchless","Much less"],["less","Less"],["","Normal"],
-    ["more","More, double resources"],["muchmore","Much more"],["most","Most"]]},
-  raids:{sel:"fModRaids",label:"Raids",opts:[
-    ["none","None"],["muchless","Much less"],["less","Less"],["","Normal"],
-    ["more","More"],["muchmore","Much more"]]},
-  portals:{sel:"fModPortals",label:"Portals",opts:[
-    ["casual","Casual, anything through portals"],["","Normal, ore restricted"],
-    ["hard","Hard, nothing teleports"],["veryhard","Very hard, portals unusable"]]},
+   Every non-empty value must match Game/WorldGen.cs exactly - the C# save validates.
+
+   ONE table drives every world-difficulty surface: the order and wording of the five
+   dropdowns, the live sentence under each dial, and the hover panel that lays all of
+   the options out at once. The settings page and the realm-forge dialog both paint
+   from here, so the two can never drift apart. "effects" is the key list the game
+   itself sets for that option, kept as fine print so a host can match a BakaLoader
+   world against the game's own world-modifier menu. */
+const WORLDGEN_HELP={
+  combat:{sel:"fModCombat",label:"Combat",
+    intro:"Sets how much damage you deal and take, and how often you run into higher leveled enemies.",
+    opts:[
+      {v:"veryeasy",label:"Very easy, enemies are weakest",
+        explain:"You deal 25 percent more damage, enemies deal half their normal damage, and enemies are 10 percent smaller and slower outside dungeons.",
+        effects:"playerdamage 125, enemydamage 50, enemyspeedsize 90"},
+      {v:"easy",label:"Easy, enemies are weaker",
+        explain:"You deal 10 percent more damage, enemies deal 75 percent of their normal damage, and enemies are 5 percent smaller and slower outside dungeons.",
+        effects:"playerdamage 110, enemydamage 75, enemyspeedsize 95"},
+      {v:"",label:"Normal, the intended balance",
+        explain:"Combat plays exactly as the game ships it, with no damage, size or enemy level changes applied.",
+        effects:"no keys set"},
+      {v:"hard",label:"Hard, enemies hit harder",
+        explain:"You deal 15 percent less damage, enemies deal 50 percent more, enemies are 10 percent bigger and faster outside dungeons, and enemies are 20 percent more likely to spawn with stars.",
+        effects:"playerdamage 85, enemydamage 150, enemyspeedsize 110, enemyleveluprate 120"},
+      {v:"veryhard",label:"Very hard, punishing combat",
+        explain:"You deal 30 percent less damage, enemies deal double damage, enemies are 20 percent bigger and faster outside dungeons, and enemies are 40 percent more likely to spawn with stars.",
+        effects:"playerdamage 70, enemydamage 200, enemyspeedsize 120, enemyleveluprate 140"},
+    ]},
+  deathpenalty:{sel:"fModDeath",label:"Death penalty",
+    intro:"Sets what happens to your items and your skills when you die.",
+    opts:[
+      {v:"casual",label:"Casual, keep your equipped gear",
+        explain:"You do not drop equipped gear, so only the items you were not wearing go into a tombstone you can recover, and skill loss is cut to 15 percent of the normal amount.",
+        effects:"deathkeepequip, skillreductionrate 15"},
+      {v:"veryeasy",label:"Very easy, smallest skill loss",
+        explain:"You drop all items, equipped gear included, into a tombstone you can recover, and skill loss is cut to 15 percent of the normal amount.",
+        effects:"skillreductionrate 15"},
+      {v:"easy",label:"Easy, half the skill loss",
+        explain:"You drop all items into a tombstone you can recover, and skill loss is half the normal amount.",
+        effects:"skillreductionrate 50"},
+      {v:"",label:"Normal, standard tombstone and skills",
+        explain:"You drop all items into a tombstone you can recover, and skills are reduced by the standard amount.",
+        effects:"no keys set"},
+      {v:"hard",label:"Hard, unequipped items are deleted",
+        explain:"Equipped items are dropped into a tombstone you can recover, everything else in your inventory is deleted for good and never reaches the tombstone, and skill loss is 1.5 times the normal amount.",
+        effects:"deathdeleteunequipped, skillreductionrate 150"},
+      {v:"hardcore",label:"Hardcore, items and skills lost",
+        explain:"Every item you were carrying, equipped or not, is deleted permanently and all of your skills reset to zero, but your character itself is not deleted.",
+        effects:"deathdeleteitems, deathskillsreset"},
+    ]},
+  resources:{sel:"fModResources",label:"Resources",
+    intro:"Sets how much material you get from gathering and from enemy drops, shown in the game as a multiplier.",
+    opts:[
+      {v:"muchless",label:"Much less, x 0.5 drops",
+        explain:"Gathering and enemy drops give half the usual amount of materials.",
+        effects:"resourcerate 50"},
+      {v:"less",label:"Less, x 0.75 drops",
+        explain:"Gathering and enemy drops give three quarters of the usual amount of materials.",
+        effects:"resourcerate 75"},
+      {v:"",label:"Normal, standard drop rates",
+        explain:"Materials drop at the amounts the game was balanced around.",
+        effects:"no keys set"},
+      {v:"more",label:"More, x 1.5 drops",
+        explain:"Gathering and enemy drops give 1.5 times the usual amount of materials.",
+        effects:"resourcerate 150"},
+      {v:"muchmore",label:"Much more, x 2 drops",
+        explain:"Gathering and enemy drops give double the usual amount of materials.",
+        effects:"resourcerate 200"},
+      {v:"most",label:"Most, x 3 drops",
+        explain:"Gathering and enemy drops give three times the usual amount of materials, the highest setting the game offers.",
+        effects:"resourcerate 300"},
+    ]},
+  raids:{sel:"fModRaids",label:"Raids",
+    intro:"Sets how often enemies come to raid your base, called Raid Rate in the game.",
+    opts:[
+      {v:"none",label:"None, timed raids turned off",
+        explain:"The timed raid check never runs, so the usual random raids on your base stop happening.",
+        effects:"eventrate 0"},
+      {v:"muchless",label:"Much less, raids are rare",
+        explain:"Raids have to wait twice as long before they can trigger and are half as likely on each check.",
+        effects:"eventrate 200"},
+      {v:"less",label:"Less, fewer raids",
+        explain:"Raids have to wait 50 percent longer before they can trigger and are about a third less likely on each check.",
+        effects:"eventrate 150"},
+      {v:"",label:"Normal, standard raid pace",
+        explain:"Raids arrive at the pace the game was balanced around.",
+        effects:"no keys set"},
+      {v:"more",label:"More, frequent raids",
+        explain:"Raids can trigger after 60 percent of the usual wait and are about 1.7 times as likely on each check.",
+        effects:"eventrate 60"},
+      {v:"muchmore",label:"Much more, constant raids",
+        explain:"Raids can trigger after 30 percent of the usual wait and are more than three times as likely on each check.",
+        effects:"eventrate 30"},
+    ]},
+  portals:{sel:"fModPortals",label:"Portals",
+    intro:"Changes how portals work, from carrying anything through them to having none at all.",
+    opts:[
+      {v:"casual",label:"Portal items, carry anything through",
+        explain:"Allows you to bring all items with you through portals, ore and metal bars included, which skips much of the hauling the world is built around.",
+        effects:"teleportall"},
+      {v:"",label:"Normal, standard portal rules",
+        explain:"Portals work as usual, so ore and metal bars still cannot be carried through them.",
+        effects:"no keys set"},
+      {v:"hard",label:"No boss portals, blocked during bosses",
+        explain:"You will not be able to use portals or exit boss dungeons while a boss is active.",
+        effects:"nobossportals"},
+      {v:"veryhard",label:"No portals, walk everywhere",
+        explain:"You will not be able to use portals to teleport yourself across the world, so every trip is made on foot or by boat.",
+        effects:"noportals"},
+    ]},
 };
+/* The shape the dial code already speaks (id, label, [value,label] tuples), derived
+   from the one table above so there is no second list to keep in step by hand. */
+const WORLDGEN=Object.fromEntries(Object.entries(WORLDGEN_HELP).map(([key,h])=>
+  [key,{sel:h.sel,label:h.label,opts:h.opts.map(o=>[o.v,o.label])}]));
+/* What BakaLoader promises about these dials, written once and shown on both surfaces. */
+const WORLDGEN_OWN_NOTE="BakaLoader applies these settings every time the server starts, and clears any leftover difficulty keys first. A difficulty change made with the in-game console does not survive a restart.";
 const wgOptions=(key,val)=>WORLDGEN[key].opts.map(([v,l])=>
-  `<option value="${v}"${v===val?" selected":""}>${esc(l)}</option>`).join("");
-/* Paint the five dials from a modifiers map (missing key == Normal == ""). */
+  `<option value="${v}"${v===val?" selected":""}>${esc(TT(l))}</option>`).join("");
+/* The table row for one dial's selected option ("" == Normal). */
+const wgOpt=(key,val)=>(WORLDGEN_HELP[key]?.opts||[]).find(o=>o.v===(val||""));
+/* The single line under a dial: what it is set to right now, in plain words. */
+const worldModExplain=(key,val)=>{const o=wgOpt(key,val);return o?TT(o.explain):"";};
+/* The hover panel for one dial: what the category does, then every option it offers
+   with its sentence and the keys the game sets for it. */
+function worldModPanelHtml(key,val){
+  const h=WORLDGEN_HELP[key]; if(!h) return "";
+  const cur=val||"";
+  return `<div class="wgt-head">${esc(TT(h.label))}</div>`+
+    `<div class="wgt-intro">${esc(TT(h.intro))}</div>`+
+    h.opts.map(o=>`<div class="wgt-row${o.v===cur?" sel":""}">`+
+      `<div class="wgt-lbl">${esc(TT(o.label))}</div>`+
+      `<div class="wgt-ex">${esc(TT(o.explain))}</div>`+
+      `<div class="wgt-eff">${esc(TT(o.effects))}</div></div>`).join("")+
+    `<div class="wgt-foot">${esc(TT(WORLDGEN_OWN_NOTE))}</div>`;
+}
+/* One shared hover panel serves every dial on both surfaces. It is fixed to the window
+   and sits outside the form, so neither a scrolling pane nor the realm-forge dialog's
+   own clipping can cut it off, and there is no per-dial copy to keep in step. */
+const wgTip=$("#wgTip");
+/* Which dial each marker speaks for, so the dial itself can point a screen reader at the
+   panel for as long as it is showing. */
+const wgTipSel=new WeakMap();
+let wgTipOwner=null, wgTipHold=0;
+/* The marker whose panel went up last, when it went up, and whether the host closed it
+   themselves. Together they tell a real Escape from one aimed at a panel that had already
+   gone away, which must not fall through and take the dialog behind it. */
+let wgTipLastOwner=null, wgTipOpenedAt=0, wgTipDismissed=true;
+/* Giving a marker below the fold focus makes the browser scroll it into view, and that
+   scroll lands a frame or two AFTER the panel opened. Scrolls this soon after an open are
+   the panel arriving, never the host scrolling away from it. */
+const WGTIP_SETTLE_MS=250;
+/* Point the marker's dial at the panel while it is showing, and let go of it after. Only
+   ever takes back its own name, so a description set for another reason is left alone. */
+function wgTipDescribe(marker,on){
+  const sel=marker&&wgTipSel.get(marker);
+  if(!sel) return;
+  if(on) sel.setAttribute("aria-describedby","wgTip");
+  else if(sel.getAttribute("aria-describedby")==="wgTip") sel.removeAttribute("aria-describedby");
+}
+function wgTipClose(){
+  clearTimeout(wgTipHold);
+  if(!wgTip||!wgTipOwner) return;
+  wgTipDescribe(wgTipOwner,false);
+  wgTipOwner=null;
+  wgTip.classList.remove("open");
+  wgTip.setAttribute("aria-hidden","true");
+}
+/* Leaving the marker gives the pointer a moment to reach the panel, so a host can
+   move onto it and read (or scroll) a long list instead of losing it on the way. */
+function wgTipCloseSoon(){clearTimeout(wgTipHold);wgTipHold=setTimeout(wgTipClose,140);}
+function wgTipKeep(){clearTimeout(wgTipHold);}
+/* Is the marker that owns the panel still somewhere the host can see it? The window is not
+   the whole test: the dials sit in panes that clip their own overflow (the settings page's
+   scroller, the realm dialog's body), so a row scrolled past the top of its pane is gone
+   from view while its coordinates are still inside the window. */
+function wgTipOwnerOnScreen(){
+  const el=wgTipOwner;
+  if(!el||!el.isConnected) return false;
+  const r=el.getBoundingClientRect();
+  if(!r.width&&!r.height) return false;
+  let top=0, left=0, right=innerWidth, bottom=innerHeight;
+  for(let p=el.parentElement;p;p=p.parentElement){
+    const st=getComputedStyle(p);
+    if(st.overflowX!=="visible"||st.overflowY!=="visible"){
+      const b=p.getBoundingClientRect();
+      top=Math.max(top,b.top); left=Math.max(left,b.left);
+      right=Math.min(right,b.right); bottom=Math.min(bottom,b.bottom);
+    }
+  }
+  return r.bottom>top+2&&r.top<bottom-2&&r.right>left+2&&r.left<right-2;
+}
+function wgTipOpen(marker,key,val){
+  if(!wgTip||!marker) return;
+  wgTipKeep();
+  wgTip.innerHTML=worldModPanelHtml(key,val);
+  // moving straight from one marker to the next never closes the panel, so the dial it
+  // was describing has to be let go of here or it keeps a description of the wrong thing
+  if(wgTipOwner&&wgTipOwner!==marker) wgTipDescribe(wgTipOwner,false);
+  wgTipOwner=marker;
+  wgTipLastOwner=marker;
+  wgTipOpenedAt=performance.now();
+  wgTipDismissed=false;
+  wgTipDescribe(marker,true);
+  wgTip.setAttribute("aria-hidden","false");
+  wgTip.classList.add("open");
+  wgTipPlace(marker);
+}
+/* Where the panel stands for a given marker. Split out from opening it so a scroll that
+   moves the marker can put the panel back beside it instead of throwing it away. */
+function wgTipPlace(marker){
+  if(!wgTip||!marker) return;
+  // measure at the origin, then place
+  wgTip.style.left="0px"; wgTip.style.top="0px";
+  const m=marker.getBoundingClientRect(), p=wgTip.getBoundingClientRect();
+  const gap=8, edge=8, fitsX=x=>x>=edge&&x+p.width<=innerWidth-edge;
+  let left=null, top=null;
+  /* Inside a dialog the panel stands beside the WHOLE dialog rather than beside the
+     marker, so the dials it is describing stay on screen while it is open. */
+  const dlg=marker.closest(".modal");
+  if(dlg){
+    const d=dlg.getBoundingClientRect();
+    const beside=fitsX(d.right+gap)?d.right+gap:(fitsX(d.left-gap-p.width)?d.left-gap-p.width:null);
+    if(beside!==null){left=beside;top=Math.max(edge,Math.min(d.top,innerHeight-p.height-edge));}
+  }
+  /* Otherwise under the marker, over it, or beside it, in that order. The last case is
+     the one that matters: a panel with nowhere to go would otherwise be clamped on top
+     of the marker that opened it, which takes the pointer off the marker and closes the
+     panel again the instant it appears. */
+  if(left===null){
+    left=Math.max(edge,Math.min(m.left-6,innerWidth-p.width-edge));
+    if(m.bottom+gap+p.height<=innerHeight-edge) top=m.bottom+gap;
+    else if(m.top-gap-p.height>=edge) top=m.top-gap-p.height;
+    else{
+      top=Math.max(edge,Math.min(m.top-24,innerHeight-p.height-edge));
+      left=fitsX(m.right+gap)?m.right+gap:Math.max(edge,m.left-gap-p.width);
+    }
+  }
+  wgTip.style.left=left+"px";
+  wgTip.style.top=top+"px";
+}
+if(wgTip){
+  wgTip.addEventListener("mouseenter",wgTipKeep);
+  wgTip.addEventListener("mouseleave",wgTipClose);
+}
+/* Give one dial its live sentence and its hover panel. Both surfaces call this with
+   their own elements, so the settings page and the realm forge behave identically. */
+function wireWorldDialHelp(key,selEl,noteEl,markerEl){
+  if(!selEl) return;
+  const paint=()=>{if(noteEl) noteEl.textContent=worldModExplain(key,selEl.value);};
+  paint();
+  selEl.addEventListener("change",()=>{
+    paint();
+    if(wgTipOwner===markerEl) wgTipOpen(markerEl,key,selEl.value); // keep an open panel honest
+  });
+  if(!markerEl) return;
+  wgTipSel.set(markerEl,selEl);
+  const open=()=>wgTipOpen(markerEl,key,selEl.value);
+  markerEl.addEventListener("mouseenter",open);
+  markerEl.addEventListener("focus",open);      // same panel for a host on the keyboard
+  markerEl.addEventListener("click",e=>{e.preventDefault();open();});
+  markerEl.addEventListener("mouseleave",wgTipCloseSoon);
+  markerEl.addEventListener("blur",()=>{
+    wgTipCloseSoon();
+    // the swallow below only guards the marker the host is actually standing on
+    if(wgTipLastOwner===markerEl&&wgTipOwner!==markerEl) wgTipLastOwner=null;
+  });
+  /* While a marker holds focus, Escape belongs to its panel. With the panel up the
+     document handler below has already taken the key and this never runs; this is for the
+     case where the panel went away on its own (the pointer left it, a pane scrolled) and
+     the host presses Escape at a panel that is no longer there. Letting that reach the
+     realm dialog would shut the dialog and lose the name and seed already typed into it.
+     Closing it with Escape is a different thing: that key was spent on purpose, so the
+     next one is the dialog's. */
+  markerEl.addEventListener("keydown",e=>{
+    if(e.key!=="Escape") return;
+    if(wgTipOwner===markerEl){e.stopPropagation();wgTipClose();wgTipDismissed=true;return;}
+    if(wgTipLastOwner===markerEl&&!wgTipDismissed){e.stopPropagation();wgTipDismissed=true;}
+  });
+}
+/* Escape closes the panel and goes no further, so reading the options inside the
+   realm-forge dialog cannot cost the host the dialog as well. */
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape"||!wgTipOwner) return;
+  e.stopPropagation();
+  wgTipClose();
+  wgTipDismissed=true;
+},true);
+/* A panel fixed to the window would otherwise hang beside a marker that has scrolled
+   away. Four cases, in this order. The panel's own scrolling is not a page scroll, so
+   reading a long list is left alone. A scroll arriving right after an open is the browser
+   bringing a freshly focused marker into view, which is how a host on the keyboard reaches
+   a dial below the fold: the panel is put back beside it, never dropped. After that the
+   panel follows its marker for as long as the marker is on screen. Only a scroll that has
+   carried the marker out of view takes the panel with it. */
+document.addEventListener("scroll",e=>{
+  if(!wgTipOwner) return;
+  const t=e.target;
+  if(wgTip&&t&&t.nodeType===1&&(t===wgTip||wgTip.contains(t))) return;
+  if(performance.now()-wgTipOpenedAt<WGTIP_SETTLE_MS||wgTipOwnerOnScreen()){wgTipPlace(wgTipOwner);return;}
+  wgTipClose();
+},true);
+window.addEventListener("blur",wgTipClose);
+/* Paint the five dials from a modifiers map (missing key == Normal == ""), and with
+   them the live sentence under each one. */
 function applyWorldModDials(mods){
   mods=mods||{};
-  for(const [key,def] of Object.entries(WORLDGEN))
+  for(const [key,def] of Object.entries(WORLDGEN)){
     $("#"+def.sel).innerHTML=wgOptions(key,mods[key]||"");
+    const note=$("#"+def.sel+"Note");
+    if(note) note.textContent=worldModExplain(key,mods[key]||"");
+  }
 }
 /* Read the five dials back into a modifiers map, dropping Normal (""). */
 function scrapeWorldModDials(){
@@ -4327,11 +4632,16 @@ $("#copySeed").addEventListener("click",()=>{
 $("#fWorld").addEventListener("change",()=>{renderWorldMods();renderWorldSeed();});
 /* A dial the host turns updates the intended state for the selected world at once, so the
    value survives any later re-render and Save Config sends exactly what is on screen. */
-for(const def of Object.values(WORLDGEN))
+for(const [key,def] of Object.entries(WORLDGEN)){
   $("#"+def.sel).addEventListener("change",()=>{
     const world=$("#fWorld").value||S.prefs?.WorldName||"";
     S.worldMods={world,mods:scrapeWorldModDials()};
   });
+  /* The live sentence and the hover panel for this dial. The ids follow the select's
+     own: fModCombat -> fModCombatNote for the line, iModCombat for the marker. */
+  wireWorldDialHelp(key,$("#"+def.sel),$("#"+def.sel+"Note"),$("#i"+def.sel.slice(1)));
+}
+{const own=$("#wgOwnNote"); if(own) own.textContent=TT(WORLDGEN_OWN_NOTE);}
 renderWorldMods(); // seed the dials with Normal defaults (both modes)
 renderWorldSeed();
 /* Max players: server-wide, not per-world. 10 = vanilla cap (no plugin); above 10 the

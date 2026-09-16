@@ -35,10 +35,11 @@ namespace ValheimBakaLoader.Tools
         List<string> FindConfigFiles(InstalledMod mod);
 
         /// <summary>
-        /// Removes a mod by moving its plugin folder (and, when requested, its matched config
-        /// files) into a recoverable backup under <c>BepInEx/.bakaloader-removed</c>, then
-        /// deleting the originals. The Valheim server must be STOPPED first - a running server
-        /// locks loaded plugin DLLs.
+        /// Removes a mod by moving its plugin folder, its matching patcher folder (patcher-type
+        /// mods install under <c>BepInEx/patchers</c>), and, when requested, its matched config
+        /// files into a recoverable backup under <c>BepInEx/.bakaloader-removed</c>, then deleting
+        /// the originals. Works for a plugin-only, a patcher-only, or a plugin-plus-patcher mod.
+        /// The Valheim server must be STOPPED first, since a running server locks loaded DLLs.
         /// </summary>
         ModRemovalResult RemoveMod(InstalledMod mod, bool includeConfig);
     }
@@ -88,14 +89,24 @@ namespace ValheimBakaLoader.Tools
         {
             if (mod == null) return ModRemovalResult.Failed(null, "No mod specified.");
 
-            if (string.IsNullOrWhiteSpace(mod.PluginDirectory) || !Directory.Exists(mod.PluginDirectory))
+            var hasPlugin = !string.IsNullOrWhiteSpace(mod.PluginDirectory) && Directory.Exists(mod.PluginDirectory);
+
+            // A patcher-type mod installs under BepInEx/patchers. Removing only the plugin folder
+            // leaves the patcher DLL loading on every boot, so the patcher folder has to go too.
+            var patcherDir = ResolvePatcherDirectory(mod);
+            var hasPatcher = !string.IsNullOrWhiteSpace(patcherDir) && Directory.Exists(patcherDir);
+
+            if (!hasPlugin && !hasPatcher)
             {
-                return ModRemovalResult.Failed(mod, $"Mod folder not found: {mod.PluginDirectory}");
+                return ModRemovalResult.Failed(mod, $"Mod folder not found: {mod.PluginDirectory ?? mod.PatcherDirectory}");
             }
 
-            // Companion plugins are managed by BakaLoader itself (and MMHOOK is patcher-generated);
-            // they never appear in the mods list, but reject removal defensively anyway.
-            if (ModScanner.IsCompanionFolder(new DirectoryInfo(mod.PluginDirectory).Name))
+            // The folder name identifies the mod. Companion plugins and framework/auto-generated
+            // patchers are managed by BakaLoader and never appear in the list, but reject removal
+            // defensively anyway so a malformed request can never touch them.
+            var primaryDir = hasPlugin ? mod.PluginDirectory : patcherDir;
+            var folderName = new DirectoryInfo(primaryDir).Name;
+            if (ModScanner.IsCompanionFolder(folderName) || ModScanner.IsProtectedPatcher(folderName))
             {
                 return ModRemovalResult.Failed(mod, "This plugin is managed by BakaLoader and cannot be removed here.");
             }
@@ -104,12 +115,26 @@ namespace ValheimBakaLoader.Tools
 
             try
             {
-                var backupDir = CreateBackupRoot(mod);
+                var backupDir = CreateBackupRoot(primaryDir);
 
-                // Back up then remove the plugin folder.
-                var pluginBackup = Path.Combine(backupDir, "plugin", new DirectoryInfo(mod.PluginDirectory).Name);
-                CopyDirectory(mod.PluginDirectory, pluginBackup);
-                Directory.Delete(mod.PluginDirectory, recursive: true);
+                // Back up then remove the plugin folder, when the mod has one.
+                if (hasPlugin)
+                {
+                    var pluginBackup = Path.Combine(backupDir, "plugin", new DirectoryInfo(mod.PluginDirectory).Name);
+                    CopyDirectory(mod.PluginDirectory, pluginBackup);
+                    Directory.Delete(mod.PluginDirectory, recursive: true);
+                }
+
+                // Back up then remove the matching patcher folder, when the mod has one. Only a
+                // NAMED subfolder inside patchers is ever removed; the shared "patchers" junction
+                // itself (which points at the base install) is never deleted or moved.
+                if (hasPatcher)
+                {
+                    var patcherFolderName = new DirectoryInfo(patcherDir).Name;
+                    var patcherBackup = Path.Combine(backupDir, "patcher", patcherFolderName);
+                    CopyDirectory(patcherDir, patcherBackup);
+                    Directory.Delete(patcherDir, recursive: true);
+                }
 
                 // Back up then remove each matched config file.
                 var deleted = new List<string>();
@@ -142,15 +167,17 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
-        /// Creates a timestamped backup root under <c>BepInEx/.bakaloader-removed/{Author-ModName}/</c>.
+        /// Creates a timestamped backup root under <c>BepInEx/.bakaloader-removed/{Author-ModName}/</c>,
+        /// derived from the mod's primary folder (its plugin folder, or its patcher folder for a
+        /// patcher-only mod).
         /// </summary>
-        private static string CreateBackupRoot(InstalledMod mod)
+        private static string CreateBackupRoot(string primaryDir)
         {
-            var bepInExRoot = GetBepInExRoot(mod);
-            var modFolderName = new DirectoryInfo(mod.PluginDirectory).Name;
+            var bepInExRoot = GetBepInExRootFromDir(primaryDir);
+            var modFolderName = new DirectoryInfo(primaryDir).Name;
 
             var root = Path.Combine(
-                bepInExRoot ?? Path.GetDirectoryName(mod.PluginDirectory),
+                bepInExRoot ?? Path.GetDirectoryName(primaryDir),
                 RemovedDirName,
                 modFolderName,
                 DateTime.Now.ToString("yyyyMMdd-HHmmss"));
@@ -165,13 +192,44 @@ namespace ValheimBakaLoader.Tools
             return bepInExRoot == null ? null : Path.Combine(bepInExRoot, "config");
         }
 
-        /// <summary>Resolves <c>...\BepInEx</c> from a mod's <c>...\BepInEx\plugins\{folder}</c> path.</summary>
+        /// <summary>
+        /// Resolves <c>...\BepInEx</c> from a mod, using its plugin folder when present and
+        /// otherwise its patcher folder. Both sit at the same depth
+        /// (<c>...\BepInEx\plugins\{folder}</c> or <c>...\BepInEx\patchers\{folder}</c>).
+        /// </summary>
         private static string GetBepInExRoot(InstalledMod mod)
         {
+            var anchor = !string.IsNullOrWhiteSpace(mod?.PluginDirectory)
+                ? mod.PluginDirectory
+                : mod?.PatcherDirectory;
+            return GetBepInExRootFromDir(anchor);
+        }
+
+        /// <summary>Resolves <c>...\BepInEx</c> from a <c>...\BepInEx\{plugins|patchers}\{folder}</c> path.</summary>
+        private static string GetBepInExRootFromDir(string modFolder)
+        {
+            if (string.IsNullOrWhiteSpace(modFolder)) return null;
+
+            var subRoot = Directory.GetParent(modFolder)?.FullName;            // ...\BepInEx\plugins or ...\BepInEx\patchers
+            return Directory.GetParent(subRoot ?? string.Empty)?.FullName;     // ...\BepInEx
+        }
+
+        /// <summary>
+        /// The mod's patcher folder: the model's <see cref="InstalledMod.PatcherDirectory"/> when
+        /// the scan set it, otherwise <c>BepInEx/patchers/{folderName}</c> computed from the plugin
+        /// folder name. Returns null when neither a patcher path nor a plugin folder is known.
+        /// </summary>
+        private static string ResolvePatcherDirectory(InstalledMod mod)
+        {
+            if (!string.IsNullOrWhiteSpace(mod?.PatcherDirectory)) return mod.PatcherDirectory;
+
             if (string.IsNullOrWhiteSpace(mod?.PluginDirectory)) return null;
 
-            var pluginsRoot = Directory.GetParent(mod.PluginDirectory)?.FullName; // ...\BepInEx\plugins
-            return Directory.GetParent(pluginsRoot ?? string.Empty)?.FullName;     // ...\BepInEx
+            var bepInExRoot = GetBepInExRootFromDir(mod.PluginDirectory);
+            if (string.IsNullOrWhiteSpace(bepInExRoot)) return null;
+
+            var folderName = new DirectoryInfo(mod.PluginDirectory).Name;
+            return Path.Combine(bepInExRoot, "patchers", folderName);
         }
 
         private static string Normalize(string value)

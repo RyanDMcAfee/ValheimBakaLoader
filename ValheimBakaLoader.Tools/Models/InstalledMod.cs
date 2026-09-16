@@ -45,6 +45,21 @@ namespace ValheimBakaLoader.Tools.Models
         /// <summary>Absolute path to the mod's folder on disk.</summary>
         public string PluginDirectory { get; set; }
 
+        /// <summary>
+        /// Absolute path to the mod's patcher folder (<c>BepInEx/patchers/{Author-ModName}</c>)
+        /// when it ships one, or null when it has no patcher part. A mod may carry a plugins
+        /// folder, a patcher folder, or both; patcher folders load their DLL early in BepInEx
+        /// startup, so a removal has to take this folder as well or the mod keeps loading.
+        /// </summary>
+        public string PatcherDirectory { get; set; }
+
+        /// <summary>
+        /// True when this mod exists ONLY as a patcher (it has a <see cref="PatcherDirectory"/>
+        /// but no plugins folder). Patcher-only mods are removable, but BakaLoader's install and
+        /// update path is plugins-oriented, so the UI does not offer to update them.
+        /// </summary>
+        public bool IsPatcher { get; set; }
+
         /// <summary>Optional website URL from the manifest ("website_url").</summary>
         public string Website { get; set; }
 

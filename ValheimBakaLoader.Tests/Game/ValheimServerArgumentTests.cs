@@ -8,7 +8,10 @@ namespace ValheimBakaLoader.Tests.Game
     /// The guard on the host-typed extra launch arguments. Valheim 1.0 added
     /// two flags that must never reach a dedicated server: -demomode turns off
     /// all world saving, and -joinserverwithcharacter makes the game try to
-    /// join a server instead of hosting one.
+    /// join a server instead of hosting one. A third, -resetmodifiers, is
+    /// BakaLoader's own: it already emits one at the head of the world flags,
+    /// and the extra arguments go on the end, so a second one would land after
+    /// the modifiers and clear the very keys they had just written.
     /// </summary>
     public class ValheimServerArgumentTests
     {
@@ -19,9 +22,14 @@ namespace ValheimBakaLoader.Tests.Game
         [InlineData("-crossplay -demomode -console", "-crossplay -console")]
         [InlineData("-demomode -console", "-console")]
         [InlineData("-console -joinserverwithcharacter", "-console")]
+        [InlineData("-resetmodifiers", "")]
+        [InlineData("-resetmodifiers -console", "-console")]
+        [InlineData("-console -resetmodifiers", "-console")]
+        [InlineData("-crossplay -resetmodifiers -console", "-crossplay -console")]
         // The flag is matched however the host cased it.
         [InlineData("-DemoMode -console", "-console")]
         [InlineData("-JOINSERVERWITHCHARACTER -console", "-console")]
+        [InlineData("-ResetModifiers -console", "-console")]
         public void BlockedFlagsAreRemoved(string typed, string expected)
         {
             Assert.Equal(expected, ValheimServer.SanitizeAdditionalArgs(typed));
@@ -32,6 +40,8 @@ namespace ValheimBakaLoader.Tests.Game
         // blocked name, or a value that contains it, is the host's business.
         [InlineData("-demomodex")]
         [InlineData("-nodemomode")]
+        [InlineData("-resetmodifiersx")]
+        [InlineData("-noresetmodifiers")]
         [InlineData("-name \"demomode\"")]
         [InlineData("-crossplay -console")]
         [InlineData("")]
@@ -58,6 +68,14 @@ namespace ValheimBakaLoader.Tests.Game
                 "-demomode -console -JoinServerWithCharacter", out var removed);
 
             Assert.Equal(new List<string> { "-demomode", "-JoinServerWithCharacter" }, removed);
+        }
+
+        [Fact]
+        public void AHostTypedResetIsReportedLikeTheRest()
+        {
+            ValheimServer.SanitizeAdditionalArgs("-console -resetmodifiers", out var removed);
+
+            Assert.Equal(new List<string> { "-resetmodifiers" }, removed);
         }
 
         [Fact]

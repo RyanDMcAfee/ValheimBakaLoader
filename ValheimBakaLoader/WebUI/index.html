@@ -39,7 +39,7 @@
       <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Discord</span><span class="norse">Herald</span></div>
       <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Statistics</span><span class="norse">Skald</span></div>
       <div class="side-foot">
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.4</span></span>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.6</span></span>
         <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
@@ -292,14 +292,15 @@
             <div class="formsec collapsible" id="secWorldMods" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᚷ</span> WORLD MODIFIERS</div>
             <div class="formsec-body">
             <div class="formgrid">
-              <div class="field"><label>Combat</label><select id="fModCombat"></select></div>
-              <div class="field"><label>Death Penalty</label><select id="fModDeath"></select></div>
-              <div class="field"><label>Resources</label><select id="fModResources"></select></div>
-              <div class="field"><label>Raids</label><select id="fModRaids"></select></div>
-              <div class="field"><label>Portals</label><select id="fModPortals"></select></div>
+              <div class="field"><label>Combat<button type="button" class="wginfo" id="iModCombat" aria-controls="wgTip" aria-label="What each Combat option does">?</button></label><select id="fModCombat"></select><div class="fieldnote wgnote" id="fModCombatNote"></div></div>
+              <div class="field"><label>Death Penalty<button type="button" class="wginfo" id="iModDeath" aria-controls="wgTip" aria-label="What each Death Penalty option does">?</button></label><select id="fModDeath"></select><div class="fieldnote wgnote" id="fModDeathNote"></div></div>
+              <div class="field"><label>Resources<button type="button" class="wginfo" id="iModResources" aria-controls="wgTip" aria-label="What each Resources option does">?</button></label><select id="fModResources"></select><div class="fieldnote wgnote" id="fModResourcesNote"></div></div>
+              <div class="field"><label>Raids<button type="button" class="wginfo" id="iModRaids" aria-controls="wgTip" aria-label="What each Raids option does">?</button></label><select id="fModRaids"></select><div class="fieldnote wgnote" id="fModRaidsNote"></div></div>
+              <div class="field"><label>Portals<button type="button" class="wginfo" id="iModPortals" aria-controls="wgTip" aria-label="What each Portals option does">?</button></label><select id="fModPortals"></select><div class="fieldnote wgnote" id="fModPortalsNote"></div></div>
               <div class="field"><label>Max Players</label><input type="text" id="fMaxPlayers" value="10"></div>
             </div>
             <div class="setupreset-note" style="display:block;margin-top:8px">modifiers saved per world · max players above 10 installs a small bundled server plugin · applies the next time the server starts</div>
+            <div class="setupreset-note" style="display:block;margin-top:6px" id="wgOwnNote"></div>
             </div>
 
             <div class="formsec collapsible" id="secRites" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse"><span class="r">ᚨ</span> ADVANCED<span class="cnorse">Rites</span></div>
@@ -588,7 +589,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.4</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.6</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>
@@ -634,6 +635,9 @@
 
   <!-- MODAL LAYER (teleport / spawn / confirm dialogs) -->
   <div class="modal-bg" id="modalBg"></div>
+
+  <!-- WORLD-DIAL HELP PANEL (positioned + filled by JS) -->
+  <div class="wgtip" id="wgTip" role="tooltip" aria-hidden="true"></div>
 
   <!-- TOASTS -->
   <div class="toasts" id="toasts"></div>

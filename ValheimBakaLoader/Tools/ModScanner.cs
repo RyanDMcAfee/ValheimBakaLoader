@@ -51,6 +51,24 @@ namespace ValheimBakaLoader.Tools
         public static bool IsCompanionFolder(string folderName) =>
             !string.IsNullOrWhiteSpace(folderName) && CompanionFolderNames.Contains(folderName);
 
+        /// <summary>
+        /// Patcher folders that are part of the framework or auto-generate other content, never a
+        /// user-installed mod anyone should list or remove:
+        /// - denikson-BepInExPack_Valheim: the BepInEx framework itself.
+        /// - ValheimModding-HookGenPatcher: generates the MMHOOK assemblies each launch.
+        /// The "patchers" folder is shared across every isolated instance via a junction, so
+        /// removing one of these would break the framework for all servers at once.
+        /// </summary>
+        private static readonly HashSet<string> PatcherProtectedNames = new(System.StringComparer.OrdinalIgnoreCase)
+        {
+            "denikson-BepInExPack_Valheim",
+            "ValheimModding-HookGenPatcher",
+        };
+
+        /// <summary>True when a patchers-dir folder name is a framework or auto-generated patcher.</summary>
+        public static bool IsProtectedPatcher(string folderName) =>
+            !string.IsNullOrWhiteSpace(folderName) && PatcherProtectedNames.Contains(folderName);
+
         private readonly IApplicationLogger Logger;
 
         public ModScanner(IApplicationLogger logger)
@@ -70,6 +88,10 @@ namespace ValheimBakaLoader.Tools
 
             Logger.Information("Scanning for installed mods in: {0}", pluginsDirectory);
 
+            // Folder name -> entry, so a mod that ships both a plugin and a patcher merges into
+            // one row (its PatcherDirectory set) instead of listing twice.
+            var byFolderName = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var modDirectory in Directory.EnumerateDirectories(pluginsDirectory))
             {
                 var folderName = new DirectoryInfo(modDirectory).Name;
@@ -82,14 +104,76 @@ namespace ValheimBakaLoader.Tools
                 var mod = TryReadMod(modDirectory);
                 if (mod != null)
                 {
+                    mod.PluginDirectory = modDirectory;
                     results.Add(mod);
+                    byFolderName[folderName] = mod;
                 }
             }
+
+            // Patcher-type mods install under BepInEx/patchers, a sibling of plugins. Surface
+            // them too so they can be seen and removed; this is read-only.
+            ScanPatchers(pluginsDirectory, results, byFolderName);
 
             Logger.Information("Mod scan complete: found {0} installed mod(s).", results.Count);
             return results;
         }
 
+        /// <summary>
+        /// Adds patcher-type mods from the sibling <c>patchers</c> directory. A patcher whose
+        /// folder name already has a plugins counterpart merges into that entry (PatcherDirectory
+        /// set, no second row); a patcher with no plugins counterpart is added as an
+        /// <see cref="InstalledMod.IsPatcher"/> row. Framework and auto-generated patchers are
+        /// excluded. A no-op when the patchers directory does not exist. Read-only.
+        /// </summary>
+        private void ScanPatchers(string pluginsDirectory, List<InstalledMod> results,
+            Dictionary<string, InstalledMod> byFolderName)
+        {
+            string patchersDirectory;
+            try
+            {
+                var parent = Directory.GetParent(pluginsDirectory);
+                if (parent == null) return;
+                patchersDirectory = Path.Combine(parent.FullName, "patchers");
+            }
+            catch
+            {
+                return;
+            }
+
+            if (!Directory.Exists(patchersDirectory)) return;
+
+            foreach (var patcherDirectory in Directory.EnumerateDirectories(patchersDirectory))
+            {
+                var folderName = new DirectoryInfo(patcherDirectory).Name;
+                if (CompanionFolderNames.Contains(folderName) || PatcherProtectedNames.Contains(folderName))
+                {
+                    Logger.Debug("Skipping framework or app-managed patcher folder: {0}", folderName);
+                    continue;
+                }
+
+                // Same mod already seen as a plugin: attach the patcher folder, do not add a row.
+                if (byFolderName.TryGetValue(folderName, out var existing))
+                {
+                    existing.PatcherDirectory = patcherDirectory;
+                    continue;
+                }
+
+                var mod = TryReadMod(patcherDirectory);
+                if (mod != null)
+                {
+                    mod.PatcherDirectory = patcherDirectory;
+                    mod.IsPatcher = true;
+                    results.Add(mod);
+                    byFolderName[folderName] = mod;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reads a mod's identity and manifest from a folder (a plugins or a patchers subfolder).
+        /// The caller sets the directory field (<see cref="InstalledMod.PluginDirectory"/> or
+        /// <see cref="InstalledMod.PatcherDirectory"/>) so the same read serves both.
+        /// </summary>
         private InstalledMod TryReadMod(string modDirectory)
         {
             var folderName = new DirectoryInfo(modDirectory).Name;
@@ -107,7 +191,6 @@ namespace ValheimBakaLoader.Tools
                     Author = author,
                     ModName = modName,
                     InstalledVersion = UnknownVersion,
-                    PluginDirectory = modDirectory,
                     // No manifest means no declared dependencies; keep the array empty, not null.
                     Dependencies = Array.Empty<string>(),
                 };
@@ -138,7 +221,6 @@ namespace ValheimBakaLoader.Tools
                         ? UnknownVersion
                         : manifest.VersionNumber.Trim(),
                     Website = manifest.WebsiteUrl,
-                    PluginDirectory = modDirectory,
                     Dependencies = ParseDependencyFullNames(manifest.Dependencies),
                 };
             }
