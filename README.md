@@ -149,7 +149,7 @@ Detail: [Worlds, backups and restore](https://github.com/RyanDMcAfee/ValheimBaka
 
 BakaLoader asks GitHub for a newer release at launch and every six hours while it is open. When one turns up, the dashboard and the sidebar say so, and a dialog explains what installing it would do before anything happens. With every server stopped you can take it there and then: the app closes, swaps its own files and opens again on the new version, with your profiles, worlds and mods untouched. With a world up, the only offer is to set it for the next restart, because installing means closing the app, and that would take your server down with it. Nothing installs itself while a server is running in any window.
 
-Both switches, checking and installing, are in the Upkeep card on the dashboard. Detail: [Install and first run](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Install-and-first-run).
+Both switches, checking and installing, are in the Upkeep card on the dashboard. Detail: [Updating BakaLoader](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-BakaLoader).
 
 ---
 
