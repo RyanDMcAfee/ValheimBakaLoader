@@ -280,6 +280,28 @@ namespace ValheimBakaLoader.Game
         public Func<Task> ApplyModUpdates { get; set; }
 
         /// <summary>
+        /// Optional hook (set by the UI) that hands back the options built from what is SAVED ON
+        /// DISK for this server's profile right now, or null when they cannot be read.
+        /// <para>
+        /// Every automatic relaunch used to come back up on the options the server was started
+        /// with, because a relaunch reuses <see cref="Options"/> and only a fresh Start ever
+        /// reads the profile again. A host who changed a setting while the server was up (the
+        /// world's difficulty dials are the painful one) then watched restart after restart
+        /// launch with the old command line until they stopped and started the server by hand.
+        /// This is what a relaunch asks so it comes up on what the host actually saved.
+        /// </para>
+        /// <para>
+        /// It must return a COMPLETE options object, launch history included, exactly as the
+        /// Start path builds one: the launch guard reads
+        /// <see cref="IValheimServerOptions.LastLaunchedServerBuild"/> and its two siblings off
+        /// these options, and the log view is wired through
+        /// <see cref="IValheimServerOptions.LogMessageHandler"/>. Unset (as in tests) means a
+        /// relaunch keeps the options it is running with, exactly as it always did.
+        /// </para>
+        /// </summary>
+        public Func<IValheimServerOptions> RefreshOptions { get; set; }
+
+        /// <summary>
         /// Optional hook (set by the UI) that checks GitHub for a newer BakaLoader release and,
         /// when auto-update is enabled and an update is found, stages a headless watchdog and
         /// begins closing the app. Returns <c>true</c> when an app update is taking over (the
@@ -357,6 +379,11 @@ namespace ValheimBakaLoader.Game
         // Why the pending relaunch is happening, so the launch guard can tell a crash recovery
         // apart from a scheduled restart. Set by whoever asks for the restart.
         private string PendingLaunchReason = LaunchReasons.Manual;
+
+        // True when the restart in flight was handed its own options. A caller that brings
+        // options is naming the ones to come back up on, so that one relaunch does not read the
+        // profile again. Consumed by the relaunch; every fresh start clears it.
+        private bool RelaunchOptionsPinned;
 
         // True between "a guarded launch was accepted" and "the process exists", so a second
         // click (or a timer firing) cannot start two servers while the guard is still thinking.
@@ -624,6 +651,60 @@ namespace ValheimBakaLoader.Game
             }
         }
 
+        /// <summary>
+        /// Swaps in whatever this profile has saved on disk right now, so a relaunch comes back
+        /// up on the settings the host last saved rather than the ones the running session was
+        /// started with. Used by every path that relaunches on the options already in hand.
+        /// <para>
+        /// Best effort by design: with no hook wired, a hook that cannot read the profile, or a
+        /// hook that throws, the relaunch keeps the options it has and says so. A restart that
+        /// refused to happen because a settings file could not be read would be a far worse
+        /// answer than a restart on the settings it is already running.
+        /// </para>
+        /// </summary>
+        /// <param name="running">The options the relaunch would otherwise reuse.</param>
+        /// <returns>The saved options, or <paramref name="running"/> when there are none.</returns>
+        private IValheimServerOptions RefreshOptionsForRelaunch(IValheimServerOptions running)
+        {
+            var refresh = RefreshOptions;
+            if (refresh == null) return running;
+
+            IValheimServerOptions saved;
+            try
+            {
+                saved = refresh();
+            }
+            catch (Exception e)
+            {
+                ApplicationLogger.Warning(
+                    "Could not read the saved settings for this relaunch, so it uses the ones the server is already running: {message}",
+                    e.Message);
+                return running;
+            }
+
+            if (saved == null)
+            {
+                ApplicationLogger.Warning(
+                    "The saved settings for this profile could not be read, so the relaunch uses the ones the server is already running.");
+                return running;
+            }
+
+            // Only worth a line when it actually changes the command line. Every scheduled
+            // restart of an untouched profile would otherwise say the same thing forever.
+            if (ValheimServerOptions.RelaunchWouldDiffer(running, saved))
+            {
+                ApplicationLogger.Information("Relaunch uses the settings saved on disk");
+            }
+
+            return saved;
+        }
+
+        /// <summary>
+        /// The same refresh, applied to this server's own <see cref="Options"/>. This is what a
+        /// relaunch with no options of its own goes through.
+        /// </summary>
+        private void RefreshOptionsForRelaunch() => Options = RefreshOptionsForRelaunch(Options);
+
         private async Task ResumeAfterStopAsync()
         {
             var delayMs = IsCrashRestart ? Options.AutoRestartDelay * 1000 : 500;
@@ -658,6 +739,16 @@ namespace ValheimBakaLoader.Game
             var reason = wasCrash ? LaunchReasons.Crash
                 : appliedUpdates ? LaunchReasons.SelfUpdate
                 : PendingLaunchReason;
+
+            // Last thing before the relaunch: take whatever the host has saved since this
+            // session started. Every automatic path lands here (crash recovery, the scheduled
+            // restart, the empty-server restart, the mod-update restart and the manual Restart
+            // button), so this is the one place that decides what they all come back up on.
+            // The exception is a restart that was handed its own options: that caller has named
+            // the settings to come back up on, and the pin is good for this relaunch only.
+            var pinned = RelaunchOptionsPinned;
+            RelaunchOptionsPinned = false;
+            if (!pinned) RefreshOptionsForRelaunch();
 
             BeginLaunch(Options, reason, automatic: true);
         }
@@ -1186,7 +1277,10 @@ namespace ValheimBakaLoader.Game
                 if (token.IsCancellationRequested) return;
                 if (!CanStart) return;
 
-                BeginLaunch(options, reason, automatic: true);
+                // A retry can fire hours after the launch it is retrying (a scheduled restart's
+                // own interval is the floor), so it asks for the saved settings the same way a
+                // relaunch does rather than carrying an old command line back up with it.
+                BeginLaunch(RefreshOptionsForRelaunch(options), reason, automatic: true);
             });
         }
 
@@ -1268,6 +1362,7 @@ namespace ValheimBakaLoader.Game
             }
 
             IsRestarting = false;
+            RelaunchOptionsPinned = false;   // a fresh session owes nothing to an older restart
             Options = options;
             Status = ServerStatus.Starting; // last: fires StatusChanged
         }
@@ -1396,12 +1491,16 @@ namespace ValheimBakaLoader.Game
         /// <summary>
         /// Gracefully shuts the server down and relaunches it once the process has
         /// exited. Passing options swaps the profile for the relaunch; otherwise the
-        /// current one is reused.
+        /// settings saved on disk for this profile are read afresh, so a change the host
+        /// made while the server was up is in force when it comes back.
         /// </summary>
         public void Restart(IValheimServerOptions options = null, string reason = null)
         {
             if (!CanRestart) return;
+
+            RelaunchOptionsPinned = options != null;
             if (options != null) Options = options;
+            else RefreshOptionsForRelaunch();
             PendingLaunchReason = reason ?? LaunchReasons.Manual;
             BeginShutdown(restartAfter: true);
         }
@@ -2555,6 +2654,25 @@ namespace ValheimBakaLoader.Game
         /// refused.
         /// </summary>
         private static string GenerateArgs(IValheimServerOptions options, IApplicationLogger logger = null)
+            => string.Join(" ", BuildArgParts(options, logger));
+
+        /// <summary>
+        /// The command line one flag at a time, for anything that needs to compare two launches
+        /// rather than run one. Each entry is a whole flag with its value ("-port 2456",
+        /// "-modifier combat hard"), which is what makes a comparison able to ignore the order
+        /// two dictionaries happened to hand their modifiers over in without also ignoring which
+        /// value belongs to which flag.
+        /// <para>
+        /// Pure: it reads the options and the paths they name, and writes nothing. It can throw
+        /// exactly where a start would (a save folder that is not there), so callers that are
+        /// not starting anything have to be ready for that.
+        /// </para>
+        /// </summary>
+        internal static IReadOnlyList<string> DescribeLaunchParts(IValheimServerOptions options)
+            => BuildArgParts(options, null);
+
+        /// <inheritdoc cref="GenerateArgs(IValheimServerOptions, IApplicationLogger)"/>
+        private static List<string> BuildArgParts(IValheimServerOptions options, IApplicationLogger logger)
         {
             // Trim trailing directory separators. A path ending in '\' would otherwise
             // produce -savedir "...\" where the backslash escapes the closing quote on
@@ -2628,7 +2746,7 @@ namespace ValheimBakaLoader.Game
                 if (!string.IsNullOrWhiteSpace(extraArgs)) parts.Add(extraArgs);
             }
 
-            return string.Join(" ", parts);
+            return parts;
         }
 
         /// <summary>

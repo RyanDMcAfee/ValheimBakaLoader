@@ -215,6 +215,10 @@ body{
 .pagehead h1 .r{color:var(--ember);margin-right:8px;text-shadow:0 0 10px rgba(255,122,26,.6)}
 .pagehead .sub{font-size:11px;color:var(--bone-dim);letter-spacing:.5px}
 .pagehead .grow{flex:1}
+/* Save Config and the line that belongs to it: the note sits directly above the button and
+   is only there while a server is up, so the header keeps its height the rest of the time. */
+.savecfg{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+.savecfg .fieldnote{margin-top:0;max-width:420px;text-align:right}
 
 /* ============ CARDS ============ */
 .card{

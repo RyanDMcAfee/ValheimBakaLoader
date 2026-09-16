@@ -226,6 +226,7 @@ namespace ValheimBakaLoader.Forms
                 WireSessionEvents(session);
                 WireAppSelfUpdate(session);
                 WireModUpdateHooks(session);
+                WireRelaunchSettings(session);
                 WireLaunchGuard(session);
 
                 Sessions[profileName] = session;
@@ -962,6 +963,62 @@ namespace ValheimBakaLoader.Forms
                 // Herald: mod count / last-update time changed.
                 DiscordStatus.RequestUpdate();
             };
+        }
+
+        /// <summary>
+        /// Teaches one session's server to read its profile again before it relaunches, so a
+        /// setting the host saved while the world was up is in force the moment it comes back
+        /// rather than waiting for somebody to stop and start the server by hand.
+        /// <para>
+        /// Built exactly the way <c>server.start</c> builds its options, launch history and log
+        /// handler included: the launch guard reads the history off these options, and the Saga
+        /// log is fed by the handler. The profile is the SESSION's own, never
+        /// <see cref="ActiveProfileName"/>: windows are per profile but sessions are keyed by
+        /// profile, so a background realm relaunching while the host is looking at another one
+        /// must read its own settings.
+        /// </para>
+        /// </summary>
+        private void WireRelaunchSettings(ServerSession session)
+        {
+            var profile = session.ProfileName;
+
+            session.Server.RefreshOptions = () =>
+            {
+                var prefs = ServerPrefsProvider.LoadPreferences(profile);
+                return prefs == null ? null : BuildServerOptions(MergeLaunchHistory(prefs));
+            };
+        }
+
+        /// <summary>
+        /// Whether this session is running (or coming up on) settings the host has since
+        /// changed. That is the whole of "restart pending": what is saved differs from what the
+        /// live server started with, and only a restart can close the gap.
+        /// <para>
+        /// A stopped server is never pending: its next start reads the profile anyway. Anything
+        /// that cannot be read or compared answers false, because a restart the host does not
+        /// need costs them their world for nothing.
+        /// </para>
+        /// </summary>
+        private IValheimServerOptions SavedOptionsIfRestartPending(ServerSession session)
+        {
+            try
+            {
+                var server = session.Server;
+                if (server.Status != ServerStatus.Running && server.Status != ServerStatus.Starting) return null;
+
+                var prefs = ServerPrefsProvider.LoadPreferences(session.ProfileName);
+                if (prefs == null) return null;
+
+                var saved = BuildServerOptions(MergeLaunchHistory(prefs));
+                return ValheimServerOptions.RelaunchWouldDiffer(server.Options, saved) ? saved : null;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex,
+                    "Could not compare the saved settings with the running server for profile {profile}",
+                    session.ProfileName);
+                return null;
+            }
         }
 
         #endregion
@@ -4939,6 +4996,11 @@ namespace ValheimBakaLoader.Forms
             var updating = ServerUpdateExe.TryGetValue(session.ProfileName, out var updatingExe)
                 && IsServerUpdateRunning(updatingExe);
 
+            // Settings the host saved while this world was up. Null unless there really is a
+            // difference, so the two keys below travel together: the fingerprint is what a
+            // dismissed row is keyed on, and a later change gives a new one.
+            var pending = SavedOptionsIfRestartPending(session);
+
             return new
             {
                 profile = session.ProfileName,
@@ -4955,6 +5017,10 @@ namespace ValheimBakaLoader.Forms
                 networkVersion = server.NetworkVersion,
                 // A launch the guard held, so the banner survives a page reload.
                 launchHold = LaunchHolds.TryGetValue(session.ProfileName, out var hold) ? hold : null,
+                // True while the live server is running settings the host has since changed.
+                // They go in at the next restart, which is the one thing the row offers.
+                restartPending = pending != null,
+                restartPendingSig = pending == null ? null : ValheimServerOptions.RelaunchSignature(pending),
                 // Companion plugins that could not be installed, so the interface can say the
                 // feature is off and why instead of leaving it quietly missing. Empty normally.
                 // Scoped to this session's profile: with two realms up, the other realm's

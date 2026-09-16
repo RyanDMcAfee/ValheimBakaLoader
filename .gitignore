@@ -353,6 +353,8 @@ MigrationBackup/
 /Build/
 # Temp verification build output (never commit)
 /Build-temp/
+/BuildStaging*/
+/Temp/
 /BuildRelease/
 /ReleaseStage/
 # Companion BepInEx plugin binaries (Resources/**/*.dll) are tracked so a fresh clone builds and ships them.

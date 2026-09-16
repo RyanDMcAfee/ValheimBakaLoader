@@ -858,7 +858,10 @@ async function switchServer(name){
   S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
   S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
   /* conditions belong to the realm that raised them */
-  ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate"].forEach(clearCondition);
+  ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate","restartPending"]
+    .forEach(clearCondition);
+  /* and so does a dismissal: the settings the host waved away were that realm's */
+  RESTART_PENDING_HIDDEN=null;
   /* so does the update answer: install kind, waiting bytes and the reason a realm cannot
      be updated are all about the install the previous realm pointed at. */
   SRV_UPDATE=null; _updHidden=false;
@@ -1304,7 +1307,10 @@ function renderHearth(){
   renderAppBar();
 }
 function renderHearthNative(){
-  const st=S.state||{status:"Stopped",canStart:false,canStop:false};
+  /* The browser preview has no native host to send a state, so this stands in for one.
+     restartPending is false in it for the same reason every other key is quiet: nothing is
+     running, so nothing can be behind what is saved. */
+  const st=S.state||{status:"Stopped",canStart:false,canStop:false,restartPending:false};
   hCard.classList.toggle("cold",st.status!=="Running");
   /* the fire says what the server is doing: crashed outranks stopped, because the
      difference between "you stopped it" and "it fell over" is the whole point */
@@ -1396,6 +1402,12 @@ function applyState(st){
   // Companion plugins that would not install. Absent on a 1.0.0 host, which simply
   // means the condition is never raised.
   if("pluginFailures" in st) conditionPluginFailures(st.pluginFailures,st.status);
+  /* Settings saved while this world is up: true only while the live server is running a
+     different command line from the one saved on disk. Absent on an older host, which simply
+     means the row is never raised. */
+  if("restartPending" in st) conditionRestartPending(st.restartPending,st.restartPendingSig);
+  /* The same fact, said again where the host is doing the saving. */
+  try{renderCfgRunningNote();}catch(_){}
   /* Whether an update can run at all depends on the run state, so the cached answer is
      stale the moment the server starts or stops. Re-ask on the transition rather than
      leaving the pill greyed with "Stop the server to update it." after it was stopped. */
@@ -3212,7 +3224,7 @@ function renderUpdatePill(){
    two warnings, then the two notices. A save that failed outranks a plugin that would not
    install, and both outrank a download running to plan. */
 const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
-                       "serverUpdate","pluginFailure","appUpdate","modUpdates"];
+                       "serverUpdate","pluginFailure","appUpdate","modUpdates","restartPending"];
 const CONDITIONS=new Map();
 function setCondition(kind,cond){
   if(!cond) CONDITIONS.delete(kind); else CONDITIONS.set(kind,cond);
@@ -3374,6 +3386,28 @@ function conditionModUpdates(n){
         TT(" New versions load the next time the server starts."),
     actionsHtml:`<button class="btn btn-ember btn-sm" id="cbMods">${esc(TT("Review in Mods"))}</button>`,
     wire:bar=>bar.querySelector("#cbMods").addEventListener("click",()=>goPage("mods")),
+  });
+}
+/* Settings saved while the world was up. Valheim reads its whole configuration off the command
+   line at launch, so a running server keeps what it started with no matter what is on disk: the
+   change is real, it is saved, and it is simply not in force yet. The native side compares the
+   saved settings with the live ones and sends the answer with every status refresh; this row is
+   where the host finds out, and the restart it offers is the same warned one the Hearth button
+   runs, never a bare stop. */
+let RESTART_PENDING_HIDDEN=null;   // the saved-settings fingerprint the host has waved away
+function conditionRestartPending(on,sig){
+  const key=String(sig||"");
+  /* Not pending any more: the server stopped, the settings were put back, or a restart took
+     them in. Either way a later change is news again rather than something already dismissed. */
+  if(!on){RESTART_PENDING_HIDDEN=null;clearCondition("restartPending");return;}
+  if(RESTART_PENDING_HIDDEN===key){clearCondition("restartPending");return;}
+  setCondition("restartPending",{sev:"info",title:TT("Restart pending"),
+    msg:TT("Saved settings differ from what the running server started with. They apply at the next restart."),
+    actionsHtml:`<button class="btn btn-ember btn-sm" id="cbRestartPending">${esc(TT("Restart"))}</button>`,
+    wire:bar=>bar.querySelector("#cbRestartPending").addEventListener("click",()=>smartRestart()),
+    /* Keyed to this exact set of saved settings: waving it away hides THESE, and the next
+       change the host saves raises the row again with a fingerprint of its own. */
+    onDismiss:()=>{RESTART_PENDING_HIDDEN=key;},
   });
 }
 /* Opens the Upkeep card, where the auto-update switch lives. */
@@ -4853,6 +4887,23 @@ async function renderMaxPlayers(){
   if(r!==FAIL&&r?.count!=null) $("#fMaxPlayers").value=r.count;
 }
 renderMaxPlayers();
+/* True while a server is up (or on its way up) for the profile the halls are showing. The
+   Settings note and the Save Config sentence both turn on it, and it is the same pair of
+   states the native side calls "restart pending". */
+function cfgServerIsUp(){
+  const status=S.state&&S.state.status;
+  return status==="Running"||status==="Starting";
+}
+/* The line above Save Config. A save goes to disk straight away, but the running server was
+   handed its whole configuration on the command line when it launched and keeps it until it
+   launches again, so the button says so before it is pressed rather than after. */
+function renderCfgRunningNote(){
+  const el=$("#cfgRunningNote"); if(!el) return;
+  const up=cfgServerIsUp();
+  el.style.display=up?"":"none";
+  el.textContent=up?TT("The server is running. Saved changes apply the next time it starts."):"";
+}
+renderCfgRunningNote();
 $("#saveCfgBtn").addEventListener("click",async()=>{
   if(!Native.available){toast("ᛉ Config saved · runes etched");return;}
   const name=S.profileName||S.prefs?.ProfileName||"Default";
@@ -4892,6 +4943,15 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
     const modifiers=scrapeWorldModDials();
     S.worldMods.mods=modifiers;
     await rpc("worldgen.save",{world:prefs.WorldName,modifiers});
+  }else if(prefs.WorldName){
+    /* The dials on screen belong to another world, or to no world yet. Writing them here
+       would stamp one world's difficulty onto another, so the save is skipped, but it is
+       skipped OUT LOUD: this used to pass in silence under a success toast, and the host
+       walked away believing a difficulty they had just set was saved. */
+    console.warn("[BakaLoader] world difficulty not saved: the dials on screen belong to "+
+      (S.worldMods&&S.worldMods.world?"'"+S.worldMods.world+"'":"no world yet")+
+      ", not '"+prefs.WorldName+"'");
+    toast("ᚷ "+TT("World difficulty was not saved for this world. Reopen Settings and save again."));
   }
   // max players rides along too - >10 auto-installs the bundled max-players plugin
   const mp=parseInt($("#fMaxPlayers").value,10);
@@ -4905,7 +4965,15 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   }
   S.prefs=r; S.profileName=r.ProfileName; S.saveInterval=r.SaveInterval??600;
   renderAllFromPrefs();
-  toast("ᛉ Config saved · profile "+r.ProfileName);
+  /* Whether the running server is now behind what is saved is the native side's answer, and
+     nothing about a save moves the server's status, so ask for the state again rather than
+     leaving the row to wait for the next start or stop. */
+  const after=await rpc("server.state");
+  if(after!==FAIL) applyState(after);
+  /* A save while the world is up is real and on disk, and it is still not what the players are
+     playing. Say that instead of a plain confirmation the host would read as "in force now". */
+  if(cfgServerIsUp()) toast("ᛉ "+TT("Saved. The running server keeps its current settings until it restarts."));
+  else toast("ᛉ Config saved · profile "+r.ProfileName);
   logLine("ok","[BakaLoader] profile '"+r.ProfileName+"' saved");
 });
 function renderAllFromPrefs(){
@@ -4918,6 +4986,7 @@ function renderAllFromPrefs(){
   renderWorldForm();
   renderNet();
   renderHearthNative();
+  try{renderCfgRunningNote();}catch(_){}
   try{renderEditBar();}catch(_){}
 }
 
@@ -6541,9 +6610,9 @@ if(!Native.available){
      looking at, so it is the default; index.html#uptodate walks the quiet one, where
      none of these surfaces show anything at all. */
   APP_UPD=location.hash==="#uptodate"
-    ?{installedVersion:"1.0.7",latestVersion:null,updateAvailable:false,releaseUrl:null,
+    ?{installedVersion:"1.0.8",latestVersion:null,updateAvailable:false,releaseUrl:null,
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true}
-    :{installedVersion:"1.0.7",latestVersion:"1.0.8",updateAvailable:true,
+    :{installedVersion:"1.0.8",latestVersion:"1.0.9",updateAvailable:true,
       releaseUrl:"https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest",
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true};
   renderAppUpdatePill();

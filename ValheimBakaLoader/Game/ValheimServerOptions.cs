@@ -162,6 +162,135 @@ namespace ValheimBakaLoader.Game
             return options;
         }
 
+        /// <summary>
+        /// Whether starting the server on <paramref name="saved"/> would run a different server
+        /// from the one <paramref name="running"/> started. This is the rule behind "restart
+        /// pending": the host saved something while the world was up, and it is not in force
+        /// until the server comes back.
+        /// <para>
+        /// The answer is the command line itself, flag by flag, because the command line is the
+        /// whole of what a start hands the game. Order does not count: two dictionaries holding
+        /// the same modifiers in a different order launch the same server, and telling the host
+        /// otherwise would raise a restart they do not need. When the command line cannot be
+        /// built at all (a save folder that has gone missing is the usual reason) the fields a
+        /// host can actually change are compared instead.
+        /// </para>
+        /// <para>
+        /// Never throws and never guesses: anything it cannot answer is answered "no
+        /// difference", because a false "restart pending" asks a host to take their world down
+        /// for nothing.
+        /// </para>
+        /// </summary>
+        public static bool RelaunchWouldDiffer(IValheimServerOptions running, IValheimServerOptions saved)
+        {
+            if (running == null || saved == null) return false;
+            if (ReferenceEquals(running, saved)) return false;
+
+            try
+            {
+                try
+                {
+                    var before = ValheimServer.DescribeLaunchParts(running);
+                    var after = ValheimServer.DescribeLaunchParts(saved);
+                    if (before != null && after != null) return !SameParts(before, after);
+                }
+                catch
+                {
+                    // A path that cannot be validated right now (an unplugged drive, a folder
+                    // somebody moved) is not an answer about the settings, so fall through to
+                    // the fields rather than calling that a difference.
+                }
+
+                return FieldsDiffer(running, saved);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// A short, stable fingerprint of what a start on these options would run, or null when
+        /// it cannot be taken. The interface keys a dismissed "restart pending" on it, so waving
+        /// the row away hides THAT set of saved settings and a later change raises it again.
+        /// The command line carries the host's password, so what travels is the hash of it and
+        /// never the line itself.
+        /// </summary>
+        public static string RelaunchSignature(IValheimServerOptions options)
+        {
+            if (options == null) return null;
+
+            try
+            {
+                string canonical;
+                try
+                {
+                    var parts = ValheimServer.DescribeLaunchParts(options);
+                    if (parts == null) return null;
+                    canonical = string.Join("\n", parts.OrderBy(part => part, StringComparer.Ordinal));
+                }
+                catch
+                {
+                    canonical = string.Join("\n", DescribeFields(options));
+                }
+
+                using var sha = System.Security.Cryptography.SHA256.Create();
+                var hash = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(canonical));
+                return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>The same flags in any order are the same launch.</summary>
+        private static bool SameParts(IReadOnlyList<string> before, IReadOnlyList<string> after)
+        {
+            if (before.Count != after.Count) return false;
+
+            return before.OrderBy(part => part, StringComparer.Ordinal)
+                .SequenceEqual(after.OrderBy(part => part, StringComparer.Ordinal), StringComparer.Ordinal);
+        }
+
+        /// <summary>
+        /// The fallback comparison: everything a host can change that reaches the game, with the
+        /// two collections compared as sets so their order is no more meaningful here than it is
+        /// on the command line.
+        /// </summary>
+        private static bool FieldsDiffer(IValheimServerOptions running, IValheimServerOptions saved)
+            => !DescribeFields(running).SequenceEqual(DescribeFields(saved), StringComparer.Ordinal);
+
+        /// <summary>One line per compared field, in a fixed order.</summary>
+        private static List<string> DescribeFields(IValheimServerOptions options)
+        {
+            var modifiers = options.WorldModifiers == null
+                ? Array.Empty<string>()
+                : options.WorldModifiers
+                    .Select(pair => pair.Key + "=" + pair.Value)
+                    .OrderBy(entry => entry, StringComparer.Ordinal)
+                    .ToArray();
+
+            var keys = options.WorldKeys == null
+                ? Array.Empty<string>()
+                : options.WorldKeys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
+
+            return new List<string>
+            {
+                "world=" + options.WorldName,
+                "port=" + options.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "password=" + options.Password,
+                "public=" + options.Public,
+                "crossplay=" + options.Crossplay,
+                "preset=" + options.WorldPreset,
+                "modifiers=" + string.Join(",", modifiers),
+                "keys=" + string.Join(",", keys),
+                "args=" + options.AdditionalArgs,
+                "saves=" + options.SaveDataFolderPath,
+                "exe=" + options.ServerExePath,
+            };
+        }
+
         public string Name { get; set; }
 
         public string Password { get; set; }
