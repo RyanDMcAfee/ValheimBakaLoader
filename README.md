@@ -27,6 +27,32 @@
 
 ---
 
+## What is new in 1.0.8
+
+**Settings you save while the server is up go in at the next restart.** Every automatic restart (the scheduled one, the empty-server one, crash recovery, the one that applies mod updates) and the Restart button used to bring the server back on the settings it was started with. A change saved while the world was up sat on disk doing nothing until somebody pressed Stop and then Start, or closed and reopened the app. World difficulty was the painful one: a new set of modifiers could be ignored for a whole day of restarts. A relaunch now reads the profile again the moment before it launches, so what you saved is what comes back up. If the settings cannot be read for any reason, the relaunch keeps the ones it is already running and says so in the log rather than refusing to restart.
+
+**The app says when the running server is behind what you saved.** A line sits directly above `Save Config` on the Settings screen while the server is up, and saving there now confirms that the running server keeps its current settings until it restarts, instead of a plain "saved" that read as though the change were already in force. A new **Restart pending** row appears on the condition bar when what is on disk differs from what the live server started with. Its action is the same warned restart the dashboard button runs, never a bare stop, and you can wave it away. A later change raises it again, because the row is keyed to the settings themselves.
+
+**A world difficulty that did not get saved no longer passes in silence.** `Save Config` only writes the world dials when the dials on screen belong to the world being saved, which is right. When they do not, it used to skip them quietly under a success toast, so a difficulty you had just set looked saved and was not. It now says which world the dials belong to and asks you to reopen Settings and save again, and the rest of the save still goes through.
+
+Full list on the [release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
+## What is new in 1.0.7
+
+**You can see when a newer BakaLoader is ready.** When a newer release is published, the Server card on the dashboard shows a glowing pill naming it, beside the Valheim server's own update pill, and the version at the foot of the sidebar glows the same way and names it too. Clicking either one opens the update dialog.
+
+**The update dialog says what it will do before it does anything.** With every server stopped, **Update and relaunch now** downloads the release, closes BakaLoader, swaps the files and opens the new version, and your profiles, worlds and mods are left alone. While a server is running the only offer is **Update on the next restart**, which installs the new version the next time BakaLoader closes. There is no button anywhere in the dialog that stops your server. **View release notes** opens the GitHub page for that version. BakaLoader also re-checks for a release every six hours while it is open, where before it checked once a day at launch, so a release published while you are hosting turns up the same day.
+
+<p align="center">
+  <a href="img/bl-update-dialog.png"><img src="img/bl-update-dialog.png" width="760" alt="The update dialog explaining what installing the new version would do"></a>
+</p>
+
+**Safer with more than one window open.** BakaLoader opens a window for each profile set to start with the app, and the "is a server running" check used to look only at the sessions in the window you clicked from. A second window whose own profile was stopped answered that nothing was running while another window had a live world, and the update went ahead on that answer. It now waits until no server anywhere in the app is running, restarting or about to launch, and a Valheim server update in flight counts as well. When an update does run, every window is closed and the app exits fully, so the file swap always starts from a stopped app. The helper that copies the files waits up to two minutes for the app to exit, and if the process is still there it leaves the install alone entirely rather than writing half a version over a running one.
+
+**Condition bar.** The BakaLoader update row now reads differently depending on your two Upkeep switches, and its button is **Update BakaLoader**, which opens the dialog instead of sending you to a browser. A row you dismissed is not raised again every few hours for the same version.
+
+Full list on the [release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
 ## What is new in 1.0.6
 
 **World modifiers, explained where you set them.** Every dial on the Settings screen now shows a one line explanation of the option you picked, and a **?** marker opens a panel listing every option with what it does and the game settings it applies. The same explanations appear in the "Found a new realm" dialog. Labels say what an option really means: Death penalty **Hard** deletes everything you were not wearing, since only equipped gear reaches your tombstone, and raises skill loss to 1.5 times normal, while **Hardcore** deletes every item and resets all your skills but does not delete your character. "Permadeath" was the wrong word for that and is gone. BakaLoader also clears the world's difficulty keys at every start and writes your settings back, so turning a setting down really turns it down. Before this, moving Death penalty from Hard back to Normal left the key that deletes unequipped items sitting in the world, and players kept losing their inventory on a world whose dial read Normal. Boss and progression keys are left alone, and a difficulty change made with the in-game console no longer survives a restart, so make it in the app. See [World modifiers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-modifiers).
@@ -97,13 +123,13 @@ The app is split into nine screens. Each has a plain name, with its Norse name s
 
 ### Running the server
 
-Start, stop and restart from the app. Scheduled restarts warn players in game first. Optional restart when the last player leaves, and relaunch after a crash.
+Start, stop and restart from the app. Scheduled restarts warn players in game first. Optional restart when the last player leaves, and relaunch after a crash. A restart reads the profile again first, so a setting you saved while the world was up is what the server comes back on.
 
 The server process is tied to the app, so it cannot linger after BakaLoader closes, even through Task Manager or a crash. If a matching server is already running when you open BakaLoader, it offers to adopt it. Closing the app while players are online asks first, then saves the world on the way out.
 
 Copy your public address, LAN address or crossplay join code from the dashboard, or give the server a name of its own with the domain wizard. Minimize to the tray if you want it out of the way.
 
-Conditions that stay true, such as a server update waiting, a held start, a failed backup or a crash with a relaunch pending, sit in a bar above the page with their action until you deal with them. Toasts are only used to confirm what you just did.
+Conditions that stay true, such as a server update waiting, a held start, a failed backup, a crash with a relaunch pending, a newer BakaLoader waiting to install, or saved settings the running server has not picked up yet, sit in a bar above the page with their action until you deal with them. Toasts are only used to confirm what you just did.
 
 Detail: [Running the server](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Running-the-server).
 
@@ -118,6 +144,12 @@ Detail: [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki
 The World saves card and the backup manager list every backup layer for every world: the game's automatic snapshots, the copies BakaLoader takes before a restore or an update, and the pre-1.0 originals the game keeps after converting a world. Restore any layer with one click, and the live world is copied aside first so the restore is itself undoable. Nothing is deleted without asking.
 
 Detail: [Worlds, backups and restore](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Worlds-backups-and-restore).
+
+### Updating BakaLoader
+
+BakaLoader asks GitHub for a newer release at launch and every six hours while it is open. When one turns up, the dashboard and the sidebar say so, and a dialog explains what installing it would do before anything happens. With every server stopped you can take it there and then: the app closes, swaps its own files and opens again on the new version, with your profiles, worlds and mods untouched. With a world up, the only offer is to set it for the next restart, because installing means closing the app, and that would take your server down with it. Nothing installs itself while a server is running in any window.
+
+Both switches, checking and installing, are in the Upkeep card on the dashboard. Detail: [Install and first run](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Install-and-first-run).
 
 ---
 
