@@ -27,6 +27,14 @@
 
 ---
 
+## What is new in 1.0.6
+
+**World modifiers, explained where you set them.** Every dial on the Settings screen now shows a one line explanation of the option you picked, and a **?** marker opens a panel listing every option with what it does and the game settings it applies. The same explanations appear in the "Found a new realm" dialog. Labels say what an option really means: Death penalty **Hard** deletes everything you were not wearing, since only equipped gear reaches your tombstone, and raises skill loss to 1.5 times normal, while **Hardcore** deletes every item and resets all your skills but does not delete your character. "Permadeath" was the wrong word for that and is gone. BakaLoader also clears the world's difficulty keys at every start and writes your settings back, so turning a setting down really turns it down. Before this, moving Death penalty from Hard back to Normal left the key that deletes unequipped items sitting in the world, and players kept losing their inventory on a world whose dial read Normal. Boss and progression keys are left alone, and a difficulty change made with the in-game console no longer survives a restart, so make it in the app. See [World modifiers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-modifiers).
+
+**Mods.** Removing a mod now removes its BepInEx patchers folder as well, so a patcher-type mod such as StartupAccelerator actually goes away instead of staying loaded. Patcher mods are listed on the [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods) screen with a "patcher" tag and can be removed there. HookGenPatcher and the BepInEx pack are protected, so they are never listed and never removed. If you run more than one server, the patchers folder is shared between them, so removing a patcher removes it for all of them.
+
+1.0.5 was never released on its own, so it is folded into this one. Full list on the [release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
 ## What is new in 1.0.3
 
 **Mods screen.** Updating all mods now shows a progress bar and a per-mod status instead of one spinner, and you can right-click a single mod to update just it. A new "Possibly outdated" column flags a mod when its newest Thunderstore version came out before Valheim was last updated, as a hint, not proof. Removing a mod now lists the installed mods that depend on it and offers to remove them too, off by default. Full list on the [release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
@@ -80,7 +88,7 @@ The app is split into nine screens. Each has a plain name, with its Norse name s
 | [**Dashboard**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-%28Hearth%29) (Hearth) | Server status, who is online, next save, network addresses, CPU and RAM, a tail of the log, and the app's own settings. |
 | [**Players**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29) (Vikings) | A sortable table with platform, session time, total playtime, last seen, deaths and position. Right-click for promote, allow, kick, ban, heal, teleport or spawn items nearby. |
 | [**Mods**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods) | Scans your BepInEx folder against Thunderstore. Update one, update all, or paste a Thunderstore link to install. |
-| [**Settings**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-%28World%29) (World) | Server name, password, port, world and seed, crossplay, backups, world modifiers, restart rules, RCON and folders. |
+| [**Settings**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-%28World%29) (World) | Server name, password, port, world and seed, crossplay, backups, world modifiers with every option explained beside the dial, restart rules, RCON and folders. |
 | [**Map**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Map-%28Atlas%29) (Atlas) | Your world drawn from its seed with no map mods, fog of war from what players have shared at cartography tables, portals and builds as layers, and a weather forecast. |
 | [**Configs**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Configs-%28Runes%29) (Runes) | Edit your mods' config files in the app. |
 | [**Log**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Log-%28Saga%29) (Saga) | The live server log with levels, search, pause on scroll, and a console line. |
