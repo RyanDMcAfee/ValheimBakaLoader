@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.2.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.3.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -32,7 +32,9 @@
 //   tp <player> <dest>               - dest is "x,z,y" coords or another player name
 //   kick <player>                    - ZNet.Kick (name / host id)
 //   baka_spawn <prefab> <x,z,y> [amount] [level] - main-thread spawn (absorbed from
-//                                      BakaLoaderSpawnHelper)
+//                                      BakaLoaderSpawnHelper). The 4th argument is a
+//                                      creature's star level (0 based) or an item's
+//                                      quality (1 based, 0 leaves it alone).
 //   baka_killall                     - kill all non-player characters (absorbed from
 //                                      BakaKillAll)
 //   anything else                    - forwarded to the in-game console if present
@@ -51,6 +53,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using BepInEx;
@@ -65,7 +68,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.2.0";
+        private const string PluginVersion = "1.3.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -569,6 +572,10 @@ namespace BakaLoaderCommander
 
         // ---- baka_spawn <prefab> <x,z,y> [amount] [level] --------------------
         // Absorbed from BakaLoaderSpawnHelper (main-thread spawn - safe headless).
+        // The 4th argument carries two meanings, the same way the game's own spawn command
+        // does: for a creature it is the star level (0 based, so 1 means one star), and for
+        // an item it is the quality (1 based, so 3 means a quality 3 tool). 0 leaves both
+        // alone. Stackable items arrive as stacks, not as one drop per unit.
 
         private static string CmdSpawn(string[] tokens)
         {
@@ -594,11 +601,22 @@ namespace BakaLoaderCommander
             var prefab = zns.GetPrefab(prefabName.GetStableHashCode()) ?? zns.GetPrefab(prefabName);
             if (prefab == null) return "Error: prefab '" + prefabName + "' not found in ZNetScene";
 
-            var spawned = 0;
-            for (var i = 0; i < amount; i++)
+            // Read the item template once. A stackable item spawns as stacks rather than as
+            // one loose drop per unit, so the count of objects and the count of units are two
+            // different numbers from here on.
+            var isItem = prefab.GetComponent<ItemDrop>() != null;
+            var maxStack = MaxStackSizeOf(prefab);
+            var drops = maxStack > 1 ? Mathf.CeilToInt(amount / (float)maxStack) : amount;
+
+            var remaining = amount;
+            var units = 0;
+            var objects = 0;
+            var quality = 0;
+
+            for (var i = 0; i < drops; i++)
             {
                 var offset = Vector3.zero;
-                if (amount > 1)
+                if (drops > 1)
                     offset = new Vector3(UnityEngine.Random.Range(-1f, 1f), 0f, UnityEngine.Random.Range(-1f, 1f));
 
                 var p = new Vector3(pos.x + offset.x, pos.y, pos.z + offset.z);
@@ -615,20 +633,128 @@ namespace BakaLoaderCommander
 
                 MarkAsSpawnedIn(obj);
 
-                if (level > 0)
+                var item = obj.GetComponent<ItemDrop>();
+                if (item != null)
                 {
-                    var character = obj.GetComponent<Character>();
-                    if (character != null)
-                        character.SetLevel(level + 1); // SetLevel is 1-indexed: 1=base, 2=1star
+                    var stack = maxStack > 1 ? Mathf.Clamp(remaining, 1, maxStack) : 1;
+                    remaining -= stack;
+                    quality = SetUpSpawnedItem(obj, item, level, stack);
+                    units += stack;
+                }
+                else
+                {
+                    if (level > 0)
+                    {
+                        var character = obj.GetComponent<Character>();
+                        if (character != null)
+                            character.SetLevel(level + 1); // SetLevel is 1-indexed: 1=base, 2=1star
+                    }
+                    units++;
                 }
 
-                spawned++;
+                objects++;
             }
 
-            return "Spawned " + spawned + "x " + prefabName + " (level " + level + ") at (" +
+            var text = "Spawned " + units + "x " + prefabName;
+            if (maxStack > 1 && units > objects)
+                text += " as " + objects + (objects == 1 ? " stack" : " stacks");
+            // A clamped quality says so. The host asked for 5 and got 4 because that is all a
+            // bronze axe has, and a line that just says "at quality 4" looks like the request
+            // was misread rather than met as far as the item allows.
+            if (quality > 0)
+            {
+                text += " at quality " + quality;
+                if (quality < level) text += " (the most this item allows)";
+            }
+            else if (!isItem && level > 0)
+            {
+                text += " at level " + level;
+            }
+
+            return text + ", placed at (" +
                 pos.x.ToString("F1", CultureInfo.InvariantCulture) + ", " +
                 pos.z.ToString("F1", CultureInfo.InvariantCulture) + ", " +
                 pos.y.ToString("F1", CultureInfo.InvariantCulture) + ")";
+        }
+
+        /// <summary>
+        /// The item's own maximum stack size, or 1 for anything that is not a stackable item.
+        /// Read off the prefab before the loop because it decides how many objects to make.
+        /// </summary>
+        private static int MaxStackSizeOf(GameObject prefab)
+        {
+            try
+            {
+                var item = prefab.GetComponent<ItemDrop>();
+                if (item == null || item.m_itemData == null || item.m_itemData.m_shared == null) return 1;
+                return Mathf.Max(1, item.m_itemData.m_shared.m_maxStackSize);
+            }
+            catch
+            {
+                return 1;
+            }
+        }
+
+        /// <summary>
+        /// Finishes a freshly conjured item the way the game's own spawn command finishes one:
+        /// full durability, and the requested quality when one was asked for. Quality is set
+        /// FIRST because maximum durability grows with it (ItemData.GetMaxDurability(quality)
+        /// is m_maxDurability plus m_durabilityPerLevel per level above 1), so a quality 4 axe
+        /// handed out at quality 1 durability would arrive visibly worn. The stack size is ours
+        /// rather than vanilla's: the console command has a player to hand items to, and this
+        /// one drops them on the ground, where 150 separate wood drops is a lag spike and three
+        /// stacks of 50 is what the player wanted. Returns the quality that was applied, or 0.
+        /// </summary>
+        private static int SetUpSpawnedItem(GameObject obj, ItemDrop item, int level, int stack)
+        {
+            var applied = 0;
+            try
+            {
+                var data = item.m_itemData;
+                if (data == null) return 0;
+
+                if (level > 0)
+                {
+                    var maxQuality = 1;
+                    if (data.m_shared != null) maxQuality = Mathf.Max(1, data.m_shared.m_maxQuality);
+
+                    // Most things in the game have no upgrade track at all: a mead, a pile of
+                    // wood, a trophy. Setting a quality on one is a write with nothing behind
+                    // it, and saying "at quality 1" about it is chatter about a property the
+                    // item does not have, so neither happens. Anything that does upgrade is
+                    // clamped to its own ceiling rather than to a hardcoded vanilla 4, because
+                    // modded items go past it.
+                    if (maxQuality > 1)
+                    {
+                        applied = Mathf.Clamp(level, 1, maxQuality);
+                        item.SetQuality(applied);
+                    }
+                }
+
+                data.m_durability = data.GetMaxDurability();
+
+                if (stack > 1)
+                {
+                    var maxStack = 1;
+                    if (data.m_shared != null) maxStack = Mathf.Max(1, data.m_shared.m_maxStackSize);
+                    data.m_stack = Mathf.Clamp(stack, 1, maxStack);
+                }
+
+                // An ItemDrop keeps its truth in its ZDO, and SaveToZDO is the public path the
+                // game's own private Save() takes. Only the owner may write it, and the index
+                // is passed as vanilla passes it (-1 = the drop's own slot, not an inventory
+                // one), written out so a game update that inserts a parameter fails the plugin
+                // verifier instead of silently landing the value in the wrong slot.
+                var view = obj.GetComponent<ZNetView>();
+                if (view != null && view.IsValid() && view.IsOwner())
+                    ItemDrop.SaveToZDO(data, view.GetZDO(), -1);
+            }
+            catch (Exception ex)
+            {
+                // Never lose the spawn over the bookkeeping.
+                Log.LogWarning("Could not finish the spawned item: " + ex.Message);
+            }
+            return applied;
         }
 
         /// <summary>
@@ -644,7 +770,7 @@ namespace BakaLoaderCommander
         {
             try
             {
-                var cheated = !PlayerProfile.s_bypassCheatChecks;
+                var cheated = !CheatChecksBypassed();
 
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
@@ -657,6 +783,47 @@ namespace BakaLoaderCommander
                 // Never lose the spawn over the bookkeeping.
                 Log.LogWarning("Could not mark the spawned object: " + ex.Message);
             }
+        }
+
+        // PlayerProfile.s_bypassCheatChecks was a plain static FIELD until Valheim 1.0.12
+        // (build 25253791) turned it into a static PROPERTY. A compiled field read is an
+        // ldsfld against a member that no longer exists, and Mono raises that
+        // MissingFieldException when it JITs the method holding the read - which is the
+        // CALLER, outside the try/catch below, so the whole spawn loop died after the first
+        // object with no level, no quality and one lonely item on the ground. Asking the live
+        // assembly what the member is today survives both shapes and any future third one.
+        private static bool _bypassProbed;
+        private static PropertyInfo _bypassProperty;
+        private static FieldInfo _bypassField;
+
+        /// <summary>
+        /// Reads PlayerProfile.s_bypassCheatChecks without compiling a reference to it.
+        /// Property first, then field, looked up once and cached. False when it is neither,
+        /// which marks the object cheated - exactly what vanilla does when the bypass is off.
+        /// </summary>
+        private static bool CheatChecksBypassed()
+        {
+            try
+            {
+                if (!_bypassProbed)
+                {
+                    _bypassProbed = true;
+                    const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+                    var property = typeof(PlayerProfile).GetProperty("s_bypassCheatChecks", flags);
+                    if (property != null && property.CanRead && property.PropertyType == typeof(bool))
+                        _bypassProperty = property;
+                    else
+                        _bypassField = typeof(PlayerProfile).GetField("s_bypassCheatChecks", flags);
+                }
+
+                if (_bypassProperty != null) return (bool)_bypassProperty.GetValue(null, null);
+                if (_bypassField != null && _bypassField.FieldType == typeof(bool)) return (bool)_bypassField.GetValue(null);
+            }
+            catch (Exception ex)
+            {
+                try { Log.LogDebug("Could not read the cheat check bypass: " + ex.Message); } catch { }
+            }
+            return false;
         }
 
         // ---- baka_killall -----------------------------------------------------

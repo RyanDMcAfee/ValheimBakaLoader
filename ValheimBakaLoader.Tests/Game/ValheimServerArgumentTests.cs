@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using ValheimBakaLoader.Game;
 using Xunit;
 
@@ -84,6 +85,79 @@ namespace ValheimBakaLoader.Tests.Game
             ValheimServer.SanitizeAdditionalArgs("-crossplay -console", out var removed);
 
             Assert.Empty(removed);
+        }
+
+        // ---- baka_spawn: the 4th argument is a star level OR an item quality ----
+        //
+        // BuildSpawn used to pass the 4th argument only when the catalog entry had a star
+        // level, so every quality the picker collected for a tool, weapon or piece of armour
+        // was thrown away at the last step and the server was told 0. The picker offered the
+        // box, the host filled it in, and the item arrived at quality 1 every time.
+
+        private static string BuildSpawn(ItemCatalogEntry entry, int amount, int levelOrQuality,
+            string coords = "100.0,200.0,30.0")
+        {
+            var build = typeof(ValheimServer).GetMethod(
+                "BuildSpawn", BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(build);
+
+            return (string)build.Invoke(null, new object[] { entry, amount, levelOrQuality, coords });
+        }
+
+        private static ItemCatalogEntry Creature(string prefab) =>
+            new ItemCatalogEntry { PrefabName = prefab, HasLevel = true, HasQuality = false };
+
+        private static ItemCatalogEntry Equipment(string prefab) =>
+            new ItemCatalogEntry { PrefabName = prefab, HasLevel = false, HasQuality = true };
+
+        private static ItemCatalogEntry PlainItem(string prefab) =>
+            new ItemCatalogEntry { PrefabName = prefab, HasLevel = false, HasQuality = false };
+
+        [Fact]
+        public void ACreatureCarriesItsStarLevel()
+        {
+            Assert.Equal("baka_spawn Lox 100.0,200.0,30.0 3 2", BuildSpawn(Creature("Lox"), 3, 2));
+        }
+
+        [Fact]
+        public void AnItemWithQualitiesCarriesItsQuality()
+        {
+            Assert.Equal("baka_spawn PickaxeBronze 100.0,200.0,30.0 1 3",
+                BuildSpawn(Equipment("PickaxeBronze"), 1, 3));
+        }
+
+        [Fact]
+        public void AnItemWithNeitherSendsZero()
+        {
+            Assert.Equal("baka_spawn Wood 100.0,200.0,30.0 50 0", BuildSpawn(PlainItem("Wood"), 50, 4));
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(-1)]
+        [InlineData(-9999)]
+        public void TheAmountNeverDropsBelowOne(int amount)
+        {
+            Assert.Equal("baka_spawn Boar 100.0,200.0,30.0 1 0", BuildSpawn(Creature("Boar"), amount, 0));
+        }
+
+        [Theory]
+        [InlineData(-1)]
+        [InlineData(-4)]
+        public void ANegativeLevelOrQualityIsSentAsZero(int levelOrQuality)
+        {
+            Assert.Equal("baka_spawn Lox 100.0,200.0,30.0 2 0",
+                BuildSpawn(Creature("Lox"), 2, levelOrQuality));
+            Assert.Equal("baka_spawn PickaxeBronze 100.0,200.0,30.0 2 0",
+                BuildSpawn(Equipment("PickaxeBronze"), 2, levelOrQuality));
+        }
+
+        [Fact]
+        public void TheCoordinatesGoThroughAsGiven()
+        {
+            Assert.Equal("baka_spawn MeadPoisonResist -1234.5,678.9,30.0 6 0",
+                BuildSpawn(PlainItem("MeadPoisonResist"), 6, 0, "-1234.5,678.9,30.0"));
         }
     }
 }

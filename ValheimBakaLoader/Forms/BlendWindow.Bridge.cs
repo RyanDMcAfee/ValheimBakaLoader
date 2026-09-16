@@ -4296,7 +4296,13 @@ namespace ValheimBakaLoader.Forms
                         string.Equals(e.PrefabName, prefab, StringComparison.OrdinalIgnoreCase))
                     ?? throw new ArgumentException($"Unknown prefab '{prefab}'");
 
-                return await Server.SpawnAtPlayerAsync(playerName, entry, amount, levelOrQuality);
+                var result = await Server.SpawnAtPlayerAsync(playerName, entry, amount, levelOrQuality);
+
+                // { ok, message } rather than the bare true this used to answer with. The server
+                // is the only side that knows whether anything landed, and its own line already
+                // names the stack and the quality, so it travels whole. Additive: a page from an
+                // older build reads the object as truthy and falls back to its own wording.
+                return new { ok = result.Ok, message = result.Message };
             });
 
             RegisterRpc("players.isListed", p =>

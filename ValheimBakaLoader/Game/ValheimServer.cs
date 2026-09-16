@@ -125,6 +125,23 @@ namespace ValheimBakaLoader.Game
     }
 
     /// <summary>
+    /// What a spawn actually did, as opposed to whether the socket answered at all. The console
+    /// replies with a line of text for every outcome, a refusal as readily as a success, so "a
+    /// reply came back" was never evidence that anything had been conjured. The day the game
+    /// turned PlayerProfile.s_bypassCheatChecks into a property, every spawn answered with a
+    /// MissingFieldException and the interface still said it had worked, which is how the bug
+    /// stayed hidden from the host for a whole session.
+    /// </summary>
+    public sealed class SpawnResult
+    {
+        /// <summary>True only when the server said it had spawned or queued what was asked for.</summary>
+        public bool Ok { get; init; }
+
+        /// <summary>The server's own words, ready to put in front of the host.</summary>
+        public string Message { get; init; }
+    }
+
+    /// <summary>
     /// Owns the valheim_server.exe process: launch arguments, lifecycle (start/stop/
     /// restart/adopt), stdout log parsing into player events, RCON player actions,
     /// and the automatic-restart machinery (scheduled, empty-server, crash recovery).
@@ -2089,22 +2106,84 @@ namespace ValheimBakaLoader.Game
         /// <summary>
         /// Spawns <paramref name="amount"/> of the given catalog entry at <paramref name="playerName"/>'s
         /// current position. First resolves the player's coordinates (pos), then issues a coordinate
-        /// spawn so the items/creatures appear around the player. Returns false if the position could
-        /// not be resolved or the command failed. The exact spawn syntax is VERIFY-LIVE.
+        /// spawn so the items/creatures appear around the player. The answer carries what the server
+        /// itself said, because that is the only thing that knows whether anything landed: this used
+        /// to report success for any reply at all, refusals included.
         /// </summary>
-        public async Task<bool> SpawnAtPlayerAsync(string playerName, ItemCatalogEntry entry, int amount, int levelOrQuality)
+        public async Task<SpawnResult> SpawnAtPlayerAsync(string playerName, ItemCatalogEntry entry, int amount, int levelOrQuality)
         {
-            if (entry == null) return false;
+            if (entry == null) return new SpawnResult { Ok = false, Message = "nothing was chosen to spawn" };
 
             var coords = await GetPlayerPositionAsync(playerName);
             if (string.IsNullOrEmpty(coords))
             {
                 ApplicationLogger.Warning("Could not resolve position for player {player}; spawn aborted.", playerName);
-                return false;
+                return new SpawnResult
+                {
+                    Ok = false,
+                    Message = "could not find that viking's position, so nothing was spawned",
+                };
             }
 
             var response = await SendRconCommandAsync(BuildSpawn(entry, amount, levelOrQuality, coords));
-            return response != null;
+            var result = ParseSpawnReply(response);
+
+            if (!result.Ok)
+            {
+                // The message goes in as an argument, never as the template: an exception text
+                // full of braces would otherwise be read as Serilog property names and vanish.
+                ApplicationLogger.Warning(
+                    "Spawn of {prefab} for {player} did not take: {reply}",
+                    entry.PrefabName, playerName, result.Message);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Reads the server's answer to a spawn command. Both plugins that answer "baka_spawn"
+        /// open their success line with a fixed word. Commander spawns in place and says
+        /// "Spawned ...", the spawn helper hands the work to the Unity main thread and says
+        /// "Queued spawn: ...", and everything else the console can say (a prefab it does not
+        /// know, a command that threw, the usage line) opens with something else, so the opening
+        /// is the whole test. An empty body reads the same as no body at all: the command may
+        /// well have run, but nothing said so, and guessing on the host's behalf is what this
+        /// replaced.
+        /// </summary>
+        public static SpawnResult ParseSpawnReply(string reply)
+        {
+            var line = FirstSpokenLine(reply);
+            if (line.Length == 0) return new SpawnResult { Ok = false, Message = "no reply from the server" };
+
+            var ok = line.StartsWith("Spawned", StringComparison.OrdinalIgnoreCase)
+                || line.StartsWith("Queued spawn", StringComparison.OrdinalIgnoreCase);
+
+            return new SpawnResult { Ok = ok, Message = line };
+        }
+
+        /// <summary>
+        /// The first thing the console actually said, with the log clock and the "Console:" tag
+        /// the RCON channel puts in front of some lines taken off (the same two prefixes the
+        /// roster reader strips), and the rest of a multi line answer left behind: a stack trace
+        /// says nothing a toast has room for, and the first line already names the failure.
+        /// </summary>
+        private static string FirstSpokenLine(string reply)
+        {
+            if (string.IsNullOrWhiteSpace(reply)) return string.Empty;
+
+            foreach (var raw in reply.Split('\n'))
+            {
+                var line = raw.Trim('\r', ' ', '\t');
+                if (line.Length == 0) continue;
+
+                line = LogClockPrefix.Replace(line, "");
+                line = ConsolePrefix.Replace(line, "");
+                line = line.Trim();
+
+                if (line.Length > 0) return line;
+            }
+
+            return string.Empty;
         }
 
         /// <summary>Kicks a player by name, Steam/Platform id, or IP (vanilla "kick").</summary>
@@ -2880,14 +2959,23 @@ namespace ValheimBakaLoader.Game
         /// BakaLoaderSpawnHelper (BepInEx plugin) registers the "baka_spawn" console command, which
         /// queues the instantiation to the Unity main thread via Update(), avoiding both crashes.
         /// The coords are passed as x,z,y (Valheim display order from playerlist), and the plugin
-        /// converts to Vector3(x, y, z) internally. Level is 0-based (0=base, 1=1star, 2=2star).
-        /// REQUIRES BakaLoaderSpawnHelper.dll in server BepInEx/plugins.
+        /// converts to Vector3(x, y, z) internally.
+        ///
+        /// The 4th argument carries two meanings, the same way the game's own spawn command does:
+        /// for a creature it is the star LEVEL and it is 0 based (0 = base, 1 = one star, 2 = two
+        /// stars), and for an item it is the QUALITY and it is 1 based (1 = base, 3 = a quality 3
+        /// tool). 0 means leave it as it is, and that is what anything with neither gets. It used
+        /// to be sent only for creatures, so every item quality the picker offered was thrown away
+        /// here and never reached the server.
+        ///
+        /// REQUIRES BakaLoaderSpawnHelper.dll (or Commander, which answers the same command) in
+        /// the server's BepInEx/plugins.
         /// </summary>
         private static string BuildSpawn(ItemCatalogEntry entry, int amount, int levelOrQuality, string coords)
         {
             var count = Math.Max(1, amount);
             var level = 0;
-            if (entry.HasLevel)
+            if (entry.HasLevel || entry.HasQuality)
                 level = Math.Max(0, levelOrQuality);
             return $"baka_spawn {entry.PrefabName} {coords} {count} {level}";
         }

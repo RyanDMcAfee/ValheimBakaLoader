@@ -53,6 +53,14 @@ namespace ValheimBakaLoader.Tests.Tools
 
         private static string Indexer => Read("BakaLoaderItemIndexer", "Plugin.cs");
 
+        /// <summary>
+        /// The source with its whole-line comments taken out, for rules about what the compiled
+        /// code may do. The plugin headers explain the bugs they were written against, so a rule
+        /// that forbids a name would otherwise be tripped by the paragraph explaining why.
+        /// </summary>
+        private static string WithoutComments(string src) =>
+            string.Join("\n", src.Split('\n').Where(line => !line.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+
         private static string BuildScript => Read("ValheimBakaLoader", "Resources", "build-plugins.ps1");
 
         private static string VerifyScript => Read("ValheimBakaLoader", "Resources", "verify-plugins.ps1");
@@ -249,13 +257,133 @@ namespace ValheimBakaLoader.Tests.Tools
 
             Assert.Contains("ZDOVars.s_cheated", src);
             Assert.Contains("ItemDrop.OnCreateNew", src);
-            Assert.Contains("PlayerProfile.s_bypassCheatChecks", src);
+            Assert.Contains("CheatChecksBypassed()", src);
 
             // It has to run on the object that was just made, not somewhere unrelated.
             var instantiate = src.IndexOf("Object.Instantiate(prefab", StringComparison.Ordinal);
             var mark = src.IndexOf("MarkAsSpawnedIn(obj)", StringComparison.Ordinal);
             Assert.True(instantiate >= 0 && mark > instantiate,
                 "the marking must follow the instantiation of the spawned object");
+        }
+
+        // ---- 1.0.9: the game turned a field into a property and took spawning with it ----
+
+        /// <summary>
+        /// Valheim 1.0.12 turned PlayerProfile.s_bypassCheatChecks from a static field into a
+        /// static property. A compiled field read is an ldsfld, and Mono raises the resulting
+        /// MissingFieldException when it JITs the method holding the read, which is the CALLER,
+        /// outside MarkAsSpawnedIn's own try/catch. The spawn loop died after the first object:
+        /// one item on the ground, no level, no quality. Nothing in either plugin may name that
+        /// member directly again; the lookup has to ask the live assembly what shape it is.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void SpawnCommands_ReadTheCheatBypassThroughReflectionNotADirectReference(string plugin)
+        {
+            var src = plugin == "Commander" ? Commander : SpawnHelper;
+
+            // Comments are free to name the member - explaining the bug is the point of them.
+            // What must not survive anywhere is CODE that reads it, because that is the ldsfld.
+            Assert.DoesNotContain("PlayerProfile" + ".s_bypassCheatChecks", WithoutComments(src));
+
+            Assert.Contains("typeof(PlayerProfile).GetProperty(\"s_bypassCheatChecks\"", src);
+            Assert.Contains("typeof(PlayerProfile).GetField(\"s_bypassCheatChecks\"", src);
+            Assert.Contains("BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static", src);
+
+            // Property first: that is the shape the game has now, and a field of the same name
+            // would only ever be an older build.
+            var property = src.IndexOf("GetProperty(\"s_bypassCheatChecks\"", StringComparison.Ordinal);
+            var field = src.IndexOf("GetField(\"s_bypassCheatChecks\"", StringComparison.Ordinal);
+            Assert.True(property < field, "the property lookup has to come before the field one");
+
+            // Absent or unreadable means cheated, which is what vanilla does with the bypass off.
+            var helper = src.IndexOf("private static bool CheatChecksBypassed()", StringComparison.Ordinal);
+            Assert.True(helper > 0, "the cached reflection helper is gone");
+            Assert.Contains("return false;", src.Substring(helper));
+        }
+
+        // ---- 1.0.9: item quality and stacking, which never worked at all ----
+
+        /// <summary>
+        /// The spawn loop only ever called Character.SetLevel, so the quality the picker
+        /// collected for every tool, weapon and piece of armour was carried all the way to the
+        /// server and then dropped. The game's own spawn command sets full durability and calls
+        /// ItemDrop.SetQuality, and quality has to be set FIRST because maximum durability grows
+        /// with it.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void SpawnCommands_GiveItemsTheirQualityAndFullDurability(string plugin)
+        {
+            var src = plugin == "Commander" ? Commander : SpawnHelper;
+
+            Assert.Contains("item.SetQuality(applied)", src);
+            Assert.Contains("data.m_durability = data.GetMaxDurability();", src);
+            Assert.Contains("data.m_shared.m_maxQuality", src);
+
+            var quality = src.IndexOf("item.SetQuality(applied)", StringComparison.Ordinal);
+            var durability = src.IndexOf("data.m_durability = data.GetMaxDurability();", StringComparison.Ordinal);
+            Assert.True(quality < durability,
+                "quality must be set before durability, or the item arrives at its quality 1 maximum");
+        }
+
+        /// <summary>
+        /// A stack of six meads is one pile, not six drops on the floor. The loop counts objects
+        /// and units separately, and the mutated item data has to reach the ZDO or nothing the
+        /// loop just did survives the first client that reads the drop.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void SpawnCommands_SpawnStackableItemsAsStacks(string plugin)
+        {
+            var src = plugin == "Commander" ? Commander : SpawnHelper;
+
+            Assert.Contains("MaxStackSizeOf(prefab)", src);
+            Assert.Contains("Mathf.CeilToInt(", src);
+            Assert.Contains("data.m_stack = Mathf.Clamp(stack, 1, maxStack);", src);
+
+            // Only the owner may write a ZDO, and SaveToZDO is the public path the game's own
+            // private Save() takes.
+            Assert.Contains("view.IsValid() && view.IsOwner()", src);
+            Assert.Contains("ItemDrop.SaveToZDO(data, view.GetZDO(), -1)", src);
+
+            var mutate = src.IndexOf("data.m_stack = Mathf.Clamp(stack, 1, maxStack);", StringComparison.Ordinal);
+            var save = src.IndexOf("ItemDrop.SaveToZDO(data, view.GetZDO(), -1)", StringComparison.Ordinal);
+            Assert.True(mutate < save, "the save has to follow the mutation it is meant to persist");
+        }
+
+        /// <summary>
+        /// Most things in the game have no upgrade track: a mead, a pile of wood, a trophy. The
+        /// first pass clamped every requested quality to 1 for those and then reported "at
+        /// quality 1", which is chatter about a property the item does not have, and a write with
+        /// nothing behind it. Nothing is set and nothing is said unless the item really upgrades,
+        /// and a request that overshoots the ceiling says it was met as far as the item allows
+        /// rather than quietly reporting a smaller number than the host typed.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void SpawnCommands_SayNothingAboutQualityOnAnItemThatHasNone(string plugin)
+        {
+            var src = plugin == "Commander" ? Commander : SpawnHelper;
+            var code = WithoutComments(src);
+
+            // The guard sits between reading the item's ceiling and setting anything on it, so
+            // a one-quality item is never written to at all.
+            var ceiling = code.IndexOf("Mathf.Max(1, data.m_shared.m_maxQuality)", StringComparison.Ordinal);
+            var guard = code.IndexOf("if (maxQuality > 1)", StringComparison.Ordinal);
+            var set = code.IndexOf("item.SetQuality(applied)", StringComparison.Ordinal);
+
+            Assert.True(ceiling > 0, "the item's own quality ceiling is no longer read");
+            Assert.True(guard > ceiling, "the guard has to follow the ceiling it reads");
+            Assert.True(set > guard, "SetQuality has to sit inside the guard, not before it");
+
+            // Nothing applied means nothing said: the report only names a quality when one was.
+            Assert.Contains("if (quality > 0)", code);
+            Assert.Contains("(the most this item allows)", code);
         }
 
         // ---- P10: killall is for hostiles, and a training post is not one ----

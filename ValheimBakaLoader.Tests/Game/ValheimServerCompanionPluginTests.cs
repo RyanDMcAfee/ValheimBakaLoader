@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Moq;
@@ -184,6 +185,14 @@ namespace ValheimBakaLoader.Tests.Game
             {
                 server.Start(Options());
 
+                // Start hands the launch, and the install pass inside it, to a background task,
+                // so the record lands a moment after the call returns rather than inside it.
+                // Asserting straight away caught the gap often enough to fail on a loaded box.
+                // Nothing here is relaxed: the window only decides how long to wait before the
+                // same three assertions run.
+                WaitFor(() => CompanionPluginStatus.Failures.Count > 0
+                    && CompanionPluginStatus.CurrentProfile == null);
+
                 var failure = Assert.Single(CompanionPluginStatus.Failures);
                 Assert.Equal("Alpha", failure.Profile);
 
@@ -203,6 +212,18 @@ namespace ValheimBakaLoader.Tests.Game
         public void A_clean_pass_carries_nothing()
         {
             Assert.Empty(BlendWindow.BuildPluginFailureDtos());
+        }
+
+        /// <summary>
+        /// Waits for something a background launch does, up to a generous ceiling, and then
+        /// returns whether it happened or not. The caller still asserts: a wait that runs out
+        /// leaves the state exactly as it found it, so the assertion fails the way it always
+        /// did rather than being softened into a pass.
+        /// </summary>
+        private static void WaitFor(Func<bool> settled, int withinMs = 5000, int stepMs = 20)
+        {
+            var deadline = DateTime.UtcNow.AddMilliseconds(withinMs);
+            while (!settled() && DateTime.UtcNow < deadline) Thread.Sleep(stepMs);
         }
 
         private ValheimServerOptions Options() => new()

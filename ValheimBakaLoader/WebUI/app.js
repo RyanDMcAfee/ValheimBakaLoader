@@ -3486,7 +3486,8 @@ const CONSOLE_CMDS=[
   ["dmg ","<player> <amount>","damage a player · negative amount heals"],
   ["tp ","<player> <x,z,y | player>","teleport a player to coords or another player"],
   ["kick ","<player | hostId>","remove a viking from the server"],
-  ["baka_spawn ","<prefab> <x,z,y> [amount] [level]","spawn an object into the world"],
+  ["baka_spawn ","<prefab> <x,z,y> [amount] [level or quality]",
+   "spawn an object into the world · the fourth number is a star level on a creature and a quality on an item"],
   ["skiptime ","<seconds>","advance world time (devcommands)"],
   ["sleep","","skip to morning (devcommands)"],
 ];
@@ -4408,9 +4409,23 @@ function openSpawnModal(p){
     modalClose();
     const r=await rpc("players.spawn",{playerName:tgt,prefab:item.PrefabName,amount,levelOrQuality});
     if(r===FAIL) return;
-    if(r===false){toast("ᚦ spawn failed · server running & player online?");return;}
-    toast("ᛟ Spawned "+amount+"× "+item.Label+" at "+tgt);
-    logLine("cmd","> spawn "+item.PrefabName+" ×"+amount+" @ "+tgt);
+    /* The server answers every spawn with a line, a refusal as readily as a success, so the
+       line is what decides and what gets shown. A bare false is the older shape of this
+       answer and still means the same thing. */
+    const said=(r&&typeof r==="object"&&r.message)?String(r.message):"";
+    if(r===false||(r&&typeof r==="object"&&r.ok===false)){
+      toast("ᚦ "+TT("spawn failed")+" · "+(said||TT("server running & player online?")));
+      logLine("err","[BakaLoader] spawn failed · "+(said||TT("no reply from the server")));
+      return;
+    }
+    /* The same box means star level on a creature and quality on an item, so say which. */
+    const grade=levelOrQuality>0
+      ?" · "+(item.HasLevel?TT("level"):TT("quality"))+" "+levelOrQuality
+      :"";
+    /* The server's own line already names the stack count and the quality it settled on,
+       which is more than the picker knows, so it wins when there is one. */
+    toast("ᛟ "+(said||("Spawned "+amount+"× "+item.Label+" at "+tgt+grade)));
+    logLine("cmd","> spawn "+item.PrefabName+" ×"+amount+grade+" @ "+tgt+(said?" · "+said:""));
   });
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   setTimeout(()=>q.focus(),30);
@@ -6610,9 +6625,9 @@ if(!Native.available){
      looking at, so it is the default; index.html#uptodate walks the quiet one, where
      none of these surfaces show anything at all. */
   APP_UPD=location.hash==="#uptodate"
-    ?{installedVersion:"1.0.8",latestVersion:null,updateAvailable:false,releaseUrl:null,
+    ?{installedVersion:"1.0.9",latestVersion:null,updateAvailable:false,releaseUrl:null,
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true}
-    :{installedVersion:"1.0.8",latestVersion:"1.0.9",updateAvailable:true,
+    :{installedVersion:"1.0.9",latestVersion:"1.0.10",updateAvailable:true,
       releaseUrl:"https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest",
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true};
   renderAppUpdatePill();

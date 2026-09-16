@@ -1,4 +1,4 @@
-// BakaLoader Spawn Helper v1.3.0 - headless-server-safe spawn via main-thread dispatch.
+// BakaLoader Spawn Helper v1.4.0 - headless-server-safe spawn via main-thread dispatch.
 //
 // WHY THIS EXISTS:
 // WEC's "spawn_object" crashes dedicated servers because RCON commands execute on a
@@ -17,15 +17,21 @@
 //   prefab  - exact prefab name (e.g. Boar, SwordIron, Wood)
 //   x,z,y   - absolute world coords in Valheim's display order (matches playerlist output)
 //   amount  - number to spawn (default 1)
-//   level   - 0-based star level for creatures (0=base, 1=1star, 2=2star; default 0)
+//   level   - 0-based star level for creatures (0=base, 1=1star, 2=2star; default 0),
+//             or 1-based quality for items (1=base, 3=a quality 3 tool; 0 leaves it alone)
+//
+// Stackable items arrive as stacks rather than as one loose drop per unit, so 6 meads are
+// one pile of 6 and 150 wood is three stacks of 50.
 //
 // EXAMPLES:
 //   baka_spawn Boar 123.4,567.8,90.1
 //   baka_spawn Lox 200,100,50 3 2
+//   baka_spawn PickaxeBronze 200,100,50 1 3
 
 using System;
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
 using UnityEngine;
@@ -37,7 +43,7 @@ namespace BakaLoaderSpawnHelper
     {
         private const string PluginGuid = "com.baka.spawnhelper";
         private const string PluginName = "BakaLoader Spawn Helper";
-        private const string PluginVersion = "1.3.0";
+        private const string PluginVersion = "1.4.0";
 
         private static ManualLogSource Log;
 
@@ -46,7 +52,9 @@ namespace BakaLoaderSpawnHelper
             public string Prefab;
             public float X, Y, Z; // Unity coords: X=east/west, Y=up/down, Z=north/south
             public int Amount;
-            public int Level; // 0-based: 0=base, 1=1star, 2=2star
+            // Creatures: 0-based star level (0=base, 1=1star, 2=2star).
+            // Items: 1-based quality (0 leaves the prefab's own quality alone).
+            public int Level;
         }
 
         private static readonly ConcurrentQueue<SpawnRequest> PendingSpawns = new ConcurrentQueue<SpawnRequest>();
@@ -108,7 +116,9 @@ namespace BakaLoaderSpawnHelper
                         Level = level
                     });
 
-                    args.Context.AddString($"Queued spawn: {amount}x {prefabName} (level {level}) at ({xVal:F1}, {zVal:F1}, {yVal:F1})");
+                    args.Context.AddString(level > 0
+                        ? $"Queued spawn: {amount}x {prefabName} at level or quality {level}, placed at ({xVal:F1}, {zVal:F1}, {yVal:F1})"
+                        : $"Queued spawn: {amount}x {prefabName}, placed at ({xVal:F1}, {zVal:F1}, {yVal:F1})");
                 },
                 // isCheat MUST stay false. From Valheim 1.0 the game refuses to run any
                 // cheat-flagged console command unless the world is already flagged as
@@ -166,12 +176,22 @@ namespace BakaLoaderSpawnHelper
                 return;
             }
 
-            int spawned = 0;
-            for (int i = 0; i < req.Amount; i++)
+            // A stackable item spawns as stacks rather than as one loose drop per unit, so the
+            // number of objects and the number of units are two different counts from here on.
+            bool isItem = prefab.GetComponent<ItemDrop>() != null;
+            int maxStack = MaxStackSizeOf(prefab);
+            int drops = maxStack > 1 ? Mathf.CeilToInt(req.Amount / (float)maxStack) : req.Amount;
+
+            int remaining = req.Amount;
+            int units = 0;
+            int objects = 0;
+            int quality = 0;
+
+            for (int i = 0; i < drops; i++)
             {
                 // Small random offset so multiple spawns don't stack exactly
                 var offset = Vector3.zero;
-                if (req.Amount > 1)
+                if (drops > 1)
                 {
                     offset = new Vector3(
                         UnityEngine.Random.Range(-1f, 1f),
@@ -197,21 +217,129 @@ namespace BakaLoaderSpawnHelper
 
                 MarkAsSpawnedIn(obj);
 
-                // Set creature level (Valheim levels: 1=base, 2=1star, 3=2star)
-                if (req.Level > 0)
+                var item = obj.GetComponent<ItemDrop>();
+                if (item != null)
                 {
-                    var character = obj.GetComponent<Character>();
-                    if (character != null)
+                    int stack = maxStack > 1 ? Mathf.Clamp(remaining, 1, maxStack) : 1;
+                    remaining -= stack;
+                    quality = SetUpSpawnedItem(obj, item, req.Level, stack);
+                    units += stack;
+                }
+                else
+                {
+                    // Set creature level (Valheim levels: 1=base, 2=1star, 3=2star)
+                    if (req.Level > 0)
                     {
-                        // SetLevel expects 1-indexed: 1=base, 2=1star, etc.
-                        character.SetLevel(req.Level + 1);
+                        var character = obj.GetComponent<Character>();
+                        if (character != null)
+                        {
+                            // SetLevel expects 1-indexed: 1=base, 2=1star, etc.
+                            character.SetLevel(req.Level + 1);
+                        }
+                    }
+                    units++;
+                }
+
+                objects++;
+            }
+
+            string text = $"Spawned {units}x {req.Prefab}";
+            if (maxStack > 1 && units > objects)
+                text += " as " + objects + (objects == 1 ? " stack" : " stacks");
+            // A clamped quality says so. The host asked for 5 and got 4 because that is all a
+            // bronze axe has, and a line that just says "at quality 4" looks like the request
+            // was misread rather than met as far as the item allows.
+            if (quality > 0)
+            {
+                text += " at quality " + quality;
+                if (quality < req.Level) text += " (the most this item allows)";
+            }
+            else if (!isItem && req.Level > 0)
+            {
+                text += " at level " + req.Level;
+            }
+
+            Log.LogInfo($"{text}, placed at ({req.X:F1}, {req.Z:F1}, {req.Y:F1})");
+        }
+
+        /// <summary>
+        /// The item's own maximum stack size, or 1 for anything that is not a stackable item.
+        /// Read off the prefab before the loop because it decides how many objects to make.
+        /// </summary>
+        private static int MaxStackSizeOf(GameObject prefab)
+        {
+            try
+            {
+                var item = prefab.GetComponent<ItemDrop>();
+                if (item == null || item.m_itemData == null || item.m_itemData.m_shared == null) return 1;
+                return Mathf.Max(1, item.m_itemData.m_shared.m_maxStackSize);
+            }
+            catch
+            {
+                return 1;
+            }
+        }
+
+        /// <summary>
+        /// Finishes a freshly conjured item the way the game's own spawn command finishes one:
+        /// full durability, and the requested quality when one was asked for. Quality is set
+        /// FIRST because maximum durability grows with it (ItemData.GetMaxDurability(quality)
+        /// is m_maxDurability plus m_durabilityPerLevel per level above 1), so a quality 4 axe
+        /// handed out at quality 1 durability would arrive visibly worn. The stack size is ours
+        /// rather than vanilla's: the console command has a player to hand items to, and this
+        /// one drops them on the ground, where 150 separate wood drops is a lag spike and three
+        /// stacks of 50 is what the player wanted. Returns the quality that was applied, or 0.
+        /// </summary>
+        private static int SetUpSpawnedItem(GameObject obj, ItemDrop item, int level, int stack)
+        {
+            int applied = 0;
+            try
+            {
+                var data = item.m_itemData;
+                if (data == null) return 0;
+
+                if (level > 0)
+                {
+                    int maxQuality = 1;
+                    if (data.m_shared != null) maxQuality = Mathf.Max(1, data.m_shared.m_maxQuality);
+
+                    // Most things in the game have no upgrade track at all: a mead, a pile of
+                    // wood, a trophy. Setting a quality on one is a write with nothing behind
+                    // it, and saying "at quality 1" about it is chatter about a property the
+                    // item does not have, so neither happens. Anything that does upgrade is
+                    // clamped to its own ceiling rather than to a hardcoded vanilla 4, because
+                    // modded items go past it.
+                    if (maxQuality > 1)
+                    {
+                        applied = Mathf.Clamp(level, 1, maxQuality);
+                        item.SetQuality(applied);
                     }
                 }
 
-                spawned++;
-            }
+                data.m_durability = data.GetMaxDurability();
 
-            Log.LogInfo($"Spawned {spawned}x {req.Prefab} (level {req.Level}) at ({req.X:F1}, {req.Z:F1}, {req.Y:F1})");
+                if (stack > 1)
+                {
+                    int maxStack = 1;
+                    if (data.m_shared != null) maxStack = Mathf.Max(1, data.m_shared.m_maxStackSize);
+                    data.m_stack = Mathf.Clamp(stack, 1, maxStack);
+                }
+
+                // An ItemDrop keeps its truth in its ZDO, and SaveToZDO is the public path the
+                // game's own private Save() takes. Only the owner may write it, and the index
+                // is passed as vanilla passes it (-1 = the drop's own slot, not an inventory
+                // one), written out so a game update that inserts a parameter fails the plugin
+                // verifier instead of silently landing the value in the wrong slot.
+                var view = obj.GetComponent<ZNetView>();
+                if (view != null && view.IsValid() && view.IsOwner())
+                    ItemDrop.SaveToZDO(data, view.GetZDO(), -1);
+            }
+            catch (Exception ex)
+            {
+                // Never lose the spawn over the bookkeeping.
+                Log.LogWarning("Could not finish the spawned item: " + ex.Message);
+            }
+            return applied;
         }
 
         /// <summary>
@@ -227,7 +355,7 @@ namespace BakaLoaderSpawnHelper
         {
             try
             {
-                var cheated = !PlayerProfile.s_bypassCheatChecks;
+                var cheated = !CheatChecksBypassed();
 
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
@@ -240,6 +368,47 @@ namespace BakaLoaderSpawnHelper
                 // Never lose the spawn over the bookkeeping.
                 Log.LogWarning("Could not mark the spawned object: " + ex.Message);
             }
+        }
+
+        // PlayerProfile.s_bypassCheatChecks was a plain static FIELD until Valheim 1.0.12
+        // (build 25253791) turned it into a static PROPERTY. A compiled field read is an
+        // ldsfld against a member that no longer exists, and Mono raises that
+        // MissingFieldException when it JITs the method holding the read - which is the
+        // CALLER, outside the try/catch above, so the whole spawn loop died after the first
+        // object with no level, no quality and one lonely item on the ground. Asking the live
+        // assembly what the member is today survives both shapes and any future third one.
+        private static bool _bypassProbed;
+        private static PropertyInfo _bypassProperty;
+        private static FieldInfo _bypassField;
+
+        /// <summary>
+        /// Reads PlayerProfile.s_bypassCheatChecks without compiling a reference to it.
+        /// Property first, then field, looked up once and cached. False when it is neither,
+        /// which marks the object cheated - exactly what vanilla does when the bypass is off.
+        /// </summary>
+        private static bool CheatChecksBypassed()
+        {
+            try
+            {
+                if (!_bypassProbed)
+                {
+                    _bypassProbed = true;
+                    const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+                    var property = typeof(PlayerProfile).GetProperty("s_bypassCheatChecks", flags);
+                    if (property != null && property.CanRead && property.PropertyType == typeof(bool))
+                        _bypassProperty = property;
+                    else
+                        _bypassField = typeof(PlayerProfile).GetField("s_bypassCheatChecks", flags);
+                }
+
+                if (_bypassProperty != null) return (bool)_bypassProperty.GetValue(null, null);
+                if (_bypassField != null && _bypassField.FieldType == typeof(bool)) return (bool)_bypassField.GetValue(null);
+            }
+            catch (Exception ex)
+            {
+                try { Log.LogDebug("Could not read the cheat check bypass: " + ex.Message); } catch { }
+            }
+            return false;
         }
     }
 }
