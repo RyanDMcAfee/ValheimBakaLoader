@@ -548,7 +548,12 @@ namespace ValheimBakaLoader.Forms
 
             try
             {
-                var path = new Uri(e.Request.Uri).GetComponents(UriComponents.Path, UriFormat.Unescaped);
+                // Still escaped on purpose. MapLanguageResourcePath does the ONE decode
+                // this path is allowed, and decoding here as well would hand it a name
+                // that has already been through Unescape once: %252e%252e would arrive
+                // as %2e%2e and decode to .. inside the very function whose job is to
+                // stop that. One decode, in the place the tests can drive.
+                var path = new Uri(e.Request.Uri).GetComponents(UriComponents.Path, UriFormat.UriEscaped);
                 var file = MapLanguageResourcePath(LanguagesDir, "/" + path);
 
                 if (file != null && File.Exists(file))

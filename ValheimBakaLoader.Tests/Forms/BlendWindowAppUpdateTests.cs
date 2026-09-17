@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using ValheimBakaLoader.Forms;
+using ValheimBakaLoader.Tests.Tools;
 using ValheimBakaLoader.Tools;
 using ValheimBakaLoader.Tools.Logging;
 using Xunit;
@@ -309,9 +310,18 @@ namespace ValheimBakaLoader.Tests.Forms
                 BlendWindow.SelfUpdateReason(StageOutcome.AlreadyCurrent),
                 BlendWindow.SelfUpdateReason(StageOutcome.NetworkError));
 
-            // And the page has the sentence that goes with it.
+            // And the page still has the sentence that goes with it. The words moved into the
+            // catalog, so this now proves BOTH halves rather than only the literal: the offline
+            // branch asks for its own id, and that id carries the sentence. Asserting on the
+            // source text alone would have gone quiet the moment the wording moved.
             var page = File.ReadAllText(WebUiPath("app.js"));
-            Assert.Contains("BakaLoader could not reach GitHub.", page);
+            Assert.Contains("if(reason===\"offline\")", page);
+            Assert.Contains("return T(\"appupd.refusal.offline\");", page);
+
+            var offline = JObject.Parse(AppSourceTree.Web("i18n/en.json"))
+                ["keys"]?["appupd.refusal.offline"]?["lore"]?.ToString();
+            Assert.NotNull(offline);
+            Assert.Contains("BakaLoader could not reach GitHub.", offline);
         }
 
         // ---------------------------------------------------------------- the never-stop gate

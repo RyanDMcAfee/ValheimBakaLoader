@@ -129,7 +129,45 @@ while IFS= read -r f; do [ -n "$f" ] && dashfiles+=("$f"); done < <(
 cat_note
 
 echo "== 7. node --check =="
-node --check "$APP/WebUI/app.js" && echo "  app.js parses"
+# The && used to swallow a parse error: a file that did not parse printed nothing
+# and the gate carried on to say PASS. Both files are checked and both count.
+if node --check "$APP/WebUI/app.js"; then echo "  app.js parses"; else fail=1; fi
+if node --check "$APP/WebUI/i18n.js"; then echo "  i18n.js parses"; else fail=1; fi
+
+echo "== 8. the lookup's own self test =="
+# i18n.js answers for nearly every sentence a host reads, so it is checked here
+# rather than only in the C# suite: the gate runs on every commit that touches
+# copy, and a broken plural or a walker that eats markup is a copy defect.
+I18N_SELFTEST="$(dirname "$HERE")/i18n/i18n_selftest.js"
+if [ -f "$I18N_SELFTEST" ]; then
+  if out=$(node "$I18N_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the self test is missing: $I18N_SELFTEST"; fail=1
+fi
+
+echo "== 9. the catalogs, read the way the lookup reads them =="
+# Ids, plural completeness derived from Intl, slot parity, markup, the names that
+# are not words, the dash rules per language, and English completeness both ways.
+CHECK_CATALOG="$(dirname "$HERE")/i18n/check_catalog.py"
+if [ -f "$CHECK_CATALOG" ]; then
+  if out=$("$py" "$CHECK_CATALOG"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the catalog check is missing: $CHECK_CATALOG"; fail=1
+fi
+
+echo "== 10. the copy painted before the catalog arrives =="
+# The catalog is fetched, and app.js paints as it is evaluated, so a T() call on that
+# road answers with its own id. This is a copy defect like any other: the first frame
+# reads "hearth.appbar.lifecycle.start" on a button.
+CHECK_FIRST_FRAME="$(dirname "$HERE")/i18n/check_first_frame.py"
+if [ -f "$CHECK_FIRST_FRAME" ]; then
+  if out=$("$py" "$CHECK_FIRST_FRAME"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the first frame check is missing: $CHECK_FIRST_FRAME"; fail=1
+fi
 
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

@@ -121,7 +121,10 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var html = Html();
 
-            Assert.Equal(2, CountOf(html, "onerror=\"BAKA_ASSET_PLAIN(this)\""));
+            // Three now: the stylesheet, the lookup and the app. Every stamped address
+            // keeps a plain one behind it, because a cache stamp must never be the reason
+            // the interface does not come up at all.
+            Assert.Equal(3, CountOf(html, "onerror=\"BAKA_ASSET_PLAIN(this)\""));
             Assert.Contains("String(el.tagName === \"LINK\" ? el.href : el.src).split(\"?\")[0]", html);
         }
 

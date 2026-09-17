@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using ValheimBakaLoader.Tests.Tools;
 using Xunit;
 
@@ -48,6 +50,37 @@ namespace ValheimBakaLoader.Tests.Forms
 
         private static string RenderModShowing() =>
             Between(AppJs(), "function renderModShowing(", "async function scanMods()");
+
+        /// <summary>
+        /// The English catalog, read the way the page reads it. Several of the words below
+        /// left app.js for <c>WebUI/i18n/en.json</c>, so the wording they used to be pinned
+        /// by is now pinned where it lives: the call site is checked for the id, and the id
+        /// is checked for the sentence. Both halves, or the gate would pass on a row that
+        /// asks for a key holding the wrong words.
+        /// </summary>
+        private static Dictionary<string, JsonElement> Catalog()
+        {
+            using var document = JsonDocument.Parse(AppSourceTree.Web("i18n/en.json"));
+            var map = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var entry in document.RootElement.GetProperty("keys").EnumerateObject())
+                map[entry.Name] = entry.Value.Clone();
+            return map;
+        }
+
+        private static string Lore(string id)
+        {
+            var catalog = Catalog();
+            Assert.True(catalog.ContainsKey(id), "the English catalog has no " + id);
+            Assert.True(catalog[id].TryGetProperty("lore", out var lore)
+                        && lore.ValueKind == JsonValueKind.String,
+                id + " carries no English");
+            return catalog[id].GetProperty("lore").GetString();
+        }
+
+        /// <summary>Every catalog id a block of app.js asks for by name.</summary>
+        private static List<string> IdsAskedIn(string block) =>
+            System.Text.RegularExpressions.Regex.Matches(block, @"(?<![A-Za-z0-9_$])T\(""([a-z][a-z0-9_.]*)""\)")
+                .Select(m => m.Groups[1].Value).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
 
         // ---------------------------------------------------------------- A. the Mods hall
 
@@ -154,7 +187,11 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var showing = RenderModShowing();
 
-            Assert.Contains("TT(\"updates every mod with an update, not only the ones shown\")", showing);
+            // The sentence moved into the catalog, so the tooltip is pinned in two places:
+            // the call site asks for the id, and the id still holds those exact words.
+            Assert.Contains("T(\"mods.showing.update_all.title\")", showing);
+            Assert.Equal("updates every mod with an update, not only the ones shown",
+                Lore("mods.showing.update_all.title"));
             Assert.Contains("btn.title=on?", showing);
             // "showing N of M" only while something is typed.
             Assert.Contains("el.textContent=on?TT(\"showing\")+\" \"+shown+\" \"+TT(\"of\")+\" \"+total:\"\";", showing);
@@ -195,14 +232,33 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var render = RenderMods();
 
-            Assert.Contains("No mod matches that search", render);
-            Assert.Contains("action:{name:\"clearModSearch\",label:\"Clear the search\"}", render);
+            // The empty state's words are catalog entries now, so the render is read for
+            // the ids and the catalog for what those ids say. Both halves matter: an id
+            // with no wording behind it draws a dotted name on the table.
+            Assert.Contains("title:T(\"mods.empty.no_match.title\")", render);
+            Assert.Equal("No mod matches that search", Lore("mods.empty.no_match.title"));
+            Assert.Contains("action:{name:\"clearModSearch\",label:T(\"mods.empty.no_match.action\")}", render);
+            Assert.Equal("Clear the search", Lore("mods.empty.no_match.action"));
             // And the older empty state, for a server with no mods at all, still stands.
-            Assert.Contains("title:\"No mods installed\"", render);
+            Assert.Contains("title:T(\"mods.empty.none.title\")", render);
+            Assert.Equal("No mods installed", Lore("mods.empty.none.title"));
+
+            // The one reason that counts what it is hiding is still composed, and still on
+            // the bridge, because a translator handed "Clear the box to see all " cannot
+            // word it. It says TT() out loud at the call site so it is visibly the odd one.
+            Assert.Contains("reason:TT(\"Nothing in this server's mod list carries every word that was typed. "
+                            + "Clear the box to see all \"+mods.length+\" again.\")", render);
 
             Assert.Contains("clearModSearch:()=>setModFilter(\"\")", AppJs());
         }
 
+        /// <summary>
+        /// The words on a row moved into the catalog, and the haystack has to ask for the
+        /// SAME ids the row draws with. That is the whole point of the rule: typing the
+        /// word on a pill has to find the row carrying it, in any language. So this reads
+        /// both blocks and insists the set of ids matches, rather than listing the six
+        /// tags twice and letting one side quietly gain a seventh.
+        /// </summary>
         [Fact]
         public void A_search_covers_the_name_the_author_the_folder_the_versions_and_the_tags()
         {
@@ -213,13 +269,44 @@ namespace ValheimBakaLoader.Tests.Forms
                 "m.ModName", "m.Author", "m.FullName",
                 "lastPathPart(m.PluginDirectory)",
                 "m.InstalledVersion", "m.LatestVersion",
-                "TT(\"patcher\")", "TT(\"Hexium\")", "TT(\"Bundled\")",
-                "TT(\"Update\")", "TT(\"Current\")", "TT(\"held\")",
             })
             {
                 Assert.True(text.Contains(field, StringComparison.Ordinal),
                     "the Mods search no longer covers " + field);
             }
+
+            var expected = new[]
+            {
+                "mods.possibly_outdated.yes", "mods.status.bundled", "mods.status.current",
+                "mods.status.held", "mods.status.update", "mods.tag.hexium", "mods.tag.patcher",
+            };
+            Assert.Equal(expected, IdsAskedIn(text).ToArray());
+
+            // And the row itself draws with exactly those, so neither side can drift. The
+            // hall's empty states are asked for in the same function and are deliberately
+            // NOT in the haystack: they are what the table says when there is no row to
+            // search. They are subtracted by name rather than by prefix-and-hope, so a row
+            // word that lands under mods.empty. by mistake fails here instead of vanishing.
+            var emptyStates = new[]
+            {
+                "mods.empty.no_match.action", "mods.empty.no_match.title",
+                "mods.empty.none.action", "mods.empty.none.reason", "mods.empty.none.title",
+                "mods.empty.scanning.reason", "mods.empty.scanning.title",
+                "mods.empty.unscanned.action", "mods.empty.unscanned.reason",
+                "mods.empty.unscanned.title",
+            };
+            var drawn = IdsAskedIn(RenderMods()).ToArray();
+            Assert.Equal(emptyStates, drawn.Where(id => id.StartsWith("mods.empty.", StringComparison.Ordinal)).ToArray());
+            Assert.Equal(expected, drawn.Where(id => !id.StartsWith("mods.empty.", StringComparison.Ordinal)).ToArray());
+
+            // The words behind the ids are the ones the host reads on the pills.
+            Assert.Equal("patcher", Lore("mods.tag.patcher"));
+            Assert.Equal("Hexium", Lore("mods.tag.hexium"));
+            Assert.Equal("Bundled", Lore("mods.status.bundled"));
+            Assert.Equal("Update", Lore("mods.status.update"));
+            Assert.Equal("Current", Lore("mods.status.current"));
+            Assert.Equal("held", Lore("mods.status.held"));
+            Assert.Equal("Yes", Lore("mods.possibly_outdated.yes"));
         }
 
         [Fact]
@@ -502,14 +589,34 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var js = AppJs();
 
-            foreach (var phrase in new[]
-            {
-                "TT(\"showing\")", "TT(\"of\")", "TT(\"no match\")", "TT(\"no scroll carries that\")",
-            })
+            // "showing N of M" is still built out of two words and two numbers, so its two
+            // halves are still bridged by their English. Rewriting that as one keyed
+            // sentence with slots belongs with the rest of the composed messages.
+            foreach (var phrase in new[] { "TT(\"showing\")", "TT(\"of\")" })
             {
                 Assert.True(js.Contains(phrase, StringComparison.Ordinal),
                     "a search-box string no longer goes through TT(): " + phrase);
             }
+
+            // The three that stand on their own now name catalog ids, and the ids still
+            // hold the words the boxes showed.
+            foreach (var (id, words) in new[]
+            {
+                ("runes.find.no_match", "no match"),
+                ("runes.list.no_match", "no scroll carries that"),
+                ("runes.list.empty", "no .cfg scrolls found"),
+            })
+            {
+                Assert.True(js.Contains("T(\"" + id + "\")", StringComparison.Ordinal),
+                    "a search-box string no longer goes through the catalog: " + id);
+                Assert.Equal(words, Lore(id));
+            }
+
+            // Both empty lines in the scroll list are escaped on the way to the DOM. One of
+            // them was not, which mattered the moment its words came out of a file.
+            var list = Between(js, "function renderCfgList(){", "/* \"showing N of M\" beside the box");
+            Assert.Contains("${esc(T(\"runes.list.no_match\"))}", list);
+            Assert.Contains("${esc(T(\"runes.list.empty\"))}", list);
 
             // The placeholders swap with the rest of the wording too.
             Assert.Contains("[$(\"#palInput\"),$(\"#cfgEditor\"),$(\"#modSearch\"),$(\"#runeSearch\"),$(\"#cfgFind\")]", js);
@@ -578,10 +685,13 @@ namespace ValheimBakaLoader.Tests.Forms
             var js = AppJs();
 
             Assert.Contains("const held=modIsHeld(m);", render);
-            // Both halves of the pill go through the wording pass: the word on it and the
-            // sentence behind it, so a plain-terminology swap can never leave one in the
-            // old wording and the other in the new.
-            Assert.Contains("held?`<span class=\"pill amber\" title=\"${esc(TT(MOD_HELD_TIP))}\">${esc(TT(\"held\"))}</span>`", render);
+            // Both halves of the pill still go through the wording pass, one through each
+            // road: the word on it asks the catalog by id, and the sentence behind it is a
+            // const app.js still spells out, so it takes the TT() bridge. Neither can be
+            // left in the old wording while the other moves.
+            Assert.Contains("held?`<span class=\"pill amber\" title=\"${esc(TT(MOD_HELD_TIP))}\">${esc(T(\"mods.status.held\"))}</span>`", render);
+            Assert.Equal("held", Lore("mods.status.held"));
+            Assert.Equal("Current", Lore("mods.status.current"));
 
             // CURRENT is what is left when nothing newer stands on EITHER site. Both arms
             // are here on purpose: Hexium moving past its own copy counts too.
@@ -593,8 +703,8 @@ namespace ValheimBakaLoader.Tests.Forms
             // row and the word the search finds can never drift apart.
             Assert.Equal(3, Count(js, "modIsHeld"));
 
-            var current = render.IndexOf("TT(\"Current\")", StringComparison.Ordinal);
-            var heldPill = render.IndexOf("esc(TT(\"held\"))", StringComparison.Ordinal);
+            var current = render.IndexOf("T(\"mods.status.current\")", StringComparison.Ordinal);
+            var heldPill = render.IndexOf("esc(T(\"mods.status.held\"))", StringComparison.Ordinal);
             Assert.True(heldPill > 0 && current > heldPill,
                 "the held pill must be decided before the row can fall through to Current");
 
@@ -613,9 +723,14 @@ namespace ValheimBakaLoader.Tests.Forms
             var mark = Between(AppJs(), "function modLatestMark(m)", "/* The transient status");
 
             Assert.Contains("const cell=String(m.LatestVersion||\"\");", mark);
-            Assert.Contains("const say=(words,version)=>esc(TT(words))+(String(version||\"\")===cell?\"\":\" \"+esc(version));", mark);
-            Assert.Contains("say(\"newer on Thunderstore\",m.LatestVersion)", mark);
-            Assert.Contains("say(\"newer on Hexium\",m.hexiumLatest)", mark);
+            // The words are looked up at the call site now and handed in already chosen, so
+            // the id is visible to the catalog gate rather than hiding inside a variable.
+            // esc() still stands between them and the DOM, which is the half that matters.
+            Assert.Contains("const say=(words,version)=>esc(words)+(String(version||\"\")===cell?\"\":\" \"+esc(version));", mark);
+            Assert.Contains("say(T(\"mods.mark.thunderstore_newer\"),m.LatestVersion)", mark);
+            Assert.Contains("say(T(\"mods.mark.hexium_newer\"),m.hexiumLatest)", mark);
+            Assert.Equal("newer on Thunderstore", Lore("mods.mark.thunderstore_newer"));
+            Assert.Equal("newer on Hexium", Lore("mods.mark.hexium_newer"));
         }
 
         /// <summary>

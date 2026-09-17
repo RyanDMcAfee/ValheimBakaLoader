@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Xunit;
 
 namespace ValheimBakaLoader.Tests.Forms
@@ -70,17 +71,36 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var page = File.ReadAllText(WebUiPath("app.js"));
             var markup = File.ReadAllText(WebUiPath("index.html"));
+            var catalog = File.ReadAllText(WebUiPath("i18n/en.json"));
+
+            string Lore(string id)
+            {
+                using var document = JsonDocument.Parse(catalog);
+                return document.RootElement.GetProperty("keys").GetProperty(id)
+                               .GetProperty("lore").GetString();
+            }
+
+            // The three sentences live in the catalog now, so the page is read for the id
+            // it asks for and the catalog for the words that id answers with. Asserting
+            // only the id would let the wording be emptied; only the wording, in a file
+            // nothing on this surface reads any more, would pass on a dead entry.
+            Assert.Contains("T(\"world.running.note\")", page);
+            Assert.Equal("The server is running. Saved changes apply the next time it starts.",
+                         Lore("world.running.note"));
 
             // The note above Save Config, and the element it is written into.
-            Assert.Contains("The server is running. Saved changes apply the next time it starts.", page);
             Assert.Contains("cfgRunningNote", markup);
 
             // The confirmation after a save made while the world is up.
-            Assert.Contains("Saved. The running server keeps its current settings until it restarts.", page);
+            Assert.Contains("T(\"world.saved.running.toast\")", page);
+            Assert.Equal("Saved. The running server keeps its current settings until it restarts.",
+                         Lore("world.saved.running.toast"));
 
             // And the world dials that were not saved say so rather than passing under a
             // success toast, which is how a difficulty the host had just set looked saved.
-            Assert.Contains("World difficulty was not saved for this world. Reopen Settings and save again.", page);
+            Assert.Contains("T(\"world.difficulty.not_saved.toast\")", page);
+            Assert.Equal("World difficulty was not saved for this world. Reopen Settings and save again.",
+                         Lore("world.difficulty.not_saved.toast"));
         }
 
         [Fact]

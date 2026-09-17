@@ -304,16 +304,22 @@ namespace ValheimBakaLoader.Tests.Forms
                 : "");
         }
 
-        /// <summary>The catalog folder exists with an English skeleton, so the arm above is live.</summary>
+        /// <summary>
+        /// The catalog folder holds a real English catalog, so the copy gate's catalog
+        /// arm is live rather than scanning an empty skeleton. What is IN it, and whether
+        /// the interface and the catalog agree both ways, is WebUiCatalogTests; this only
+        /// insists the arm above has something to read.
+        /// </summary>
         [Fact]
-        public void The_catalog_folder_exists_with_an_english_skeleton()
+        public void The_catalog_folder_holds_a_real_english_catalog()
         {
             var en = File.ReadAllText(Path.Combine(
                 AppSourceTree.RepoRoot(), "ValheimBakaLoader", "WebUI", "i18n", "en.json"));
 
-            Assert.Contains("\"language\":\"en\"", en);
-            Assert.Contains("\"catalog\":0", en);
-            Assert.Contains("\"keys\":{}", en);
+            Assert.Contains("\"language\": \"en\"", en);
+            Assert.Contains("\"keys\"", en);
+            Assert.DoesNotContain("\"keys\": {}", en);
+            Assert.Contains("\"lore\"", en);
         }
 
         // ------------------------------------------------------------------ helpers

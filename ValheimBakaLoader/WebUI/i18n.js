@@ -1,0 +1,520 @@
+/* ============================================================================
+   i18n.js - the lookup the halls read their words out of.
+
+   Loaded by index.html before app.js, through the same cache stamp both other
+   includes use, so a new release is a new address and the browser's disk cache
+   cannot hand back last version's catalog.
+
+   It is a classic script on purpose: app.js is one too, and a module would put
+   the lookup behind an await that every render function would then have to
+   learn about. The guard at the bottom also hands the same object back to
+   require(), which is how scripts/i18n/i18n_selftest.js drives it under node
+   with no browser and no jsdom in the room.
+
+   THE CONTRACT, in one paragraph. An id is a stable dotted name and never the
+   English text: keying on English orphans every translation the first time
+   somebody edits a sentence, and this codebase edits sentences often. One entry
+   holds BOTH registers of the same sentence, `lore` and `plain`, because two
+   sibling keys is how one half of a pair goes missing. Slots are named, {like}
+   this, never positional, because Russian and Japanese reorder the clauses
+   around them. A plural is an object of CLDR categories, chosen by
+   Intl.PluralRules from the parameter the entry names. The order at every call
+   site is T(id, params) then esc() then the DOM, and esc() stays last.
+   ============================================================================ */
+
+(function (root, factory) {
+  "use strict";
+  var api = factory();
+  if (typeof module === "object" && module && module.exports) module.exports = api;
+  if (root) root.I18N = api;
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+  "use strict";
+
+  /* ---------------------------------------------------------------- state */
+
+  /* The English catalog is the source of record and the fallback both. It is
+     kept separately from the active one so a pack that is older than the app
+     shows the English sentence for a key it has never heard of, rather than a
+     dotted id. */
+  var english = null;
+  var active = null;
+  var activeTag = "en";
+
+  /* English text to id, for the TT() bridge (see idFor). A text two entries
+     share is ambiguous and is dropped rather than guessed at. */
+  var reverse = null;
+
+  /* Ids the active catalog did not have and English answered for. Read by the
+     pack tests and worth reading in the console while a translation is in
+     review: a long list means the pack is behind the app. */
+  var missing = [];
+  var missingSeen = Object.create(null);
+
+  var warned = Object.create(null);
+
+  /* What the app says about the register right now. The app owns the answer
+     (it is a preference, and the switch is in Upkeep), so it hands a getter in
+     rather than this file reaching for a global it does not own. */
+  var registerGetter = function () { return false; };
+
+  var has = Object.prototype.hasOwnProperty;
+
+  /* ------------------------------------------------------------ the lookup */
+
+  function keysOf(catalog) {
+    return (catalog && typeof catalog === "object" && catalog.keys) || null;
+  }
+
+  /* Text to id, built once per English catalog. A text that two entries share
+     names neither of them, so it is removed: the bridge falls back to the old
+     behaviour for that sentence, which is what it did yesterday anyway. */
+  function buildReverse(keys) {
+    var map = Object.create(null);
+    var clash = Object.create(null);
+    for (var id in keys) {
+      if (!has.call(keys, id)) continue;
+      var lore = keys[id] && keys[id].lore;
+      if (typeof lore !== "string" || !lore.length) continue;
+      if (has.call(map, lore)) { clash[lore] = true; continue; }
+      map[lore] = id;
+    }
+    for (var text in clash) if (has.call(clash, text)) delete map[text];
+    return map;
+  }
+
+  /**
+   * Installs a catalog as the active one, and as the English fallback when it
+   * is the English one. Sets the locale the formatters read.
+   * @param {object} catalog parsed en.json or a pack's strings.json
+   * @param {string} [langCode] overrides _meta.language
+   * @returns {string} the language tag now active
+   */
+  function load(catalog, langCode) {
+    var meta = (catalog && catalog._meta) || {};
+    var tag = String(langCode || meta.language || "en").trim() || "en";
+    var keys = keysOf(catalog) || Object.create(null);
+
+    if (tag === "en" || meta.language === "en") {
+      english = keys;
+      reverse = buildReverse(keys);
+    }
+    active = keys;
+    setLocale(tag);
+    return activeTag;
+  }
+
+  function note(id) {
+    if (missingSeen[id]) return;
+    missingSeen[id] = true;
+    missing.push(id);
+  }
+
+  function entryFor(id) {
+    if (active && has.call(active, id)) return active[id];
+    if (english && has.call(english, id)) { note(id); return english[id]; }
+    return null;
+  }
+
+  function plainWanted() {
+    try { return !!registerGetter(); } catch (_) { return false; }
+  }
+
+  /* One entry, two registers, and a translated pack's single value. Plain wins
+     when the host asked for plain and the entry has one; a pack's own
+     translation wins next; the lore wording is the floor. */
+  function pickRegister(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    if (plainWanted() && entry.plain != null) return entry.plain;
+    if (entry.translation != null) return entry.translation;
+    return entry.lore != null ? entry.lore : null;
+  }
+
+  function pluralCategory(n) {
+    var value = Number(n);
+    if (!isFinite(value)) return "other";
+    try { return pluralRules().select(value); } catch (_) { return "other"; }
+  }
+
+  /* A plural value is an object of CLDR categories. The category the language
+     does not have, or a parameter that is not a number, both land on "other",
+     which every language has. */
+  function resolveValue(entry, params) {
+    var value = pickRegister(entry);
+    if (value && typeof value === "object") {
+      var name = entry.plural;
+      var picked = pluralCategory(params ? params[name] : NaN);
+      value = value[picked] != null ? value[picked] : value.other;
+    }
+    return value == null ? null : String(value);
+  }
+
+  var SLOT = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+  /* A slot with no parameter behind it is left standing rather than blanked.
+     An empty gap in a sentence reads as a wording mistake and gets lived with;
+     a literal {count} on screen gets reported the same day. */
+  function fill(text, params) {
+    if (!params || text.indexOf("{") < 0) return text;
+    return text.replace(SLOT, function (whole, name) {
+      return has.call(params, name) ? String(params[name]) : whole;
+    });
+  }
+
+  function warnOnce(id) {
+    if (warned[id]) return;
+    warned[id] = true;
+    if (typeof console !== "undefined" && console && console.warn) {
+      console.warn("[i18n] no wording for " + id);
+    }
+  }
+
+  /**
+   * The words for an id. Falls back to English, then to the id itself.
+   * @param {string} id dotted catalog id
+   * @param {object} [params] named slot values
+   * @returns {string} plain text, never markup: esc() still comes after this
+   */
+  function T(id, params) {
+    if (id == null) return "";
+    var key = String(id);
+    var entry = entryFor(key);
+    if (!entry) { warnOnce(key); return key; }
+    var text = resolveValue(entry, params);
+    if (text == null) { warnOnce(key); return key; }
+    return fill(text, params);
+  }
+
+  /** True when some catalog can answer for this id. */
+  function hasKey(id) {
+    if (id == null) return false;
+    var key = String(id);
+    return !!((active && has.call(active, key)) || (english && has.call(english, key)));
+  }
+
+  /** The rune that leads this message, or "" when it leads with none. */
+  function mark(id) {
+    var entry = id == null ? null : entryFor(String(id));
+    return entry && entry.mark != null ? String(entry.mark) : "";
+  }
+
+  /**
+   * The id an English lore sentence belongs to, or null.
+   * This is what lets a call site that has not been rewritten yet and one that
+   * has agree on the same words: a TT() still holding the English sentence and
+   * a rewritten call site holding the id come out of the same entry. Null for a
+   * sentence two entries share, and for everything the catalog never heard of.
+   */
+  function idFor(text) {
+    if (!reverse || typeof text !== "string") return null;
+    return has.call(reverse, text) ? reverse[text] : null;
+  }
+
+  /** The app hands in the getter that answers "plain wording, or lore?". */
+  function setRegister(getter) {
+    registerGetter = typeof getter === "function" ? getter : function () { return false; };
+    return registerGetter;
+  }
+
+  /** True when the host is reading the plain register right now. */
+  function plain() { return plainWanted(); }
+
+  /* --------------------------------------------------------- the formatters
+
+     Every one of these is built on Intl with the ACTIVE locale, and every one
+     is pinned to the options that make English come out exactly as the hand
+     rolled formatter it replaced did. That pinning is deliberate: this phase
+     changes which code writes the number, never what an English host reads.
+     Where a language wants its own shape (4 ч 32 мин rather than 4h 32m) it is
+     Intl that knows, and that is the entire point of the move.                */
+
+  var cache = Object.create(null);
+
+  function cached(kind, opts, build) {
+    var key = kind + "|" + activeTag + "|" + JSON.stringify(opts || {});
+    if (has.call(cache, key)) return cache[key];
+    var made = null;
+    try { made = build(); } catch (_) { made = null; }
+    cache[key] = made;
+    return made;
+  }
+
+  /** Cached Intl.NumberFormat for the active locale. */
+  function numberFormat(opts) {
+    return cached("n", opts, function () { return new Intl.NumberFormat(activeTag, opts); });
+  }
+
+  /** Cached Intl.DateTimeFormat for the active locale. */
+  function dateTimeFormat(opts) {
+    return cached("d", opts, function () { return new Intl.DateTimeFormat(activeTag, opts); });
+  }
+
+  /** Cached Intl.RelativeTimeFormat for the active locale. */
+  function relativeFormat(opts) {
+    return cached("r", opts, function () { return new Intl.RelativeTimeFormat(activeTag, opts); });
+  }
+
+  /** Cached Intl.Collator for the active locale. */
+  function collator(opts) {
+    return cached("c", opts, function () { return new Intl.Collator(activeTag, opts); });
+  }
+
+  /** Cached Intl.PluralRules for the active locale. */
+  function pluralRules() {
+    return cached("p", null, function () { return new Intl.PluralRules(activeTag); });
+  }
+
+  /** The CLDR categories this locale actually uses. The catalog gate asks the
+      same question of the same machinery, so a plural entry can never be
+      complete here and short there. */
+  function pluralCategories() {
+    var rules = pluralRules();
+    try { return rules.resolvedOptions().pluralCategories.slice(); }
+    catch (_) { return ["other"]; }
+  }
+
+  /** A number in the host's own notation. */
+  function fmtNumber(n, opts) {
+    var value = Number(n);
+    if (!isFinite(value)) return "-";
+    var formatter = numberFormat(opts);
+    if (!formatter) return String(value);
+    try { return formatter.format(value); } catch (_) { return String(value); }
+  }
+
+  function fixed(value, digits) {
+    return fmtNumber(value, {
+      minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false
+    });
+  }
+
+  /**
+   * "512 B" / "1.5 KB" / "2.0 MB" / "1.25 GB".
+   * The tiers and the digit counts are the ones the halls have always shown;
+   * what Intl brings is the decimal mark, which is a comma in half of Europe.
+   * Grouping is off because it was off before, and a separator appearing in
+   * "1023.9 KB" would be a change no release note claimed.
+   */
+  function fmtBytes(n) {
+    var value = Number(n);
+    if (!isFinite(value)) return "-";
+    if (value < 1024) return fmtNumber(value, { maximumFractionDigits: 0, useGrouping: false }) + " B";
+    if (value < 1048576) return fixed(value / 1024, 1) + " KB";
+    if (value < 1073741824) return fixed(value / 1048576, 1) + " MB";
+    return fixed(value / 1073741824, 2) + " GB";
+  }
+
+  var RELATIVE_OPTS = { numeric: "always", style: "narrow" };
+
+  /**
+   * "40s ago" / "5m ago" / "3h ago" / "2d ago", in the host's language.
+   * @param {number} amount how many units ago. Positive is the past.
+   * @param {string} [unit] "second" | "minute" | "hour" | "day". Left out, the
+   *   amount is read as seconds and the unit is chosen by size, rounding DOWN
+   *   the way the hand rolled version did.
+   */
+  function fmtRelative(amount, unit) {
+    var value = Number(amount);
+    if (!isFinite(value)) return "-";
+    var named = unit;
+    if (!named) {
+      var s = Math.max(0, value);
+      if (s < 60) { named = "second"; value = Math.floor(s); }
+      else if (s < 3600) { named = "minute"; value = Math.floor(s / 60); }
+      else if (s < 86400) { named = "hour"; value = Math.floor(s / 3600); }
+      else { named = "day"; value = Math.floor(s / 86400); }
+    }
+    var formatter = relativeFormat(RELATIVE_OPTS);
+    if (!formatter) return fmtNumber(value) + " " + named;
+    try { return formatter.format(-value, named); }
+    catch (_) { return fmtNumber(value) + " " + named; }
+  }
+
+  var TIME_OPTS = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+
+  /**
+   * "19:45". The 24 hour cycle is pinned rather than left to the locale,
+   * because the halls have always shown a 24 hour clock and a server log
+   * beside a 12 hour status bar reads as two different machines.
+   */
+  function fmtTime(when) {
+    var d = when instanceof Date ? when : new Date(when);
+    if (isNaN(d.getTime())) return "-";
+    var formatter = dateTimeFormat(TIME_OPTS);
+    if (!formatter) return two(d.getHours()) + ":" + two(d.getMinutes());
+    try { return formatter.format(d); }
+    catch (_) { return two(d.getHours()) + ":" + two(d.getMinutes()); }
+  }
+
+  function two(n) { return String(n).padStart(2, "0"); }
+
+  /* Four option sets rather than one, because a span of exactly thirteen days
+     has to read "13d 0h" and a span of seven minutes has to read "7m": the
+     zero component is wanted in one and not the other, and that is a display
+     choice per tier rather than per formatter. */
+  var DURATION_TIERS = {
+    day: { style: "narrow", daysDisplay: "always", hoursDisplay: "always" },
+    hour: { style: "narrow", hoursDisplay: "always", minutesDisplay: "always" },
+    minute: { style: "narrow", minutesDisplay: "always" },
+    second: { style: "narrow", secondsDisplay: "always" }
+  };
+
+  function durationFormat(opts) {
+    if (typeof Intl === "undefined" || typeof Intl.DurationFormat !== "function") return null;
+    return cached("dur", opts, function () { return new Intl.DurationFormat(activeTag, opts); });
+  }
+
+  /**
+   * "13d 0h" / "4h 32m" / "7m" / "40s", big spans coarse and small spans exact.
+   * Intl.DurationFormat where the runtime has it (it is young: Chromium 129),
+   * and the digits with their letters where it does not. Both arms produce the
+   * same English, which is how the fallback stays honest.
+   */
+  function fmtDuration(seconds) {
+    var total = Math.max(0, Math.round(Number(seconds) || 0));
+    var d = Math.floor(total / 86400);
+    var h = Math.floor((total % 86400) / 3600);
+    var m = Math.floor((total % 3600) / 60);
+    var s = total % 60;
+
+    var tier, parts;
+    if (d > 0) { tier = "day"; parts = { days: d, hours: h }; }
+    else if (h > 0) { tier = "hour"; parts = { hours: h, minutes: m }; }
+    else if (m > 0) { tier = "minute"; parts = { minutes: m }; }
+    else { tier = "second"; parts = { seconds: s }; }
+
+    var formatter = durationFormat(DURATION_TIERS[tier]);
+    if (formatter) {
+      try { return formatter.format(parts); } catch (_) { /* fall through */ }
+    }
+    if (tier === "day") return fmtNumber(d) + "d " + fmtNumber(h) + "h";
+    if (tier === "hour") return fmtNumber(h) + "h " + fmtNumber(m) + "m";
+    if (tier === "minute") return fmtNumber(m) + "m";
+    return fmtNumber(s) + "s";
+  }
+
+  var COMPARE_OPTS = { sensitivity: "base" };
+
+  /**
+   * Sorts the way the host's language sorts. Chinese wants pinyin order and
+   * Swedish wants a after z, and neither is something a byte comparison knows.
+   * @param {object} [opts] Intl.Collator options; the default ignores case.
+   */
+  function compare(a, b, opts) {
+    var left = String(a == null ? "" : a);
+    var right = String(b == null ? "" : b);
+    var c = collator(opts || COMPARE_OPTS);
+    if (!c) return left < right ? -1 : (left > right ? 1 : 0);
+    try { return c.compare(left, right); }
+    catch (_) { return left < right ? -1 : (left > right ? 1 : 0); }
+  }
+
+  /* ------------------------------------------------------------ the locale */
+
+  /** The BCP 47 tag every formatter above is reading. */
+  function locale() { return activeTag; }
+
+  /** Points the formatters at another language. Clears the formatter cache. */
+  function setLocale(code) {
+    var tag = String(code || "en").trim() || "en";
+    if (tag !== activeTag) cache = Object.create(null);
+    activeTag = tag;
+    return activeTag;
+  }
+
+  /* ------------------------------------------------------------ the walker
+
+     565 static text nodes come up on first paint and the old terminology
+     selector reached 87 of them, so a static node is translated by carrying its
+     own id rather than by being matched from a list. One attribute per place
+     the words can sit: the text, the tooltip, the placeholder, the label a
+     screen reader reads.                                                      */
+
+  /* An element that has element children keeps them: only its own words are
+     replaced. That is what lets a palette row carry its id on the row itself
+     and keep the rune and the badge that sit either side of the label. */
+  function setText(el, value) {
+    var nodes = el.childNodes;
+    var hasElementChild = false;
+    var i;
+    if (nodes && nodes.length) {
+      for (i = 0; i < nodes.length; i++) {
+        if (nodes[i].nodeType === 1) { hasElementChild = true; break; }
+      }
+      for (i = 0; i < nodes.length; i++) {
+        if (nodes[i].nodeType === 3 && String(nodes[i].nodeValue).trim()) {
+          nodes[i].nodeValue = value;
+          return;
+        }
+      }
+    }
+    if (!hasElementChild) { el.textContent = value; return; }
+    /* Markup and no words of its own: append rather than wipe the children. */
+    if (el.ownerDocument && el.ownerDocument.createTextNode) {
+      el.appendChild(el.ownerDocument.createTextNode(value));
+    }
+  }
+
+  function attribute(name) {
+    return function (el, value) { el.setAttribute(name, value); };
+  }
+
+  var WALK = [
+    ["data-i18n", setText],
+    ["data-i18n-title", attribute("title")],
+    ["data-i18n-placeholder", attribute("placeholder")],
+    ["data-i18n-aria", attribute("aria-label")]
+  ];
+
+  /**
+   * Fills every element under root that names an id.
+   * @param {object} [root] defaults to the document
+   * @returns {number} how many places were written
+   */
+  function applyStatic(root) {
+    var where = root || (typeof document !== "undefined" ? document : null);
+    if (!where || typeof where.querySelectorAll !== "function") return 0;
+
+    var written = 0;
+    for (var w = 0; w < WALK.length; w++) {
+      var attr = WALK[w][0], apply = WALK[w][1];
+      var found = where.querySelectorAll("[" + attr + "]") || [];
+      for (var i = 0; i < found.length; i++) {
+        var el = found[i];
+        var id = el.getAttribute(attr);
+        if (!id) continue;
+        apply(el, T(id));
+        written++;
+      }
+    }
+    return written;
+  }
+
+  /* ---------------------------------------------------------------- the API */
+
+  var api = {
+    load: load,
+    T: T,
+    has: hasKey,
+    mark: mark,
+    idFor: idFor,
+    setRegister: setRegister,
+    plain: plain,
+    locale: locale,
+    setLocale: setLocale,
+    fmtNumber: fmtNumber,
+    fmtBytes: fmtBytes,
+    fmtRelative: fmtRelative,
+    fmtTime: fmtTime,
+    fmtDuration: fmtDuration,
+    compare: compare,
+    applyStatic: applyStatic,
+    numberFormat: numberFormat,
+    dateTimeFormat: dateTimeFormat,
+    relativeFormat: relativeFormat,
+    collator: collator,
+    pluralCategories: pluralCategories,
+    missing: missing
+  };
+
+  return api;
+});

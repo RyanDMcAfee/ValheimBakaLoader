@@ -173,6 +173,46 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
+        /// A request path is decoded ONCE, and in the function these tests can drive.
+        /// <para>
+        /// The handler used to ask the Uri for an already unescaped path and then hand
+        /// it to a mapper that unescapes again. Two decodes is how a double encoded
+        /// traversal gets through: %252e%252e survives the first decode as %2e%2e and
+        /// the second turns it into the dot dot the mapper is there to refuse. Nothing
+        /// was reachable through it today, because the Uri class had already
+        /// canonicalised the path, but the ordering was one refactor away from being
+        /// the whole hole.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void A_request_path_is_decoded_exactly_once()
+        {
+            var source = BlendWindowSource();
+
+            Assert.Contains("GetComponents(UriComponents.Path, UriFormat.UriEscaped)", source);
+            Assert.DoesNotContain("UriFormat.Unescaped", source);
+
+            // And the one decode is the one inside the mapper.
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(source, "Uri\\.UnescapeDataString"));
+        }
+
+        /// <summary>
+        /// The mapper decodes once itself, so a double encoded run names a file with
+        /// percent signs in it rather than a folder above the languages folder. That
+        /// file does not exist, which is a 404, which is the right answer.
+        /// </summary>
+        [Fact]
+        public void A_double_encoded_traversal_names_a_file_rather_than_a_way_out()
+        {
+            var mapped = Map("/lang/%252e%252e/secrets.json");
+
+            Assert.NotNull(mapped);
+            Assert.StartsWith(Root, mapped, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("%2e%2e", mapped);
+            Assert.Equal(Path.Combine(Root, "%2e%2e", "secrets.json"), mapped);
+        }
+
+        /// <summary>
         /// The folder sits beside userprefs, not in the install folder: the install folder
         /// may be read-only, and a manual re-extract carries nothing across.
         /// </summary>

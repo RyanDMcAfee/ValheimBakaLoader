@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using ValheimBakaLoader.Tests.Tools;
 using Xunit;
@@ -33,6 +34,18 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.True(start >= 0, "could not find " + from);
             var end = source.IndexOf(to, start, StringComparison.Ordinal);
             return end < 0 ? source.Substring(start) : source.Substring(start, end - start);
+        }
+
+        /// <summary>The English the catalog holds for an id, or null when it holds none.
+        /// The update bar's sentences live there now, so a gate that only read app.js would
+        /// pass on an id nothing answers.</summary>
+        private static string Lore(string id)
+        {
+            using var document = JsonDocument.Parse(AppSourceTree.Web("i18n/en.json"));
+            if (!document.RootElement.GetProperty("keys").TryGetProperty(id, out var entry)) return null;
+            return entry.TryGetProperty("lore", out var lore) && lore.ValueKind == JsonValueKind.String
+                ? lore.GetString()
+                : null;
         }
 
         // ------------------------------------------------------------------ 1. the toast mark
@@ -115,15 +128,25 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.DoesNotContain("JST", Html());
         }
 
+        /// <summary>
+        /// The options are still the same three; what changed is where the formatter
+        /// comes from. It used to be built once at boot against whatever locale the
+        /// runtime had, which is a clock that keeps writing in the language that was
+        /// active when the window opened. It is now asked for per paint, off the
+        /// lookup, so it follows the language the host is actually reading.
+        /// </summary>
         [Fact]
-        public void The_status_clock_is_formatted_for_the_runtime_locale_and_names_its_zone()
+        public void The_status_clock_is_formatted_for_the_active_language_and_names_its_zone()
         {
             var js = AppJs();
-            var formatter = Between(js, "const CLOCK_FMT=", "function clockOffsetName");
+            var options = Between(js, "const CLOCK_OPTS=", "function clockFmt");
 
-            Assert.Contains("new Intl.DateTimeFormat(undefined,{", formatter);
-            Assert.Contains("timeZoneName:\"short\"", formatter);
-            Assert.Contains("hourCycle:\"h23\"", formatter);
+            Assert.Contains("timeZoneName:\"short\"", options);
+            Assert.Contains("hourCycle:\"h23\"", options);
+
+            var formatter = Between(js, "function clockFmt(){", "function clockOffsetName");
+            Assert.Contains("const L=intl(); if(L) return L.dateTimeFormat(CLOCK_OPTS);", formatter);
+            Assert.Contains("new Intl.DateTimeFormat(undefined,CLOCK_OPTS)", formatter);
         }
 
         /// <summary>
@@ -171,7 +194,11 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var text = Between(AppJs(), "function updPhaseText(u){", "\n}");
 
-            Assert.Contains("return said||TT(\"Updating the server\");", text);
+            // The wording moved into the catalog, so the fallback is named by id here and the
+            // sentence itself is read out of the catalog: the old assertion would have passed
+            // on an id that answers with nothing.
+            Assert.Contains("return said||T(\"srvupd.phase.unknown\");", text);
+            Assert.Equal("Updating the server", Lore("srvupd.phase.unknown"));
         }
 
         [Fact]
@@ -179,13 +206,23 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var table = Between(AppJs(), "function updPhaseSentence(k,u){", "\n}");
 
-            foreach (var phase in new[]
+            // The branch is still there AND the id it answers with still has words. Before
+            // the sentences moved into the catalog the first half was the whole gate; on its
+            // own it would now pass on a phase that renders its own id on the progress bar.
+            foreach (var (phase, id, english) in new[]
             {
-                "backingUp", "askingSteam", "downloading", "verifying",
-                "runningSteamCmd", "finished", "cancelled",
+                ("backingUp", "srvupd.phase.backing_up", "Backing up worlds"),
+                ("askingSteam", "srvupd.phase.asking_steam", "Asking Steam to download the update"),
+                ("downloading", "srvupd.phase.downloading", "Steam is downloading the update"),
+                ("verifying", "srvupd.phase.verifying", "Verifying the install"),
+                ("runningSteamCmd", "srvupd.phase.running_steamcmd", "Running steamcmd"),
+                ("finished", "srvupd.phase.finished", "Update finished."),
+                ("cancelled", "srvupd.phase.cancelled", "Stopped waiting. Steam carries on downloading on its own."),
             })
             {
                 Assert.Contains("k===\"" + phase + "\"", table);
+                Assert.Contains("T(\"" + id + "\")", table);
+                Assert.Equal(english, Lore(id));
             }
 
             // A phase it has no wording for answers nothing, so the caller can fall back.

@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json;
 using ValheimBakaLoader.Tests.Tools;
 using Xunit;
 
@@ -17,6 +18,19 @@ namespace ValheimBakaLoader.Tests.Forms
     public class WebUiHexiumCopyTests
     {
         private static string AppJs() => AppSourceTree.Web("app.js");
+
+        /// <summary>The English behind one catalog id, read the way the page reads it. The
+        /// dialog's sentences live in <c>WebUI/i18n/en.json</c> now, so what this file
+        /// guards is read from there rather than from the source line that used to hold it.</summary>
+        private static string Lore(string id)
+        {
+            using var document = JsonDocument.Parse(AppSourceTree.Web("i18n/en.json"));
+            var keys = document.RootElement.GetProperty("keys");
+            Assert.True(keys.TryGetProperty(id, out var entry), "the English catalog has no " + id);
+            Assert.True(entry.TryGetProperty("lore", out var lore) && lore.ValueKind == JsonValueKind.String,
+                id + " carries no English");
+            return lore.GetString();
+        }
 
         private static string Between(string source, string from, string to)
         {
@@ -64,21 +78,31 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var dialog = Between(AppJs(), "function hexiumConsentModal", "async function hexiumInstallFlow");
 
+            // The sentences left app.js for the English catalog, so the dialog is checked
+            // for the ids and the ids are checked for the words. Reading only the source
+            // would now pass on a dialog that asks for a key holding nothing of the sort.
+            Assert.Contains("T(\"mods.hexium.consent.note\")", dialog);
+            Assert.Contains("T(\"mods.hexium.consent.replacing\")", dialog);
+            Assert.Contains("T(\"mods.hexium.consent.accept\")", dialog);
+
+            var note = Lore("mods.hexium.consent.note");
             // It has to say whose it is not, and that nobody can vouch for who made it.
-            Assert.Contains("not Thunderstore", dialog);
-            Assert.Contains("cannot tell you who published it", dialog);
+            Assert.Contains("not Thunderstore", note);
+            Assert.Contains("cannot tell you who published it", note);
             // It has to say the folder will be replaced when there is one.
-            Assert.Contains("will be replaced", dialog);
+            Assert.Contains("will be replaced", Lore("mods.hexium.consent.replacing"));
             // And the button has to be an acceptance rather than an OK.
-            Assert.Contains("TT(\"I accept the risk, install\")", dialog);
+            Assert.Equal("I accept the risk, install", Lore("mods.hexium.consent.accept"));
         }
 
         [Fact]
         public void Turning_the_dialog_down_is_always_on_offer()
         {
             // confirmModal draws the second button for every dialog in the app, this one
-            // included, and it reads as a refusal rather than as nothing.
-            Assert.Contains("id=\"mCancel\">${esc(TT(\"Cancel\"))}", AppJs());
+            // included, and it reads as a refusal rather than as nothing. The word is one
+            // catalog entry the whole app shares, so the id is what the dialog asks for.
+            Assert.Contains("id=\"mCancel\">${esc(T(\"common.button.cancel\"))}", AppJs());
+            Assert.Equal("Cancel", Lore("common.button.cancel"));
         }
 
         [Fact]
@@ -130,7 +154,10 @@ namespace ValheimBakaLoader.Tests.Forms
             var refusal = Between(AppJs(), "function hexiumFailToast", "function hexiumConsentModal");
 
             Assert.Contains("r.Reason===\"sourceOff\"", refusal);
-            Assert.Contains("TT(\"Turn on Also check Hexium in Upkeep to install from Hexium.\")", refusal);
+            Assert.Contains("T(\"mods.hexium.source_off.toast\")", refusal);
+            // The words the id answers with still name the switch and where it lives.
+            Assert.Equal("Turn on Also check Hexium in Upkeep to install from Hexium.",
+                         Lore("mods.hexium.source_off.toast"));
         }
 
         // --- The switch is a real setting, saved with the rest of them ---
@@ -141,7 +168,9 @@ namespace ValheimBakaLoader.Tests.Forms
             var js = AppJs();
 
             Assert.Contains("setT(\"tUseHexium\",up.UseHexiumSource)", js);
-            Assert.Contains("UseHexiumSource:T(\"tUseHexium\")", js);
+            // swOn is the switch reader. It used to be called T and gave that name up
+            // to the catalog lookup, which needed it more.
+            Assert.Contains("UseHexiumSource:swOn(\"tUseHexium\")", js);
             Assert.Contains("$(\"#tUseHexium\")?.addEventListener(\"click\"", js);
         }
 
