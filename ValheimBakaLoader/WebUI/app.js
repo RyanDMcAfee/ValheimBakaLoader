@@ -53,6 +53,14 @@ const S={
   hexium:false,           // the host's "Also check Hexium" switch, mirrored from userprefs
 
   modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
+  /* What is typed in the Mods search box. It lives here rather than in the DOM so a
+     re-render keeps it, and it narrows the rows on screen ONLY: every count, the Update
+     all button and the unattended paths read the whole list. Cleared on a profile switch,
+     because the previous realm's search is not this realm's. */
+  modFilter:"",
+  /* The same for the Configs hall: it narrows the list of scrolls on screen, and reading,
+     saving and reverting all act on the whole file whatever the list is showing. */
+  runeFilter:"",
   extIp:null, intIp:null,
   gameVersion:null, networkVersion:null,   // read off the server's own startup banner
   domain:null,            // custom join domain (the Waystone) - shown instead of the raw public IP when set
@@ -308,7 +316,7 @@ function applyTerms(){
     const t=TERM_TITLE_ORIG.get(el);
     el.title=PLAIN?plainify(t):t;
   });
-  [$("#palInput"),$("#cfgEditor")].forEach(el=>{
+  [$("#palInput"),$("#cfgEditor"),$("#modSearch"),$("#runeSearch"),$("#cfgFind")].forEach(el=>{
     if(!el) return;
     if(!TERM_ORIG.has(el)) TERM_ORIG.set(el,el.placeholder);
     const o=TERM_ORIG.get(el);
@@ -460,6 +468,10 @@ function onWindowResize(){
        without touching anything unless the backing size really differs. */
     try{flameResize();}catch(_){}
     if(currentPage==="vikings"){try{renderVikCols();}catch(_){}}
+    /* A narrower pane wraps the config text differently, so a painted find mark would be
+       left over words it no longer belongs to. It is painted again where they went, and
+       the pane is not scrolled: the host is resizing a window, not asking to jump. */
+    if(currentPage==="runes"){try{cfgFindPaint(false);}catch(_){}}
   });
 }
 window.addEventListener("resize",onWindowResize);
@@ -862,6 +874,10 @@ async function switchServer(name){
   S.players=[]; S.invite=null; S.net={conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]};
   S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
   S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
+  /* a search was typed about the previous realm's mods and scrolls, so it goes with them */
+  S.modFilter=""; if($("#modSearch")) $("#modSearch").value="";
+  S.runeFilter=""; if($("#runeSearch")) $("#runeSearch").value="";
+  cfgFindReset();
   /* conditions belong to the realm that raised them */
   ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate","restartPending"]
     .forEach(clearCondition);
@@ -1521,6 +1537,8 @@ Object.assign(ES_ACTIONS,{
   openLog:()=>goPage("saga"),
   copyJoin:()=>{ if(sailBtn) sailBtn.click(); },
   startServer:()=>lifecycleToggle(),
+  clearModSearch:()=>setModFilter(""),
+  clearRuneSearch:()=>setRuneFilter(""),
 });
 
 /* ---------- SPARKLINES (shared drawing; mock driver below) ---------- */
@@ -1846,6 +1864,72 @@ function sortedMods(mods){
   else if(col==="status") s.sort((a,b)=>m*((b.UpdateAvailable?1:0)-(a.UpdateAvailable?1:0)));
   return s;
 }
+/* ---------- SEARCH BOXES ----------
+   One rule for every search box in the app: what is typed is cut at whitespace, and a
+   row is kept only when EVERY piece is found somewhere in that row's own text, case
+   ignored. So "jere world" finds JereKuusela's WorldEditCommands whichever order it is
+   typed in, and a single word still behaves the way anybody expects.
+   Nothing here sorts, and nothing here removes anything from the list the rest of the
+   app reads: a search box narrows what is drawn and that is the whole of its job. */
+function searchTokens(q){
+  return String(q||"").trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+function searchHit(haystack,tokens){
+  const hay=String(haystack||"").toLowerCase();
+  return tokens.every(t=>hay.includes(t));
+}
+/* The last piece of a path, whichever slash the host's machine writes. */
+function lastPathPart(p){
+  const parts=String(p||"").split(/[\\/]/).filter(Boolean);
+  return parts.length?parts[parts.length-1]:"";
+}
+/* Everything a mod row shows, gathered into one string to search: its name and author,
+   the folder it sits in, both version numbers, and every tag and chip the row can carry
+   (patcher, Hexium, bundled, and the word in the Status cell). */
+function modSearchText(m){
+  if(!m) return "";
+  const bits=[
+    m.ModName, m.Author, m.FullName,
+    lastPathPart(m.PluginDirectory), lastPathPart(m.PatcherDirectory),
+    m.InstalledVersion, m.LatestVersion, m.hexiumLatest,
+    m.IsPatcher?TT("patcher"):"",
+    (m.installedSource==="hexium")?TT("Hexium"):"",
+    m.Bundled?TT("Bundled"):modIsHeld(m)?TT("held"):(m.UpdateAvailable?TT("Update"):TT("Current")),
+    m.possiblyOutdated&&!m.IsPatcher?TT("Yes"):"",
+  ];
+  return bits.filter(Boolean).join(" ");
+}
+/* A copy the host took from Hexium that either site has since moved past. It is not
+   CURRENT: something newer stands out there and BakaLoader is deliberately not taking it,
+   whichever site the newer build is on. A Hexium copy nothing has moved past is genuinely
+   current, and reads that way. */
+function modIsHeld(m){
+  if(!m||m.installedSource!=="hexium") return false;
+  return !!(m.thunderstoreNewer&&m.LatestVersion)||!!(m.hexiumNewer&&m.hexiumLatest);
+}
+/* THE ONE PLACE the Mods search is allowed to be applied: the table body render calls
+   this and nothing else does. Every counter in the header, the Update all button, the
+   waiting-updates pill, the condition bar and the unattended paths all read the whole
+   list, so a search narrows what is on screen and never what the app acts on. */
+function modsForBody(mods){
+  const tokens=searchTokens(S.modFilter);
+  if(!tokens.length) return mods;
+  return mods.filter(m=>searchHit(modSearchText(m),tokens));
+}
+/* A row is found again by its own name, never by where it happens to sit in the table,
+   so a row menu or a mark opened while a search is narrowing the table still acts on
+   the mod that was clicked. */
+function modByKey(key){
+  if(!key) return null;
+  return (S.mods||[]).find(m=>m&&m.FullName===key)||null;
+}
+/* Which site an install answer came from. The two Hexium calls have always spelled the
+   key Source and the Thunderstore add now carries source, so this reads whichever is
+   there and every caller stops caring which. */
+function modResultSource(r){
+  if(!r) return "";
+  return String(r.Source??r.source??"");
+}
 /* ---------- SHARED TABLE SORT ----------
    Click cycles a column: first click, reverse, then back to the table's own order.
    descFirst names the columns whose first click reads high to low (versions, counts,
@@ -1885,16 +1969,29 @@ const MOD_PO_TIP="The newest version on Thunderstore came out before Valheim las
 const MOD_PO_TIP_UNKNOWN="Valheim's last update date could not be read for this server, so this hint is left blank for every mod.";
 /* What the Hexium chip on a row means, said in full on hover. */
 const HEXIUM_ROW_TIP="These files came from Hexium, so BakaLoader leaves them alone: this mod sits out Update all, the waiting count and the unattended restart. Swapping back to the Thunderstore build is offered from the row menu, and it asks first.";
+/* The Status pill on a Hexium copy Thunderstore has moved past. It is not CURRENT: there
+   is something newer on the other site and BakaLoader is deliberately not taking it. */
+const MOD_HELD_TIP="installed from Hexium; BakaLoader will not replace it on its own";
 const HEXIUM_MARK_TIP="Hexium holds a higher version than both what is installed and what Thunderstore has. Nothing is downloaded until you ask for it and read what it is.";
 const THUNDERSTORE_MARK_TIP="Thunderstore has moved past this Hexium copy. Installing the Thunderstore build replaces these files and hands the mod back to the ordinary update path.";
 /* The mark that hangs off the Latest cell, or nothing. At most one: a row is either a
    Thunderstore install the other site is ahead of, or a Hexium install Thunderstore is
    ahead of, and never both. */
-function modLatestMark(m,i){
+/* The mark names its own row rather than a position in the table, so it still opens the
+   right offer while a search is narrowing what is drawn.
+   A mark that would repeat the number already printed in the cell it hangs off says the
+   words alone: the Latest cell reads the Thunderstore version, so "newer on Thunderstore
+   1.66.0" beside a cell reading 1.66.0 said the same thing twice. */
+function modLatestMark(m){
+  const key=esc(m.FullName);
+  /* The cell this mark hangs off prints the Thunderstore version, so a mark carrying
+     that same number says it twice. Said once. */
+  const cell=String(m.LatestVersion||"");
+  const say=(words,version)=>esc(TT(words))+(String(version||"")===cell?"":" "+esc(version));
   if(m.hexiumNewer&&m.hexiumLatest)
-    return ` <span class="modmark" data-hex="${i}" role="button" tabindex="0" title="${esc(HEXIUM_MARK_TIP)}">${esc(TT("newer on Hexium"))} ${esc(m.hexiumLatest)}</span>`;
+    return ` <span class="modmark" data-hex="${key}" role="button" tabindex="0" title="${esc(HEXIUM_MARK_TIP)}">${say("newer on Hexium",m.hexiumLatest)}</span>`;
   if(m.thunderstoreNewer&&m.LatestVersion)
-    return ` <span class="modmark ts" data-ts="${i}" role="button" tabindex="0" title="${esc(THUNDERSTORE_MARK_TIP)}">${esc(TT("newer on Thunderstore"))} ${esc(m.LatestVersion)}</span>`;
+    return ` <span class="modmark ts" data-ts="${key}" role="button" tabindex="0" title="${esc(THUNDERSTORE_MARK_TIP)}">${say("newer on Thunderstore",m.LatestVersion)}</span>`;
   return "";
 }
 /* The transient status a row shows while a bulk update runs. Cleared by the fresh scan
@@ -1979,15 +2076,24 @@ function renderMods(){
     $("#modTable")._list=[];
     $("#modUpdWrap").innerHTML="";
     $("#modsSub").textContent="Thunderstore index · "+(S.modsScanning?"scanning…":"not yet scanned");
+    renderModShowing(0,0);
     return;
   }
   const anyGameDate=mods.some(m=>m.gameUpdatedUtc);
   const th=$("#thPossiblyOutdated");
   if(th) th.title=(scanned&&mods.length&&!anyGameDate)?MOD_PO_TIP_UNKNOWN:MOD_PO_TIP;
-  $("#modTable").innerHTML=mods.map((m,i)=>{
+  /* The one use of the search: the rows that get drawn. Everything above and below this
+     line counts the whole list. */
+  const shown=modsForBody(mods);
+  $("#modTable").innerHTML=shown.map(m=>{
     const has=!!m.UpdateAvailable;
-    const pill=m.Bundled?`<span class="pill ember">Bundled</span>`
-      :`<span class="pill ${has?"amber":"green"}">${has?"Update":"Current"}</span>`;
+    /* A copy the host took from Hexium is HELD, not CURRENT: BakaLoader leaves it where
+       it is even when a site has moved past it, and the pill has to say so rather than
+       reading like the row is level with the world. */
+    const held=modIsHeld(m);
+    const pill=m.Bundled?`<span class="pill ember">${esc(TT("Bundled"))}</span>`
+      :held?`<span class="pill amber" title="${esc(TT(MOD_HELD_TIP))}">${esc(TT("held"))}</span>`
+      :`<span class="pill ${has?"amber":"green"}">${esc(has?TT("Update"):TT("Current"))}</span>`;
     const st=S.modRowStatus&&S.modRowStatus[m.FullName];
     const statusCell=st?renderRowStatus(st):pill;
     /* Patcher-only mods are not update-tracked (the install path is plugins-oriented), so the
@@ -2004,15 +2110,19 @@ function renderMods(){
     /* One mark at most on the Latest cell. Either the other site is ahead of both what
        is installed and what Thunderstore has, or this is a Hexium copy Thunderstore has
        moved past. Both are offers, and both ask before they do anything. */
-    const mark=modLatestMark(m,i);
-    return `<tr data-i="${i}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span>${patcherTag}${srcChip}</td>`+
+    const mark=modLatestMark(m);
+    return `<tr data-key="${esc(m.FullName)}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span>${patcherTag}${srcChip}</td>`+
       `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
       `<td class="mono"${has?' style="color:var(--amber)"':""}>${esc(m.LatestVersion||"-")}${mark}</td>`+
       `<td>${statusCell}</td>`+
       po+`</tr>`;
-  }).join("")||`<tr><td colspan="5">${emptyState({mark:"ᚱ",title:"No mods installed",
-      reason:"Nothing was found in this server's BepInEx plugins folder. Check the server path in Settings, or add a mod from Thunderstore.",
-      action:{name:"addMod",label:"Add from Thunderstore"}})}</td></tr>`;
+  }).join("")||`<tr><td colspan="5">${mods.length
+    ?emptyState({mark:"ᚱ",title:"No mod matches that search",
+        reason:"Nothing in this server's mod list carries every word that was typed. Clear the box to see all "+mods.length+" again.",
+        action:{name:"clearModSearch",label:"Clear the search"}})
+    :emptyState({mark:"ᚱ",title:"No mods installed",
+        reason:"Nothing was found in this server's BepInEx plugins folder. Check the server path in Settings, or add a mod from Thunderstore.",
+        action:{name:"addMod",label:"Add from Thunderstore"}})}</td></tr>`;
   esWire($("#modTable"));
   $("#modTable")._list=mods;
   $("#modUpdWrap").innerHTML=upd.length
@@ -2021,6 +2131,18 @@ function renderMods(){
   /* waiting mod updates are a standing condition, not a toast that repeats forever */
   conditionModUpdates(upd.length);
   $("#modsSub").textContent=mods.length+" loaded · Thunderstore index"+(S.lastScan?" · last scan "+S.lastScan:"");
+  renderModShowing(shown.length,mods.length);
+}
+/* "showing N of M", and only while something is typed. It reads the two lengths the
+   render already has: the whole list, and the rows that were drawn. */
+function renderModShowing(shown,total){
+  const el=$("#modShowing"); if(!el) return;
+  const on=searchTokens(S.modFilter).length>0;
+  el.textContent=on?TT("showing")+" "+shown+" "+TT("of")+" "+total:"";
+  /* With the table narrowed, Update all is the one button whose reach is wider than
+     what is on screen, so it says so on hover. */
+  const btn=$("#updAllBtn");
+  if(btn) btn.title=on?TT("updates every mod with an update, not only the ones shown"):"";
 }
 async function scanMods(){
   if(!Native.available||S.modsScanning||S.modsUpdating) return;
@@ -2075,6 +2197,22 @@ $("#scanBtn").addEventListener("click",()=>{
   if(Native.available){scanMods();return;}
   toast("ᛋ Thunderstore scan begun · v1 community index");
   logLine("info","[Thunderstore] fetching valheim community index (cached 15m)…");
+});
+/* ---- The Mods search box ----
+   The typed value is held in S, so a scan, an update or any other re-render leaves it
+   where it was. Escape empties it, and the "/" key anywhere on the Mods hall puts the
+   cursor in it, the way search works nearly everywhere else. */
+function setModFilter(value){
+  S.modFilter=String(value||"");
+  const box=$("#modSearch");
+  if(box&&box.value!==S.modFilter) box.value=S.modFilter;
+  renderMods();
+}
+$("#modSearch")?.addEventListener("input",e=>setModFilter(e.target.value));
+$("#modSearch")?.addEventListener("keydown",e=>{
+  if(e.key!=="Escape") return;
+  e.preventDefault(); e.stopPropagation();
+  setModFilter("");
 });
 /* Opens the mod's own page on Thunderstore in the host's browser. The scan is what
    pairs a plugin with a page, so a hand-dropped or bundled plugin has none and the
@@ -2145,9 +2283,9 @@ async function doUpdateOne(mod){
 }
 $("#modTable").addEventListener("contextmenu",e=>{
   if(!Native.available) return;
-  const tr=e.target.closest("tr[data-i]"); if(!tr) return;
+  const tr=e.target.closest("tr[data-key]"); if(!tr) return;
   e.preventDefault();
-  const mod=($("#modTable")._list||[])[+tr.dataset.i]; if(!mod) return;
+  const mod=modByKey(tr.dataset.key); if(!mod) return;
   ctxOpen(e.clientX,e.clientY,mod.FullName,modRowItems(mod));
 });
 async function removeModFlow(mod){
@@ -2298,9 +2436,8 @@ function thunderstoreSwapFlow(mod){
 $("#modTable").addEventListener("click",e=>{
   const mark=e.target.closest(".modmark"); if(!mark) return;
   e.preventDefault(); e.stopPropagation();
-  const list=$("#modTable")._list||[];
-  if(mark.dataset.hex!=null){const m=list[+mark.dataset.hex]; if(m) hexiumInstallFlow(m); return;}
-  if(mark.dataset.ts!=null){const m=list[+mark.dataset.ts]; if(m) thunderstoreSwapFlow(m);}
+  if(mark.dataset.hex!=null){const m=modByKey(mark.dataset.hex); if(m) hexiumInstallFlow(m); return;}
+  if(mark.dataset.ts!=null){const m=modByKey(mark.dataset.ts); if(m) thunderstoreSwapFlow(m);}
 });
 
 /* ---- Add a mod from any pasted Thunderstore link ---- */
@@ -2345,7 +2482,9 @@ async function doAddMod(url){
     hexiumConsentModal(r,()=>doInstallFromHexium(r));
     return;
   }
-  if(r.Reason==="sourceOff"||(r.Source==="hexium"&&!r.Installed)){
+  /* Which site an answer came from. The two Hexium calls spell it Source and the
+     Thunderstore add spells it source, so the page reads either one rather than caring. */
+  if(r.Reason==="sourceOff"||(modResultSource(r)==="hexium"&&!r.Installed)){
     hexiumFailToast(r);
     renderMods();
     return;
@@ -2530,6 +2669,28 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="ArrowDown"){e.preventDefault();vis.forEach(v=>v.classList.remove("sel"));(vis[Math.min(idx+1,vis.length-1)]||vis[0])?.classList.add("sel");}
   else if(e.key==="ArrowUp"){e.preventDefault();vis.forEach(v=>v.classList.remove("sel"));(vis[Math.max(idx-1,0)]||vis[0])?.classList.add("sel");}
   else if(e.key==="Enter"){e.preventDefault();invokePal();}
+});
+
+/* ---------- "/" REACHES THE SEARCH BOX ----------
+   On a hall that carries one, "/" puts the cursor in its search box and selects what is
+   already there, the way search works nearly everywhere else. It stands down while a
+   dialog or the command palette is open, and while anything is already being typed into,
+   so a slash typed into a field stays a slash. */
+const PAGE_SEARCH_BOX={mods:"#modSearch",runes:"#runeSearch"};
+function typingIntoSomething(){
+  const a=document.activeElement;
+  if(!a) return false;
+  const tag=(a.tagName||"").toLowerCase();
+  return tag==="input"||tag==="textarea"||tag==="select"||a.isContentEditable===true;
+}
+document.addEventListener("keydown",e=>{
+  if(e.key!=="/"||e.ctrlKey||e.metaKey||e.altKey) return;
+  if(palOpen||$("#modalBg")?.classList.contains("open")) return;
+  if(typingIntoSomething()) return;
+  const sel=PAGE_SEARCH_BOX[currentPage]; if(!sel) return;
+  const box=$(sel); if(!box) return;
+  e.preventDefault();
+  box.focus(); box.select();
 });
 
 /* ---------- TOASTS ---------- */
@@ -3576,14 +3737,24 @@ function conditionPluginFailures(list,status){
     onDismiss:()=>{PLUGIN_FAIL_HIDDEN=sig;},
   });
 }
+let MOD_UPDATES_HIDDEN=null;   // the waiting-update count the host has waved away
 function conditionModUpdates(n){
-  if(!n){clearCondition("modUpdates");return;}
+  /* Nothing waiting any more: the updates were taken, so a later one is news again rather
+     than something already dismissed. */
+  if(!n){MOD_UPDATES_HIDDEN=null;clearCondition("modUpdates");return;}
+  /* The Mods hall draws itself again for a great many small reasons: a sort click, a
+     letter typed in the search box, a row status changing. Without this the row the host
+     waved away came straight back on the next one of them. It is keyed to the count, so a
+     mod that picks up an update afterwards raises the row again. */
+  const key=String(n);
+  if(MOD_UPDATES_HIDDEN===key){clearCondition("modUpdates");return;}
   setCondition("modUpdates",{sev:"info",title:TT("Mod updates"),
     msg:n+TT(n===1?" mod has a newer version on Thunderstore."
                   :" mods have newer versions on Thunderstore.")+
         TT(" New versions load the next time the server starts."),
     actionsHtml:`<button class="btn btn-ember btn-sm" id="cbMods">${esc(TT("Review in Mods"))}</button>`,
     wire:bar=>bar.querySelector("#cbMods").addEventListener("click",()=>goPage("mods")),
+    onDismiss:()=>{MOD_UPDATES_HIDDEN=key;},
   });
 }
 /* Settings saved while the world was up. Valheim reads its whole configuration off the command
@@ -5813,12 +5984,167 @@ async function cfgWrite(file,text){
   const r=await rpc("config.write",{file,text});
   return r!==FAIL;
 }
+/* Everything one scroll can be found by: its own file name, and the mod that wrote it.
+   BepInEx names a config after the plugin that owns it, so the pieces of the name are
+   worth searching on their own ("extraslots" finds shudnal.ExtraSlots.cfg), and where a
+   scan has matched a plugin to that name its author and title are searchable too. */
+function cfgSearchText(f){
+  const name=String(f||"");
+  const stem=name.replace(/\.cfg$/i,"");
+  const bits=[name,stem.split(/[.\-_]+/).filter(Boolean).join(" ")];
+  const low=name.toLowerCase();
+  (S.mods||[]).forEach(m=>{
+    if(!m) return;
+    const mod=String(m.ModName||"").toLowerCase(), full=String(m.FullName||"").toLowerCase();
+    if((mod&&low.includes(mod))||(full&&low.includes(full)))
+      bits.push(m.ModName,m.Author,m.FullName);
+  });
+  return bits.filter(Boolean).join(" ");
+}
+/* THE ONE PLACE the Configs search is allowed to be applied: the list render. Opening,
+   reading, saving and reverting all work from CFG.files and CFG.file, which the search
+   never touches, so a narrowed list is only ever a narrowed list. */
+function cfgFilesForList(){
+  const tokens=searchTokens(S.runeFilter);
+  if(!tokens.length) return CFG.files;
+  return CFG.files.filter(f=>searchHit(cfgSearchText(f),tokens));
+}
 function renderCfgList(){
   $("#runesSub").textContent=TT(CFG.files.length+" rune-scroll"+(CFG.files.length===1?"":"s")+" in the config vault");
-  $("#cfgList").innerHTML=CFG.files.map(f=>
+  const shown=cfgFilesForList();
+  $("#cfgList").innerHTML=shown.map(f=>
     `<div class="cfg-item${f===CFG.file?" sel":""}" data-f="${esc(f)}"><span class="cfgname">${esc(f)}</span>${(f===CFG.file&&CFG.dirty)?'<span class="dot"></span>':""}</div>`
-  ).join("")||`<div class="cfg-item" style="opacity:.5;cursor:default"><span class="cfgname">${TT("no .cfg scrolls found")}</span></div>`;
+  ).join("")||(CFG.files.length
+    ?`<div class="cfg-item" style="opacity:.5;cursor:default"><span class="cfgname">${esc(TT("no scroll carries that"))}</span></div>`
+    :`<div class="cfg-item" style="opacity:.5;cursor:default"><span class="cfgname">${TT("no .cfg scrolls found")}</span></div>`);
+  renderRuneShowing(shown.length,CFG.files.length);
 }
+/* "showing N of M" beside the box, and only while something is typed. */
+function renderRuneShowing(shown,total){
+  const el=$("#runeShowing"); if(!el) return;
+  el.textContent=searchTokens(S.runeFilter).length?TT("showing")+" "+shown+" "+TT("of")+" "+total:"";
+}
+function setRuneFilter(value){
+  S.runeFilter=String(value||"");
+  const box=$("#runeSearch");
+  if(box&&box.value!==S.runeFilter) box.value=S.runeFilter;
+  renderCfgList();
+}
+$("#runeSearch")?.addEventListener("input",e=>setRuneFilter(e.target.value));
+$("#runeSearch")?.addEventListener("keydown",e=>{
+  if(e.key!=="Escape") return;
+  e.preventDefault(); e.stopPropagation();
+  setRuneFilter("");
+});
+
+/* ---- Find inside the open scroll ----
+   The editor is one plain text box, so the match is PAINTED rather than selected: a layer
+   behind the text holds the same words in the same font at the same width, the match is
+   marked on it, and the pane scrolls to it. Nothing in here focuses the editor, moves its
+   cursor, selects any of its text or writes to it, so a keystroke meant for the find box
+   can never land in the config file and the file is never left with a selection waiting to
+   be typed over. Save still writes the whole document exactly as it stands. */
+let CFG_FIND_AT=0;
+/* The match on show, kept so a window resize can paint it again where the words have
+   moved to. Null means nothing is marked. */
+let CFG_FIND_MARK=null;
+/* Past this many letters the layer is not painted: holding a second copy of a very large
+   file in the page for every keystroke is not worth it, so such a file gets the scroll and
+   the count and no paint. Config files are a few thousand letters, so this never fires in
+   practice; it is here so a huge one cannot make the box crawl. */
+const CFG_FIND_PAINT_MAX=200000;
+function cfgFindClearMark(){
+  CFG_FIND_MARK=null;
+  const layer=$("#cfgEdMark"); if(layer&&layer.innerHTML) layer.innerHTML="";
+}
+function cfgFindReset(){
+  CFG_FIND_AT=0;
+  cfgFindClearMark();
+  const box=$("#cfgFind"); if(box) box.value="";
+  const count=$("#cfgFindCount"); if(count) count.textContent="";
+}
+/* The host has typed in the file, so the painted match no longer stands where it was and
+   the count no longer holds. The words stay in the find box, and the next Enter looks
+   again at the text as it is now. */
+function cfgFindStale(){
+  if(!CFG_FIND_MARK) return;
+  cfgFindClearMark();
+  const count=$("#cfgFindCount"); if(count) count.textContent="";
+}
+function cfgFindMatches(needle){
+  const ed=$("#cfgEditor");
+  if(!ed||!needle) return [];
+  const hay=ed.value.toLowerCase(), q=needle.toLowerCase();
+  const out=[];
+  for(let i=hay.indexOf(q);i>=0;i=hay.indexOf(q,i+q.length)) out.push(i);
+  return out;
+}
+/* Paints the marked match and, when asked, brings it into view. The layer wraps its lines
+   the way the editor wraps its own, so the mark sits over the letters it belongs to
+   wherever they have ended up, and the scroll is worked out from where the mark landed
+   rather than guessed from a line count. */
+function cfgFindPaint(bringIntoView){
+  const ed=$("#cfgEditor"), layer=$("#cfgEdMark");
+  if(!ed||!layer||!CFG_FIND_MARK) return;
+  if(!ed.clientWidth) return;   // the hall is not on screen; the next paint will place it
+  const at=CFG_FIND_MARK.at, len=CFG_FIND_MARK.len;
+  const text=ed.value;
+  if(text.length>CFG_FIND_PAINT_MAX){
+    layer.innerHTML="";
+    if(bringIntoView){
+      const before=text.slice(0,at).split("\n").length-1;
+      const lineHeight=Math.max(12,Math.round(parseFloat(getComputedStyle(ed).lineHeight)||19));
+      ed.scrollTop=Math.max(0,before*lineHeight-Math.round(ed.clientHeight/2));
+    }
+    return;
+  }
+  layer.style.width=ed.clientWidth+"px";
+  layer.innerHTML=esc(text.slice(0,at))+"<mark>"+esc(text.slice(at,at+len))+"</mark>"+esc(text.slice(at+len))+"\n";
+  if(bringIntoView){
+    const hit=layer.querySelector("mark");
+    const top=hit?hit.offsetTop:0;
+    ed.scrollTop=Math.max(0,Math.round(top-ed.clientHeight/2));
+  }
+  layer.scrollTop=ed.scrollTop; layer.scrollLeft=ed.scrollLeft;
+}
+function cfgFindGo(step){
+  const ed=$("#cfgEditor"); if(!ed) return;
+  const box=$("#cfgFind");
+  const needle=(box?.value||"");
+  const count=$("#cfgFindCount");
+  if(!needle){cfgFindClearMark(); if(count) count.textContent=""; return;}
+  const hits=cfgFindMatches(needle);
+  if(!hits.length){
+    cfgFindClearMark();
+    if(count) count.textContent=TT("no match");
+    return;
+  }
+  CFG_FIND_AT=((CFG_FIND_AT+step)%hits.length+hits.length)%hits.length;
+  CFG_FIND_MARK={at:hits[CFG_FIND_AT],len:needle.length};
+  cfgFindPaint(true);
+  if(count) count.textContent=(CFG_FIND_AT+1)+" "+TT("of")+" "+hits.length;
+}
+$("#cfgFind")?.addEventListener("input",()=>{CFG_FIND_AT=-1;cfgFindGo(1);});
+$("#cfgFind")?.addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();cfgFindGo(e.shiftKey?-1:1);return;}
+  if(e.key!=="Escape") return;
+  e.preventDefault(); e.stopPropagation();
+  cfgFindReset();
+});
+/* The chip is pressable, and a press on it must not pull the keyboard out of the box the
+   host is typing in: the mouse press is stopped from moving the keyboard at all, so Enter
+   still walks the matches after a click. */
+$("#cfgFindNext")?.addEventListener("mousedown",e=>e.preventDefault());
+$("#cfgFindNext")?.addEventListener("click",()=>cfgFindGo(1));
+$("#cfgFindNext")?.addEventListener("keydown",e=>{
+  if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();cfgFindGo(1);}
+});
+/* The layer sits still behind a pane that scrolls, so it is moved with it. */
+$("#cfgEditor")?.addEventListener("scroll",()=>{
+  const ed=$("#cfgEditor"), layer=$("#cfgEdMark");
+  if(!ed||!layer) return;
+  layer.scrollTop=ed.scrollTop; layer.scrollLeft=ed.scrollLeft;
+});
 function setCfgDirty(d){
   if(CFG.dirty===d) return;
   CFG.dirty=d;
@@ -5839,6 +6165,7 @@ async function loadCfg(f,force){
   $("#cfgEditor").value=text;
   $("#cfgSaveBtn").disabled=true;
   resetCfgSaveBtn();
+  cfgFindReset();   // a find was about the scroll that was open, not this one
   renderCfgList();
 }
 async function refreshCfgList(reRead){
@@ -5849,9 +6176,10 @@ async function refreshCfgList(reRead){
     // current file vanished from disk
     CFG.file=null; CFG.dirty=false;
     $("#cfgEditor").value=""; $("#cfgSaveBtn").disabled=true;
+    cfgFindStale();   // the text it was painted over is not there any more
   }else if(reRead&&CFG.file&&!CFG.dirty){
     const text=await cfgRead(CFG.file);
-    if(text!==null) $("#cfgEditor").value=text;
+    if(text!==null){$("#cfgEditor").value=text;cfgFindStale();}
   }
   renderCfgList();
 }
@@ -5866,12 +6194,12 @@ $("#cfgList").addEventListener("click",e=>{
   const it=e.target.closest(".cfg-item[data-f]");
   if(it) loadCfg(it.dataset.f,false);
 });
-$("#cfgEditor").addEventListener("input",()=>{if(CFG.file)setCfgDirty(true);});
+$("#cfgEditor").addEventListener("input",()=>{if(CFG.file)setCfgDirty(true);cfgFindStale();});
 $("#cfgReloadBtn").addEventListener("click",()=>{
   const go=async()=>{
     CFG.dirty=false;
     await refreshCfgList(true);
-    if(CFG.file){const t=await cfgRead(CFG.file);if(t!==null)$("#cfgEditor").value=t;}
+    if(CFG.file){const t=await cfgRead(CFG.file);if(t!==null){$("#cfgEditor").value=t;cfgFindStale();}}
     $("#cfgSaveBtn").disabled=true; resetCfgSaveBtn(); renderCfgList();
     toast("ᛋ Scrolls reloaded");
   };
@@ -6925,9 +7253,9 @@ if(!Native.available){
   /* The row menu is host-only in the app, so the preview gets its own opener; it calls
      the same builder, so what a screenshot shows is what the app shows. */
   $("#modTable").addEventListener("contextmenu",e=>{
-    const tr=e.target.closest("tr[data-i]"); if(!tr) return;
+    const tr=e.target.closest("tr[data-key]"); if(!tr) return;
     e.preventDefault();
-    const mod=($("#modTable")._list||[])[+tr.dataset.i]; if(!mod) return;
+    const mod=modByKey(tr.dataset.key); if(!mod) return;
     ctxOpen(e.clientX,e.clientY,mod.FullName,modRowItems(mod));
   });
   $("#fWorld").innerHTML=`<option>Final Sunset</option>`;

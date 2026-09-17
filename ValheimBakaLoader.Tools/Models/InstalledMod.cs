@@ -105,8 +105,14 @@ namespace ValheimBakaLoader.Tools.Models
 
         /// <summary>
         /// True when <see cref="LatestVersion"/> is a strictly higher semver than
-        /// <see cref="InstalledVersion"/>. Returns false when either side is missing
-        /// or when the installed version is "unknown" (manifest-less mods).
+        /// <see cref="InstalledVersion"/>. Returns false when either side is blank, and
+        /// false when the latest version cannot be read at all.
+        /// <para>
+        /// An installed version of "unknown", which is what a manifest-less folder gets,
+        /// does NOT answer false: a version nobody can read sorts lowest, so any readable
+        /// Thunderstore release ranks above it and the row offers the update. That is
+        /// deliberate, and the sentence that used to stand here claimed the opposite.
+        /// </para>
         /// <para>
         /// A copy installed from Hexium always answers false, whatever Thunderstore
         /// holds. This is the one flag "Update all", the waiting-updates count and the

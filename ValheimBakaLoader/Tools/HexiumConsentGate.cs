@@ -21,6 +21,19 @@ namespace ValheimBakaLoader.Tools
         /// <summary>How long an acceptance stays good once the host has been shown the question.</summary>
         public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
 
+        /// <summary>
+        /// Guards the whole of an issue, a take and a clear.
+        /// <para>
+        /// "Spent once" was written as a read followed by a write with nothing holding the
+        /// two together, and that is only once-and-once-only while a single caller is asking.
+        /// The bridge answers each page call on its own task, so two install calls carrying
+        /// the same token could both read it before either cleared it, and both would pass:
+        /// one answer, two downloads. The contract enforces itself here rather than relying
+        /// on nobody ever calling twice at the same moment.
+        /// </para>
+        /// </summary>
+        private readonly object _lock = new();
+
         private string _token;
         private string _forKey;
         private DateTime _issuedUtc;
@@ -29,7 +42,10 @@ namespace ValheimBakaLoader.Tools
         public Func<DateTime> UtcNow { get; set; } = () => DateTime.UtcNow;
 
         /// <summary>True while an acceptance is outstanding, whether or not it is still fresh.</summary>
-        public bool HasOutstanding => !string.IsNullOrEmpty(_token);
+        public bool HasOutstanding
+        {
+            get { lock (_lock) return !string.IsNullOrEmpty(_token); }
+        }
 
         /// <summary>
         /// Records that the host has been shown one exact package and version, and hands
@@ -37,26 +53,40 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         public string Issue(string owner, string name, string version)
         {
-            _token = Guid.NewGuid().ToString("N");
-            _forKey = Key(owner, name, version);
-            _issuedUtc = UtcNow();
-            return _token;
+            lock (_lock)
+            {
+                _token = Guid.NewGuid().ToString("N");
+                _forKey = Key(owner, name, version);
+                _issuedUtc = UtcNow();
+                return _token;
+            }
         }
 
         /// <summary>
         /// Spends the outstanding acceptance if it is this one, is still fresh, and names
         /// this exact package and version. The acceptance is always cleared, taken or
         /// not, so a token is good once and once only.
+        /// <para>
+        /// Reading the acceptance and clearing it happen inside one lock, so two calls
+        /// arriving at the same moment with the same token cannot both be told yes: the
+        /// first one through takes it, and the second finds nothing there.
+        /// </para>
         /// </summary>
         public bool Take(string token, string owner, string name, string version)
         {
-            var expected = _token;
-            var expectedFor = _forKey;
-            var issued = _issuedUtc;
+            string expected, expectedFor;
+            DateTime issued;
 
-            _token = null;
-            _forKey = null;
-            _issuedUtc = DateTime.MinValue;
+            lock (_lock)
+            {
+                expected = _token;
+                expectedFor = _forKey;
+                issued = _issuedUtc;
+
+                _token = null;
+                _forKey = null;
+                _issuedUtc = DateTime.MinValue;
+            }
 
             if (string.IsNullOrWhiteSpace(token) || string.IsNullOrEmpty(expected)) return false;
             if (!string.Equals(token, expected, StringComparison.Ordinal)) return false;
@@ -68,9 +98,12 @@ namespace ValheimBakaLoader.Tools
         /// <summary>Drops any outstanding acceptance without spending it.</summary>
         public void Clear()
         {
-            _token = null;
-            _forKey = null;
-            _issuedUtc = DateTime.MinValue;
+            lock (_lock)
+            {
+                _token = null;
+                _forKey = null;
+                _issuedUtc = DateTime.MinValue;
+            }
         }
 
         private static string Key(string owner, string name, string version) =>

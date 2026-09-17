@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.3.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.3.1 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -11,9 +11,11 @@
 // NATIVELY against the game API (no Terminal, no devcommands requirement).
 //
 // WIRE COMPATIBILITY (must match BakaLoader's Tools/RconClient.cs exactly):
-//   - Source RCON packet frame: [int32 length][int32 id][int32 type][ASCII body][0][0],
+//   - Source RCON packet frame: [int32 length][int32 id][int32 type][UTF-8 body][0][0],
 //     little-endian. Client sanity-checks 10 <= length <= 4110, so response bodies are
-//     split into chunks of <= 4000 bytes.
+//     split into chunks of <= 4000 bytes, and a chunk never ends in the middle of a
+//     multi-byte letter. The body was ASCII until 1.3.1, which turned every letter
+//     outside the first 128 into a question mark in both directions.
 //   - The client opens a FRESH connection per request and drains packets until the
 //     socket closes - so Commander answers exactly one request per connection and
 //     then closes it (same externally-visible behavior as AviiNL-RCON).
@@ -68,7 +70,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.3.0";
+        private const string PluginVersion = "1.3.1";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -79,6 +81,13 @@ namespace BakaLoaderCommander
         private const int MaxResponseBodyBytes = 4000; // client rejects frames > 4110 total
         private const int CommandTimeoutMs = 4500;     // client gives up at 5000
         private const int IoTimeoutMs = 5000;
+
+        // How packet bodies are written and read, matching BakaLoader's RconClient exactly.
+        // UTF-8 with no byte-order mark: identical to ASCII for plain English, and it carries
+        // every other alphabet as well. Player names go out in playerlist and come back in
+        // spawn, tp and kick; broadcasts and restart warnings go the other way. All of them
+        // used to lose any letter outside the first 128 to a question mark.
+        private static readonly Encoding BodyEncoding = new UTF8Encoding(false);
 
         private static ManualLogSource Log;
 
@@ -264,7 +273,7 @@ namespace BakaLoaderCommander
 
             id = BitConverter.ToInt32(payload, 0);
             type = BitConverter.ToInt32(payload, 4);
-            body = Encoding.ASCII.GetString(payload, 8, length - 10); // strip 2 null terminators
+            body = BodyEncoding.GetString(payload, 8, length - 10); // strip 2 null terminators
             return true;
         }
 
@@ -285,35 +294,87 @@ namespace BakaLoaderCommander
 
         private static void WritePacket(NetworkStream stream, int id, int type, string body)
         {
-            var bodyBytes = Encoding.ASCII.GetBytes(body ?? "");
-            var length = 4 + 4 + bodyBytes.Length + 2;
+            // Counted in BYTES, never in characters: the length field is what the reader on
+            // the other end trusts, and one letter outside the first 128 is two or more bytes.
+            var bodyBytes = BodyEncoding.GetBytes(body ?? "");
+            WritePacket(stream, id, type, bodyBytes, 0, bodyBytes.Length);
+        }
+
+        private static void WritePacket(NetworkStream stream, int id, int type, byte[] body, int offset, int count)
+        {
+            var length = 4 + 4 + count + 2;
             var packet = new byte[4 + length];
 
             Buffer.BlockCopy(BitConverter.GetBytes(length), 0, packet, 0, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(id), 0, packet, 4, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(type), 0, packet, 8, 4);
-            Buffer.BlockCopy(bodyBytes, 0, packet, 12, bodyBytes.Length);
+            if (count > 0) Buffer.BlockCopy(body, offset, packet, 12, count);
             // last two bytes stay 0 (body terminator + packet terminator)
 
             stream.Write(packet, 0, packet.Length);
             stream.Flush();
         }
 
-        /// <summary>Splits large responses across multiple packets (client drains until close).</summary>
+        /// <summary>
+        /// Splits large responses across multiple packets (client drains until close).
+        /// <para>
+        /// The split is on bytes, because the frame's length field is bytes, and a UTF-8
+        /// letter can be up to four of them. A cut landing inside one of those letters would
+        /// hand the client half a letter at the end of one packet and half at the start of
+        /// the next, and both halves would be read as damage. So a chunk that would end mid
+        /// letter is walked back to the last whole one, and the bytes are handed on as they
+        /// are rather than decoded and re-encoded around the seam.
+        /// </para>
+        /// </summary>
         private static void WriteResponse(NetworkStream stream, int id, string response)
         {
-            var bytes = Encoding.ASCII.GetBytes(response ?? "");
+            var bytes = BodyEncoding.GetBytes(response ?? "");
             if (bytes.Length == 0)
             {
                 WritePacket(stream, id, TypeResponse, "");
                 return;
             }
 
-            for (var offset = 0; offset < bytes.Length; offset += MaxResponseBodyBytes)
+            var offset = 0;
+            while (offset < bytes.Length)
             {
-                var chunkLen = Math.Min(MaxResponseBodyBytes, bytes.Length - offset);
-                WritePacket(stream, id, TypeResponse, Encoding.ASCII.GetString(bytes, offset, chunkLen));
+                var chunkLen = SafeChunkLength(bytes, offset, Math.Min(MaxResponseBodyBytes, bytes.Length - offset));
+                WritePacket(stream, id, TypeResponse, bytes, offset, chunkLen);
+                offset += chunkLen;
             }
+        }
+
+        /// <summary>
+        /// The most of <paramref name="wanted"/> bytes that can be sent without cutting a
+        /// UTF-8 letter in half. A byte of the form 10xxxxxx continues the letter before it,
+        /// so a chunk must never begin with one: the length is walked back until the byte
+        /// that would start the next chunk begins a letter of its own. A chunk that reaches
+        /// the end of the text needs no walking back, and one letter can never be more than
+        /// four bytes, so this gives up at most three.
+        /// <para>
+        /// A cap under four bytes could not hold the longest letter at all, so rather than
+        /// cut one in half the chunk is allowed to grow to four and the cap is exceeded by
+        /// at most three bytes. The only caller's cap is <see cref="MaxResponseBodyBytes"/>
+        /// (4000), so this arm never runs today; it is here so that lowering the cap can
+        /// never turn into a split letter.
+        /// </para>
+        /// </summary>
+        private static int SafeChunkLength(byte[] bytes, int offset, int wanted)
+        {
+            if (wanted <= 0) return 0;
+            if (offset + wanted >= bytes.Length) return wanted;
+
+            var len = wanted < 4 ? 4 : wanted;
+            if (offset + len >= bytes.Length) return bytes.Length - offset;
+
+            var walked = 0;
+            while (len > 1 && walked < 3 && (bytes[offset + len] & 0xC0) == 0x80)
+            {
+                len--;
+                walked++;
+            }
+
+            return len;
         }
 
         // ------------------------------------------------------------------

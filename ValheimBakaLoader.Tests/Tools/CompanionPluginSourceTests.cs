@@ -456,5 +456,58 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.True(next > at, "the " + type + " case leads nowhere");
             Assert.StartsWith("return \"Equipment\";", src.Substring(next));
         }
+
+        // ---- P12: the RCON body is UTF-8 on both ends, and a chunk never cuts a letter ----
+
+        /// <summary>
+        /// Commander wrote and read packet bodies as ASCII, which has no room for any letter
+        /// past the first 128: a player name in Cyrillic, Japanese or Chinese reached
+        /// BakaLoader as question marks, and the name BakaLoader sent back in a spawn, a tp or
+        /// a kick was the question marks, which match nobody. A line that puts ASCII back on
+        /// either body path is what this catches.
+        /// </summary>
+        [Fact]
+        public void Commander_ReadsAndWritesPacketBodiesAsUtf8()
+        {
+            var src = WithoutComments(Commander);
+
+            Assert.DoesNotContain("Encoding.ASCII", src);
+            Assert.Contains("new UTF8Encoding(false)", src);
+            Assert.Contains("BodyEncoding.GetString(payload", src);
+            Assert.Contains("BodyEncoding.GetBytes(body", src);
+            Assert.Contains("BodyEncoding.GetBytes(response", src);
+        }
+
+        /// <summary>
+        /// Long answers are split on bytes, because the frame's length field is bytes. A cut
+        /// landing inside a multi-byte letter would hand the client half of it at the end of
+        /// one packet and half at the start of the next, and both halves read as damage. The
+        /// split walks back to the last whole letter, and the bytes are passed on rather than
+        /// decoded and re-encoded around the seam.
+        /// </summary>
+        [Fact]
+        public void Commander_SplitsLongAnswersWithoutCuttingALetterInHalf()
+        {
+            var src = WithoutComments(Commander);
+
+            Assert.Contains("private static int SafeChunkLength(", src);
+            // 10xxxxxx is a continuation byte: a chunk must never start with one.
+            Assert.Contains("& 0xC0) == 0x80", src);
+
+            var writeResponse = src.IndexOf("private static void WriteResponse(", StringComparison.Ordinal);
+            Assert.True(writeResponse > 0, "WriteResponse is gone");
+            var body = src.Substring(writeResponse, Math.Min(900, src.Length - writeResponse));
+
+            Assert.Contains("SafeChunkLength(bytes, offset,", body);
+            // The old split decoded each chunk back to text before writing it, which is the
+            // step that could not survive a seam inside a letter.
+            Assert.DoesNotContain("GetString(bytes, offset", body);
+        }
+
+        [Fact]
+        public void Commander_CarriesTheVersionTheUtf8FixShippedIn()
+        {
+            Assert.Contains("PluginVersion = \"1.3.1\"", Commander);
+        }
     }
 }

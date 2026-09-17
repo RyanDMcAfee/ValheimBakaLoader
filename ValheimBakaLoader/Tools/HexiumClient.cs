@@ -270,6 +270,18 @@ namespace ValheimBakaLoader.Tools
         public long MaxIndexBytes { get; set; } = 128L * 1024 * 1024;
 
         /// <summary>
+        /// The most of an UNPACKED body this will read.
+        /// <para>
+        /// The limit above is on the bytes that came down the wire, and a packed body is
+        /// small by definition: a few megabytes of gzip can unpack to gigabytes, and the
+        /// reader would have gone on filling memory until the machine gave out. This is the
+        /// same refusal applied to what comes out of the decompressor, so a body that never
+        /// ends is a failed fetch either way round.
+        /// </para>
+        /// </summary>
+        public long MaxDecompressedBytes { get; set; } = 256L * 1024 * 1024;
+
+        /// <summary>
         /// The response body as readable text, unpacked when it came packed.
         /// <para>
         /// Only gzip is asked for, so that is the case that matters, but a server that
@@ -303,15 +315,79 @@ namespace ValheimBakaLoader.Tools
             }
 
             if (encoding is "gzip" or "x-gzip")
-                return new GZipStream(buffer, CompressionMode.Decompress);
+                return Capped(new GZipStream(buffer, CompressionMode.Decompress));
 
             if (encoding == "deflate")
-                return LooksLikeZlib(buffer)
+                return Capped(LooksLikeZlib(buffer)
                     ? new ZLibStream(buffer, CompressionMode.Decompress)
-                    : new DeflateStream(buffer, CompressionMode.Decompress);
+                    : new DeflateStream(buffer, CompressionMode.Decompress));
 
-            // Nothing named, or something nobody asked for: read it as it came.
+            // Nothing named, or something nobody asked for: read it as it came. It was
+            // already held to MaxIndexBytes on the way in, so there is nothing to cap.
             return buffer;
+        }
+
+        private Stream Capped(Stream inner) => new LengthCappedStream(inner, MaxDecompressedBytes,
+            $"The Hexium index unpacked past {MaxDecompressedBytes} bytes, so it was not read.");
+
+        /// <summary>
+        /// A read-only wrapper that gives up once a stream has handed over more than it was
+        /// allowed to. Nothing is buffered: the count is kept as the reader pulls, so the
+        /// refusal lands on the read that crosses the line rather than after the fact.
+        /// </summary>
+        private sealed class LengthCappedStream : Stream
+        {
+            private readonly Stream Inner;
+            private readonly long Limit;
+            private readonly string Refusal;
+            private long Taken;
+
+            public LengthCappedStream(Stream inner, long limit, string refusal)
+            {
+                Inner = inner;
+                Limit = limit;
+                Refusal = refusal;
+            }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+
+            public override long Position
+            {
+                get => Taken;
+                set => throw new NotSupportedException();
+            }
+
+            public override int Read(byte[] buffer, int offset, int count) =>
+                Count(Inner.Read(buffer, offset, count));
+
+            public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                Count(await Inner.ReadAsync(buffer, offset, count, cancellationToken));
+
+            public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+                Count(await Inner.ReadAsync(buffer, cancellationToken));
+
+            private int Count(int read)
+            {
+                if (read <= 0) return read;
+
+                Taken += read;
+                if (Taken > Limit) throw new IOException(Refusal);
+                return read;
+            }
+
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) Inner.Dispose();
+                base.Dispose(disposing);
+            }
         }
 
         /// <summary>

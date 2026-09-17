@@ -109,7 +109,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_mark_on_the_latest_cell_only_appears_when_there_is_something_to_say()
         {
-            var mark = Between(AppJs(), "function modLatestMark(m,i)", "/* The transient status");
+            var mark = Between(AppJs(), "function modLatestMark(m)", "/* The transient status");
 
             Assert.Contains("if(m.hexiumNewer&&m.hexiumLatest)", mark);
             Assert.Contains("if(m.thunderstoreNewer&&m.LatestVersion)", mark);

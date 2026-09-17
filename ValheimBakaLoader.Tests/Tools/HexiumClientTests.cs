@@ -206,7 +206,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
         // --- The body arrives packed, because that is what was asked for ---
 
-        private static HttpResponseMessage Packed(string body, string encoding)
+        private static byte[] PackedBytes(string body, string encoding)
         {
             var raw = System.Text.Encoding.UTF8.GetBytes(body);
             using var buffer = new MemoryStream();
@@ -222,9 +222,14 @@ namespace ValheimBakaLoader.Tests.Tools
                 packer.Write(raw, 0, raw.Length);
             }
 
+            return buffer.ToArray();
+        }
+
+        private static HttpResponseMessage Packed(string body, string encoding)
+        {
             var response = new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new ByteArrayContent(buffer.ToArray()),
+                Content = new ByteArrayContent(PackedBytes(body, encoding)),
             };
             response.Content.Headers.ContentEncoding.Add(encoding == "raw-deflate" ? "deflate" : encoding);
             return response;
@@ -278,6 +283,65 @@ namespace ValheimBakaLoader.Tests.Tools
 
             Assert.False(lookup.Found);
             Assert.False(lookup.IndexAvailable);
+        }
+
+        /// <summary>
+        /// A body that is small on the wire and enormous once unpacked.
+        /// <para>
+        /// The limit above is on the bytes that arrive, and packing is exactly what makes
+        /// that limit no protection: a few kilobytes of gzip unpack to megabytes, and
+        /// megabytes unpack to gigabytes. The reader would have gone on filling memory with
+        /// whatever came out of the decompressor until the machine gave out, so the same
+        /// refusal now applies to the unpacked side.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_small_packed_body_that_unpacks_enormous_is_refused()
+        {
+            // Two megabytes of one repeated character: a few kilobytes on the wire.
+            var enormous = "[\"" + new string('a', 2 * 1024 * 1024) + "\"]";
+            var onTheWire = PackedBytes(enormous, "gzip");
+
+            Assert.True(onTheWire.Length < 256 * 1024,
+                "the fixture is meant to arrive well under the unpacked limit, packed size was " + onTheWire.Length);
+
+            var provider = new RecordingHttpClientProvider(_ => Packed(enormous, "gzip"));
+            var client = new HexiumClient(provider, GetService<IApplicationLogger>())
+            {
+                // Far above what arrives, so the on-the-wire limit cannot be what stops this.
+                MaxIndexBytes = 64L * 1024 * 1024,
+                MaxDecompressedBytes = 256 * 1024,
+            };
+
+            var lookup = await client.LookupAsync("DrakeMods-LockSmith");
+
+            Assert.False(lookup.Found);
+            Assert.False(lookup.IndexAvailable);
+            Assert.Contains("Hexium did not answer", lookup.Error);
+        }
+
+        /// <summary>The same reader, under the cap, still reads the real index.</summary>
+        [Fact]
+        public async Task A_packed_body_under_the_unpacked_limit_is_read_as_usual()
+        {
+            var provider = new RecordingHttpClientProvider(_ => Packed(FixtureJson(), "gzip"));
+            var client = new HexiumClient(provider, GetService<IApplicationLogger>())
+            {
+                MaxDecompressedBytes = 8L * 1024 * 1024,
+            };
+
+            var package = await client.GetPackageAsync("DrakeMods-LockSmith");
+
+            Assert.NotNull(package);
+            Assert.Equal("0.3.6", package.LatestStable.VersionNumber);
+        }
+
+        [Fact]
+        public void The_unpacked_limit_stands_at_256_megabytes_out_of_the_box()
+        {
+            var (client, _) = Build();
+
+            Assert.Equal(256L * 1024 * 1024, client.MaxDecompressedBytes);
         }
 
         // --- When the site says no ---

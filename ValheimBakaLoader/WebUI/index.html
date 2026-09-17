@@ -32,9 +32,9 @@
       <div class="navitem active" data-page="hearth"><span class="rune">ᚠ</span><span class="lbl">Dashboard</span><span class="norse">Hearth</span></div>
       <div class="navitem" data-page="vikings"><span class="rune">ᛗ</span><span class="lbl">Players</span><span class="norse">Vikings</span></div>
       <div class="navitem" data-page="mods"><span class="rune">ᚱ</span><span class="lbl">Mods</span></div>
+      <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl">Configs</span><span class="norse">Runes</span></div>
       <div class="navitem" data-page="world"><span class="rune">ᛃ</span><span class="lbl">Settings</span><span class="norse">World</span></div>
       <div class="navitem" data-page="atlas"><span class="rune">ᛞ</span><span class="lbl">Map</span><span class="norse">Atlas</span></div>
-      <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl">Configs</span><span class="norse">Runes</span></div>
       <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl">Log</span><span class="norse">Saga</span></div>
       <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl">Discord</span><span class="norse">Herald</span></div>
       <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl">Statistics</span><span class="norse">Skald</span></div>
@@ -238,6 +238,10 @@
           <div class="pagehead">
             <h1><span class="r">ᚱ</span>MODS</h1>
             <span class="sub" id="modsSub">63 loaded · Thunderstore index · last scan 21:38</span>
+            <!-- Narrows the rows on screen and nothing else: every count in this header, the
+                 Update all button and the unattended paths keep reading the whole list. -->
+            <input id="modSearch" class="pagesearch" placeholder="search the mods…" spellcheck="false" autocomplete="off" aria-label="Search the mods">
+            <span class="sub pagesearch-count" id="modShowing"></span>
             <div class="grow"></div>
             <button class="btn btn-ghost btn-sm" id="addModBtn">ᚨ&nbsp; Add from Thunderstore</button>
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>
@@ -256,6 +260,50 @@
               </tr></thead>
               <tbody id="modTable"></tbody>
             </table>
+          </div>
+        </section>
+
+        <!-- ============ PAGE: RUNES (BepInEx config editor) ============ -->
+        <section class="page" id="page-runes">
+          <div class="runes" style="height:100%">
+            <div class="pagehead">
+              <h1><span class="r">ᚲ</span>CONFIGS</h1>
+              <span class="hnorse">Runes</span>
+              <span class="sub" id="runesSub">BepInEx config files</span>
+              <div class="grow"></div>
+              <button class="btn btn-ghost btn-sm" id="cfgOpenBtn">ᛃ&nbsp; Open folder</button>
+              <button class="btn btn-ghost btn-sm" id="cfgReloadBtn" style="margin-left:8px">ᛋ&nbsp; Reload</button>
+              <button class="btn btn-ember btn-sm" id="cfgSaveBtn" style="margin-left:8px" disabled>ᛉ&nbsp; Save</button>
+            </div>
+            <div class="runes-grid">
+              <div class="card cfg-listcard">
+                <div class="microlabel">Config files<span class="cnorse">Scrolls</span></div>
+                <!-- Narrows the list on screen only. Reading, saving and reverting all act on
+                     the whole file, whatever the list is showing. -->
+                <input id="runeSearch" class="pagesearch cfgsearch" placeholder="search the config files…" spellcheck="false" autocomplete="off" aria-label="Search the config files">
+                <div class="sub pagesearch-count" id="runeShowing"></div>
+                <div class="cfg-list" id="cfgList"></div>
+              </div>
+              <div class="card cfg-edcard">
+                <!-- Find inside the open file: it marks what it found and scrolls to it.
+                     It never takes the keyboard out of the find box, never moves the
+                     cursor in the text, and never changes a letter of it. Save always
+                     writes the whole document. -->
+                <div class="cfg-findbar">
+                  <span class="cfg-findr">ᚲ</span>
+                  <input id="cfgFind" class="pagesearch cfgfind" placeholder="find in this file…" spellcheck="false" autocomplete="off" aria-label="Find in this config file">
+                  <span class="sub pagesearch-count" id="cfgFindCount"></span>
+                  <span class="fpill" id="cfgFindNext" role="button" tabindex="0" title="Jump to the next match">next</span>
+                </div>
+                <div class="cfg-edwrap">
+                  <!-- The same words in the same font at the same width, sitting behind the
+                       editor. The find bar marks the match on this layer, so the highlight
+                       stays put whatever has the keyboard. -->
+                  <div class="cfg-edmark" id="cfgEdMark" aria-hidden="true"></div>
+                  <textarea class="cfg-editor" id="cfgEditor" spellcheck="false" placeholder="choose a rune-scroll from the left…"></textarea>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -441,29 +489,6 @@
           </div>
         </section>
 
-        <!-- ============ PAGE: RUNES (BepInEx config editor) ============ -->
-        <section class="page" id="page-runes">
-          <div class="runes" style="height:100%">
-            <div class="pagehead">
-              <h1><span class="r">ᚲ</span>CONFIGS</h1>
-              <span class="hnorse">Runes</span>
-              <span class="sub" id="runesSub">BepInEx config files</span>
-              <div class="grow"></div>
-              <button class="btn btn-ghost btn-sm" id="cfgOpenBtn">ᛃ&nbsp; Open folder</button>
-              <button class="btn btn-ghost btn-sm" id="cfgReloadBtn" style="margin-left:8px">ᛋ&nbsp; Reload</button>
-              <button class="btn btn-ember btn-sm" id="cfgSaveBtn" style="margin-left:8px" disabled>ᛉ&nbsp; Save</button>
-            </div>
-            <div class="runes-grid">
-              <div class="card cfg-listcard">
-                <div class="microlabel">Config files<span class="cnorse">Scrolls</span></div>
-                <div class="cfg-list" id="cfgList"></div>
-              </div>
-              <div class="card cfg-edcard">
-                <textarea class="cfg-editor" id="cfgEditor" spellcheck="false" placeholder="choose a rune-scroll from the left…"></textarea>
-              </div>
-            </div>
-          </div>
-        </section>
 
         <!-- ============ PAGE: SAGA ============ -->
         <section class="page" id="page-saga" style="display:none">

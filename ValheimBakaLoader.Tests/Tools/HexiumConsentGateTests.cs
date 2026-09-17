@@ -137,6 +137,115 @@ namespace ValheimBakaLoader.Tests.Tools
                 "the install call must check the switch before anything else");
         }
 
+        /// <summary>
+        /// "Spent once" has to hold when two calls arrive at the same moment, not only when
+        /// they arrive one after the other. The gate read the acceptance and cleared it as
+        /// two separate steps with nothing holding them together, so two install calls
+        /// carrying the same token could both read it before either cleared it, and both
+        /// would be told yes: one answer from the host, two downloads.
+        /// <para>
+        /// Each round here starts a pair of takes on the thread pool and releases them
+        /// together, and runs enough rounds that the unguarded version loses the race.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Two_takes_at_the_same_moment_cannot_both_succeed()
+        {
+            const int rounds = 400;
+            var doubleSpends = 0;
+            var spends = 0;
+
+            for (var round = 0; round < rounds; round++)
+            {
+                var gate = Gate();
+                var token = gate.Issue("Owner", "Mod", "1.0.0");
+
+                using var start = new System.Threading.Barrier(2);
+                var answers = new bool[2];
+
+                var pair = new[]
+                {
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        start.SignalAndWait();
+                        answers[0] = gate.Take(token, "Owner", "Mod", "1.0.0");
+                    }),
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        start.SignalAndWait();
+                        answers[1] = gate.Take(token, "Owner", "Mod", "1.0.0");
+                    }),
+                };
+
+                System.Threading.Tasks.Task.WaitAll(pair);
+
+                var taken = (answers[0] ? 1 : 0) + (answers[1] ? 1 : 0);
+                if (taken > 1) doubleSpends++;
+                if (taken == 1) spends++;
+
+                Assert.False(gate.HasOutstanding);
+            }
+
+            Assert.Equal(0, doubleSpends);
+            // And the answer was not simply lost by both: exactly one side got it every time.
+            Assert.Equal(rounds, spends);
+        }
+
+        /// <summary>
+        /// A server path that is wrong or not set yet is checked BEFORE the acceptance is
+        /// spent. A token is good once, so asking afterwards burned the host's answer on a
+        /// refusal they could do nothing about and the dialog had to be read again.
+        /// </summary>
+        [Fact]
+        public void A_missing_plugins_folder_is_found_before_the_acceptance_is_spent()
+        {
+            var handler = Between(BridgeSource(), "RegisterRpc(\"mods.installFromHexium\"", "// --- Capabilities");
+
+            var pluginsCheck = handler.IndexOf("!Directory.Exists(pluginsDir)", StringComparison.Ordinal);
+            var consent = handler.IndexOf("HexiumConsent.Take(", StringComparison.Ordinal);
+
+            Assert.True(pluginsCheck > 0, "the install call no longer checks the plugins folder");
+            Assert.True(pluginsCheck < consent,
+                "the plugins folder is checked after the acceptance is spent, so a bad path burns it");
+        }
+
+        /// <summary>
+        /// Every call that reaches the second site stands behind the host's own switch, and
+        /// that includes opening one of its pages in the browser. The scan and the install
+        /// both checked it; opening a page did not, so a host with the switch off could still
+        /// be sent to hexium.gg by a stale row.
+        /// </summary>
+        [Fact]
+        public void Opening_a_hexium_page_is_behind_the_switch_like_the_other_two_calls()
+        {
+            var bridge = BridgeSource();
+
+            foreach (var call in new[] { "mods.hexiumPrepare", "mods.installFromHexium", "shell.openHexium" })
+            {
+                var handler = Between(bridge, "RegisterRpc(\"" + call + "\"", "RegisterRpc(\"" + NextAfter(call) + "\"");
+                Assert.False(string.IsNullOrEmpty(handler), "the " + call + " handler is gone");
+            }
+
+            var open = Between(bridge, "RegisterRpc(\"shell.openHexium\"", "RegisterRpc(\"shell.openThunderstore\"");
+
+            var switchCheck = open.IndexOf("UseHexiumSource", StringComparison.Ordinal);
+            var address = open.IndexOf("HexiumUrlParser.PageUrl", StringComparison.Ordinal);
+            var start = open.IndexOf("Process.Start", StringComparison.Ordinal);
+
+            Assert.True(switchCheck > 0, "opening a Hexium page no longer checks the switch");
+            Assert.True(address > switchCheck, "the address is built before the switch is checked");
+            Assert.True(start > switchCheck, "the browser is opened before the switch is checked");
+        }
+
+        /// <summary>The handler that follows each of the three, for slicing the bridge source.</summary>
+        private static string NextAfter(string call) => call switch
+        {
+            "mods.hexiumPrepare" => "mods.installFromHexium",
+            "mods.installFromHexium" => "caps.get",
+            "shell.openHexium" => "shell.openThunderstore",
+            _ => throw new ArgumentOutOfRangeException(nameof(call)),
+        };
+
         [Fact]
         public void Nothing_else_in_the_app_installs_from_the_second_site()
         {

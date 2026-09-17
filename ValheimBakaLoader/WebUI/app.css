@@ -215,6 +215,16 @@ body{
 .pagehead h1 .r{color:var(--ember);margin-right:8px;text-shadow:0 0 10px rgba(255,122,26,.6)}
 .pagehead .sub{font-size:11px;color:var(--bone-dim);letter-spacing:.5px}
 .pagehead .grow{flex:1}
+/* The search box a hall carries in its header, and the "showing N of M" that stands
+   beside it while something is typed. Both narrow what is on screen and nothing else. */
+.pagesearch{width:200px;max-width:100%;background:rgba(0,0,0,.3);border:1px solid var(--bronze);
+  border-radius:20px;padding:3px 11px;color:var(--bone);font-family:var(--mono);font-size:10px;
+  outline:none;transition:border-color .15s var(--ease)}
+.pagesearch::placeholder{color:var(--bone-faint)}
+.pagesearch:focus{border-color:var(--ember)}
+.pagesearch-count{color:var(--bone-faint);white-space:nowrap}
+.pagesearch-count:empty{display:none}
+.cfgsearch{width:100%;margin-top:8px}
 /* Save Config and the line that belongs to it: the note sits directly above the button and
    is only there while a server is up, so the header keeps its height the rest of the time. */
 .savecfg{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
@@ -946,10 +956,30 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .cfg-item .dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex:none;
   margin-left:auto;box-shadow:0 0 6px rgba(232,169,60,.8)}
 .cfg-edcard{box-shadow:inset 0 2px 12px rgba(0,0,0,.35)}
+/* Find inside the open scroll. It sits above the text and never overlaps it, so the
+   editor keeps its own scrollbar and nothing is hidden behind the bar. */
+.cfg-findbar{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:0 0 8px;margin:0 0 6px;border-bottom:1px solid rgba(140,109,63,.25)}
+.cfg-findbar .cfg-findr{color:var(--ember);font-size:12px;flex:none}
+.cfg-findbar .cfgfind{flex:1;min-width:110px;margin-left:0}
+.cfg-findbar .fpill{cursor:pointer;flex:none}
 .cfg-editor{flex:1;width:100%;min-height:0;resize:none;background:transparent;border:none;outline:none;
   font-family:var(--mono);font-size:11.5px;line-height:1.65;color:var(--bone);
   padding:2px 4px;caret-color:var(--ember)}
 .cfg-editor::placeholder{color:var(--bone-faint)}
+/* The find mark. A layer holding the same words in the same font at the same width sits
+   behind the editor, which is see-through, so a mark painted on the layer shows up under
+   the letters it belongs to. Every type-setting rule below has to match .cfg-editor above
+   or the mark drifts off its word: same family, same size, same line height, same padding,
+   and the wrapping a textarea does of its own accord. */
+.cfg-edwrap{position:relative;flex:1;min-height:0}
+.cfg-edwrap>.cfg-editor{position:absolute;inset:0;width:100%;height:100%;flex:none}
+.cfg-edmark{position:absolute;inset:0;overflow:hidden;pointer-events:none;
+  font-family:var(--mono);font-size:11.5px;line-height:1.65;color:transparent;
+  padding:2px 4px;margin:0;border:none;background:transparent;
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:normal}
+.cfg-edmark mark{background:rgba(232,169,60,.3);color:transparent;border-radius:2px;
+  box-shadow:0 0 0 1px rgba(232,169,60,.6)}
 
 /* ---------- MULTI-SERVER CHIP STRIP (sidebar top) ---------- */
 /* The strip never gets shrunk by the rail (flex:none) and its height is always a
@@ -1174,6 +1204,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 #termNew::before{inset:-5px -3px}    /* 14px -> 24px */
 .toggle::before{content:"";position:absolute;inset:-2px 0;background:transparent;border-radius:20px}
 .termsearch{min-height:24px}
+.pagesearch{min-height:24px}
 .termin input{min-height:24px}
 .palette .pin input{min-height:24px}
 .modal input[type=text],.modal input[type=number]{min-height:24px}

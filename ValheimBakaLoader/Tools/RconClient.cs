@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -48,6 +49,21 @@ namespace ValheimBakaLoader.Tools
 
         private const int ConnectTimeoutMs = 5000;
         private const int IoTimeoutMs = 5000;
+
+        /// <summary>
+        /// How packet bodies are written and read. UTF-8 with no byte-order mark, which is
+        /// what the companion plugin on the other end writes and reads too.
+        /// <para>
+        /// This was ASCII on both ends until 1.1.0, and ASCII turns every letter outside the
+        /// first 128 into a question mark. That cost real text: a player name with Cyrillic,
+        /// Japanese or accented letters came back as "???" in the roster and went out as
+        /// "???" in a spawn, tp or kick, and a broadcast or restart warning written in any
+        /// of those alphabets reached the world unreadable. UTF-8 carries all of it and is
+        /// byte-for-byte the same as ASCII for plain English, so nothing that worked before
+        /// changes.
+        /// </para>
+        /// </summary>
+        internal static readonly Encoding BodyEncoding = new UTF8Encoding(false);
 
         private readonly IApplicationLogger Logger;
         private readonly SemaphoreSlim SendLock = new(1, 1);
@@ -205,9 +221,11 @@ namespace ValheimBakaLoader.Tools
             return RequestId;
         }
 
-        private static async Task SendPacketAsync(NetworkStream stream, int id, int type, string body)
+        internal static async Task SendPacketAsync(Stream stream, int id, int type, string body)
         {
-            var bodyBytes = Encoding.ASCII.GetBytes(body ?? string.Empty);
+            // Counted in BYTES, never in characters: one letter outside the first 128 is two
+            // or more bytes, and the length field is what the reader on the other end trusts.
+            var bodyBytes = BodyEncoding.GetBytes(body ?? string.Empty);
 
             // length covers: id(4) + type(4) + body + body null terminator(1) + trailing null(1)
             var length = 4 + 4 + bodyBytes.Length + 2;
@@ -227,7 +245,7 @@ namespace ValheimBakaLoader.Tools
             await stream.FlushAsync(cts.Token);
         }
 
-        private static async Task<RconPacket> ReadPacketAsync(NetworkStream stream)
+        internal static async Task<RconPacket> ReadPacketAsync(Stream stream)
         {
             using var cts = new CancellationTokenSource(IoTimeoutMs);
 
@@ -244,12 +262,12 @@ namespace ValheimBakaLoader.Tools
             var type = BitConverter.ToInt32(payload, 4);
             // body is everything after id+type, minus the two trailing null bytes
             var bodyLength = length - 4 - 4 - 2;
-            var body = bodyLength > 0 ? Encoding.ASCII.GetString(payload, 8, bodyLength) : string.Empty;
+            var body = bodyLength > 0 ? BodyEncoding.GetString(payload, 8, bodyLength) : string.Empty;
 
             return new RconPacket { Id = id, Type = type, Body = body };
         }
 
-        private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, int count, CancellationToken token)
+        private static async Task<bool> ReadExactAsync(Stream stream, byte[] buffer, int count, CancellationToken token)
         {
             var read = 0;
             while (read < count)
@@ -269,7 +287,7 @@ namespace ValheimBakaLoader.Tools
             buffer[offset++] = (byte)((value >> 24) & 0xFF);
         }
 
-        private class RconPacket
+        internal class RconPacket
         {
             public int Id { get; set; }
             public int Type { get; set; }

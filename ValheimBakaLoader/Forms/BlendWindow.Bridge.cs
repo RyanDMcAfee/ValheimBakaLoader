@@ -4587,6 +4587,7 @@ namespace ValheimBakaLoader.Forms
                     Name = (string)null,
                     Version = (string)null,
                     Error = error,
+                    source = (string)null,
                 };
 
                 if (_modUpdateInProgress)
@@ -4630,6 +4631,10 @@ namespace ValheimBakaLoader.Forms
                         result.Name,
                         result.Version,
                         result.Error,
+                        // Which site the files came from, carried through so the page never
+                        // has to guess what it just installed. Additive: a page that does not
+                        // read it is unaffected, and a Thunderstore install says so plainly.
+                        source = result.Source,
                     };
                 }
                 finally
@@ -4675,12 +4680,17 @@ namespace ValheimBakaLoader.Forms
                 var name = p.Value<string>("name");
                 var version = p.Value<string>("version");
 
-                if (!HexiumConsent.Take(p.Value<string>("token"), owner, name, version))
-                    return FailDto("That install was not accepted, or the question has gone stale. Open it again.", "noConsent");
-
+                // Asked BEFORE the acceptance is spent. A token is good once, so a server
+                // path that is wrong or not set yet used to burn the host's answer on a
+                // refusal they could do nothing about, and the dialog had to be opened and
+                // read again. Nothing here fetches or writes a byte, so checking first
+                // costs nothing and the acceptance survives to be used once it can be.
                 var pluginsDir = GetPluginsDirectory();
                 if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
                     return FailDto("BepInEx plugins folder not found. Set a valid server .exe path first.", "noPlugins");
+
+                if (!HexiumConsent.Take(p.Value<string>("token"), owner, name, version))
+                    return FailDto("That install was not accepted, or the question has gone stale. Open it again.", "noConsent");
 
                 // Resolved again from the index rather than from anything the page sent,
                 // so the address that is fetched is the site's own and this build's.
@@ -4941,6 +4951,12 @@ namespace ValheimBakaLoader.Forms
             // ever land on Hexium.
             RegisterRpc("shell.openHexium", p =>
             {
+                // Behind the host's own switch, like the other two calls that reach the second
+                // site. With it off nothing about that site is asked for, and that includes
+                // opening one of its pages in the host's browser.
+                if (!UserPrefsProvider.LoadPreferences().UseHexiumSource)
+                    throw new InvalidOperationException("Turn on Also check Hexium in Upkeep to open Hexium pages.");
+
                 var url = Tools.HexiumUrlParser.PageUrl(p.Value<string>("owner"), p.Value<string>("name"))
                     ?? throw new ArgumentException("That mod has no Hexium page to open.");
 
