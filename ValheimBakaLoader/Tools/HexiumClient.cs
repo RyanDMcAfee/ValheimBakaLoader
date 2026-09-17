@@ -43,6 +43,15 @@ namespace ValheimBakaLoader.Tools
         /// could not go ahead. Never throws.
         /// </summary>
         Task<HexiumLookup> LookupAsync(string fullName);
+
+        /// <summary>
+        /// Reads the index again even when the held copy is still inside its window,
+        /// for a host who pressed Scan and meant it. A second call within
+        /// <see cref="HexiumClient.ForceCooldown"/> reuses what was just read rather
+        /// than knocking again, and a pause the site itself asked for is still
+        /// honoured. Answers true when a read actually went out. Never throws.
+        /// </summary>
+        Task<bool> RefreshAsync();
     }
 
     /// <summary>
@@ -78,6 +87,12 @@ namespace ValheimBakaLoader.Tools
         public const string RootHost = "hexium.gg";
 
         private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
+
+        /// <summary>
+        /// The shortest gap between two deliberate refreshes. A host who presses Scan
+        /// twice in a row gets one trip to the site, not two.
+        /// </summary>
+        public static readonly TimeSpan ForceCooldown = TimeSpan.FromSeconds(60);
         private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(120);
         private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(15);
         private static readonly TimeSpan FirstBackoff = TimeSpan.FromMinutes(1);
@@ -174,6 +189,40 @@ namespace ValheimBakaLoader.Tools
                 }
 
                 return Index;
+            }
+            finally
+            {
+                IndexLock.Release();
+            }
+        }
+
+        public async Task<bool> RefreshAsync()
+        {
+            await IndexLock.WaitAsync();
+            try
+            {
+                // Only just read: there is nothing newer to find, and the held answer is
+                // already the fresh one.
+                if (Index != null && UtcNow() - IndexFetchedUtc < ForceCooldown) return false;
+
+                // A site that asked to be left alone is still left alone. A host pressing
+                // Scan is not a reason to ignore what the site itself asked for.
+                if (UtcNow() < HoldOffUntilUtc) return false;
+
+                var fresh = await FetchIndexAsync();
+                if (fresh == null) return false;
+
+                Index = fresh;
+                IndexFetchedUtc = UtcNow();
+                ConsecutiveFailures = 0;
+                HoldOffUntilUtc = DateTime.MinValue;
+                LastError = null;
+                return true;
+            }
+            catch (Exception e)
+            {
+                Logger.Warning(e, "Hexium index refresh failed.");
+                return false;
             }
             finally
             {

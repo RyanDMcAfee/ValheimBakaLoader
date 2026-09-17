@@ -4375,6 +4375,15 @@ namespace ValheimBakaLoader.Forms
                 _modScanInProgress = true;
                 try
                 {
+                    // A host who pressed Scan means "ask the sites again", not "show me
+                    // what you happen to be holding". Without this the held index stood
+                    // for fifteen minutes and a scan a minute after a release found
+                    // nothing, which is exactly what a host reported. Each client keeps
+                    // its own short cooldown, so pressing twice is still one trip.
+                    var force = p?.Value<bool?>("force") ?? false;
+                    ThunderstoreIndexState indexState = null;
+                    if (force) indexState = await ThunderstoreClient.RefreshAsync();
+
                     var pluginsDir = GetPluginsDirectory()
                         ?? throw new InvalidOperationException("Server exe path is not configured");
                     var mods = ModScanner.ScanPlugins(pluginsDir);
@@ -4395,6 +4404,15 @@ namespace ValheimBakaLoader.Forms
                             // a real package behind it.
                             mod.ThunderstoreNamespace = package?.Namespace;
                             mod.ThunderstoreName = package?.Name;
+
+                            // A package list that came back and did not hold this mod is worth
+                            // saying on the row. A list that never came back is not: nobody was
+                            // asked, so the row says nothing rather than something wrong.
+                            mod.NotListedOnThunderstore = NotListedNow(
+                                packageFound: package != null,
+                                listWasRead: ThunderstoreClient.IndexFetchedUtc != null,
+                                mod.Author,
+                                mod.ModName);
                         }
                         catch
                         {
@@ -4406,7 +4424,7 @@ namespace ValheimBakaLoader.Forms
                     // Thunderstore and never instead of it, and a Hexium failure cannot
                     // reach the scan: the client answers null rather than throwing, and
                     // this is wrapped besides.
-                    await AddHexiumVersionsAsync(mods);
+                    await AddHexiumVersionsAsync(mods, force);
 
                     // Remember this realm's mod set so it's tracked per-profile and reconstructable
                     // on restore/export (kept distinct so servers never cross-contaminate).
@@ -4416,12 +4434,96 @@ namespace ValheimBakaLoader.Forms
                     // row (it is the same game for all of them). Null when there is no manifest.
                     var gameUpdatedUtc = ReadGameLastUpdatedUtc();
 
-                    return mods.Select(m => BuildModDto(m, gameUpdatedUtc)).ToList();
+                    return new
+                    {
+                        mods = mods.Select(m => BuildModDto(m, gameUpdatedUtc)).ToList(),
+                        // When the list the rows were answered from was read, and which of
+                        // the two addresses answered, so the page can say so instead of
+                        // showing the time the button was pressed.
+                        index = BuildIndexStateDto(indexState),
+                    };
                 }
                 finally
                 {
                     _modScanInProgress = false;
                 }
+            });
+
+            // Asks Thunderstore about one package directly, for a host looking at a row and
+            // knowing there is a newer build than BakaLoader is showing. One request per
+            // press, and a press repeated inside the cooldown is answered without one.
+            RegisterRpc("mods.checkOne", async p =>
+            {
+                var author = p?.Value<string>("author");
+                var name = p?.Value<string>("name");
+
+                if (!IsThunderstoreSegment(author) || !IsThunderstoreSegment(name))
+                    return new { ok = false, reason = "badName", fullName = (string)null };
+
+                var fullName = $"{author.Trim()}-{name.Trim()}";
+
+                if (!TakeCheckOneSlot(fullName))
+                    return new { ok = false, reason = "cooldown", fullName };
+
+                var lookup = await ThunderstoreClient.LookupLiveAsync(author.Trim(), name.Trim());
+
+                // A site that did not answer says nothing about the package, so the row is
+                // left exactly as it was rather than being told the mod has been pulled.
+                if (lookup == null || !lookup.Answered)
+                    return new { ok = false, reason = "unreachable", fullName };
+
+                var package = lookup.Package;
+
+                // What is installed, read off disk rather than taken from the page, so the
+                // answer about whether an update is waiting is BakaLoader's own.
+                Tools.Models.InstalledMod installed = null;
+                try
+                {
+                    var pluginsDir = GetPluginsDirectory();
+                    if (!string.IsNullOrWhiteSpace(pluginsDir) && Directory.Exists(pluginsDir))
+                    {
+                        installed = ModScanner.ScanPlugins(pluginsDir)
+                            .FirstOrDefault(m => string.Equals(m.FullName, fullName, StringComparison.OrdinalIgnoreCase));
+                    }
+                }
+                catch (Exception e)
+                {
+                    AppLogger.Debug("Could not read the installed copy of {0}: {1}", fullName, e.Message);
+                }
+
+                if (package == null || string.IsNullOrWhiteSpace(package.LatestVersion))
+                {
+                    return new
+                    {
+                        ok = true,
+                        found = false,
+                        notListed = true,
+                        fullName,
+                        latestVersion = (string)null,
+                        latestReleasedUtc = (string)null,
+                        updateAvailable = false,
+                        reason = (string)null,
+                    };
+                }
+
+                // A copy the host took from Hexium is left alone by every update path, so
+                // it never reads as having a Thunderstore update waiting. Same rule as the
+                // scan, applied here rather than trusted to the page.
+                var heldFromHexium = installed?.IsHexiumInstalled ?? false;
+                var updateAvailable = CheckOneSaysUpdateWaiting(
+                    package.LatestVersion, installed?.InstalledVersion, heldFromHexium);
+
+                return new
+                {
+                    ok = true,
+                    found = true,
+                    notListed = false,
+                    fullName,
+                    latestVersion = package.LatestVersion,
+                    latestReleasedUtc = package.Latest?.DateCreated?.ToUniversalTime().ToString("o"),
+                    updateAvailable,
+                    reason = (string)null,
+                };
             });
 
             RegisterRpc("mods.updateAll", async p =>
@@ -5922,16 +6024,100 @@ namespace ValheimBakaLoader.Forms
         /// which is what makes "off means no connection to hexium.gg" true rather than
         /// merely intended. A preferences file that cannot be read counts as off.
         /// </summary>
-        private async Task AddHexiumVersionsAsync(IEnumerable<Tools.Models.InstalledMod> mods)
+        private async Task AddHexiumVersionsAsync(IEnumerable<Tools.Models.InstalledMod> mods, bool force = false)
         {
             bool enabled;
             try { enabled = UserPrefsProvider.LoadPreferences().UseHexiumSource; }
             catch { return; }
 
             // The step itself decides what a false means, so the promise can be driven and
-            // proved on its own rather than inferred from these two lines.
-            await HexiumScan.ApplyAsync(mods, enabled);
+            // proved on its own rather than inferred from these two lines. The force is
+            // inside that gate as well: a scan with the switch off still contacts nobody.
+            await HexiumScan.ApplyAsync(mods, enabled, force);
         }
+
+        /// <summary>
+        /// What the page shows about the package list a scan's rows were answered from:
+        /// when it was read, which of the two addresses answered, and whether this press
+        /// of Scan went out or reused a list read moments ago. Null when the scan did not
+        /// ask for a refresh, in which case the page falls back to what it already knows.
+        /// </summary>
+        private object BuildIndexStateDto(Tools.ThunderstoreIndexState state)
+        {
+            var fetchedUtc = state?.FetchedUtc ?? ThunderstoreClient.IndexFetchedUtc;
+            var source = state?.Source ?? ThunderstoreClient.IndexSource;
+
+            return new
+            {
+                fetchedUtc = fetchedUtc?.ToUniversalTime().ToString("o"),
+                source,
+                refreshed = state?.Fetched ?? false,
+                reusedFresh = state?.ReusedFresh ?? false,
+                packageCount = state?.PackageCount ?? 0,
+            };
+        }
+
+        /// <summary>
+        /// How long one package has to wait before it can be checked again by hand. A
+        /// host pressing the row action twice on the same mod is one request, not two.
+        /// </summary>
+        private static readonly TimeSpan CheckOneCooldown = TimeSpan.FromSeconds(10);
+
+        private readonly Dictionary<string, DateTime> _checkedOneAtUtc = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// True when this package may be asked about now, having recorded that it was.
+        /// False when it was asked about inside <see cref="CheckOneCooldown"/>, and then
+        /// nothing goes out to the site at all.
+        /// </summary>
+        private bool TakeCheckOneSlot(string fullName)
+        {
+            var now = DateTime.UtcNow;
+
+            lock (_checkedOneAtUtc)
+            {
+                if (_checkedOneAtUtc.TryGetValue(fullName, out var last) && CheckOneOnCooldown(last, now))
+                    return false;
+
+                _checkedOneAtUtc[fullName] = now;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// True when this package was asked about too recently to ask again. Reachable so
+        /// the rule can be read straight rather than inferred from a timing test.
+        /// </summary>
+        public static bool CheckOneOnCooldown(DateTime lastCheckedUtc, DateTime nowUtc) =>
+            lastCheckedUtc != DateTime.MinValue && nowUtc - lastCheckedUtc < CheckOneCooldown;
+
+        /// <summary>
+        /// Whether a single-mod check should say an update is waiting.
+        /// <para>
+        /// The one rule that matters here is the Hexium one: a copy the host deliberately
+        /// took from the other site is left alone by every update path, so it never reads
+        /// as having a Thunderstore update waiting however far ahead Thunderstore has gone.
+        /// The row still shows what Thunderstore holds, and the swap back is its own
+        /// deliberate action that asks first.
+        /// </para>
+        /// </summary>
+        public static bool CheckOneSaysUpdateWaiting(string latestVersion, string installedVersion, bool installedFromHexium) =>
+            !installedFromHexium && Tools.SemVer.IsNewer(latestVersion, installedVersion);
+
+        /// <summary>
+        /// Whether a row should say its package was not in the list.
+        /// <para>
+        /// It needs a list that actually came back: "nobody could be asked" and "the site
+        /// answered and this was not in it" are different things, and only the second is
+        /// worth putting on a row. A folder that does not name a package at all is left
+        /// alone, because it was never expected to be in the list.
+        /// </para>
+        /// </summary>
+        public static bool NotListedNow(bool packageFound, bool listWasRead, string author, string modName) =>
+            !packageFound
+            && listWasRead
+            && !string.IsNullOrWhiteSpace(author)
+            && !string.IsNullOrWhiteSpace(modName);
 
         /// <summary>
         /// Persists a profile's current installed-mod set into its ModManifest so each server's
@@ -6028,6 +6214,11 @@ namespace ValheimBakaLoader.Forms
                 thunderstoreNamespace = mod.ThunderstoreNamespace,
                 thunderstoreName = mod.ThunderstoreName,
                 thunderstoreUrl = ThunderstorePageUrl(mod.ThunderstoreNamespace, mod.ThunderstoreName),
+                // True only when a package list that actually came back had no entry for
+                // this mod. The row says so on the Latest cell and offers no update; it
+                // never removes or rolls back anything, and the next scan that finds the
+                // package clears it.
+                notListed = mod.NotListedOnThunderstore,
                 // "Possibly outdated": a hint, not proof. Dates are ISO 8601 (round-trip) or null.
                 possiblyOutdated,
                 modUpdatedUtc = modUpdatedUtc?.ToString("o"),

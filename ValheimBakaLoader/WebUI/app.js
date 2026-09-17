@@ -50,6 +50,10 @@ const S={
   saveSec:null, saveInterval:600,
   players:[], caps:{rcon:false,devcommands:false},
   mods:null, modsScanned:false, modsScanning:false, modsUpdating:false, lastScan:null,
+  /* When the package list the rows were answered from was read, and which of the two
+     addresses answered. Not the same thing as when Scan was pressed: a press that finds
+     a list read moments ago keeps the earlier time, because that is the truthful one. */
+  modIndexAt:null, modIndexSource:null,
   hexium:false,           // the host's "Also check Hexium" switch, mirrored from userprefs
 
   modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
@@ -874,6 +878,7 @@ async function switchServer(name){
   S.players=[]; S.invite=null; S.net={conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]};
   S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
   S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
+  S.modIndexAt=null; S.modIndexSource=null;
   /* a search was typed about the previous realm's mods and scrolls, so it goes with them */
   S.modFilter=""; if($("#modSearch")) $("#modSearch").value="";
   S.runeFilter=""; if($("#runeSearch")) $("#runeSearch").value="";
@@ -1972,6 +1977,9 @@ const HEXIUM_ROW_TIP="These files came from Hexium, so BakaLoader leaves them al
 /* The Status pill on a Hexium copy Thunderstore has moved past. It is not CURRENT: there
    is something newer on the other site and BakaLoader is deliberately not taking it. */
 const MOD_HELD_TIP="installed from Hexium; BakaLoader will not replace it on its own";
+/* The Latest cell on a mod the package list came back without. It is said plainly and it
+   is all that happens: the files stay exactly where they are. */
+const MOD_NOT_LISTED_TIP="not listed on Thunderstore right now";
 const HEXIUM_MARK_TIP="Hexium holds a higher version than both what is installed and what Thunderstore has. Nothing is downloaded until you ask for it and read what it is.";
 const THUNDERSTORE_MARK_TIP="Thunderstore has moved past this Hexium copy. Installing the Thunderstore build replaces these files and hands the mod back to the ordinary update path.";
 /* The mark that hangs off the Latest cell, or nothing. At most one: a row is either a
@@ -2054,6 +2062,26 @@ function onModUpdateProgress(d){
   renderModUpdateProgress();
   renderMods();
 }
+/* The line under the Mods heading. It reads when the PACKAGE LIST was read, not when the
+   button was pressed: those were the same thing until a press started reusing a list read
+   moments ago, and showing the press time would have been the same lie that started all
+   this. On hover it names which of the two addresses answered, because the fast one can
+   fall back to the slow one without anything else on screen changing. */
+function renderModIndexLine(count){
+  const el=$("#modsSub"); if(!el) return;
+  /* No time at all rather than the time of the press: with nothing read, "checked" would
+     be claiming something that did not happen, and the Latest column is empty anyway. */
+  const at=S.modIndexAt;
+  el.textContent=count+" "+TT("loaded")+" · "+TT("Thunderstore index checked")+(at?" "+at:"");
+  el.title=S.modIndexSource==="listing-index"?TT("via listing index")
+    :(S.modIndexSource==="v1"?TT("via full listing"):"");
+}
+/* The clock face of an ISO instant the bridge sent, in the host's own time. */
+function hhmm(iso){
+  if(!iso) return null;
+  const d=new Date(iso);
+  return isNaN(d.getTime())?null:String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+}
 function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
@@ -2076,6 +2104,8 @@ function renderMods(){
     $("#modTable")._list=[];
     $("#modUpdWrap").innerHTML="";
     $("#modsSub").textContent="Thunderstore index · "+(S.modsScanning?"scanning…":"not yet scanned");
+    /* Nothing has been read, so the note saying which address answered goes with it. */
+    $("#modsSub").title="";
     renderModShowing(0,0);
     return;
   }
@@ -2113,7 +2143,7 @@ function renderMods(){
     const mark=modLatestMark(m);
     return `<tr data-key="${esc(m.FullName)}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span>${patcherTag}${srcChip}</td>`+
       `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
-      `<td class="mono"${has?' style="color:var(--amber)"':""}>${esc(m.LatestVersion||"-")}${mark}</td>`+
+      `<td class="mono"${has?' style="color:var(--amber)"':""}${m.notListed?` title="${esc(TT(MOD_NOT_LISTED_TIP))}"`:""}>${esc(m.LatestVersion||"-")}${mark}</td>`+
       `<td>${statusCell}</td>`+
       po+`</tr>`;
   }).join("")||`<tr><td colspan="5">${mods.length
@@ -2130,7 +2160,7 @@ function renderMods(){
     :`<span class="pill green">up to date</span>`;
   /* waiting mod updates are a standing condition, not a toast that repeats forever */
   conditionModUpdates(upd.length);
-  $("#modsSub").textContent=mods.length+" loaded · Thunderstore index"+(S.lastScan?" · last scan "+S.lastScan:"");
+  renderModIndexLine(mods.length);
   renderModShowing(shown.length,mods.length);
 }
 /* "showing N of M", and only while something is typed. It reads the two lengths the
@@ -2144,18 +2174,32 @@ function renderModShowing(shown,total){
   const btn=$("#updAllBtn");
   if(btn) btn.title=on?TT("updates every mod with an update, not only the ones shown"):"";
 }
+/* A scan always asks the sites again rather than reading whatever BakaLoader was holding.
+   It used to hold a package list for fifteen minutes, so a scan a minute after a release
+   found nothing and a host watching the mod's own page saw a version BakaLoader would not
+   admit to. Each client keeps its own short cooldown, so two presses in a row are still
+   one trip out. */
 async function scanMods(){
   if(!Native.available||S.modsScanning||S.modsUpdating) return;
   S.modsScanning=true; renderMods();
-  toast("ᛋ Thunderstore scan begun · v1 community index");
-  logLine("info","[Thunderstore] fetching valheim community index (cached 15m)…");
-  const r=await rpc("mods.scan");
+  toast("ᛋ "+TT("Thunderstore scan begun"));
+  logLine("info","[Thunderstore] reading the community listing index…");
+  const r=await rpc("mods.scan",{force:true});
   S.modsScanning=false;
-  if(r===FAIL||!Array.isArray(r)){renderMods();return;}
-  S.mods=r; S.modsScanned=true; S.lastScan=clock();
+  /* The bridge answers with the rows and what it read them from. A plain array is still
+     accepted so nothing here depends on the two shipping in lockstep. */
+  const rows=Array.isArray(r)?r:(r&&r!==FAIL&&Array.isArray(r.mods)?r.mods:null);
+  if(r===FAIL||!rows){renderMods();return;}
+  const idx=(r&&!Array.isArray(r))?r.index:null;
+  S.mods=rows; S.modsScanned=true; S.lastScan=clock();
+  /* The time the LIST was read, which a press that reused a fresh one leaves where it
+     was. An older bridge answering with a bare array has no such time, and the press
+     time is the best that is known there. */
+  S.modIndexAt=idx?hhmm(idx.fetchedUtc):S.lastScan;
+  S.modIndexSource=(idx&&idx.source)||null;
   renderMods();
-  const u=r.filter(m=>m.UpdateAvailable).length;
-  toast("ᛋ Scan complete · "+r.length+" mods · "+u+" update"+(u===1?"":"s"));
+  const u=rows.filter(m=>m.UpdateAvailable).length;
+  toast("ᛋ "+TT("Scan complete")+" · "+rows.length+" "+TT("mods")+" · "+u+" "+(u===1?TT("update"):TT("updates")));
 }
 async function doUpdateAll(){
   if(S.modsUpdating||S.modsScanning) return;
@@ -2195,8 +2239,8 @@ $("#updAllBtn").addEventListener("click",()=>{
 });
 $("#scanBtn").addEventListener("click",()=>{
   if(Native.available){scanMods();return;}
-  toast("ᛋ Thunderstore scan begun · v1 community index");
-  logLine("info","[Thunderstore] fetching valheim community index (cached 15m)…");
+  toast("ᛋ "+TT("Thunderstore scan begun"));
+  logLine("info","[Thunderstore] reading the community listing index…");
 });
 /* ---- The Mods search box ----
    The typed value is held in S, so a scan, an update or any other re-render leaves it
@@ -2242,12 +2286,21 @@ function modRowItems(mod){
   const onHexium=!!mod.hexiumUrl;
   const isPatcher=!!mod.IsPatcher;
   const canUpd=!!mod.UpdateAvailable&&!isPatcher;
+  const canCheck=!mod.Bundled&&!!(mod.Author&&mod.ModName);
   const items=[
     {r:"ᚱ",label:TT("Update mod"),disabled:!canUpd,
       tip:isPatcher?TT("Patcher mods are not updated here.")
         :(mod.installedSource==="hexium"?TT("This copy came from Hexium, so Thunderstore updates are not applied to it.")
         :TT("This mod is already up to date.")),
       fn:()=>doUpdateOne(mod)},
+    /* One question to Thunderstore about this one mod, for a host looking at the mod's own
+       page and knowing there is something newer than the row says. It asks the address the
+       page itself reads, so it is never behind; it changes what the row shows and nothing
+       else. A bundled plugin has no package to ask about. */
+    {r:"ᛋ",label:TT("Check this mod now"),disabled:!canCheck,
+      tip:mod.Bundled?TT("This plugin ships inside BakaLoader, so there is no Thunderstore package to ask about.")
+        :TT("This folder does not name a Thunderstore package, so there is nothing to ask about."),
+      fn:()=>checkOneNow(mod)},
     {r:"ᛋ",label:TT("Open Thunderstore page"),disabled:!onStore,tip:TT("Not on Thunderstore"),
       fn:()=>openThunderstorePage(mod)},
   ];
@@ -2263,6 +2316,32 @@ function modRowItems(mod){
   items.push("hr");
   items.push({r:"ᛪ",label:TT("Remove mod…"),danger:true,fn:()=>removeModFlow(mod)});
   return items;
+}
+/* Asks Thunderstore about one mod, right now. This is the answer the mod's own page shows,
+   so it settles the "the site says 2.0.5 and BakaLoader says 2.0.3" argument on the spot.
+   It updates that one row and says what it found in plain words. Nothing is downloaded. */
+async function checkOneNow(mod){
+  const r=await rpc("mods.checkOne",{author:mod.Author,name:mod.ModName});
+  if(r===FAIL||!r) return;
+  if(r.reason==="cooldown"){toast("ᛋ "+TT("that one was just checked; give it a moment"));return;}
+  if(r.reason==="badName"){toast("ᚦ "+TT("this folder does not name a Thunderstore package"));return;}
+  /* The site not answering says nothing about the mod, so the row is left where it was
+     rather than being told its package has been pulled. */
+  if(r.reason==="unreachable"){toast("ᚦ "+TT("Thunderstore did not answer. Try again in a little while."));return;}
+  const row=modByKey(mod.FullName);
+  if(row){
+    row.notListed=!!r.notListed;
+    if(r.found){
+      row.LatestVersion=r.latestVersion;
+      row.modUpdatedUtc=r.latestReleasedUtc||row.modUpdatedUtc;
+      row.UpdateAvailable=!!r.updateAvailable;
+    }
+    renderMods();
+  }
+  if(!r.found){toast("ᛋ "+mod.ModName+" "+TT("is not listed on Thunderstore right now"));return;}
+  toast("ᛋ "+(r.updateAvailable
+    ?(r.latestVersion+" "+TT("is the newest on Thunderstore"))
+    :TT("you have the newest")));
 }
 /* Update a single mod from its row menu. The bridge streams the same mods.updateProgress
    events the bulk path uses, so the row flips updating -> done in place; no server is
@@ -7151,9 +7230,9 @@ if(!Native.available){
      looking at, so it is the default; index.html#uptodate walks the quiet one, where
      none of these surfaces show anything at all. */
   APP_UPD=location.hash==="#uptodate"
-    ?{installedVersion:"1.1.1",latestVersion:null,updateAvailable:false,releaseUrl:null,
+    ?{installedVersion:"1.1.2",latestVersion:null,updateAvailable:false,releaseUrl:null,
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true}
-    :{installedVersion:"1.1.1",latestVersion:"1.1.2",updateAvailable:true,
+    :{installedVersion:"1.1.2",latestVersion:"1.1.3",updateAvailable:true,
       releaseUrl:"https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest",
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true};
   renderAppUpdatePill();
@@ -7217,6 +7296,11 @@ if(!Native.available){
     /* Carried by both sites at the same version: a page to open, and no mark at all. */
     {ModName:"EpicLoot",Author:"RandyKnapp",FullName:"RandyKnapp-EpicLoot",InstalledVersion:"0.11.3",LatestVersion:"0.11.3",
      hexiumLatest:"0.11.3",hexiumNewer:false,hexiumUrl:"https://valheim.hexium.gg/mods/RandyKnapp/EpicLoot"},
+    /* A mod the package list came back without: pulled by its author, or taken down. The
+       row says so on hover of the Latest cell, offers no update, and nothing is removed
+       or rolled back. The next scan that finds it again clears the note. */
+    {ModName:"QuietTorches",Author:"Skogsvandrare",FullName:"Skogsvandrare-QuietTorches",
+     InstalledVersion:"1.4.0",LatestVersion:null,UpdateAvailable:false,notListed:true},
     {ModName:"ComfyMods-Gizmo",Author:"ComfyMods",FullName:"ComfyMods-Gizmo",InstalledVersion:"1.15.0",LatestVersion:"1.15.0"},
     {ModName:"PlantEverything",Author:"Advize",FullName:"Advize-PlantEverything",InstalledVersion:"1.18.2",LatestVersion:"1.18.2"},
     {ModName:"SearsCatalog",Author:"ComfyMods",FullName:"ComfyMods-SearsCatalog",InstalledVersion:"1.4.0",LatestVersion:"1.4.0"},
@@ -7249,6 +7333,9 @@ if(!Native.available){
     m.possiblyOutdated=!!(m.modUpdatedUtc&&m.gameUpdatedUtc&&new Date(m.modUpdatedUtc)<new Date(m.gameUpdatedUtc));
   });
   S.modsScanned=true; S.lastScan="21:38";
+  /* The header line reads when the package list was read and which address answered, so
+     the preview carries both the way a real scan hands them back. */
+  S.modIndexAt="21:38"; S.modIndexSource="listing-index";
   renderMods();
   /* The row menu is host-only in the app, so the preview gets its own opener; it calls
      the same builder, so what a screenshot shows is what the app shows. */

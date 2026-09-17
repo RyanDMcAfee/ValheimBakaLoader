@@ -1,4 +1,3 @@
-using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -110,10 +109,12 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// Installs a mod from a parsed Thunderstore reference into the given
-        /// BepInEx plugins directory. A null version installs the latest release
-        /// (resolved via the Valheim community index, with the experimental
-        /// per-package API as a fallback for packages outside that community).
-        /// An existing install is backed up and replaced.
+        /// BepInEx plugins directory. A version on the link is fetched exactly as
+        /// named, with no lookup at all. A link with no version asks Thunderstore
+        /// about that package directly, so what lands is what the package's own page
+        /// shows; the held community index stands behind that for packages the
+        /// per-package address does not answer for. An existing install is backed up
+        /// and replaced.
         /// </summary>
         Task<ModInstallResult> InstallFromThunderstoreAsync(ThunderstoreModReference reference, string pluginsDir);
 
@@ -241,18 +242,21 @@ namespace ValheimBakaLoader.Tools
                 return ModUpdateResult.Skipped(mod);
             }
 
-            // Resolve the latest published version + download URL.
+            // Resolve the latest published version + download URL. Thunderstore is asked
+            // about this one package directly before any held index is read, so a release
+            // published minutes ago is the one that gets installed.
             ThunderstorePackage package;
             try
             {
-                package = await Thunderstore.GetLatestAsync(mod.Author, mod.ModName);
+                package = await ResolveLatestAsync(mod.Author, mod.ModName);
             }
             catch (Exception e)
             {
                 return ModUpdateResult.Failed(mod, $"Thunderstore lookup failed: {e.Message}");
             }
 
-            if (package == null || string.IsNullOrWhiteSpace(package.DownloadUrl))
+            var downloadFrom = DownloadAddressFor(package, mod.Author, mod.ModName);
+            if (downloadFrom == null)
             {
                 return ModUpdateResult.Failed(mod, "Could not find this mod on Thunderstore (no download URL).");
             }
@@ -275,7 +279,7 @@ namespace ValheimBakaLoader.Tools
             {
                 Logger.Information("Updating {0}: {1} -> {2}", mod.FullName, fromVersion, toVersion);
 
-                await DownloadFileAsync(package.DownloadUrl, tempZip);
+                await DownloadFileAsync(downloadFrom, tempZip);
 
                 Directory.CreateDirectory(tempExtract);
                 ZipFile.ExtractToDirectory(tempZip, tempExtract, overwriteFiles: true);
@@ -353,34 +357,23 @@ namespace ValheimBakaLoader.Tools
 
             if (!string.IsNullOrWhiteSpace(version))
             {
-                // A pinned version's download URL is always constructable directly.
-                downloadUrl = $"https://thunderstore.io/package/download/{reference.Owner}/{reference.Name}/{version}/";
+                // A pinned version's download URL is always constructable directly, and
+                // nothing is looked up at all: the link already said which build to fetch.
+                downloadUrl = ConstructedDownloadUrl(reference.Owner, reference.Name, version);
             }
             else
             {
-                // Latest: try the cached Valheim community index first.
-                ThunderstorePackage package = null;
-                try { package = await Thunderstore.GetLatestAsync(reference.Owner, reference.Name); }
-                catch (Exception e) { Logger.Debug("Community-index lookup failed for {0}: {1}", reference.FolderName, e.Message); }
+                // Latest: ask Thunderstore about this package directly, and read the held
+                // index only if that did not answer. A link with no version on it used to
+                // resolve through the index alone, which is how a host who deleted a mod
+                // and pasted its link back got yesterday's build handed to them.
+                var package = await ResolveLatestAsync(reference.Owner, reference.Name);
 
-                if (!string.IsNullOrWhiteSpace(package?.DownloadUrl))
-                {
-                    downloadUrl = package.DownloadUrl;
-                    version = package.LatestVersion;
-                }
-                else
-                {
-                    // Not in the Valheim index (e.g. a package from another community's
-                    // page like old.thunderstore.io/package/bbepis/BepInExPack/) -
-                    // fall back to the per-package experimental endpoint.
-                    var (fallbackVersion, fallbackUrl, fallbackError) =
-                        await FetchLatestViaExperimentalApiAsync(reference.Owner, reference.Name);
-                    if (string.IsNullOrWhiteSpace(fallbackUrl))
-                        return Fail(fallbackError ?? $"Could not find {reference.Owner}/{reference.Name} on Thunderstore.");
+                downloadUrl = DownloadAddressFor(package, reference.Owner, reference.Name);
+                if (downloadUrl == null)
+                    return Fail($"Could not find {reference.Owner}/{reference.Name} on Thunderstore.");
 
-                    downloadUrl = fallbackUrl;
-                    version = fallbackVersion;
-                }
+                version = package.LatestVersion;
             }
 
             // --- Download + extract + install ---
@@ -688,41 +681,50 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
-        /// Resolves a package's latest version + download URL via Thunderstore's
-        /// experimental per-package API. Used only as a fallback for packages that
-        /// aren't in the cached Valheim community index.
+        /// The newest release of a package, asked of Thunderstore directly first and read
+        /// from the held index only when that did not answer.
+        /// <para>
+        /// The order matters. The community listing BakaLoader holds is a snapshot the
+        /// site rebuilds on a timer, so it can name yesterday's version while the package's
+        /// own page names today's. The per-package address is the one the page reads, so it
+        /// is never behind, and it answers for every community rather than this one. The
+        /// held list stays behind it for the times that address does not answer at all: a
+        /// blip, a rate limit, a machine that has gone offline since the list was read.
+        /// </para>
+        /// Returns null when neither answered. Never throws.
         /// </summary>
-        private async Task<(string Version, string Url, string Error)> FetchLatestViaExperimentalApiAsync(
-            string owner, string name)
+        private async Task<ThunderstorePackage> ResolveLatestAsync(string owner, string name)
         {
-            try
-            {
-                using var client = HttpClientProvider.CreateClient();
-                client.Timeout = TimeSpan.FromSeconds(30);
-                client.DefaultRequestHeaders.UserAgent.ParseAdd("ValheimBakaLoader");
+            ThunderstorePackage live = null;
+            try { live = await Thunderstore.GetLiveAsync(owner, name); }
+            catch (Exception e) { Logger.Debug("Live Thunderstore lookup failed for {0}-{1}: {2}", owner, name, e.Message); }
 
-                var url = $"https://thunderstore.io/api/experimental/package/{owner}/{name}/";
-                using var response = await client.GetAsync(url);
-                if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-                    return (null, null, $"Thunderstore has no package named {owner}/{name}.");
-                if (!response.IsSuccessStatusCode)
-                    return (null, null, $"Thunderstore lookup failed (HTTP {(int)response.StatusCode}).");
+            if (!string.IsNullOrWhiteSpace(live?.LatestVersion)) return live;
 
-                var json = JObject.Parse(await response.Content.ReadAsStringAsync());
-                var latest = json["latest"];
-                var version = latest?.Value<string>("version_number");
-                var download = latest?.Value<string>("download_url");
-
-                if (string.IsNullOrWhiteSpace(download))
-                    return (null, null, $"Thunderstore returned no download URL for {owner}/{name}.");
-
-                return (version, download, null);
-            }
+            try { return await Thunderstore.GetLatestAsync(owner, name); }
             catch (Exception e)
             {
-                return (null, null, $"Thunderstore lookup failed: {e.Message}");
+                Logger.Debug("Thunderstore index lookup failed for {0}-{1}: {2}", owner, name, e.Message);
+                return null;
             }
         }
+
+        /// <summary>
+        /// Where to fetch a resolved package from: the address Thunderstore itself gave,
+        /// used exactly as it came, and only when it gave none is one built from the
+        /// version number. Null when there is no version to fetch at all.
+        /// </summary>
+        private static string DownloadAddressFor(ThunderstorePackage package, string owner, string name)
+        {
+            if (!string.IsNullOrWhiteSpace(package?.DownloadUrl)) return package.DownloadUrl;
+
+            var version = package?.LatestVersion;
+            return string.IsNullOrWhiteSpace(version) ? null : ConstructedDownloadUrl(owner, name, version);
+        }
+
+        /// <summary>The address of one named build, built by BakaLoader rather than accepted from anywhere.</summary>
+        private static string ConstructedDownloadUrl(string owner, string name, string version) =>
+            $"https://thunderstore.io/package/download/{owner}/{name}/{version}/";
 
         private async Task DownloadFileAsync(string url, string destinationPath)
         {

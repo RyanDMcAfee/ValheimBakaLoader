@@ -109,7 +109,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 "$(\"#modCount\").textContent=scanned?mods.length",
                 "$(\"#sbMods\").textContent=(scanned?mods.length",
                 "conditionModUpdates(upd.length);",             // the standing condition
-                "$(\"#modsSub\").textContent=mods.length+\" loaded",
+                "renderModIndexLine(mods.length);",
             })
             {
                 Assert.True(render.Contains(line, StringComparison.Ordinal),

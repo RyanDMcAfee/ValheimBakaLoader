@@ -171,6 +171,9 @@ namespace ValheimBakaLoader.Tests.Tools
 
             public Task<HexiumLookup> LookupAsync(string fullName) =>
                 throw new InvalidOperationException("this client does not keep its promises");
+
+            public Task<bool> RefreshAsync() =>
+                throw new InvalidOperationException("this client does not keep its promises");
         }
     }
 }
