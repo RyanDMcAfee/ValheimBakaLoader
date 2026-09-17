@@ -27,6 +27,46 @@
 
 ---
 
+## What is new in 1.1.0
+
+**A second mod site, off until you turn it on.** Some mods turn up on Hexium before they turn up on Thunderstore, and a few only ever turn up there. A new switch in the Upkeep card, **Also check Hexium**, lets BakaLoader read that site as well. It is off when you install this version and off after an upgrade, and while it is off BakaLoader does not open a connection to hexium.gg at all, not even to open one of its pages in your browser. Turn it on and a mod scan adds one step after the Thunderstore one: a blue mark on the Latest cell of any row where Hexium holds a higher version than both what you have installed and what Thunderstore has, and an **Open on Hexium** entry in the row menu for a mod the site carries.
+
+**The switch carries the whole of what it means, because turning it on is the agreement.** There is no second notice to click through. Whoever runs Hexium is not named on the site, and its accounts are Discord sign-ins, so BakaLoader cannot tell you that an author there is the same person as the author of that name on Thunderstore. With the switch on, your machine contacts hexium.gg about four times an hour while BakaLoader is open, because the index is fetched once and held for fifteen minutes however many mods you have, and the site says it keeps request logs for up to ninety days. With the switch off, nothing in the app names Hexium except the switch itself.
+
+<p align="center">
+  <a href="img/bl-hexium-switch.png"><img src="img/bl-hexium-switch.png" width="760" alt="The Also check Hexium switch in the Upkeep card, with the text that explains it"></a>
+</p>
+
+**Nothing is ever installed from Hexium on its own.** There is no automatic Hexium update, no Hexium row in **Update all**, and nothing in the scheduled restart or the empty-server restart that reaches for one. The mark is an offer and it waits for you. Choosing to install opens a dialog that names the package, the owner as Hexium spells it, the version, the size of the download when the site gives one, the folder that is already there and will be replaced, and anything the package says it needs, which BakaLoader does not fetch for you. Nothing is downloaded until you press **I accept the risk, install**.
+
+**A mod you took from Hexium is then left alone.** It carries a Hexium chip, it sits out **Update all**, it is not in the waiting updates count, and no scheduled or empty-server restart replaces it. If Thunderstore later moves past it, the row says so and the row menu offers the Thunderstore build, which asks the same way before it replaces anything. Mods you installed by hand are untouched by all of this: BakaLoader only treats a folder as a Hexium install when it put the files there itself and left its own record inside the folder saying so, and it stops believing that record the moment the folder's version stops matching it. A download has to come from an address on hexium.gg before the first request, at every redirect and at the end, it stops at 600 MiB, and if the site listed a size and what arrives is not that size then nothing is installed and the copy you had is left exactly as it was. Detail: [Hexium](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Hexium).
+
+**A search box on the Mods screen.** Type in the box beside the count line and the table narrows as you go. Capitals do not matter and every word has to match somewhere on the row, so `jere world` finds JereKuusela's WorldEditCommands whichever order you type the two words in. It looks at everything the row shows: the mod's name, its author, the folder it sits in, the version numbers and the tags. Escape empties the box, and pressing `/` anywhere on the Mods screen puts the cursor in it, unless you are already typing into something else, where a slash is just a slash. The search narrows what is on screen and nothing else: the loaded count, **Update all**, the sidebar badge and the standing notice about waiting updates all still read every mod, and **Update all** says on hover that it updates every mod with an update, not only the ones shown. The row menu finds a mod by its own name rather than by where it sits in the narrowed table, so every row action acts on the row you clicked. The box empties itself when you switch to another profile.
+
+<p align="center">
+  <a href="img/bl-mods-search.png"><img src="img/bl-mods-search.png" width="760" alt="The Mods screen with a search narrowing the table and a count beside the box"></a>
+</p>
+
+**The Configs screen has a search box too, and the open file has a find box.** The file list narrows the same way, and it matches the mod that wrote a file as well as the file name, so an author's name finds their config even when the file is named after the plugin. In the open file, typing in the find box marks the first match and brings it into view, Enter walks to the next one, Shift and Enter walks back, and the count beside it says which match you are on. The find box never puts the cursor into the config text, never selects any of it and never changes a letter, so nothing you type while you are searching can land in the file. Save still writes the whole file exactly as it stands.
+
+**Configs moved up the sidebar** to sit directly under Mods, so the two screens you move between while fitting a mod out are next to each other. Nothing was renamed and no link changed.
+
+**Names and messages in any alphabet.** BakaLoader and its Commander plugin used to talk to the server in a form with no room for anything but the basic Latin letters, so every other letter turned into a question mark on the way. A player named in Cyrillic, Japanese or Chinese came back into the roster as `???`, and the name BakaLoader then sent back for a spawn, a teleport or a kick was the question marks, which match nobody, so the action failed. Broadcasts and restart warnings written in those alphabets reached the world unreadable. Both ends now speak UTF-8, and a long reply split across packets never cuts a letter in half. Plain English is byte for byte what it always was. The bundled Commander plugin goes from 1.3.0 to 1.3.1 for this, and it is replaced on your next server start like the other bundled plugins.
+
+**Version numbers are compared properly.** A suffix such as `-beta.1` used to be thrown away, so `2.0.13-beta.1` and `2.0.13` looked equal. Versions now compare the way semantic versioning says they should: a pre-release ranks below its own release, `beta.2` comes before `beta.10`, `1.0.666` is higher than `1.0.7`, and a version nothing can read is never treated as newer than the one you have. For nearly every mod this changes nothing. The one case it does change is a mod folder sitting on a suffixed version, where the plain release is now correctly offered as an update.
+
+Full list on the [release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
+## What is new in 1.0.9
+
+**Spawning works again after the Valheim update.** The latest Valheim update moved one line inside the game that BakaLoader's spawn plugins were built to read, and they were built before it moved, so the first thing the server did with them was fail. What a host saw was a spawn that half happened: you asked for six meads and one mead appeared, you asked for a two star boar and a plain boar appeared, and nothing in the app said anything was wrong. The server log had the reason in it, a "Field not found" error, once per spawn. Both plugins now ask the running game what that line looks like instead of assuming, so this shape of game change cannot take spawning down again. They are rebuilt against the current game and go into each server the next time it starts, so there is nothing to install by hand. The release also adds a check that reads the shipped plugins against the installed game and refuses a build where one of them names something the game no longer has, which is the check that would have caught this before it reached anybody.
+
+**Item quality arrives, and stackable items arrive as stacks.** The spawn window has always offered a Quality box for tools, weapons and armour, and the number you typed into it was thrown away on the way to the server, so every item turned up at quality one. The quality now goes through, and the item arrives at the full durability for that quality rather than the base one. Modded items that go past quality four keep their own ceiling instead of being cut down to four. Star levels for creatures were never affected by this and behave as before. Stackable items now arrive stacked as well: six meads is one pile of six and 150 wood is three stacks of fifty, where before it was 150 separate pieces on the ground. Anything that does not stack, and every creature, is spawned one at a time exactly as before.
+
+**A spawn the server refused now says so.** The app used to count any reply at all as a success, refusals included. It now reads what the server actually said and puts that line in front of you, so the toast reads `Spawned 6x MeadPoisonResist as 1 stack` or `Spawned 1x PickaxeBronze at quality 3`, and a spawn that did not happen says why in the server's own words instead of the cheerful confirmation that kept this bug out of sight for a whole session.
+
+Full list on the [release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
 ## What is new in 1.0.8
 
 **Settings you save while the server is up go in at the next restart.** Every automatic restart (the scheduled one, the empty-server one, crash recovery, the one that applies mod updates) and the Restart button used to bring the server back on the settings it was started with. A change saved while the world was up sat on disk doing nothing until somebody pressed Stop and then Start, or closed and reopened the app. World difficulty was the painful one: a new set of modifiers could be ignored for a whole day of restarts. A relaunch now reads the profile again the moment before it launches, so what you saved is what comes back up. If the settings cannot be read for any reason, the relaunch keeps the ones it is already running and says so in the log rather than refusing to restart.
@@ -112,11 +152,11 @@ The app is split into nine screens. Each has a plain name, with its Norse name s
 | Screen | What it is for |
 |---|---|
 | [**Dashboard**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-%28Hearth%29) (Hearth) | Server status, who is online, next save, network addresses, CPU and RAM, a tail of the log, and the app's own settings. |
-| [**Players**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29) (Vikings) | A sortable table with platform, session time, total playtime, last seen, deaths and position. Right-click for promote, allow, kick, ban, heal, teleport or spawn items nearby. |
-| [**Mods**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods) | Scans your BepInEx folder against Thunderstore. Update one, update all, or paste a Thunderstore link to install. |
+| [**Players**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29) (Vikings) | A sortable table with platform, session time, total playtime, last seen, deaths and position. Right-click for promote, allow, kick, ban, heal, teleport or spawn items nearby. A spawn arrives at the quality you asked for, stacked where the item stacks, and the server's own reply comes back to you. |
+| [**Mods**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods) | Scans your BepInEx folder against Thunderstore, with a search box over the table. Update one, update all, or paste a link to install. Hexium can be read as a second source once you switch it on, and nothing is installed or updated from it unless you ask for it. |
 | [**Settings**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-%28World%29) (World) | Server name, password, port, world and seed, crossplay, backups, world modifiers with every option explained beside the dial, restart rules, RCON and folders. |
 | [**Map**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Map-%28Atlas%29) (Atlas) | Your world drawn from its seed with no map mods, fog of war from what players have shared at cartography tables, portals and builds as layers, and a weather forecast. |
-| [**Configs**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Configs-%28Runes%29) (Runes) | Edit your mods' config files in the app. |
+| [**Configs**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Configs-%28Runes%29) (Runes) | Edit your mods' config files in the app. The list has a search box over it, and the open file has a find box that never touches the text. |
 | [**Log**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Log-%28Saga%29) (Saga) | The live server log with levels, search, pause on scroll, and a console line. |
 | [**Discord**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-%28Herald%29) (Herald) | One status post in a Discord channel that edits itself as the server changes. |
 | [**Statistics**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Statistics-%28Skald%29) (Skald) | Uptime, sessions, deaths and mod history, counted on your machine only. |
@@ -185,7 +225,7 @@ Longer version: [Install and first run](https://github.com/RyanDMcAfee/ValheimBa
   <tr>
     <td width="50%" valign="top">
       <a href="img/bl-mods.png"><img src="img/bl-mods.png" alt="Mods screen"></a>
-      <p align="center"><strong>Mods.</strong> Thunderstore scan, one-click updates, paste a link to install.</p>
+      <p align="center"><strong>Mods.</strong> Thunderstore scan, a search box, one-click updates, paste a link to install.</p>
     </td>
     <td width="50%" valign="top">
       <a href="img/bl-world.png"><img src="img/bl-world.png" alt="Server settings"></a>
@@ -223,6 +263,7 @@ This is a program that starts a server process, edits files in your Valheim fold
 **Network connections it makes**
 
 - `thunderstore.io` to read the mod index and download mod files you asked for.
+- `hexium.gg` to read its mod index and to download a mod you asked for there, and only while "Also check Hexium" is on in Upkeep. That switch is off unless you turn it on, and while it is off BakaLoader does not open a connection to that site at all. With it on, the index is read about four times an hour while the app is open, and the site says it keeps request logs for up to ninety days.
 - `api.github.com` and GitHub release downloads to check for and fetch BakaLoader updates.
 - `api.ipify.org` to find your public address for the join info.
 - Valve's own address for steamcmd, once, and the Steam client for a server update.
@@ -232,7 +273,7 @@ This is a program that starts a server process, edits files in your Valheim fold
 **Files it writes**
 
 - Its own settings, statistics and logs under `%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\`.
-- Your server's BepInEx folders when you install, update or remove mods, and the admin, ban and allow lists when you use the player actions.
+- Your server's BepInEx folders when you install, update or remove mods, and the admin, ban and allow lists when you use the player actions. A mod BakaLoader installed from Hexium also gets a small record inside its own folder saying where it came from, which is how the app knows to leave that folder out of its updates.
 - Backups and restores inside your Valheim save folder, always as copies, never in place.
 
 Your server password and RCON password are stored in plain text in `userprefs.json`.
