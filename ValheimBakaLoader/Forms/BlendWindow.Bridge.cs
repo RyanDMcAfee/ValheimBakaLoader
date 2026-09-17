@@ -34,6 +34,8 @@ namespace ValheimBakaLoader.Forms
         private IIpAddressProvider IpAddressProvider;
         private IModScanner ModScanner;
         private IThunderstoreClient ThunderstoreClient;
+        private IHexiumClient HexiumClient;
+        private Tools.HexiumScanStep HexiumScan;
         private IModUpdateService ModUpdateService;
         private IModRemovalService ModRemovalService;
         private IRequiredModChecker RequiredModChecker;
@@ -106,6 +108,14 @@ namespace ValheimBakaLoader.Forms
 
         private bool _modScanInProgress;
         private bool _modUpdateInProgress;
+
+        // The one outstanding "yes, fetch that from Hexium" the page has been handed.
+        // mods.installFromHexium will not move a byte without it, it only ever matches
+        // the exact package and version the host was shown, it is spent the moment it is
+        // used, and it goes stale on its own so a dialog left open overnight is not still
+        // good in the morning. This is what makes an install from the other site
+        // something the host did rather than something the app did.
+        private readonly Tools.HexiumConsentGate HexiumConsent = new();
         private bool _requiredModInstallInProgress;
         private bool _maxPlayersSaveInProgress;
         private bool _atlasRenderInProgress;
@@ -170,6 +180,11 @@ namespace ValheimBakaLoader.Forms
             PlayerListService = playerListService;
             AppUpdateService = appUpdateService;
             Heartbeat = heartbeatService;
+            // The Hexium reader. Resolved here rather than taken through the window's
+            // constructor so nothing else in the app has to know it exists; it opens no
+            // connection at all until the host turns their own switch on.
+            HexiumClient = serviceProvider.GetRequiredService<IHexiumClient>();
+            HexiumScan = new Tools.HexiumScanStep(HexiumClient, appLogger);
             InstallIsolation = serviceProvider.GetRequiredService<IInstallIsolationService>();
             MaxPlayersInstaller = serviceProvider.GetRequiredService<IMaxPlayersInstaller>();
             DiscordStatus = serviceProvider.GetRequiredService<IDiscordStatusService>();
@@ -3004,6 +3019,7 @@ namespace ValheimBakaLoader.Forms
                     Apply("SaveDataFolderPath", v => prefs.SaveDataFolderPath = v.Value<string>());
                     Apply("CheckForUpdates", v => prefs.CheckForUpdates = v.Value<bool>());
                     Apply("AutoUpdateMods", v => prefs.AutoUpdateMods = v.Value<bool>());
+                    Apply("UseHexiumSource", v => prefs.UseHexiumSource = v.Value<bool>());
                     Apply("AutoUpdateBakaLoader", v => prefs.AutoUpdateBakaLoader = v.Value<bool>());
                     Apply("StartWithWindows", v => prefs.StartWithWindows = v.Value<bool>());
                     Apply("ShareAnonymousStats", v => prefs.ShareAnonymousStats = v.Value<bool>());
@@ -4386,6 +4402,12 @@ namespace ValheimBakaLoader.Forms
                         }
                     }));
 
+                    // The second site, only when the host asked for it. It is read after
+                    // Thunderstore and never instead of it, and a Hexium failure cannot
+                    // reach the scan: the client answers null rather than throwing, and
+                    // this is wrapped besides.
+                    await AddHexiumVersionsAsync(mods);
+
                     // Remember this realm's mod set so it's tracked per-profile and reconstructable
                     // on restore/export (kept distinct so servers never cross-contaminate).
                     RecordModManifest(CurrentProfile, mods);
@@ -4570,7 +4592,14 @@ namespace ValheimBakaLoader.Forms
                 if (_modUpdateInProgress)
                     return FailDto("A mod update is already in progress. Try again in a moment.");
 
-                if (!ThunderstoreUrlParser.TryParse(p.Value<string>("url"), out var reference, out var parseError))
+                // A hexium.gg link is a different site with a different answer: it never
+                // installs from a paste. It is resolved, and what it resolves to is handed
+                // back for the host to read and accept or turn down.
+                var pasted = p.Value<string>("url");
+                if (Tools.HexiumUrlParser.LooksLikeHexiumLink(pasted))
+                    return await PrepareHexiumInstallAsync(pasted, null, null, null);
+
+                if (!ThunderstoreUrlParser.TryParse(pasted, out var reference, out var parseError))
                     return FailDto(parseError);
 
                 var pluginsDir = GetPluginsDirectory();
@@ -4600,6 +4629,110 @@ namespace ValheimBakaLoader.Forms
                         result.Owner,
                         result.Name,
                         result.Version,
+                        result.Error,
+                    };
+                }
+                finally
+                {
+                    _modUpdateInProgress = false;
+                }
+            });
+
+            // Works out what installing a named package from Hexium would actually do,
+            // and hands that back for the host to read. It downloads nothing. The answer
+            // carries a one-shot token, and mods.installFromHexium refuses without it.
+            RegisterRpc("mods.hexiumPrepare", async p =>
+                await PrepareHexiumInstallAsync(
+                    null,
+                    p.Value<string>("owner"),
+                    p.Value<string>("name"),
+                    p.Value<string>("version")));
+
+            // Fetches and installs one Hexium build. Only reachable with the token the
+            // dialog above handed out, for the exact package and version it named.
+            RegisterRpc("mods.installFromHexium", async p =>
+            {
+                object FailDto(string error, string reason = null) => new
+                {
+                    Installed = false,
+                    Replaced = false,
+                    Owner = p.Value<string>("owner"),
+                    Name = p.Value<string>("name"),
+                    Version = p.Value<string>("version"),
+                    Source = Tools.ModSourceMarkerFile.HexiumSource,
+                    Dependencies = Array.Empty<string>(),
+                    Reason = reason,
+                    Error = error,
+                };
+
+                if (!UserPrefsProvider.LoadPreferences().UseHexiumSource)
+                    return FailDto("Turn on Also check Hexium in Upkeep to install from Hexium.", "sourceOff");
+
+                if (_modUpdateInProgress)
+                    return FailDto("A mod update is already in progress. Try again in a moment.", "busy");
+
+                var owner = p.Value<string>("owner");
+                var name = p.Value<string>("name");
+                var version = p.Value<string>("version");
+
+                if (!HexiumConsent.Take(p.Value<string>("token"), owner, name, version))
+                    return FailDto("That install was not accepted, or the question has gone stale. Open it again.", "noConsent");
+
+                var pluginsDir = GetPluginsDirectory();
+                if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
+                    return FailDto("BepInEx plugins folder not found. Set a valid server .exe path first.", "noPlugins");
+
+                // Resolved again from the index rather than from anything the page sent,
+                // so the address that is fetched is the site's own and this build's.
+                var lookup = await HexiumClient.LookupAsync($"{owner}-{name}");
+                if (!lookup.IndexAvailable) return FailDto(lookup.Error, "unreachable");
+                if (!lookup.Found) return FailDto($"Hexium has no package named {owner}/{name}.", "notFound");
+
+                var chosen = lookup.Package.Find(version);
+                if (chosen == null)
+                    return FailDto($"Hexium does not offer {owner}/{name} {version}.", "noVersion");
+
+                // What was there before, read before anything is replaced, so the journal
+                // can say what this swapped out rather than guessing afterwards.
+                var previousVersion = ModScanner.ScanPlugins(pluginsDir)
+                    .FirstOrDefault(m => m.FullName == $"{lookup.Package.Owner}-{lookup.Package.Name}")?.InstalledVersion;
+
+                _modUpdateInProgress = true;
+                try
+                {
+                    var result = await ModUpdateService.InstallFromHexiumAsync(new HexiumInstallPlan
+                    {
+                        Owner = lookup.Package.Owner,
+                        Name = lookup.Package.Name,
+                        Version = chosen.VersionNumber,
+                        DownloadUrl = chosen.DownloadUrl,
+                        FileSize = chosen.FileSize,
+                        Dependencies = (chosen.Dependencies ?? new List<string>()).ToArray(),
+                    }, pluginsDir);
+
+                    if (result.Installed)
+                    {
+                        Analytics.Record(new AnalyticsEvent
+                        {
+                            Kind = result.Replaced ? "modup" : "modin",
+                            Server = ActiveProfileName,
+                            Mod = $"{result.Owner}-{result.Name}",
+                            FromVersion = result.Replaced ? previousVersion : null,
+                            ToVersion = result.Version,
+                            Source = Tools.ModSourceMarkerFile.HexiumSource,
+                        });
+                    }
+
+                    return new
+                    {
+                        result.Installed,
+                        result.Replaced,
+                        result.Owner,
+                        result.Name,
+                        result.Version,
+                        result.Source,
+                        result.Dependencies,
+                        Reason = (string)null,
                         result.Error,
                     };
                 }
@@ -4803,6 +4936,22 @@ namespace ValheimBakaLoader.Forms
             // row offers. The page sends the matched package identity and never a URL: the
             // address is built here from two validated segments, so nothing the page says can
             // send the shell anywhere else.
+            // Opens a mod's own page on Hexium. The address is built here from the two
+            // halves of the package identity, never taken from the page, so this can only
+            // ever land on Hexium.
+            RegisterRpc("shell.openHexium", p =>
+            {
+                var url = Tools.HexiumUrlParser.PageUrl(p.Value<string>("owner"), p.Value<string>("name"))
+                    ?? throw new ArgumentException("That mod has no Hexium page to open.");
+
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true,
+                });
+                return Task.FromResult<object>(true);
+            });
+
             RegisterRpc("shell.openThunderstore", p =>
             {
                 var url = ThunderstorePageUrl(p.Value<string>("namespace"), p.Value<string>("name"))
@@ -5627,6 +5776,148 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// Works out what installing a package from Hexium would do, and answers with
+        /// everything the host needs to decide: who Hexium says owns it, the version,
+        /// how big the download is when the site says, what the package expects to find
+        /// beside it, and whether a folder is already there to be replaced.
+        /// <para>
+        /// Nothing is downloaded and nothing on disk is touched. The answer carries a
+        /// token that is good once, for this package and version only, and
+        /// mods.installFromHexium refuses without it. Either a link or an owner and name
+        /// may be given; the link route is what a pasted address takes.
+        /// </para>
+        /// </summary>
+        private async Task<object> PrepareHexiumInstallAsync(string url, string owner, string name, string version)
+        {
+            object Fail(string error, string reason) => new
+            {
+                Installed = false,
+                NeedsConsent = false,
+                Replaced = false,
+                Owner = owner,
+                Name = name,
+                Version = version,
+                Source = Tools.ModSourceMarkerFile.HexiumSource,
+                Reason = reason,
+                Error = error,
+            };
+
+            if (!UserPrefsProvider.LoadPreferences().UseHexiumSource)
+                return Fail("Turn on Also check Hexium in Upkeep to install from Hexium.", "sourceOff");
+
+            if (_modUpdateInProgress)
+                return Fail("A mod update is already in progress. Try again in a moment.", "busy");
+
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                if (!Tools.HexiumUrlParser.TryParse(url, out var reference, out var parseError))
+                    return Fail(parseError, "badLink");
+
+                owner = reference.Owner;
+                name = reference.Name;
+                version = reference.Version;
+            }
+
+            if (!Tools.HexiumUrlParser.IsOwnerSegment(owner) || !Tools.HexiumUrlParser.IsNameSegment(name))
+                return Fail("That is not a Hexium owner and mod pair.", "badName");
+
+            if (!string.IsNullOrWhiteSpace(version) && !Tools.HexiumUrlParser.IsVersionSegment(version))
+                return Fail($"\"{version}\" does not look like a version number.", "badVersion");
+
+            var lookup = await HexiumClient.LookupAsync($"{owner.Trim()}-{name.Trim()}");
+            if (!lookup.IndexAvailable) return Fail(lookup.Error, "unreachable");
+            if (!lookup.Found) return Fail($"Hexium has no package named {owner}/{name}.", "notFound");
+
+            var package = lookup.Package;
+
+            // A named version has to exist; otherwise take the highest one, worked out
+            // here rather than read off the top of a list the site does not sort.
+            var chosen = string.IsNullOrWhiteSpace(version)
+                ? PickHexiumVersion(package)
+                : package.Find(version);
+
+            if (chosen == null)
+            {
+                return string.IsNullOrWhiteSpace(version)
+                    ? Fail($"Hexium lists {owner}/{name} but offers no version to install.", "noVersion")
+                    : Fail($"Hexium does not offer {owner}/{name} {version}.", "noVersion");
+            }
+
+            if (!Tools.HexiumUrlParser.IsDownloadAddress(chosen.DownloadUrl, out _))
+                return Fail("Hexium gave a download address that is not on hexium.gg, so it was turned down.", "badAddress");
+
+            var pluginsDir = GetPluginsDirectory();
+            var folderName = $"{package.Owner}-{package.Name}";
+            string replacingVersion = null;
+            var replacing = false;
+
+            if (!string.IsNullOrWhiteSpace(pluginsDir) && Directory.Exists(pluginsDir))
+            {
+                var existing = ModScanner.ScanPlugins(pluginsDir).FirstOrDefault(m => m.FullName == folderName);
+                replacing = existing != null;
+                replacingVersion = existing?.InstalledVersion;
+            }
+
+            var token = HexiumConsent.Issue(package.Owner, package.Name, chosen.VersionNumber);
+
+            return new
+            {
+                Installed = false,
+                NeedsConsent = true,
+                Source = Tools.ModSourceMarkerFile.HexiumSource,
+                Owner = package.Owner,
+                Name = package.Name,
+                Version = chosen.VersionNumber,
+                FileSize = chosen.FileSize,
+                Dependencies = (chosen.Dependencies ?? new List<string>()).ToArray(),
+                PageUrl = Tools.HexiumUrlParser.PageUrl(package.Owner, package.Name),
+                Folder = folderName,
+                Replacing = replacing,
+                ReplacingVersion = replacingVersion,
+                Token = token,
+                Reason = (string)null,
+                Error = (string)null,
+            };
+        }
+
+        /// <summary>
+        /// Which Hexium build a link with no version in it means. Full releases only,
+        /// unless the folder already holds a pre-release, in which case a pre-release on
+        /// the same line or later counts too. Falls back to the highest build of any kind
+        /// for a package that has never had a full release.
+        /// </summary>
+        private Tools.Models.HexiumPackageVersion PickHexiumVersion(Tools.Models.HexiumPackage package)
+        {
+            var pluginsDir = GetPluginsDirectory();
+            string installed = null;
+
+            if (!string.IsNullOrWhiteSpace(pluginsDir) && Directory.Exists(pluginsDir))
+            {
+                installed = ModScanner.ScanPlugins(pluginsDir)
+                    .FirstOrDefault(m => m.FullName == $"{package.Owner}-{package.Name}")?.InstalledVersion;
+            }
+
+            return package.LatestFor(installed) ?? package.LatestAny;
+        }
+
+        /// <summary>
+        /// Reads the host's switch and hands it to the scan step, which is where the
+        /// answer is acted on. With the switch off nothing is asked of the second site,
+        /// which is what makes "off means no connection to hexium.gg" true rather than
+        /// merely intended. A preferences file that cannot be read counts as off.
+        /// </summary>
+        private async Task AddHexiumVersionsAsync(IEnumerable<Tools.Models.InstalledMod> mods)
+        {
+            bool enabled;
+            try { enabled = UserPrefsProvider.LoadPreferences().UseHexiumSource; }
+            catch { return; }
+
+            // The step itself decides what a false means, so the promise can be driven and
+            // proved on its own rather than inferred from these two lines.
+            await HexiumScan.ApplyAsync(mods, enabled);
+        }
+
+        /// <summary>
         /// Persists a profile's current installed-mod set into its ModManifest so each server's
         /// mod list is tracked distinctly (used on restore/export). Best-effort: a persistence
         /// failure never breaks a scan.
@@ -5725,6 +6016,19 @@ namespace ValheimBakaLoader.Forms
                 possiblyOutdated,
                 modUpdatedUtc = modUpdatedUtc?.ToString("o"),
                 gameUpdatedUtc = gameUtc?.ToString("o"),
+                // --- The second mod site. Every one of these is null or false unless the
+                // host turned "Also check Hexium" on, and none of them touches
+                // UpdateAvailable, the waiting count, "Update all" or the unattended path.
+                // hexiumLatest is what Hexium holds; hexiumNewer says it is ahead of BOTH
+                // what is installed and what Thunderstore has; installedSource says these
+                // files came from Hexium, which is the only thing that makes the row skip
+                // Thunderstore updates; thunderstoreNewer is the mirror of that, for a
+                // Hexium copy Thunderstore has since moved past.
+                hexiumLatest = mod.HexiumLatestVersion,
+                hexiumNewer = mod.HexiumNewer,
+                hexiumUrl = Tools.HexiumUrlParser.PageUrl(mod.HexiumOwner, mod.HexiumName),
+                installedSource = mod.InstalledSource,
+                thunderstoreNewer = mod.ThunderstoreNewer,
             };
         }
 
@@ -5785,6 +6089,7 @@ namespace ValheimBakaLoader.Forms
                 prefs.SaveDataFolderPath,
                 prefs.CheckForUpdates,
                 prefs.AutoUpdateMods,
+                prefs.UseHexiumSource,
                 prefs.AutoUpdateBakaLoader,
                 prefs.StartWithWindows,
                 prefs.ShareAnonymousStats,

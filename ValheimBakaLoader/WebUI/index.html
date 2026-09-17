@@ -41,7 +41,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.0.9</span></span>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.1.0</span></span>
         <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
@@ -178,6 +178,8 @@
                 <div class="subval" id="upkeepMsg" style="margin:2px 0 4px">Fetches new releases at launch and on restarts.</div>
                 <div class="togglerow"><span class="tl">Update mods at scheduled restarts</span><span class="toggle" id="tAutoUpdMods" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px">Installs waiting Thunderstore updates during a scheduled restart, and once the server has sat empty for ten minutes.</div>
+                <div class="togglerow"><span class="tl" id="hexiumSwitchLabel">Also check Hexium</span><span class="toggle" id="tUseHexium" data-t></span></div>
+                <div class="subval" id="hexiumHelp" style="margin:2px 0 4px">Hexium is a second mod site. Whoever runs it is not named on the site, and its accounts are Discord sign-ins, so BakaLoader cannot tell you that an author there is the same person as the author of the same name on Thunderstore. With this on, your machine contacts hexium.gg about four times an hour while BakaLoader is open, and that site says it keeps request logs for up to ninety days. Nothing is installed from Hexium unless you ask for it and accept what it is.</div>
                 <div class="togglerow"><span class="tl">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
                 <div class="togglerow"><span class="tl">Start minimized</span><span class="toggle" id="tStartMin" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px">The window opens minimized to the taskbar. BakaLoader has no tray icon, so it waits there rather than in the notification area.</div>
@@ -600,7 +602,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.0.9</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.1.0</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>

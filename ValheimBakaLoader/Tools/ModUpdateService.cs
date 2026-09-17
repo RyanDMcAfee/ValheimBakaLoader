@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Net.Http;
 using System.Threading.Tasks;
 using ValheimBakaLoader.Tools.Http;
 using ValheimBakaLoader.Tools.Logging;
@@ -61,6 +62,33 @@ namespace ValheimBakaLoader.Tools
         /// <summary>True when an existing install was backed up and replaced.</summary>
         public bool Replaced { get; init; }
         public string Error { get; init; }
+
+        /// <summary>Which site the files came from: "thunderstore" or "hexium".</summary>
+        public string Source { get; init; }
+
+        /// <summary>
+        /// The mods this package's own manifest says it needs, as the index listed
+        /// them. Nothing here is installed for the host: it is handed back so the
+        /// page can say what else this mod expects to find. Never null.
+        /// </summary>
+        public string[] Dependencies { get; init; } = Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// Everything needed to fetch one Hexium build, worked out before the host was
+    /// asked and handed back unchanged once they accepted. The download address is
+    /// the one the index gave, never a rebuilt one.
+    /// </summary>
+    public class HexiumInstallPlan
+    {
+        public string Owner { get; init; }
+        public string Name { get; init; }
+        public string Version { get; init; }
+        public string DownloadUrl { get; init; }
+        public long? FileSize { get; init; }
+        public string[] Dependencies { get; init; } = Array.Empty<string>();
+
+        public string FolderName => $"{Owner}-{Name}";
     }
 
     public interface IModUpdateService
@@ -88,6 +116,20 @@ namespace ValheimBakaLoader.Tools
         /// An existing install is backed up and replaced.
         /// </summary>
         Task<ModInstallResult> InstallFromThunderstoreAsync(ThunderstoreModReference reference, string pluginsDir);
+
+        /// <summary>
+        /// Installs one already-resolved Hexium build into the given BepInEx plugins
+        /// directory, backing up and replacing an existing folder the same way an
+        /// update does, and leaving a note recording where the files came from.
+        /// <para>
+        /// This is only ever reached after the host has read what the download is and
+        /// said yes; nothing in the app calls it on its own. The address is used
+        /// exactly as the index gave it, its host is checked before and after any
+        /// redirect, the download is capped, and a size the index named has to match
+        /// or nothing is replaced.
+        /// </para>
+        /// </summary>
+        Task<ModInstallResult> InstallFromHexiumAsync(HexiumInstallPlan plan, string pluginsDir);
     }
 
     /// <summary>
@@ -103,6 +145,17 @@ namespace ValheimBakaLoader.Tools
     {
         private const string BackupDirName = ".bakaloader-mod-backups";
         private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// The most a Hexium download is allowed to weigh. The largest Valheim mod
+        /// packages run to a few hundred megabytes, so this leaves room for a real
+        /// one while stopping a download that never ends from filling the disk.
+        /// Settable so a test can prove the cap with a small file.
+        /// </summary>
+        public long MaxHexiumDownloadBytes { get; set; } = 600L * 1024 * 1024;
+
+        /// <summary>How many redirects a download is allowed to follow before it gives up.</summary>
+        public int MaxDownloadRedirects { get; set; } = 5;
 
         private readonly IThunderstoreClient Thunderstore;
         private readonly IHttpClientProvider HttpClientProvider;
@@ -179,6 +232,15 @@ namespace ValheimBakaLoader.Tools
                 return ModUpdateResult.Failed(mod, $"Mod folder not found: {mod.PluginDirectory}");
             }
 
+            // A copy the host took from Hexium is left alone by every update path.
+            // The row offers the swap back to Thunderstore as its own action, and that
+            // one asks first; nothing here replaces those files on its own.
+            if (mod.IsHexiumInstalled)
+            {
+                Logger.Information("Mod {0} was installed from Hexium, so the Thunderstore update is not applied.", mod.FullName);
+                return ModUpdateResult.Skipped(mod);
+            }
+
             // Resolve the latest published version + download URL.
             ThunderstorePackage package;
             try
@@ -217,6 +279,7 @@ namespace ValheimBakaLoader.Tools
 
                 Directory.CreateDirectory(tempExtract);
                 ZipFile.ExtractToDirectory(tempZip, tempExtract, overwriteFiles: true);
+                StripSourceMarkers(tempExtract);
 
                 if (!HasAnyEntries(tempExtract))
                 {
@@ -339,6 +402,7 @@ namespace ValheimBakaLoader.Tools
                 // ZipFile.ExtractToDirectory rejects entries that resolve outside
                 // the destination (zip-slip) on .NET Core/5+.
                 ZipFile.ExtractToDirectory(tempZip, tempExtract, overwriteFiles: true);
+                StripSourceMarkers(tempExtract);
 
                 if (!HasAnyEntries(tempExtract))
                     return Fail("Downloaded package was empty.");
@@ -363,6 +427,7 @@ namespace ValheimBakaLoader.Tools
                     Folder = targetDir,
                     Installed = true,
                     Replaced = replacing,
+                    Source = "thunderstore",
                 };
             }
             catch (Exception e)
@@ -402,6 +467,224 @@ namespace ValheimBakaLoader.Tools
                 TryDelete(tempZip);
                 TryDeleteDirectory(tempExtract);
             }
+        }
+
+        public async Task<ModInstallResult> InstallFromHexiumAsync(HexiumInstallPlan plan, string pluginsDir)
+        {
+            ModInstallResult Fail(string error) => new()
+            {
+                Owner = plan?.Owner,
+                Name = plan?.Name,
+                Version = plan?.Version,
+                Installed = false,
+                Source = ModSourceMarkerFile.HexiumSource,
+                Dependencies = plan?.Dependencies ?? Array.Empty<string>(),
+                Error = error,
+            };
+
+            if (plan == null) return Fail("No mod was named.");
+            if (string.IsNullOrWhiteSpace(plan.Owner) || string.IsNullOrWhiteSpace(plan.Name))
+                return Fail("No owner and mod name to install.");
+            if (string.IsNullOrWhiteSpace(plan.Version))
+                return Fail("No version to install.");
+            if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
+                return Fail("BepInEx plugins folder not found. Set a valid server .exe path first.");
+
+            // The address came from the index and is used as it was given. It still has
+            // to be an address on Hexium: a link that points anywhere else is refused
+            // before a single byte is asked for.
+            if (!HexiumUrlParser.IsDownloadAddress(plan.DownloadUrl, out var downloadUri))
+                return Fail("That download address is not on hexium.gg, so it was not fetched.");
+
+            var targetDir = Path.Combine(pluginsDir, plan.FolderName);
+            var replacing = Directory.Exists(targetDir) && HasAnyEntries(targetDir);
+
+            var tempZip = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}.zip");
+            var tempExtract = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}");
+            string backupDir = null;
+
+            try
+            {
+                Logger.Information("Installing {0} v{1} from Hexium ({2}).",
+                    plan.FolderName, plan.Version, downloadUri);
+
+                // Everything that could turn the download away happens before the folder
+                // on disk is touched, so a refused download leaves the install as it was.
+                var written = await DownloadHexiumFileAsync(downloadUri, tempZip);
+
+                if (plan.FileSize is { } expected && expected > 0 && written != expected)
+                {
+                    return Fail($"The download did not match the size Hexium listed ({written} bytes against {expected}). Nothing was replaced.");
+                }
+
+                Directory.CreateDirectory(tempExtract);
+                // ZipFile.ExtractToDirectory turns down entries that resolve outside the
+                // destination (zip slip) on .NET Core and later.
+                ZipFile.ExtractToDirectory(tempZip, tempExtract, overwriteFiles: true);
+
+                // A package cannot ship its own history: any note inside the archive goes
+                // before the folder is placed, and BakaLoader writes its own afterwards.
+                StripSourceMarkers(tempExtract);
+
+                if (!HasAnyEntries(tempExtract))
+                    return Fail("The downloaded package was empty.");
+
+                if (replacing)
+                {
+                    backupDir = BackupModFolder(targetDir);
+                    ClearDirectory(targetDir);
+                }
+
+                CopyDirectory(tempExtract, targetDir);
+
+                ModSourceMarkerFile.Write(targetDir, new ModSourceMarker
+                {
+                    Schema = ModSourceMarkerFile.CurrentSchema,
+                    Writer = $"{ModSourceMarkerFile.WriterPrefix} {AssemblyHelper.GetApplicationVersion()}",
+                    Source = ModSourceMarkerFile.HexiumSource,
+                    Owner = plan.Owner,
+                    Name = plan.Name,
+                    Version = plan.Version,
+                    DownloadUrl = plan.DownloadUrl,
+                    FileSize = plan.FileSize,
+                    InstalledUtc = DateTime.UtcNow,
+                });
+
+                Logger.Information("Installed {0} v{1} from Hexium to {2}{3}.",
+                    plan.FolderName, plan.Version, targetDir,
+                    backupDir != null ? $" (previous copy backed up to {backupDir})" : "");
+
+                return new ModInstallResult
+                {
+                    Owner = plan.Owner,
+                    Name = plan.Name,
+                    Version = plan.Version,
+                    Folder = targetDir,
+                    Installed = true,
+                    Replaced = replacing,
+                    Source = ModSourceMarkerFile.HexiumSource,
+                    Dependencies = plan.Dependencies ?? Array.Empty<string>(),
+                };
+            }
+            catch (Exception e)
+            {
+                Logger.Error(e, "Failed to install {0} from Hexium.", plan.FolderName);
+
+                if (backupDir != null && Directory.Exists(backupDir))
+                {
+                    try
+                    {
+                        ClearDirectory(targetDir);
+                        CopyDirectory(backupDir, targetDir);
+                        Logger.Information("Restored previous copy of {0}.", plan.FolderName);
+                    }
+                    catch (Exception restoreError)
+                    {
+                        Logger.Error(restoreError,
+                            "Could not restore {0}. The previous files are preserved at {1}.",
+                            plan.FolderName, backupDir);
+                        return Fail($"Install failed AND automatic restore failed. Previous files are at: {backupDir}");
+                    }
+                }
+                else if (!replacing)
+                {
+                    // Never leave a half-written new folder for BepInEx to trip on.
+                    TryDeleteDirectory(targetDir);
+                }
+
+                return Fail(e.Message);
+            }
+            finally
+            {
+                TryDelete(tempZip);
+                TryDeleteDirectory(tempExtract);
+            }
+        }
+
+        /// <summary>
+        /// Streams a Hexium package to a file, following any redirect by hand so each
+        /// hop is checked against the same rule the first address was, and stopping the
+        /// moment the file passes the cap. Answers how many bytes were written.
+        /// </summary>
+        private async Task<long> DownloadHexiumFileAsync(Uri url, string destinationPath)
+        {
+            using var client = HttpClientProvider.CreateClient();
+            client.Timeout = DownloadTimeout;
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(HexiumClient.UserAgent());
+
+            var address = url;
+            HttpResponseMessage response = null;
+
+            try
+            {
+                for (var hop = 0; ; hop++)
+                {
+                    response?.Dispose();
+                    response = await client.GetAsync(address, HttpCompletionOption.ResponseHeadersRead);
+
+                    // A real HttpClient follows redirects itself, so this loop usually runs
+                    // once; the final address is checked below either way.
+                    var location = IsRedirect(response) ? response.Headers.Location : null;
+                    if (location == null) break;
+
+                    if (hop >= MaxDownloadRedirects)
+                        throw new IOException("That download redirected too many times.");
+
+                    address = location.IsAbsoluteUri ? location : new Uri(address, location);
+                    if (!HexiumUrlParser.IsDownloadAddress(address.ToString(), out _))
+                        throw new IOException("That download redirected off hexium.gg, so it was stopped.");
+                }
+
+                // Whoever followed the redirects, the address the bytes are coming from
+                // has to still be Hexium's. This is read before the body is touched.
+                var finalAddress = response.RequestMessage?.RequestUri ?? address;
+                if (!HexiumUrlParser.IsDownloadAddress(finalAddress.ToString(), out _))
+                    throw new IOException("That download ended up off hexium.gg, so it was stopped.");
+
+                response.EnsureSuccessStatusCode();
+
+                var cap = MaxHexiumDownloadBytes;
+                if (response.Content.Headers.ContentLength is { } declared && cap > 0 && declared > cap)
+                    throw new IOException($"That download is larger than BakaLoader will fetch ({declared} bytes against a limit of {cap}).");
+
+                await using var source = await response.Content.ReadAsStreamAsync();
+                await using var destination = File.Create(destinationPath);
+
+                var buffer = new byte[81920];
+                long total = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    total += read;
+                    if (cap > 0 && total > cap)
+                        throw new IOException($"That download passed the size BakaLoader will fetch ({cap} bytes), so it was stopped.");
+
+                    await destination.WriteAsync(buffer, 0, read);
+                }
+
+                return total;
+            }
+            finally
+            {
+                response?.Dispose();
+            }
+        }
+
+        private static bool IsRedirect(HttpResponseMessage response)
+        {
+            var status = (int)response.StatusCode;
+            return status is 301 or 302 or 303 or 307 or 308;
+        }
+
+        /// <summary>
+        /// Clears any BakaLoader source note out of a freshly-unpacked archive, so a
+        /// downloaded package can never claim to have come from somewhere it did not.
+        /// </summary>
+        private void StripSourceMarkers(string extractedRoot)
+        {
+            var removed = ModSourceMarkerFile.StripFrom(extractedRoot);
+            if (removed > 0)
+                Logger.Warning("Removed {0} source note(s) that came inside the downloaded package.", removed);
         }
 
         /// <summary>

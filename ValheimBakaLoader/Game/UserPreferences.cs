@@ -21,6 +21,12 @@ namespace ValheimBakaLoader.Game
 
         public bool AutoUpdateMods { get; set; }
 
+        // Also look at Hexium, a second mod site, when checking for newer versions.
+        // Off unless the host turns it on: with it off BakaLoader never opens a
+        // connection to hexium.gg at all. Turning it on is the whole of the consent,
+        // and the switch says in the Upkeep card exactly what it means.
+        public bool UseHexiumSource { get; set; }
+
         public bool AutoUpdateBakaLoader { get; set; } = true;
 
         public bool StartWithWindows { get; set; }
@@ -101,6 +107,7 @@ namespace ValheimBakaLoader.Game
                 SaveDataFolderPath = file.SaveDataFolderPath ?? defaults.SaveDataFolderPath,
                 CheckForUpdates = file.CheckForUpdates ?? defaults.CheckForUpdates,
                 AutoUpdateMods = file.AutoUpdateMods ?? defaults.AutoUpdateMods,
+                UseHexiumSource = file.UseHexiumSource ?? defaults.UseHexiumSource,
                 AutoUpdateBakaLoader = file.AutoUpdateBakaLoader ?? defaults.AutoUpdateBakaLoader,
                 StartWithWindows = file.StartWithWindows ?? defaults.StartWithWindows,
                 ShareAnonymousStats = file.ShareAnonymousStats ?? defaults.ShareAnonymousStats,
@@ -147,6 +154,7 @@ namespace ValheimBakaLoader.Game
             SaveDataFolderPath = SaveDataFolderPath,
             CheckForUpdates = CheckForUpdates,
             AutoUpdateMods = AutoUpdateMods,
+            UseHexiumSource = UseHexiumSource,
             AutoUpdateBakaLoader = AutoUpdateBakaLoader,
             StartWithWindows = StartWithWindows,
             ShareAnonymousStats = ShareAnonymousStats,

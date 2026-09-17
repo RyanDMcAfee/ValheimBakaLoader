@@ -477,6 +477,21 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
 .pill.amber{background:rgba(232,169,60,.13);color:var(--amber);border:1px solid rgba(232,169,60,.4)}
 .pill.blue{background:rgba(91,122,140,.15);color:var(--cold-hi);border:1px solid rgba(91,122,140,.4)}
 .pill.ember{background:var(--ember-dim);color:var(--ember-hi);border:1px solid rgba(255,122,26,.45)}
+/* The chip on a mod row that came from the second site, and the mark on the Latest cell
+   that says the other site is ahead. Both are quieter than a pill on purpose: they are a
+   note about where files came from, not the row's status. The mark is the offer as well
+   as the note, so it reads as something you can press. */
+.modchip{display:inline-block;font-size:8.5px;letter-spacing:1.1px;font-weight:700;line-height:1.5;
+  padding:1px 6px;border-radius:20px;text-transform:uppercase;vertical-align:1px;
+  background:rgba(91,122,140,.15);color:var(--cold-hi);border:1px solid rgba(91,122,140,.4)}
+.modmark{display:inline-block;font-family:var(--sans);font-size:9.5px;letter-spacing:.5px;
+  line-height:1.5;padding:1px 6px;margin-left:6px;border-radius:3px;cursor:pointer;white-space:nowrap;
+  background:rgba(91,122,140,.14);color:var(--cold-hi);border:1px solid rgba(91,122,140,.42);
+  transition:background .15s var(--ease),color .15s var(--ease),border-color .15s var(--ease)}
+.modmark:hover{background:rgba(91,122,140,.26);color:var(--bone)}
+.modmark:focus-visible{outline:1px solid var(--cold-hi);outline-offset:2px}
+.modmark.ts{background:rgba(232,169,60,.13);color:var(--amber);border-color:rgba(232,169,60,.42)}
+.modmark.ts:hover{background:rgba(232,169,60,.24);color:#F3C77A}
 /* The Server card's waiting-update pill is a real button drawn as a pill: it reads as
    status and acts as the action, and greys out while the server is still up. */
 .updpill{flex:none;align-self:center;font-family:var(--sans);cursor:pointer;

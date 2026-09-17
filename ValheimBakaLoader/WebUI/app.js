@@ -50,6 +50,8 @@ const S={
   saveSec:null, saveInterval:600,
   players:[], caps:{rcon:false,devcommands:false},
   mods:null, modsScanned:false, modsScanning:false, modsUpdating:false, lastScan:null,
+  hexium:false,           // the host's "Also check Hexium" switch, mirrored from userprefs
+
   modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
   extIp:null, intIp:null,
   gameVersion:null, networkVersion:null,   // read off the server's own startup banner
@@ -316,6 +318,9 @@ function applyTerms(){
   try{renderHearth();}catch{}
   try{renderAppBar();}catch{}
   try{renderConditionBar();}catch{}
+  /* The Upkeep switch that opens the second mod site writes its label and its
+     explanation through TT() as well, so both follow the swap. */
+  try{renderHexiumCopy();}catch{}
   /* The two surfaces that say which BakaLoader is waiting. Both write their text through
      TT() at render time, so the swap only reaches them if they are re-rendered here. */
   try{renderAppUpdatePill();}catch{}
@@ -1878,6 +1883,20 @@ wireSort("#page-mods th.sortable",S.modSort,()=>renderMods());
 /* The "Possibly outdated" hint, said plainly: a nudge to check, never a verdict. */
 const MOD_PO_TIP="The newest version on Thunderstore came out before Valheim last updated, and that update is at least a week old, so the mod may not account for the current game version. The column stays blank for the first week after a Valheim update so authors can catch up. It is a hint, not proof the mod is broken.";
 const MOD_PO_TIP_UNKNOWN="Valheim's last update date could not be read for this server, so this hint is left blank for every mod.";
+/* What the Hexium chip on a row means, said in full on hover. */
+const HEXIUM_ROW_TIP="These files came from Hexium, so BakaLoader leaves them alone: this mod sits out Update all, the waiting count and the unattended restart. Swapping back to the Thunderstore build is offered from the row menu, and it asks first.";
+const HEXIUM_MARK_TIP="Hexium holds a higher version than both what is installed and what Thunderstore has. Nothing is downloaded until you ask for it and read what it is.";
+const THUNDERSTORE_MARK_TIP="Thunderstore has moved past this Hexium copy. Installing the Thunderstore build replaces these files and hands the mod back to the ordinary update path.";
+/* The mark that hangs off the Latest cell, or nothing. At most one: a row is either a
+   Thunderstore install the other site is ahead of, or a Hexium install Thunderstore is
+   ahead of, and never both. */
+function modLatestMark(m,i){
+  if(m.hexiumNewer&&m.hexiumLatest)
+    return ` <span class="modmark" data-hex="${i}" role="button" tabindex="0" title="${esc(HEXIUM_MARK_TIP)}">${esc(TT("newer on Hexium"))} ${esc(m.hexiumLatest)}</span>`;
+  if(m.thunderstoreNewer&&m.LatestVersion)
+    return ` <span class="modmark ts" data-ts="${i}" role="button" tabindex="0" title="${esc(THUNDERSTORE_MARK_TIP)}">${esc(TT("newer on Thunderstore"))} ${esc(m.LatestVersion)}</span>`;
+  return "";
+}
 /* The transient status a row shows while a bulk update runs. Cleared by the fresh scan
    that follows the run, so it never lingers into the resting table. */
 function renderRowStatus(st){
@@ -1978,9 +1997,17 @@ function renderMods(){
       :`<td class="mod-po"></td>`;
     const patcherTag=m.IsPatcher
       ?` <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(TT("patcher"))}</span>`:"";
-    return `<tr data-i="${i}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span>${patcherTag}</td>`+
+    /* A copy the host took from the second site says so, and keeps saying so whatever
+       happens to the switch afterwards: it is why this row sits out Update all. */
+    const srcChip=(m.installedSource==="hexium")
+      ?` <span class="modchip" title="${esc(HEXIUM_ROW_TIP)}">${esc(TT("Hexium"))}</span>`:"";
+    /* One mark at most on the Latest cell. Either the other site is ahead of both what
+       is installed and what Thunderstore has, or this is a Hexium copy Thunderstore has
+       moved past. Both are offers, and both ask before they do anything. */
+    const mark=modLatestMark(m,i);
+    return `<tr data-i="${i}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span>${patcherTag}${srcChip}</td>`+
       `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
-      `<td class="mono"${has?' style="color:var(--amber)"':""}>${esc(m.LatestVersion||"-")}</td>`+
+      `<td class="mono"${has?' style="color:var(--amber)"':""}>${esc(m.LatestVersion||"-")}${mark}</td>`+
       `<td>${statusCell}</td>`+
       po+`</tr>`;
   }).join("")||`<tr><td colspan="5">${emptyState({mark:"ᚱ",title:"No mods installed",
@@ -2058,20 +2085,46 @@ function openThunderstorePage(mod){
   Native.call("shell.openThunderstore",{namespace,name})
     .catch(err=>toast("ᚦ "+TT("Thunderstore page did not open · ")+(err&&err.message||"unknown error")));
 }
-/* right-click a mod row → its Thunderstore page, or remove */
+/* Opens the mod's page on Hexium in the host's browser. The app builds the address
+   from the two halves of the identity the scan matched, so this only ever lands on
+   Hexium; a mod the site does not carry has no page and the menu says so. */
+function openHexiumPage(mod){
+  if(!mod||!mod.hexiumUrl) return;
+  Native.call("shell.openHexium",{owner:readHexiumOwner(mod),name:readHexiumName(mod)})
+    .catch(err=>toast("ᚦ "+TT("Hexium page did not open · ")+(err&&err.message||TT("unknown error"))));
+}
+/* The scan hands back the built page address rather than the two halves, so the halves
+   are read back off it when the menu needs them. The app built that address from
+   segments it had already checked, and it checks them again before it opens anything. */
+function readHexiumOwner(mod){const p=String(mod.hexiumUrl||"").split("/");return p.length>=2?p[p.length-2]:"";}
+function readHexiumName(mod){const p=String(mod.hexiumUrl||"").split("/");return p.length>=1?p[p.length-1]:"";}
+/* right-click a mod row → its page on either site, the swap offers, or remove */
 function modRowItems(mod){
   const onStore=!!(mod.thunderstoreNamespace&&mod.thunderstoreName);
+  const onHexium=!!mod.hexiumUrl;
   const isPatcher=!!mod.IsPatcher;
   const canUpd=!!mod.UpdateAvailable&&!isPatcher;
-  return [
-    {r:"ᚱ",label:"Update mod",disabled:!canUpd,
-      tip:isPatcher?TT("Patcher mods are not updated here."):TT("This mod is already up to date."),
+  const items=[
+    {r:"ᚱ",label:TT("Update mod"),disabled:!canUpd,
+      tip:isPatcher?TT("Patcher mods are not updated here.")
+        :(mod.installedSource==="hexium"?TT("This copy came from Hexium, so Thunderstore updates are not applied to it.")
+        :TT("This mod is already up to date.")),
       fn:()=>doUpdateOne(mod)},
-    {r:"ᛋ",label:"Open Thunderstore page",disabled:!onStore,tip:TT("Not on Thunderstore"),
+    {r:"ᛋ",label:TT("Open Thunderstore page"),disabled:!onStore,tip:TT("Not on Thunderstore"),
       fn:()=>openThunderstorePage(mod)},
-    "hr",
-    {r:"ᛪ",label:"Remove mod…",danger:true,fn:()=>removeModFlow(mod)},
   ];
+  /* Left out entirely rather than greyed: a host who never turned the second site on
+     should not read its name anywhere but on the switch that turns it on. */
+  if(onHexium)
+    items.push({r:"ᚺ",label:TT("Open on Hexium"),fn:()=>openHexiumPage(mod)});
+  /* Each swap is its own deliberate act, and each one asks before it fetches anything. */
+  if(mod.hexiumNewer&&mod.hexiumLatest)
+    items.push({r:"ᚺ",label:TT("Install the Hexium build"),fn:()=>hexiumInstallFlow(mod)});
+  if(mod.thunderstoreNewer&&mod.LatestVersion)
+    items.push({r:"ᛋ",label:TT("Install the Thunderstore build"),fn:()=>thunderstoreSwapFlow(mod)});
+  items.push("hr");
+  items.push({r:"ᛪ",label:TT("Remove mod…"),danger:true,fn:()=>removeModFlow(mod)});
+  return items;
 }
 /* Update a single mod from its row menu. The bridge streams the same mods.updateProgress
    events the bulk path uses, so the row flips updating -> done in place; no server is
@@ -2148,14 +2201,123 @@ async function doRemoveMod(mod,includeConfig,dependents){
   else toast("ᛪ Removed "+okN+" mod"+(okN===1?"":"s")+" · backup kept");
   scanMods();
 }
+/* ---- The second mod site: ask first, then fetch ----
+   Nothing on this path ever installs on its own. The host is shown exactly what the
+   download is, who Hexium says published it, and what BakaLoader cannot tell them, and
+   only a deliberate answer moves a byte. The host side refuses the install without the
+   one-shot token this dialog hands back. */
+function hexiumFailToast(r){
+  if(!r) return;
+  if(r.Reason==="sourceOff"){
+    toast("ᚦ "+TT("Turn on Also check Hexium in Upkeep to install from Hexium."));
+    return;
+  }
+  const why=r.Error||TT("unknown error");
+  toast("ᚦ "+TT("Hexium install did not go ahead")+" · "+why);
+  logLine("warn","[Hexium] "+why);
+}
+/* The stand-in answer the browser preview feeds the real dialog, so the wording and the
+   layout can be walked with no host behind them. The app never reads this. */
+const HEXIUM_PREVIEW={Owner:"JereKuusela",Name:"WorldEditCommands",Version:"1.67.0",
+  FileSize:1830412,Replacing:true,ReplacingVersion:"1.65.0",
+  Dependencies:["denikson-BepInExPack_Valheim-5.4.2350"],Token:"preview"};
+function hexiumConsentModal(pay,onAccept){
+  const size=(pay.FileSize!=null&&Number(pay.FileSize)>0)?fmtBytes(pay.FileSize):null;
+  const deps=Array.isArray(pay.Dependencies)?pay.Dependencies:[];
+  const body=
+    `<div class="mbody-note">${esc(TT("This download comes from Hexium, not Thunderstore. BakaLoader cannot tell you who published it: the site does not say who runs it, and its accounts are Discord sign-ins, so a name there is not proof of the same person on Thunderstore."))}</div>`+
+    `<div class="mono-list">`+
+      `${esc(pay.Owner)} / ${esc(pay.Name)}<br>`+
+      `${esc(TT("Version"))} ${esc(pay.Version)}`+
+      (size?`<br>${esc(TT("Download"))} ${esc(size)}`:"")+
+    `</div>`+
+    (pay.Replacing
+      ?`<div class="mwarn">⚠ ${esc(TT("A folder for this mod is already installed and will be replaced. The old copy is backed up first."))}</div>`
+      :`<div class="mbody-note">${esc(TT("This mod is not installed on this server yet, so nothing is replaced."))}</div>`)+
+    (deps.length
+      ?`<div class="mbody-note" style="margin-top:10px">${esc(TT("This package says it needs these, and BakaLoader does not fetch them for you:"))}</div>`+
+       `<div class="mono-list">${deps.map(d=>esc(d)).join("<br>")}</div>`
+      :"")+
+    ((S.state?.status==="Running")
+      ?`<div class="mwarn">⚠ ${esc(TT("The server is RUNNING. A new mod only loads after a restart, and locked files may fail to replace."))}</div>`:"");
+  confirmModal(TT("Install from Hexium?"),body,TT("I accept the risk, install"),()=>onAccept());
+}
+/* Resolves what installing would do, then puts it to the host. A row hands its own
+   identity in; a pasted link has already been resolved by the host side. */
+async function hexiumInstallFlow(mod){
+  if(S.modsUpdating||S.modsScanning) return;
+  if(!Native.available){
+    /* Browser preview: the real dialog with a stand-in answer, so it can be walked. */
+    hexiumConsentModal(HEXIUM_PREVIEW,()=>toast("ᚺ "+TT("Installing from Hexium runs in the app.")));
+    return;
+  }
+  const r=await rpc("mods.hexiumPrepare",{
+    owner:readHexiumOwner(mod),name:readHexiumName(mod),version:mod.hexiumLatest||null});
+  if(r===FAIL) return;
+  if(!r.NeedsConsent){hexiumFailToast(r);return;}
+  hexiumConsentModal(r,()=>doInstallFromHexium(r));
+}
+async function doInstallFromHexium(pay){
+  if(S.modsUpdating||S.modsScanning) return;
+  S.modsUpdating=true; renderMods();
+  toast("ᚺ "+TT("Fetching from Hexium")+"…");
+  logLine("info","[Hexium] downloading "+pay.Owner+"-"+pay.Name+" v"+pay.Version);
+  const r=await rpc("mods.installFromHexium",
+    {owner:pay.Owner,name:pay.Name,version:pay.Version,token:pay.Token});
+  S.modsUpdating=false;
+  if(r===FAIL){renderMods();return;}
+  if(r.Installed){
+    const full=r.Owner+"-"+r.Name;
+    toast("ᚺ "+TT("Installed from Hexium")+" · "+full+" "+(r.Version||""));
+    logLine("ok","[Hexium] installed "+full+" v"+(r.Version||"?")+(r.Replaced?" (previous copy backed up)":""));
+    if(Array.isArray(r.Dependencies)&&r.Dependencies.length)
+      logLine("info","[Hexium] "+full+" says it needs: "+r.Dependencies.join(", "));
+    if(S.state?.status==="Running") logLine("warn","[Hexium] server is running, so "+full+" loads on the next restart");
+    await scanMods();
+  }else{
+    hexiumFailToast(r);
+    renderMods();
+  }
+}
+/* The way back. A Hexium copy is never replaced on its own, so the swap to the
+   Thunderstore build is its own action and it asks the same way the other one does. */
+function thunderstoreSwapFlow(mod){
+  const owner=mod.thunderstoreNamespace, name=mod.thunderstoreName, version=mod.LatestVersion;
+  if(!owner||!name||!version) return;
+  confirmModal(TT("Install the Thunderstore build?"),
+    `<div class="mbody-note">${esc(TT("This copy came from Hexium. Installing the Thunderstore build replaces those files and hands the mod back to the ordinary update path, so it joins Update all again."))}</div>`+
+    `<div class="mono-list">${esc(owner)} / ${esc(name)}<br>${esc(TT("Version"))} ${esc(version)}</div>`+
+    `<div class="mwarn">⚠ ${esc(TT("The installed folder is backed up and then replaced."))}</div>`,
+    TT("Install the Thunderstore build"),
+    ()=>{
+      if(!Native.available){toast("ᛋ "+TT("Installing runs in the app."));return;}
+      doAddMod("https://thunderstore.io/c/valheim/p/"+owner+"/"+name+"/v/"+version+"/");
+    });
+}
+/* Clicking a mark on the Latest cell is the same offer the row menu carries. */
+$("#modTable").addEventListener("click",e=>{
+  const mark=e.target.closest(".modmark"); if(!mark) return;
+  e.preventDefault(); e.stopPropagation();
+  const list=$("#modTable")._list||[];
+  if(mark.dataset.hex!=null){const m=list[+mark.dataset.hex]; if(m) hexiumInstallFlow(m); return;}
+  if(mark.dataset.ts!=null){const m=list[+mark.dataset.ts]; if(m) thunderstoreSwapFlow(m);}
+});
+
 /* ---- Add a mod from any pasted Thunderstore link ---- */
 function addModFlow(){
   if(S.modsUpdating||S.modsScanning) return;
   const runWarn=(S.state?.status==="Running")
     ?`<div class="mwarn">⚠ The server is RUNNING. New mods only load after a restart, and replacing an existing mod may fail on locked files.</div>`:"";
+  /* With the second site switched on, a hexium.gg address is accepted here too. It
+     never installs from the paste: it comes back with what the download would be, and
+     the host reads that and answers. */
+  const hexNote=S.hexium
+    ?`<div class="mbody-note" style="margin-top:8px">${esc(TT("A hexium.gg address works here as well. BakaLoader will show you what it found and ask before it fetches anything."))}</div>`
+    :"";
   confirmModal("Add mod from Thunderstore",
     `<div class="mbody-note">Paste any Thunderstore link: the mod's page, its versions page, a direct download link, or a ror2mm:// mod-manager link. If the link has no version, the latest release is installed.</div>`+
     `<input type="text" id="mModUrl" placeholder="https://thunderstore.io/c/valheim/p/Author/ModName/" spellcheck="false" autocomplete="off" style="margin-top:10px">`+
+    hexNote+
     runWarn,
     "Install",m=>{
       const url=(m.querySelector("#mModUrl")?.value||"").trim();
@@ -2176,6 +2338,18 @@ async function doAddMod(url){
   const r=await rpc("mods.addFromUrl",{url});
   S.modsUpdating=false;
   if(r===FAIL){renderMods();return;}
+  /* A hexium.gg address stops here on purpose: the host side resolved it and handed
+     back what it is, and nothing is fetched until the host reads that and says yes. */
+  if(r.NeedsConsent){
+    renderMods();
+    hexiumConsentModal(r,()=>doInstallFromHexium(r));
+    return;
+  }
+  if(r.Reason==="sourceOff"||(r.Source==="hexium"&&!r.Installed)){
+    hexiumFailToast(r);
+    renderMods();
+    return;
+  }
   if(r.Installed){
     const full=r.Owner+"-"+r.Name;
     toast("ᚨ Installed "+full+" "+(r.Version||"")+(r.Replaced?" · replaced previous install":""));
@@ -2626,6 +2800,18 @@ $("#upkeepBody")?.addEventListener("click",e=>{
 $("#tCheckUpd")?.addEventListener("click",syncUpkeepGates);
 syncUpkeepGates();
 
+/* ---------- THE SECOND MOD SITE (Hexium) ----------
+   Turning the switch on IS the consent: there is no separate notice anywhere, so the
+   switch has to carry the whole of what it means. The wording lives here rather than
+   in the page so the plain-terminology pass reaches it like every other line. */
+const HEXIUM_SWITCH_LABEL="Also check Hexium";
+const HEXIUM_HELP="Hexium is a second mod site. Whoever runs it is not named on the site, and its accounts are Discord sign-ins, so BakaLoader cannot tell you that an author there is the same person as the author of the same name on Thunderstore. With this on, your machine contacts hexium.gg about four times an hour while BakaLoader is open, and that site says it keeps request logs for up to ninety days. Nothing is installed from Hexium unless you ask for it and accept what it is.";
+function renderHexiumCopy(){
+  const label=$("#hexiumSwitchLabel"); if(label) label.textContent=TT(HEXIUM_SWITCH_LABEL);
+  const help=$("#hexiumHelp"); if(help) help.textContent=TT(HEXIUM_HELP);
+}
+renderHexiumCopy();
+
 /* WORLD hall: World Modifiers + Advanced Rites + Directories fold like the Upkeep card */
 ["secWorldMods","secRites","secDirs"].forEach(id=>{
   const el=document.getElementById(id);
@@ -2637,6 +2823,8 @@ async function initUpkeep(){
     setT("tCheckUpd",up.CheckForUpdates);
     setT("tAutoUpdApp",up.AutoUpdateBakaLoader);
     setT("tAutoUpdMods",up.AutoUpdateMods);
+    setT("tUseHexium",up.UseHexiumSource);
+    S.hexium=!!up.UseHexiumSource;
     setT("tStartWin",up.StartWithWindows);
     setT("tStartMin",up.StartMinimized);
     setT("tShareStats",up.ShareAnonymousStats);
@@ -2656,7 +2844,7 @@ async function initUpkeep(){
     renderWaystone();
   }
   /* the generic [data-t] handler already flipped .on before these fire, so just persist */
-  const save=()=>rpc("userprefs.save",{prefs:{CheckForUpdates:T("tCheckUpd"),AutoUpdateBakaLoader:T("tAutoUpdApp"),AutoUpdateMods:T("tAutoUpdMods"),StartWithWindows:T("tStartWin"),StartMinimized:T("tStartMin"),ShareAnonymousStats:T("tShareStats"),PlainTerminology:!T("tPlainTerms")}});
+  const save=()=>rpc("userprefs.save",{prefs:{CheckForUpdates:T("tCheckUpd"),AutoUpdateBakaLoader:T("tAutoUpdApp"),AutoUpdateMods:T("tAutoUpdMods"),UseHexiumSource:T("tUseHexium"),StartWithWindows:T("tStartWin"),StartMinimized:T("tStartMin"),ShareAnonymousStats:T("tShareStats"),PlainTerminology:!T("tPlainTerms")}});
   $("#tCheckUpd").addEventListener("click",()=>{
     save();
     /* the standing update row says whether it installs itself, and with checking off it
@@ -2673,6 +2861,16 @@ async function initUpkeep(){
     refreshAppUpdateInfo();
   });
   $("#tAutoUpdMods").addEventListener("click",save);
+  /* The second site goes on or off here and nowhere else. Off, BakaLoader opens no
+     connection to hexium.gg at all, so the rows lose their Hexium marks on the next
+     scan rather than the moment the switch moves. */
+  $("#tUseHexium")?.addEventListener("click",()=>{
+    save();
+    S.hexium=T("tUseHexium");
+    toast("ᚺ "+(S.hexium
+      ?TT("Hexium is on. Scan again to see what it holds.")
+      :TT("Hexium is off. BakaLoader will not contact it.")));
+  });
   $("#tStartWin").addEventListener("click",save);
   $("#tStartMin").addEventListener("click",save);
   $("#tShareStats").addEventListener("click",save);
@@ -2838,7 +3036,7 @@ function confirmModal(title,bodyHtml,okLabel,onOk){
   const m=modalOpen(
     `<div class="mtitle">${esc(title)}</div>`+
     `<div class="mbody">${bodyHtml}</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Cancel</button><button class="btn btn-ember btn-sm" id="mOk">${esc(okLabel)}</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(TT("Cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(okLabel)}</button></div>`);
   m.querySelector("#mOk").addEventListener("click",()=>{try{onOk(m);}finally{modalClose();}});
   m.querySelector("#mCancel").addEventListener("click",modalClose);
 }
@@ -6625,9 +6823,9 @@ if(!Native.available){
      looking at, so it is the default; index.html#uptodate walks the quiet one, where
      none of these surfaces show anything at all. */
   APP_UPD=location.hash==="#uptodate"
-    ?{installedVersion:"1.0.9",latestVersion:null,updateAvailable:false,releaseUrl:null,
+    ?{installedVersion:"1.1.0",latestVersion:null,updateAvailable:false,releaseUrl:null,
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true}
-    :{installedVersion:"1.0.9",latestVersion:"1.0.10",updateAvailable:true,
+    :{installedVersion:"1.1.0",latestVersion:"1.1.1",updateAvailable:true,
       releaseUrl:"https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest",
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true};
   renderAppUpdatePill();
@@ -6679,9 +6877,18 @@ if(!Native.available){
   };
   renderPlayers();
   S.mods=[
-    {ModName:"WorldEditCommands",Author:"JereKuusela",FullName:"JereKuusela-WorldEditCommands",InstalledVersion:"1.65.0",LatestVersion:"1.66.0",UpdateAvailable:true},
-    {ModName:"ExtraSlots",Author:"shudnal",FullName:"shudnal-ExtraSlots",InstalledVersion:"1.0.20",LatestVersion:"1.0.22",UpdateAvailable:true},
-    {ModName:"EpicLoot",Author:"RandyKnapp",FullName:"RandyKnapp-EpicLoot",InstalledVersion:"0.11.3",LatestVersion:"0.11.3"},
+    /* The second site is ahead of both this install and Thunderstore, so the row carries
+       the "newer on Hexium" mark and the menu offers that build. */
+    {ModName:"WorldEditCommands",Author:"JereKuusela",FullName:"JereKuusela-WorldEditCommands",InstalledVersion:"1.65.0",LatestVersion:"1.66.0",UpdateAvailable:true,
+     hexiumLatest:"1.67.0",hexiumNewer:true,hexiumUrl:"https://valheim.hexium.gg/mods/JereKuusela/WorldEditCommands"},
+    /* A copy the host took from Hexium: chipped, out of Update all whatever Thunderstore
+       holds, and offered the way back as its own deliberate action. */
+    {ModName:"ExtraSlots",Author:"shudnal",FullName:"shudnal-ExtraSlots",InstalledVersion:"1.0.20",LatestVersion:"1.0.22",UpdateAvailable:false,
+     installedSource:"hexium",thunderstoreNewer:true,
+     hexiumLatest:"1.0.20",hexiumNewer:false,hexiumUrl:"https://valheim.hexium.gg/mods/shudnal/ExtraSlots"},
+    /* Carried by both sites at the same version: a page to open, and no mark at all. */
+    {ModName:"EpicLoot",Author:"RandyKnapp",FullName:"RandyKnapp-EpicLoot",InstalledVersion:"0.11.3",LatestVersion:"0.11.3",
+     hexiumLatest:"0.11.3",hexiumNewer:false,hexiumUrl:"https://valheim.hexium.gg/mods/RandyKnapp/EpicLoot"},
     {ModName:"ComfyMods-Gizmo",Author:"ComfyMods",FullName:"ComfyMods-Gizmo",InstalledVersion:"1.15.0",LatestVersion:"1.15.0"},
     {ModName:"PlantEverything",Author:"Advize",FullName:"Advize-PlantEverything",InstalledVersion:"1.18.2",LatestVersion:"1.18.2"},
     {ModName:"SearsCatalog",Author:"ComfyMods",FullName:"ComfyMods-SearsCatalog",InstalledVersion:"1.4.0",LatestVersion:"1.4.0"},
@@ -6715,6 +6922,14 @@ if(!Native.available){
   });
   S.modsScanned=true; S.lastScan="21:38";
   renderMods();
+  /* The row menu is host-only in the app, so the preview gets its own opener; it calls
+     the same builder, so what a screenshot shows is what the app shows. */
+  $("#modTable").addEventListener("contextmenu",e=>{
+    const tr=e.target.closest("tr[data-i]"); if(!tr) return;
+    e.preventDefault();
+    const mod=($("#modTable")._list||[])[+tr.dataset.i]; if(!mod) return;
+    ctxOpen(e.clientX,e.clientY,mod.FullName,modRowItems(mod));
+  });
   $("#fWorld").innerHTML=`<option>Final Sunset</option>`;
 
   /* mock config vault (RUNES page preview) */

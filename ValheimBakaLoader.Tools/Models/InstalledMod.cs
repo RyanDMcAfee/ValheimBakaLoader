@@ -79,10 +79,60 @@ namespace ValheimBakaLoader.Tools.Models
         public string ThunderstoreName { get; set; }
 
         /// <summary>
+        /// Where this copy of the mod came from, when BakaLoader installed it from
+        /// somewhere other than Thunderstore and left a note saying so: "hexium", or
+        /// null for everything else. Only ever set from a note BakaLoader wrote and
+        /// still believes (see <c>ModSourceMarkerFile</c>), never guessed.
+        /// </summary>
+        public string InstalledSource { get; set; }
+
+        /// <summary>True when this copy was installed from Hexium by BakaLoader.</summary>
+        public bool IsHexiumInstalled =>
+            string.Equals(InstalledSource, "hexium", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The highest version Hexium offers for this exact package, or null when the
+        /// host has not turned that source on, Hexium has no such package, or the
+        /// lookup did not answer.
+        /// </summary>
+        public string HexiumLatestVersion { get; set; }
+
+        /// <summary>Owner as Hexium spells it, set only from a package Hexium answered with.</summary>
+        public string HexiumOwner { get; set; }
+
+        /// <summary>Package name as Hexium spells it, set with <see cref="HexiumOwner"/> and never alone.</summary>
+        public string HexiumName { get; set; }
+
+        /// <summary>
         /// True when <see cref="LatestVersion"/> is a strictly higher semver than
         /// <see cref="InstalledVersion"/>. Returns false when either side is missing
         /// or when the installed version is "unknown" (manifest-less mods).
+        /// <para>
+        /// A copy installed from Hexium always answers false, whatever Thunderstore
+        /// holds. This is the one flag "Update all", the waiting-updates count and the
+        /// unattended restart path all read, so a mod the host deliberately took from
+        /// the other site is never quietly replaced with the Thunderstore build.
+        /// Swapping back is offered as its own action, and it asks first.
+        /// </para>
         /// </summary>
-        public bool UpdateAvailable => SemVer.IsNewer(LatestVersion, InstalledVersion);
+        public bool UpdateAvailable => !IsHexiumInstalled && SemVer.IsNewer(LatestVersion, InstalledVersion);
+
+        /// <summary>
+        /// True when Hexium has a version worth telling the host about: higher than
+        /// what is installed, and higher than Thunderstore's newest as well, so the
+        /// mark only ever appears when the other site really is ahead. A package
+        /// Thunderstore does not carry at all satisfies the second half.
+        /// </summary>
+        public bool HexiumNewer =>
+            !string.IsNullOrWhiteSpace(HexiumLatestVersion)
+            && SemVer.IsNewer(HexiumLatestVersion, InstalledVersion)
+            && (string.IsNullOrWhiteSpace(LatestVersion) || SemVer.IsNewer(HexiumLatestVersion, LatestVersion));
+
+        /// <summary>
+        /// True for a Hexium-installed copy that Thunderstore has since moved past.
+        /// The row says so and offers the swap; nothing acts on it by itself.
+        /// </summary>
+        public bool ThunderstoreNewer =>
+            IsHexiumInstalled && SemVer.IsNewer(LatestVersion, InstalledVersion);
     }
 }

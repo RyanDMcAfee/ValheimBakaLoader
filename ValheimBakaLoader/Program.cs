@@ -62,6 +62,7 @@ namespace ValheimBakaLoader
             // Remote services: GitHub self-update, Thunderstore mods, telemetry.
             services.AddSingleton<IGitHubClient, GitHubClient>();
             services.AddSingleton<IThunderstoreClient, ThunderstoreClient>();
+            services.AddSingleton<IHexiumClient, HexiumClient>();
             services.AddSingleton<IModScanner, ModScanner>();
             services.AddSingleton<IModUpdateService, ModUpdateService>();
             services.AddSingleton<IModRemovalService, ModRemovalService>();

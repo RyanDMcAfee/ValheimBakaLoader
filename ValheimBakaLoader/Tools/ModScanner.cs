@@ -213,15 +213,22 @@ namespace ValheimBakaLoader.Tools
                     modName = manifest.Name;
                 }
 
+                var installedVersion = string.IsNullOrWhiteSpace(manifest.VersionNumber)
+                    ? UnknownVersion
+                    : manifest.VersionNumber.Trim();
+
                 return new InstalledMod
                 {
                     Author = author,
                     ModName = modName,
-                    InstalledVersion = string.IsNullOrWhiteSpace(manifest.VersionNumber)
-                        ? UnknownVersion
-                        : manifest.VersionNumber.Trim(),
+                    InstalledVersion = installedVersion,
                     Website = manifest.WebsiteUrl,
                     Dependencies = ParseDependencyFullNames(manifest.Dependencies),
+                    // Where these files came from, when BakaLoader put them there itself
+                    // and left a note saying so. The note is only believed when it names
+                    // the same version the manifest does, so a folder replaced since is
+                    // read as an ordinary Thunderstore install again.
+                    InstalledSource = ModSourceMarkerFile.ReadTrustedSource(modDirectory, installedVersion),
                 };
             }
             catch (JsonException ex)

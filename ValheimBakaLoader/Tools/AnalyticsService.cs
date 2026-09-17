@@ -44,6 +44,13 @@ namespace ValheimBakaLoader.Tools
 
         [JsonProperty("v", NullValueHandling = NullValueHandling.Ignore)]
         public string ToVersion { get; set; }
+
+        /// <summary>
+        /// Which mod site a modin/modup came from: "hexium" when the host installed
+        /// it from there, absent for the Thunderstore path everything else takes.
+        /// </summary>
+        [JsonProperty("src", NullValueHandling = NullValueHandling.Ignore)]
+        public string Source { get; set; }
     }
 
     public interface IAnalyticsService
