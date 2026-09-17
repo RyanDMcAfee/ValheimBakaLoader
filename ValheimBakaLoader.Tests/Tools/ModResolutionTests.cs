@@ -93,12 +93,21 @@ namespace ValheimBakaLoader.Tests.Tools
         private static Mock<IThunderstoreClient> StaleListFreshLive()
         {
             var client = new Mock<IThunderstoreClient>();
+            client.Setup(c => c.LookupLiveAsync("Vapok", "XPortalNetworks"))
+                .ReturnsAsync(Answered(Package("2.0.5", LiveUrl)));
             client.Setup(c => c.GetLiveAsync("Vapok", "XPortalNetworks"))
                 .ReturnsAsync(Package("2.0.5", LiveUrl));
             client.Setup(c => c.GetLatestAsync("Vapok", "XPortalNetworks"))
                 .ReturnsAsync(Package("2.0.3", ListUrl));
             return client;
         }
+
+        /// <summary>The site spoke: here is the package, or here is a plain no.</summary>
+        private static ThunderstoreLiveLookup Answered(ThunderstorePackage package = null) =>
+            new() { Answered = true, Package = package };
+
+        /// <summary>The site did not speak, which says nothing about the package.</summary>
+        private static ThunderstoreLiveLookup Silent() => new() { Answered = false };
 
         private static ModUpdateService Service(IThunderstoreClient thunderstore, RecordingHttpClientProvider provider) =>
             new(thunderstore, provider, Mock.Of<IApplicationLogger>());
@@ -155,7 +164,7 @@ namespace ValheimBakaLoader.Tests.Tools
         public async Task When_the_live_answer_does_not_come_the_held_list_still_installs()
         {
             var client = StaleListFreshLive();
-            client.Setup(c => c.GetLiveAsync("Vapok", "XPortalNetworks")).ReturnsAsync((ThunderstorePackage)null);
+            client.Setup(c => c.LookupLiveAsync("Vapok", "XPortalNetworks")).ReturnsAsync(Silent());
             var provider = Downloads();
 
             var result = await Service(client.Object, provider).InstallFromThunderstoreAsync(Link(), Plugins);
@@ -187,12 +196,56 @@ namespace ValheimBakaLoader.Tests.Tools
         public async Task A_package_neither_address_knows_installs_nothing_and_says_so()
         {
             var client = new Mock<IThunderstoreClient>();
+            // The site spoke and has no such package, which is the only answer that means
+            // the mod is not there.
+            client.Setup(c => c.LookupLiveAsync("Vapok", "XPortalNetworks")).ReturnsAsync(Answered());
             var provider = Downloads();
 
             var result = await Service(client.Object, provider).InstallFromThunderstoreAsync(Link(), Plugins);
 
             Assert.False(result.Installed);
+            Assert.Contains("Could not find", result.Error);
             Assert.Contains("Vapok/XPortalNetworks", result.Error);
+            Assert.Empty(provider.Handler.Requests);
+        }
+
+        /// <summary>
+        /// A site that would not speak is not a mod that does not exist. A host adding a
+        /// brand new mod during a bad minute on the internet used to be told their mod was
+        /// not on Thunderstore, which sends them looking for the wrong thing entirely.
+        /// </summary>
+        [Fact]
+        public async Task A_site_that_did_not_answer_is_not_reported_as_a_mod_that_does_not_exist()
+        {
+            var client = new Mock<IThunderstoreClient>();
+            client.Setup(c => c.LookupLiveAsync("Vapok", "XPortalNetworks")).ReturnsAsync(Silent());
+            var provider = Downloads();
+
+            var result = await Service(client.Object, provider).InstallFromThunderstoreAsync(Link(), Plugins);
+
+            Assert.False(result.Installed);
+            Assert.Contains("did not answer", result.Error);
+            Assert.DoesNotContain("Could not find", result.Error);
+            Assert.Contains("Vapok/XPortalNetworks", result.Error);
+            Assert.Empty(provider.Handler.Requests);
+        }
+
+        /// <summary>The same distinction on the update path, which had lost it too.</summary>
+        [Fact]
+        public async Task An_update_during_an_outage_says_the_site_did_not_answer()
+        {
+            InstallMod("Vapok-XPortalNetworks", "2.0.2");
+            var mod = new ModScanner(Mock.Of<IApplicationLogger>()).ScanPlugins(Plugins).Single();
+
+            var client = new Mock<IThunderstoreClient>();
+            client.Setup(c => c.LookupLiveAsync("Vapok", "XPortalNetworks")).ReturnsAsync(Silent());
+            var provider = Downloads();
+
+            var result = await Service(client.Object, provider).UpdateModAsync(mod);
+
+            Assert.False(result.Updated);
+            Assert.Contains("did not answer", result.Error);
+            Assert.DoesNotContain("Could not find", result.Error);
             Assert.Empty(provider.Handler.Requests);
         }
 
@@ -232,6 +285,7 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.False(result.Updated);
             Assert.Null(result.Error);
             Assert.Empty(provider.Handler.Requests);
+            client.Verify(c => c.LookupLiveAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
             client.Verify(c => c.GetLiveAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
 

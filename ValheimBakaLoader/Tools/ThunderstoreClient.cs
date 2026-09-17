@@ -474,11 +474,15 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
-        /// The body at an address, capped, following a redirect by hand.
+        /// The body at an address, capped, with redirects followed.
         /// <para>
-        /// Following it here rather than leaving it to the transport is what lets the
-        /// address a redirect points at be checked before it is fetched. Where the
-        /// transport followed on its own, the address it landed on is checked too.
+        /// The control that holds is the landed-host check below: whatever the response
+        /// came from, its address has to be Thunderstore's or the body is dropped unread.
+        /// That is what runs in the app, where the transport follows the redirect itself
+        /// and this only ever sees the 200 the blob answered with. The hand-rolled hop
+        /// below is for a transport that hands the 3xx back instead, and there the address
+        /// is also checked before the next request goes out. Either way nothing is sent
+        /// anywhere but Thunderstore, and no credentials are sent at all.
         /// </para>
         /// </summary>
         private async Task<byte[]> GetBytesAsync(HttpClient client, string url, long cap, int maxHops = 4)
@@ -515,8 +519,9 @@ namespace ValheimBakaLoader.Tools
                     return null;
                 }
 
-                // Where the request actually landed, in case the transport followed a
-                // redirect of its own before this code saw it.
+                // Where the request actually landed. This is the check that holds in the
+                // app, where the transport follows the redirect itself and the body
+                // arrives from the blob address without this code seeing the 3xx at all.
                 var landed = response.RequestMessage?.RequestUri?.ToString();
                 if (!string.IsNullOrWhiteSpace(landed) && !IsThunderstoreAddress(landed))
                 {
@@ -617,11 +622,28 @@ namespace ValheimBakaLoader.Tools
         /// downstream sees the same model whichever one answered. Merging is by exact
         /// full name; a later entry for a name already read wins, which is what makes
         /// reading chunk after chunk into one map safe.
+        /// <para>
+        /// Each body is judged on its own contents and nothing else. The lookup is shared
+        /// across chunks, so a verdict that read it would let the first chunk vouch for
+        /// every chunk after it, and a chunk that came back holding an error document or
+        /// an empty list would pass as read. That is how a thirteenth of the community
+        /// would go missing from a list this then published as complete, with every mod in
+        /// it marked as no longer on Thunderstore. So: it has to be an array of packages,
+        /// and it has to have held at least one.
+        /// </para>
         /// </summary>
-        private static bool ReadPackagesInto(Dictionary<string, ThunderstorePackage> map, JsonTextReader jsonReader)
+        private bool ReadPackagesInto(Dictionary<string, ThunderstorePackage> map, JsonTextReader jsonReader)
         {
             var serializer = new JsonSerializer();
-            var objectsRead = 0;
+            var packagesRead = 0;
+
+            // A 200 is not an answer on its own. An error document is an object, and a
+            // list of packages is an array, and only the second one is a package list.
+            if (!jsonReader.Read() || jsonReader.TokenType != JsonToken.StartArray)
+            {
+                Logger.Warning("A Thunderstore package list did not begin with an array of packages.");
+                return false;
+            }
 
             while (jsonReader.Read())
             {
@@ -630,7 +652,6 @@ namespace ValheimBakaLoader.Tools
                 if (jsonReader.TokenType != JsonToken.StartObject) continue;
 
                 var pkg = serializer.Deserialize<V1Package>(jsonReader);
-                objectsRead++;
                 if (pkg?.Versions == null || pkg.Versions.Count == 0) continue;
                 if (string.IsNullOrEmpty(pkg.Owner) || string.IsNullOrEmpty(pkg.Name)) continue;
 
@@ -640,9 +661,17 @@ namespace ValheimBakaLoader.Tools
                     Name = pkg.Name,
                     Latest = pkg.Versions[0],
                 };
+
+                packagesRead++;
             }
 
-            return objectsRead > 0 || map.Count > 0;
+            // What THIS body held, never what the lookup holds: the lookup already has
+            // the chunks read before this one in it. Counting packages rather than objects
+            // also keeps an array of something else from passing for a package list.
+            if (packagesRead == 0)
+                Logger.Warning("A Thunderstore package list came back with no packages in it.");
+
+            return packagesRead > 0;
         }
 
         /// <summary>

@@ -179,6 +179,57 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Contains(ThunderstoreClient.V1IndexUrl, handler.Requests);
         }
 
+        /// <summary>
+        /// A chunk that answers 200 with something that is not a package list is a chunk
+        /// that did not answer. It has to be judged on its own contents: the chunks are
+        /// read into one shared lookup, so a verdict that asked "is there anything in the
+        /// lookup" would have the first chunk vouching for every chunk after it, and an
+        /// error document or an empty list would pass as read. The live list is thirteen
+        /// chunks, so that is a thirteenth of the community quietly missing from a list
+        /// BakaLoader would then publish as the fresh one, with every mod in it marked as
+        /// no longer on Thunderstore.
+        /// </summary>
+        [Theory]
+        [InlineData("{\"detail\":\"Not found.\"}")]
+        [InlineData("[]")]
+        [InlineData("[{\"detail\":\"Not found.\"}]")]
+        public async Task A_chunk_that_answers_with_something_that_is_not_a_package_list_falls_back(string body)
+        {
+            var (client, handler) = Build(Site(over: url => url == ChunkTwo ? Packed(body) : null));
+
+            var xportal = await client.GetLatestAsync("Vapok", "XPortalNetworks");
+            var quickload = await client.GetLatestAsync("aedenthorn", "QuickLoad");
+
+            // The fresh path did not answer in full, so the full listing stood in and the
+            // interface is told which one answered.
+            Assert.Equal(ThunderstoreClient.V1Source, client.IndexSource);
+            Assert.Contains(ThunderstoreClient.V1IndexUrl, handler.Requests);
+
+            // And nothing vanished: the package that lives only in the dropped chunk is
+            // still in the list, so no row is told its mod has been pulled.
+            Assert.Equal("2.0.3", xportal.LatestVersion);
+            Assert.NotNull(quickload);
+            Assert.Equal("0.2.0", quickload.LatestVersion);
+        }
+
+        [Fact]
+        public async Task A_full_listing_that_is_not_a_package_list_is_not_read_as_an_empty_community()
+        {
+            var (client, _) = Build(Site(over: url =>
+                url == ThunderstoreClient.ListingIndexUrl ? Status(HttpStatusCode.NotFound)
+                : url == ThunderstoreClient.V1IndexUrl ? Plain("{\"detail\":\"Not found.\"}")
+                : null));
+
+            var xportal = await client.GetLatestAsync("Vapok", "XPortalNetworks");
+
+            // Neither address gave a list of packages, so there is no list. Reading the
+            // error document as "the community has nothing in it" would mark every
+            // installed mod as no longer on Thunderstore.
+            Assert.Null(xportal);
+            Assert.Null(client.IndexSource);
+            Assert.Null(client.IndexFetchedUtc);
+        }
+
         [Fact]
         public async Task With_neither_address_answering_nothing_is_claimed()
         {

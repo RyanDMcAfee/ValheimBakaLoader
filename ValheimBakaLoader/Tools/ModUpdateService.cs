@@ -245,20 +245,25 @@ namespace ValheimBakaLoader.Tools
             // Resolve the latest published version + download URL. Thunderstore is asked
             // about this one package directly before any held index is read, so a release
             // published minutes ago is the one that gets installed.
-            ThunderstorePackage package;
+            LatestLookup lookup;
             try
             {
-                package = await ResolveLatestAsync(mod.Author, mod.ModName);
+                lookup = await ResolveLatestAsync(mod.Author, mod.ModName);
             }
             catch (Exception e)
             {
                 return ModUpdateResult.Failed(mod, $"Thunderstore lookup failed: {e.Message}");
             }
 
+            var package = lookup.Package;
             var downloadFrom = DownloadAddressFor(package, mod.Author, mod.ModName);
             if (downloadFrom == null)
             {
-                return ModUpdateResult.Failed(mod, "Could not find this mod on Thunderstore (no download URL).");
+                // Same distinction the install path makes: a site that would not speak is
+                // not a mod that has been pulled.
+                return ModUpdateResult.Failed(mod, lookup.SiteAnswered
+                    ? "Could not find this mod on Thunderstore (no download URL)."
+                    : "Thunderstore did not answer, so this mod could not be checked. Try again in a little while.");
             }
 
             var fromVersion = mod.InstalledVersion;
@@ -367,13 +372,20 @@ namespace ValheimBakaLoader.Tools
                 // index only if that did not answer. A link with no version on it used to
                 // resolve through the index alone, which is how a host who deleted a mod
                 // and pasted its link back got yesterday's build handed to them.
-                var package = await ResolveLatestAsync(reference.Owner, reference.Name);
+                var lookup = await ResolveLatestAsync(reference.Owner, reference.Name);
 
-                downloadUrl = DownloadAddressFor(package, reference.Owner, reference.Name);
+                downloadUrl = DownloadAddressFor(lookup.Package, reference.Owner, reference.Name);
                 if (downloadUrl == null)
-                    return Fail($"Could not find {reference.Owner}/{reference.Name} on Thunderstore.");
+                {
+                    // "Thunderstore has no such package" and "Thunderstore did not answer"
+                    // are different sentences, and a host adding a brand new mod during a
+                    // bad minute on the internet should not be told their mod is not real.
+                    return Fail(lookup.SiteAnswered
+                        ? $"Could not find {reference.Owner}/{reference.Name} on Thunderstore."
+                        : $"Thunderstore did not answer about {reference.Owner}/{reference.Name}. Try again in a little while.");
+                }
 
-                version = package.LatestVersion;
+                version = lookup.Package.LatestVersion;
             }
 
             // --- Download + extract + install ---
@@ -691,22 +703,42 @@ namespace ValheimBakaLoader.Tools
         /// held list stays behind it for the times that address does not answer at all: a
         /// blip, a rate limit, a machine that has gone offline since the list was read.
         /// </para>
-        /// Returns null when neither answered. Never throws.
+        /// The package is null when neither answered. Never throws.
         /// </summary>
-        private async Task<ThunderstorePackage> ResolveLatestAsync(string owner, string name)
+        private async Task<LatestLookup> ResolveLatestAsync(string owner, string name)
         {
-            ThunderstorePackage live = null;
-            try { live = await Thunderstore.GetLiveAsync(owner, name); }
+            ThunderstoreLiveLookup live = null;
+            try { live = await Thunderstore.LookupLiveAsync(owner, name); }
             catch (Exception e) { Logger.Debug("Live Thunderstore lookup failed for {0}-{1}: {2}", owner, name, e.Message); }
 
-            if (!string.IsNullOrWhiteSpace(live?.LatestVersion)) return live;
+            if (!string.IsNullOrWhiteSpace(live?.Package?.LatestVersion))
+                return new LatestLookup { Package = live.Package, SiteAnswered = true };
 
-            try { return await Thunderstore.GetLatestAsync(owner, name); }
+            var answered = live?.Answered ?? false;
+
+            ThunderstorePackage fromList = null;
+            try { fromList = await Thunderstore.GetLatestAsync(owner, name); }
             catch (Exception e)
             {
                 Logger.Debug("Thunderstore index lookup failed for {0}-{1}: {2}", owner, name, e.Message);
-                return null;
             }
+
+            // A list that had the package in it is Thunderstore speaking too, even when
+            // the package's own address did not.
+            return new LatestLookup { Package = fromList, SiteAnswered = answered || fromList != null };
+        }
+
+        /// <summary>
+        /// What resolving a package's newest release came to. The package is the answer;
+        /// <see cref="SiteAnswered"/> is what separates "Thunderstore has no such package"
+        /// from "Thunderstore did not answer", which are two different things to tell a
+        /// host who is watching an install fail.
+        /// </summary>
+        private sealed class LatestLookup
+        {
+            public ThunderstorePackage Package { get; init; }
+
+            public bool SiteAnswered { get; init; }
         }
 
         /// <summary>

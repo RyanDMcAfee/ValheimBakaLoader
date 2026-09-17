@@ -2069,10 +2069,13 @@ function onModUpdateProgress(d){
    fall back to the slow one without anything else on screen changing. */
 function renderModIndexLine(count){
   const el=$("#modsSub"); if(!el) return;
-  /* No time at all rather than the time of the press: with nothing read, "checked" would
-     be claiming something that did not happen, and the Latest column is empty anyway. */
+  /* With no time to show, the line says the list has not been read rather than saying
+     "checked" and then trailing off: a press that came back with nothing read is the one
+     moment the word "checked" would be claiming something that did not happen. */
   const at=S.modIndexAt;
-  el.textContent=count+" "+TT("loaded")+" · "+TT("Thunderstore index checked")+(at?" "+at:"");
+  el.textContent=count+" "+TT("loaded")+" · "+(at
+    ?TT("Thunderstore index checked")+" "+at
+    :TT("Thunderstore index not read yet"));
   el.title=S.modIndexSource==="listing-index"?TT("via listing index")
     :(S.modIndexSource==="v1"?TT("via full listing"):"");
 }
@@ -2121,8 +2124,12 @@ function renderMods(){
        it is even when a site has moved past it, and the pill has to say so rather than
        reading like the row is level with the world. */
     const held=modIsHeld(m);
+    /* A row whose package the list came back without has no Latest to be level with, so
+       it cannot read CURRENT either. It says the one thing that is known: Thunderstore is
+       not listing it at the moment, and nothing has been done about that. */
     const pill=m.Bundled?`<span class="pill ember">${esc(TT("Bundled"))}</span>`
       :held?`<span class="pill amber" title="${esc(TT(MOD_HELD_TIP))}">${esc(TT("held"))}</span>`
+      :m.notListed?`<span class="pill" title="${esc(TT(MOD_NOT_LISTED_TIP))}">${esc(TT("not listed"))}</span>`
       :`<span class="pill ${has?"amber":"green"}">${esc(has?TT("Update"):TT("Current"))}</span>`;
     const st=S.modRowStatus&&S.modRowStatus[m.FullName];
     const statusCell=st?renderRowStatus(st):pill;
@@ -2288,10 +2295,14 @@ function modRowItems(mod){
   const canUpd=!!mod.UpdateAvailable&&!isPatcher;
   const canCheck=!mod.Bundled&&!!(mod.Author&&mod.ModName);
   const items=[
+    /* The greyed tip says which of the reasons it is. "Already up to date" is only one of
+       them, and it is the wrong one for a row whose Latest nobody knows: a mod the list
+       came back without has nothing to be up to date with. */
     {r:"ᚱ",label:TT("Update mod"),disabled:!canUpd,
       tip:isPatcher?TT("Patcher mods are not updated here.")
         :(mod.installedSource==="hexium"?TT("This copy came from Hexium, so Thunderstore updates are not applied to it.")
-        :TT("This mod is already up to date.")),
+        :(mod.notListed?TT("Thunderstore is not listing this mod at the moment, so there is nothing to update it to.")
+        :TT("This mod is already up to date."))),
       fn:()=>doUpdateOne(mod)},
     /* One question to Thunderstore about this one mod, for a host looking at the mod's own
        page and knowing there is something newer than the row says. It asks the address the
@@ -2335,10 +2346,25 @@ async function checkOneNow(mod){
       row.LatestVersion=r.latestVersion;
       row.modUpdatedUtc=r.latestReleasedUtc||row.modUpdatedUtc;
       row.UpdateAvailable=!!r.updateAvailable;
+      /* A row the list came back without could not open its page, because the scan had
+         no identity to build one from. This answer has one, so the page opens again
+         without waiting for the next scan. */
+      if(r.thunderstoreNamespace) row.thunderstoreNamespace=r.thunderstoreNamespace;
+      if(r.thunderstoreName) row.thunderstoreName=r.thunderstoreName;
+      /* A Hexium copy Thunderstore has moved past: the row keeps saying held, and the
+         swap back stays on offer. */
+      row.thunderstoreNewer=!!r.thunderstoreNewer;
     }
     renderMods();
   }
   if(!r.found){toast("ᛋ "+mod.ModName+" "+TT("is not listed on Thunderstore right now"));return;}
+  /* Three answers, not two. A copy that came from Hexium is left alone whatever
+     Thunderstore has, so telling its host they have the newest would be untrue. */
+  if(r.held&&r.thunderstoreNewer){
+    toast("ᛋ "+TT("Thunderstore has")+" "+r.latestVersion+" · "
+      +TT("this copy came from Hexium, so BakaLoader leaves it where it is"));
+    return;
+  }
   toast("ᛋ "+(r.updateAvailable
     ?(r.latestVersion+" "+TT("is the newest on Thunderstore"))
     :TT("you have the newest")));

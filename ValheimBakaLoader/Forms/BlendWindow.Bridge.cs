@@ -4410,7 +4410,8 @@ namespace ValheimBakaLoader.Forms
                             // asked, so the row says nothing rather than something wrong.
                             mod.NotListedOnThunderstore = NotListedNow(
                                 packageFound: package != null,
-                                listWasRead: ThunderstoreClient.IndexFetchedUtc != null,
+                                listWasRead: ListIsRecentEnoughToJudge(
+                                    ThunderstoreClient.IndexFetchedUtc, DateTime.UtcNow),
                                 mod.Author,
                                 mod.ModName);
                         }
@@ -4502,6 +4503,10 @@ namespace ValheimBakaLoader.Forms
                         latestVersion = (string)null,
                         latestReleasedUtc = (string)null,
                         updateAvailable = false,
+                        held = installed?.IsHexiumInstalled ?? false,
+                        thunderstoreNewer = false,
+                        thunderstoreNamespace = (string)null,
+                        thunderstoreName = (string)null,
                         reason = (string)null,
                     };
                 }
@@ -4513,6 +4518,12 @@ namespace ValheimBakaLoader.Forms
                 var updateAvailable = CheckOneSaysUpdateWaiting(
                     package.LatestVersion, installed?.InstalledVersion, heldFromHexium);
 
+                // The other half of the same rule. A held copy Thunderstore has moved past
+                // is neither updatable nor the newest, and the page says so instead of
+                // telling its host they have the newest.
+                var thunderstoreMovedPast = CheckOneSaysThunderstoreMovedPast(
+                    package.LatestVersion, installed?.InstalledVersion, heldFromHexium);
+
                 return new
                 {
                     ok = true,
@@ -4522,6 +4533,14 @@ namespace ValheimBakaLoader.Forms
                     latestVersion = package.LatestVersion,
                     latestReleasedUtc = package.Latest?.DateCreated?.ToUniversalTime().ToString("o"),
                     updateAvailable,
+                    // These files came from the other site, so no update is applied to
+                    // them however far ahead Thunderstore has gone.
+                    held = heldFromHexium,
+                    thunderstoreNewer = thunderstoreMovedPast,
+                    // The identity the site answered with, so a row the list had no entry
+                    // for can open its page the moment this finds it.
+                    thunderstoreNamespace = package.Namespace,
+                    thunderstoreName = package.Name,
                     reason = (string)null,
                 };
             });
@@ -6076,6 +6095,17 @@ namespace ValheimBakaLoader.Forms
 
             lock (_checkedOneAtUtc)
             {
+                // An entry past its cooldown cannot refuse anything any more, so it is
+                // dropped rather than kept for the life of the window. Doing it here keeps
+                // the list about as long as the presses of the last ten seconds.
+                foreach (var stale in _checkedOneAtUtc
+                             .Where(pair => !CheckOneOnCooldown(pair.Value, now))
+                             .Select(pair => pair.Key)
+                             .ToList())
+                {
+                    _checkedOneAtUtc.Remove(stale);
+                }
+
                 if (_checkedOneAtUtc.TryGetValue(fullName, out var last) && CheckOneOnCooldown(last, now))
                     return false;
 
@@ -6105,14 +6135,43 @@ namespace ValheimBakaLoader.Forms
             !installedFromHexium && Tools.SemVer.IsNewer(latestVersion, installedVersion);
 
         /// <summary>
-        /// Whether a row should say its package was not in the list.
+        /// Whether a single-mod check should say Thunderstore has moved past a copy the
+        /// host took from Hexium.
         /// <para>
-        /// It needs a list that actually came back: "nobody could be asked" and "the site
-        /// answered and this was not in it" are different things, and only the second is
-        /// worth putting on a row. A folder that does not name a package at all is left
-        /// alone, because it was never expected to be in the list.
+        /// This is the other half of the rule above, and the page needs both: with only
+        /// the first, a held copy Thunderstore has left behind reads as "you have the
+        /// newest", which is the one thing it certainly is not. Neither an update waiting
+        /// nor the newest: something newer is out there and BakaLoader is deliberately
+        /// leaving these files alone.
         /// </para>
         /// </summary>
+        public static bool CheckOneSaysThunderstoreMovedPast(string latestVersion, string installedVersion, bool installedFromHexium) =>
+            installedFromHexium && Tools.SemVer.IsNewer(latestVersion, installedVersion);
+
+        /// <summary>
+        /// Whether a row should say its package was not in the list.
+        /// <para>
+        /// It needs a list that actually came back, and came back lately: "nobody could be
+        /// asked" and "the site answered and this was not in it" are different things, and
+        /// only the second is worth putting on a row. A folder that does not name a
+        /// package at all is left alone, because it was never expected to be in the list.
+        /// </para>
+        /// </summary>
+        /// <summary>
+        /// Whether the package list in hand is recent enough to say a mod that is not in
+        /// it has been pulled.
+        /// <para>
+        /// A failed read leaves the last good list standing on purpose, so a blip does not
+        /// wipe a scan's results. That list is worth showing versions from, and it is not
+        /// worth marking rows delisted from: after a long run and a refresh that could not
+        /// get through, it can be hours old, and hours old is exactly the state this whole
+        /// release exists to stop reading as fact. The window is the same one an ordinary
+        /// check reads a held list within.
+        /// </para>
+        /// </summary>
+        public static bool ListIsRecentEnoughToJudge(DateTime? listReadUtc, DateTime nowUtc) =>
+            listReadUtc is { } read && nowUtc.ToUniversalTime() - read.ToUniversalTime() < Tools.ThunderstoreClient.CacheTtl;
+
         public static bool NotListedNow(bool packageFound, bool listWasRead, string author, string modName) =>
             !packageFound
             && listWasRead

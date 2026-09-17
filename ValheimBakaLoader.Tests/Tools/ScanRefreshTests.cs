@@ -136,6 +136,30 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.False(BlendWindow.NotListedNow(packageFound: false, listWasRead: true, "Vapok", null));
         }
 
+        /// <summary>
+        /// The note needs a list read lately, not just a list. A read that fails leaves the
+        /// last good list standing on purpose, so after a long run and a refresh that could
+        /// not get through, the list in hand can be hours old. Versions off it are still
+        /// worth showing; "this mod has been pulled" off it is not, and hours behind is the
+        /// exact state this release exists to stop reading as fact.
+        /// </summary>
+        [Fact]
+        public void A_list_read_hours_ago_is_not_grounds_for_saying_a_mod_was_pulled()
+        {
+            var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+
+            // Read moments ago, and within the window an ordinary check reads it in.
+            Assert.True(BlendWindow.ListIsRecentEnoughToJudge(now.AddSeconds(-5), now));
+            Assert.True(BlendWindow.ListIsRecentEnoughToJudge(now.AddMinutes(-14), now));
+
+            // Past it, and after the kind of gap a failed refresh leaves behind.
+            Assert.False(BlendWindow.ListIsRecentEnoughToJudge(now.AddMinutes(-15), now));
+            Assert.False(BlendWindow.ListIsRecentEnoughToJudge(now.AddHours(-6), now));
+
+            // Nothing was ever read at all.
+            Assert.False(BlendWindow.ListIsRecentEnoughToJudge(null, now));
+        }
+
         [Fact]
         public void The_row_carries_the_note_and_offers_no_update()
         {
@@ -179,6 +203,25 @@ namespace ValheimBakaLoader.Tests.Tools
             // Already current, and ahead of the site.
             Assert.False(BlendWindow.CheckOneSaysUpdateWaiting("2.0.5", "2.0.5", installedFromHexium: false));
             Assert.False(BlendWindow.CheckOneSaysUpdateWaiting("2.0.5", "2.1.0", installedFromHexium: false));
+        }
+
+        /// <summary>
+        /// The other half of that rule, which is what the answer needs to stop reading as
+        /// "you have the newest" on a copy that plainly does not.
+        /// </summary>
+        [Fact]
+        public void Checking_one_mod_says_when_thunderstore_has_moved_past_a_copy_from_the_other_site()
+        {
+            // Held, and Thunderstore is ahead. Neither an update waiting nor the newest.
+            Assert.True(BlendWindow.CheckOneSaysThunderstoreMovedPast("2.0.5", "2.0.3", installedFromHexium: true));
+            Assert.False(BlendWindow.CheckOneSaysUpdateWaiting("2.0.5", "2.0.3", installedFromHexium: true));
+
+            // Held and level with Thunderstore: nothing to say.
+            Assert.False(BlendWindow.CheckOneSaysThunderstoreMovedPast("2.0.5", "2.0.5", installedFromHexium: true));
+            Assert.False(BlendWindow.CheckOneSaysThunderstoreMovedPast("2.0.5", "2.1.0", installedFromHexium: true));
+
+            // An ordinary copy is never "held": it has an update waiting instead.
+            Assert.False(BlendWindow.CheckOneSaysThunderstoreMovedPast("2.0.5", "2.0.3", installedFromHexium: false));
         }
 
         [Fact]
