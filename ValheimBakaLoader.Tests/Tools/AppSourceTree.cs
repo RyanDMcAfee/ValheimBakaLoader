@@ -29,9 +29,18 @@ namespace ValheimBakaLoader.Tests.Tools
             return Path.GetDirectoryName(tests);                     // the repository root
         }
 
+        /// <summary>
+        /// Source text with every line ending as LF. The repository stores LF, but a checkout
+        /// on a runner with Git's Windows default (core.autocrlf true) rewrites the working
+        /// copy to CRLF, and a gate that counts a literal spanning two lines then finds
+        /// nothing. Every read here goes through this, so what the gates see is the same on
+        /// every machine.
+        /// </summary>
+        public static string Lf(string text) => text?.Replace("\r\n", "\n");
+
         /// <summary>One file of app source, by its path from the app project folder.</summary>
         public static string Read(params string[] pathParts) =>
-            File.ReadAllText(Path.Combine(RepoRoot(), Path.Combine(pathParts)));
+            Lf(File.ReadAllText(Path.Combine(RepoRoot(), Path.Combine(pathParts))));
 
         private static readonly Dictionary<string, string> WebCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -42,7 +51,7 @@ namespace ValheimBakaLoader.Tests.Tools
             {
                 if (WebCache.TryGetValue(fileName, out var held)) return held;
 
-                var text = File.ReadAllText(Path.Combine(RepoRoot(), "ValheimBakaLoader", "WebUI", fileName));
+                var text = Lf(File.ReadAllText(Path.Combine(RepoRoot(), "ValheimBakaLoader", "WebUI", fileName)));
                 WebCache[fileName] = text;
                 return text;
             }
@@ -71,7 +80,7 @@ namespace ValheimBakaLoader.Tests.Tools
             foreach (var file in Directory.EnumerateFiles(directory, "*.cs"))
             {
                 var name = Path.GetFileName(file);
-                if (!map.ContainsKey(name)) map[name] = File.ReadAllText(file);
+                if (!map.ContainsKey(name)) map[name] = Lf(File.ReadAllText(file));
             }
 
             foreach (var child in Directory.EnumerateDirectories(directory))
