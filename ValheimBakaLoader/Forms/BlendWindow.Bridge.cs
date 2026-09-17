@@ -6149,15 +6149,6 @@ namespace ValheimBakaLoader.Forms
             installedFromHexium && Tools.SemVer.IsNewer(latestVersion, installedVersion);
 
         /// <summary>
-        /// Whether a row should say its package was not in the list.
-        /// <para>
-        /// It needs a list that actually came back, and came back lately: "nobody could be
-        /// asked" and "the site answered and this was not in it" are different things, and
-        /// only the second is worth putting on a row. A folder that does not name a
-        /// package at all is left alone, because it was never expected to be in the list.
-        /// </para>
-        /// </summary>
-        /// <summary>
         /// Whether the package list in hand is recent enough to say a mod that is not in
         /// it has been pulled.
         /// <para>
@@ -6172,6 +6163,15 @@ namespace ValheimBakaLoader.Forms
         public static bool ListIsRecentEnoughToJudge(DateTime? listReadUtc, DateTime nowUtc) =>
             listReadUtc is { } read && nowUtc.ToUniversalTime() - read.ToUniversalTime() < Tools.ThunderstoreClient.CacheTtl;
 
+        /// <summary>
+        /// Whether a row should say its package was not in the list.
+        /// <para>
+        /// It needs a list that actually came back, and came back lately: "nobody could be
+        /// asked" and "the site answered and this was not in it" are different things, and
+        /// only the second is worth putting on a row. A folder that does not name a
+        /// package at all is left alone, because it was never expected to be in the list.
+        /// </para>
+        /// </summary>
         public static bool NotListedNow(bool packageFound, bool listWasRead, string author, string modName) =>
             !packageFound
             && listWasRead

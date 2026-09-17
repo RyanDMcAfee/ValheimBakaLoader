@@ -2073,11 +2073,35 @@ function renderModIndexLine(count){
      "checked" and then trailing off: a press that came back with nothing read is the one
      moment the word "checked" would be claiming something that did not happen. */
   const at=S.modIndexAt;
+  /* With the second site switched on a scan reads both of them, so the line names both.
+     Off, BakaLoader opens no connection to it at all, and the line names the one site
+     that was actually read. */
+  const both=!!S.hexium;
   el.textContent=count+" "+TT("loaded")+" · "+(at
-    ?TT("Thunderstore index checked")+" "+at
-    :TT("Thunderstore index not read yet"));
+    ?(both?TT("Thunderstore and Hexium checked"):TT("Thunderstore index checked"))+" "+at
+    :(both?TT("Thunderstore and Hexium not read yet"):TT("Thunderstore index not read yet")));
   el.title=S.modIndexSource==="listing-index"?TT("via listing index")
     :(S.modIndexSource==="v1"?TT("via full listing"):"");
+}
+/* The two buttons in the Mods header say which sites they reach, so they follow the
+   Upkeep switch rather than naming Thunderstore whatever the setting is. A host who never
+   turned the second site on reads its name on the switch and nowhere else, which is the
+   rule the row menu and the Latest marks already live under. Only the words move: both
+   buttons keep the id they have always had, so everything wired to them still finds
+   them. */
+function renderModSourceLabels(){
+  const both=!!S.hexium;
+  const add=$("#addModBtn");
+  if(add) add.innerHTML="ᚨ&nbsp; "+esc(both?TT("Add from link"):TT("Add from Thunderstore"));
+  const scan=$("#scanBtn");
+  if(scan) scan.innerHTML="ᛋ&nbsp; "+esc(both?TT("Scan mod sites"):TT("Scan Thunderstore"));
+}
+/* Both halves of the switch in one place: the page's own mirror of the setting, and the
+   Mods hall drawn again in the same breath so its labels never sit a render behind it.
+   The host and the browser preview both come through here, so the two cannot drift. */
+function setHexiumSource(on){
+  S.hexium=!!on;
+  try{renderMods();}catch{}
 }
 /* The clock face of an ISO instant the bridge sent, in the host's own time. */
 function hhmm(iso){
@@ -2089,6 +2113,7 @@ function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
   $("#addModBtn").disabled=busy;
+  renderModSourceLabels();
   const scanned=S.mods!==null;
   const mods=sortedMods(S.mods||[]);
   const upd=mods.filter(m=>m.UpdateAvailable);
@@ -2129,7 +2154,7 @@ function renderMods(){
        not listing it at the moment, and nothing has been done about that. */
     const pill=m.Bundled?`<span class="pill ember">${esc(TT("Bundled"))}</span>`
       :held?`<span class="pill amber" title="${esc(TT(MOD_HELD_TIP))}">${esc(TT("held"))}</span>`
-      :m.notListed?`<span class="pill" title="${esc(TT(MOD_NOT_LISTED_TIP))}">${esc(TT("not listed"))}</span>`
+      :m.notListed?`<span class="pill grey" title="${esc(TT(MOD_NOT_LISTED_TIP))}">${esc(TT("not listed"))}</span>`
       :`<span class="pill ${has?"amber":"green"}">${esc(has?TT("Update"):TT("Current"))}</span>`;
     const st=S.modRowStatus&&S.modRowStatus[m.FullName];
     const statusCell=st?renderRowStatus(st):pill;
@@ -2328,6 +2353,38 @@ function modRowItems(mod){
   items.push({r:"ᛪ",label:TT("Remove mod…"),danger:true,fn:()=>removeModFlow(mod)});
   return items;
 }
+/* What one check's answer does to the row it was asked about, kept apart from the toast
+   so the row's state is one readable rule.
+   A reply that found the package writes the numbers it came back with. A reply that says
+   the list no longer holds the package leaves those numbers exactly where they are and
+   takes the UPDATE away, which is the shape a scan leaves a row in when a fresh list came
+   back without it. Without that second half a row could carry a "not listed" pill and an
+   Update offer at the same moment, which is two answers to one question, and Update all
+   would go on counting it.
+   A reply that found nothing and is not saying the package was pulled is the third case:
+   nobody could be asked, so the row is left alone rather than told something wrong. */
+function applyCheckOneToRow(row,r){
+  if(!row||!r) return row;
+  row.notListed=!!r.notListed;
+  if(r.found){
+    row.LatestVersion=r.latestVersion;
+    row.modUpdatedUtc=r.latestReleasedUtc||row.modUpdatedUtc;
+    row.UpdateAvailable=!!r.updateAvailable;
+    /* A row the list came back without could not open its page, because the scan had
+       no identity to build one from. This answer has one, so the page opens again
+       without waiting for the next scan. */
+    if(r.thunderstoreNamespace) row.thunderstoreNamespace=r.thunderstoreNamespace;
+    if(r.thunderstoreName) row.thunderstoreName=r.thunderstoreName;
+    /* A Hexium copy Thunderstore has moved past: the row keeps saying held, and the
+       swap back stays on offer. */
+    row.thunderstoreNewer=!!r.thunderstoreNewer;
+  }else if(row.notListed){
+    /* Nothing is removed and nothing is rolled back to say this: the version last seen
+       stays on the row, and only the offer to update to it goes. */
+    row.UpdateAvailable=false;
+  }
+  return row;
+}
 /* Asks Thunderstore about one mod, right now. This is the answer the mod's own page shows,
    so it settles the "the site says 2.0.5 and BakaLoader says 2.0.3" argument on the spot.
    It updates that one row and says what it found in plain words. Nothing is downloaded. */
@@ -2341,20 +2398,7 @@ async function checkOneNow(mod){
   if(r.reason==="unreachable"){toast("ᚦ "+TT("Thunderstore did not answer. Try again in a little while."));return;}
   const row=modByKey(mod.FullName);
   if(row){
-    row.notListed=!!r.notListed;
-    if(r.found){
-      row.LatestVersion=r.latestVersion;
-      row.modUpdatedUtc=r.latestReleasedUtc||row.modUpdatedUtc;
-      row.UpdateAvailable=!!r.updateAvailable;
-      /* A row the list came back without could not open its page, because the scan had
-         no identity to build one from. This answer has one, so the page opens again
-         without waiting for the next scan. */
-      if(r.thunderstoreNamespace) row.thunderstoreNamespace=r.thunderstoreNamespace;
-      if(r.thunderstoreName) row.thunderstoreName=r.thunderstoreName;
-      /* A Hexium copy Thunderstore has moved past: the row keeps saying held, and the
-         swap back stays on offer. */
-      row.thunderstoreNewer=!!r.thunderstoreNewer;
-    }
+    applyCheckOneToRow(row,r);
     renderMods();
   }
   if(!r.found){toast("ᛋ "+mod.ModName+" "+TT("is not listed on Thunderstore right now"));return;}
@@ -2556,9 +2600,13 @@ function addModFlow(){
   const hexNote=S.hexium
     ?`<div class="mbody-note" style="margin-top:8px">${esc(TT("A hexium.gg address works here as well. BakaLoader will show you what it found and ask before it fetches anything."))}</div>`
     :"";
-  confirmModal("Add mod from Thunderstore",
+  /* The title and the box follow the same switch the two header buttons do: with the
+     second site on, this dialog takes a link from either of them, so it says that rather
+     than naming one of the two. */
+  const both=!!S.hexium;
+  confirmModal(both?TT("Add mod from a link"):TT("Add mod from Thunderstore"),
     `<div class="mbody-note">Paste any Thunderstore link: the mod's page, its versions page, a direct download link, or a ror2mm:// mod-manager link. If the link has no version, the latest release is installed.</div>`+
-    `<input type="text" id="mModUrl" placeholder="https://thunderstore.io/c/valheim/p/Author/ModName/" spellcheck="false" autocomplete="off" style="margin-top:10px">`+
+    `<input type="text" id="mModUrl" placeholder="${esc(both?TT("paste a Thunderstore or Hexium link"):"https://thunderstore.io/c/valheim/p/Author/ModName/")}" spellcheck="false" autocomplete="off" style="margin-top:10px">`+
     hexNote+
     runWarn,
     "Install",m=>{
@@ -3090,7 +3138,9 @@ async function initUpkeep(){
     setT("tAutoUpdApp",up.AutoUpdateBakaLoader);
     setT("tAutoUpdMods",up.AutoUpdateMods);
     setT("tUseHexium",up.UseHexiumSource);
-    S.hexium=!!up.UseHexiumSource;
+    /* The Mods header names the sites a scan reads, so it has to be told on load and not
+       only when the switch moves under a host's finger. */
+    setHexiumSource(up.UseHexiumSource);
     setT("tStartWin",up.StartWithWindows);
     setT("tStartMin",up.StartMinimized);
     setT("tShareStats",up.ShareAnonymousStats);
@@ -3132,7 +3182,7 @@ async function initUpkeep(){
      scan rather than the moment the switch moves. */
   $("#tUseHexium")?.addEventListener("click",()=>{
     save();
-    S.hexium=T("tUseHexium");
+    setHexiumSource(T("tUseHexium"));
     toast("ᚺ "+(S.hexium
       ?TT("Hexium is on. Scan again to see what it holds.")
       :TT("Hexium is off. BakaLoader will not contact it.")));
@@ -7243,6 +7293,9 @@ if(!Native.available){
   /* the terminology switch is wired in initUpkeep, which is native-only; wire it here
      too so the browser preview can be walked in both states */
   $("#tPlainTerms").addEventListener("click",()=>{PLAIN=!T("tPlainTerms");applyTerms();});
+  /* the second-site switch is wired in initUpkeep too, which is native-only; it goes
+     through the same one function, so the preview shows the labels the app shows */
+  $("#tUseHexium")?.addEventListener("click",()=>setHexiumSource(T("tUseHexium")));
   setT("tHeraldAddr",true); // herald preview mirrors the C# default (address shared, rest off)
 
   /* multi-server chip strip preview */
