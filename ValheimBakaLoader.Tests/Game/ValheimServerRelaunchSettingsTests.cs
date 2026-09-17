@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using ValheimBakaLoader.Game;
+using ValheimBakaLoader.Tools;
 using Xunit;
 
 namespace ValheimBakaLoader.Tests.Game
@@ -29,9 +30,21 @@ namespace ValheimBakaLoader.Tests.Game
         // process launch is not (BaseTest swaps in MockProcessProvider).
         private readonly string SandboxDir;
 
+        // A record book of its own, because Start() runs the companion plugin install pass and
+        // that pass clears the record for the realm it is starting. See
+        // CompanionPluginStatusTests.Every_test_class_that_touches_the_record_keeps_a_book_of_its_own.
+        private readonly IDisposable OwnRecords;
+
         public ValheimServerRelaunchSettingsTests()
         {
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
             Server = GetService<ValheimServer>();
+
+            // The relaunch waits half a second in production so the exiting process has let go
+            // of its port and its saves. These tests drive the whole restart and then read the
+            // command line it built, so the wait is pure dead time here, and dead time on a
+            // loaded build machine is what turns a passing test into a flaky one.
+            Server.RelaunchDelay = _ => Task.CompletedTask;
 
             SandboxDir = Path.Combine(Path.GetTempPath(), "vbl-relaunch-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path.Combine(SandboxDir, "saves"));
@@ -42,6 +55,8 @@ namespace ValheimBakaLoader.Tests.Game
         {
             try { Server.Dispose(); } catch { /* best effort */ }
             try { Directory.Delete(SandboxDir, true); } catch { /* best-effort temp cleanup */ }
+            OwnRecords.Dispose();
+            GC.SuppressFinalize(this);
         }
 
         // ----------------------------------------------- the relaunch reads the profile again
@@ -291,7 +306,7 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.NotNull(old);
             RaiseExited(old);
 
-            await WaitUntil(() => Server.Status == ServerStatus.Starting, 8000);
+            await WaitUntil(() => Server.Status == ServerStatus.Starting);
             var process = Server.GetTrackedProcess();
             Assert.NotNull(process);
             return process.StartInfo.Arguments;
@@ -325,7 +340,13 @@ namespace ValheimBakaLoader.Tests.Game
             SaveDataFolderPath = Path.Combine(SandboxDir, "saves"),
         };
 
-        private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 8000)
+        /// <summary>
+        /// Waits for something a background step does. The ceiling is generous on purpose: a run
+        /// that is going to pass gets here in milliseconds, so the only thing the deadline
+        /// decides is how long a genuinely stalled build agent is given before it is called a
+        /// failure. Nothing is relaxed by making it longer, and a short one made CI cry wolf.
+        /// </summary>
+        private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 30000)
         {
             var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
             while (!condition() && DateTime.UtcNow < deadline) await Task.Delay(10);

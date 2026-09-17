@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using ValheimBakaLoader.Game;
+using ValheimBakaLoader.Tools;
 using Xunit;
 
 namespace ValheimBakaLoader.Tests.Game
@@ -21,8 +22,15 @@ namespace ValheimBakaLoader.Tests.Game
         private readonly ValheimServer Server;
         private readonly string SandboxDir;
 
+        // A record book of its own. Starting a server runs the companion plugin install pass,
+        // and that pass clears the record for the realm it is starting, which walks over what a
+        // class reading the shared record had written. See
+        // CompanionPluginStatusTests.Every_test_class_that_touches_the_record_keeps_a_book_of_its_own.
+        private readonly IDisposable OwnRecords;
+
         public ValheimServerLaunchBlockedTests()
         {
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
             Server = GetService<ValheimServer>();
 
             SandboxDir = Path.Combine(Path.GetTempPath(), "vbl-blocked-" + Guid.NewGuid().ToString("N"));
@@ -34,6 +42,7 @@ namespace ValheimBakaLoader.Tests.Game
         {
             try { Server.Dispose(); } catch { /* best effort */ }
             try { Directory.Delete(SandboxDir, true); } catch { /* best effort */ }
+            OwnRecords.Dispose();
             GC.SuppressFinalize(this);
         }
 
@@ -185,7 +194,13 @@ namespace ValheimBakaLoader.Tests.Game
             SaveDataFolderPath = Path.Combine(SandboxDir, "saves"),
         };
 
-        private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 5000)
+        /// <summary>
+        /// Waits for something a background step does. The ceiling is generous on purpose: a run
+        /// that is going to pass gets here in milliseconds, so the only thing the deadline
+        /// decides is how long a genuinely stalled build agent is given before it is called a
+        /// failure. Nothing is relaxed by making it longer, and a short one made CI cry wolf.
+        /// </summary>
+        private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 30000)
         {
             var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
             while (!condition() && DateTime.UtcNow < deadline) await Task.Delay(10);

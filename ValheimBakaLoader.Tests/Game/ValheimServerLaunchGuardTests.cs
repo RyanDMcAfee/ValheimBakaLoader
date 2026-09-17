@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using ValheimBakaLoader.Game;
+using ValheimBakaLoader.Tools;
 using Xunit;
 
 namespace ValheimBakaLoader.Tests.Game
@@ -18,8 +19,15 @@ namespace ValheimBakaLoader.Tests.Game
         private readonly ValheimServer Server;
         private readonly string SandboxDir;
 
+        // A record book of its own. Starting a server runs the companion plugin install pass,
+        // and that pass clears the record for the realm it is starting, which walks over what a
+        // class reading the shared record had written. See
+        // CompanionPluginStatusTests.Every_test_class_that_touches_the_record_keeps_a_book_of_its_own.
+        private readonly IDisposable OwnRecords;
+
         public ValheimServerLaunchGuardTests()
         {
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
             Server = GetService<ValheimServer>();
 
             // Same throwaway sandbox the other server tests use: Start()'s path validation is
@@ -33,6 +41,8 @@ namespace ValheimBakaLoader.Tests.Game
         {
             try { Server.Dispose(); } catch { /* best effort */ }
             try { Directory.Delete(SandboxDir, true); } catch { /* best-effort temp cleanup */ }
+            OwnRecords.Dispose();
+            GC.SuppressFinalize(this);
         }
 
         [Fact]
@@ -461,14 +471,20 @@ namespace ValheimBakaLoader.Tests.Game
 
         private static async Task<T> WithTimeout<T>(Task<T> task)
         {
-            var done = await Task.WhenAny(task, Task.Delay(5000));
+            var done = await Task.WhenAny(task, Task.Delay(30000));
             Assert.Same(task, done);
             return await task;
         }
 
+        /// <summary>
+        /// Waits for something a background step does. The ceiling is generous on purpose: a run
+        /// that is going to pass gets here in milliseconds, so the only thing the deadline
+        /// decides is how long a genuinely stalled build agent is given before it is called a
+        /// failure. Nothing is relaxed by making it longer, and a short one made CI cry wolf.
+        /// </summary>
         private static async Task WaitUntil(Func<bool> condition)
         {
-            for (var i = 0; i < 100; i++)
+            for (var i = 0; i < 600; i++)
             {
                 if (condition()) return;
                 await Task.Delay(50);

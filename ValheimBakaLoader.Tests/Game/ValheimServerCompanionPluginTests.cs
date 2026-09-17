@@ -26,9 +26,15 @@ namespace ValheimBakaLoader.Tests.Game
     public class ValheimServerCompanionPluginTests : BaseTest, IDisposable
     {
         private readonly string SandboxDir;
+        private readonly IDisposable OwnRecords;
 
         public ValheimServerCompanionPluginTests()
         {
+            // A record book only this test can reach, and one every task this test starts
+            // carries along with it. Sharing the process-wide record was the whole trouble:
+            // another class starting a server under the same realm name ran the same install
+            // pass, and its opening clear wiped the record this test had just written.
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
             CompanionPluginStatus.Clear();
 
             SandboxDir = Path.Combine(Path.GetTempPath(), "vbl-plugin-tests-" + Guid.NewGuid().ToString("N"));
@@ -39,9 +45,15 @@ namespace ValheimBakaLoader.Tests.Game
         public void Dispose()
         {
             CompanionPluginStatus.Clear();
+            OwnRecords.Dispose();
             try { Directory.Delete(SandboxDir, true); } catch { /* best-effort temp cleanup */ }
             GC.SuppressFinalize(this);
         }
+
+        /// <summary>The scope opened in the constructor has to reach the test body. Gate on that.</summary>
+        [Fact]
+        public void Every_test_here_reads_a_record_book_of_its_own()
+            => Assert.True(CompanionPluginStatus.UsingOwnRecords);
 
         [Fact]
         public void An_installer_that_throws_is_recorded_and_said_in_the_server_log()
@@ -185,11 +197,10 @@ namespace ValheimBakaLoader.Tests.Game
             {
                 server.Start(Options());
 
-                // Start hands the launch, and the install pass inside it, to a background task,
-                // so the record lands a moment after the call returns rather than inside it.
-                // Asserting straight away caught the gap often enough to fail on a loaded box.
-                // Nothing here is relaxed: the window only decides how long to wait before the
-                // same three assertions run.
+                // With a launch guard wired the launch, and the install pass inside it, go to a
+                // background task, so the record can land a moment after the call returns rather
+                // than inside it. Nothing here is relaxed: the window only decides how long to
+                // wait before the same three assertions run.
                 WaitFor(() => CompanionPluginStatus.Failures.Count > 0
                     && CompanionPluginStatus.CurrentProfile == null);
 
@@ -220,7 +231,7 @@ namespace ValheimBakaLoader.Tests.Game
         /// leaves the state exactly as it found it, so the assertion fails the way it always
         /// did rather than being softened into a pass.
         /// </summary>
-        private static void WaitFor(Func<bool> settled, int withinMs = 5000, int stepMs = 20)
+        private static void WaitFor(Func<bool> settled, int withinMs = 30000, int stepMs = 20)
         {
             var deadline = DateTime.UtcNow.AddMilliseconds(withinMs);
             while (!settled() && DateTime.UtcNow < deadline) Thread.Sleep(stepMs);

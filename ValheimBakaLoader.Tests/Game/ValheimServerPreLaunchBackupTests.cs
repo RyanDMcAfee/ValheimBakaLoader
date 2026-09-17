@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using ValheimBakaLoader.Game;
+using ValheimBakaLoader.Tools;
 using Xunit;
 
 namespace ValheimBakaLoader.Tests.Game
@@ -19,8 +20,15 @@ namespace ValheimBakaLoader.Tests.Game
         private readonly string SandboxDir;
         private readonly string SaveDir;
 
+        // A record book of its own. Starting a server runs the companion plugin install pass,
+        // and that pass clears the record for the realm it is starting, which walks over what a
+        // class reading the shared record had written. See
+        // CompanionPluginStatusTests.Every_test_class_that_touches_the_record_keeps_a_book_of_its_own.
+        private readonly IDisposable OwnRecords;
+
         public ValheimServerPreLaunchBackupTests()
         {
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
             Server = GetService<ValheimServer>();
 
             SandboxDir = Path.Combine(Path.GetTempPath(), "vbl-presnap-" + Guid.NewGuid().ToString("N"));
@@ -37,6 +45,7 @@ namespace ValheimBakaLoader.Tests.Game
         {
             try { Server.Dispose(); } catch { /* best effort */ }
             try { Directory.Delete(SandboxDir, true); } catch { /* best-effort temp cleanup */ }
+            OwnRecords.Dispose();
             GC.SuppressFinalize(this);
         }
 
@@ -76,9 +85,15 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.Equal(ServerStatus.Starting, Server.Status);
         }
 
+        /// <summary>
+        /// Waits for something a background step does. The ceiling is generous on purpose: a run
+        /// that is going to pass gets here in milliseconds, so the only thing the deadline
+        /// decides is how long a genuinely stalled build agent is given before it is called a
+        /// failure. Nothing is relaxed by making it longer, and a short one made CI cry wolf.
+        /// </summary>
         private static async Task WaitUntil(Func<bool> condition)
         {
-            var deadline = DateTime.UtcNow.AddSeconds(10);
+            var deadline = DateTime.UtcNow.AddSeconds(30);
             while (DateTime.UtcNow < deadline)
             {
                 if (condition()) return;

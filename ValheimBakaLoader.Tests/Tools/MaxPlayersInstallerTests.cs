@@ -19,9 +19,14 @@ namespace ValheimBakaLoader.Tests.Tools
         private readonly string PluginsDir;
         private readonly string ConfigDir;
         private readonly MaxPlayersInstaller Installer;
+        private readonly IDisposable OwnRecords;
 
         public MaxPlayersInstallerTests()
         {
+            // A record book only this test can reach. The shared one is written by any server
+            // start in flight elsewhere in the run, which is not this test's news.
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
+
             Root = Path.Combine(Path.GetTempPath(), "baka-maxplayers-" + Guid.NewGuid().ToString("N"));
             PluginsDir = Path.Combine(Root, "BepInEx", "plugins");
             ConfigDir = Path.Combine(Root, "BepInEx", "config");
@@ -35,9 +40,15 @@ namespace ValheimBakaLoader.Tests.Tools
         public void Dispose()
         {
             CompanionPluginStatus.Clear();
+            OwnRecords.Dispose();
             try { Directory.Delete(Root, recursive: true); } catch { }
             GC.SuppressFinalize(this);
         }
+
+        /// <summary>The scope opened in the constructor has to reach the test body. Gate on that.</summary>
+        [Fact]
+        public void Every_test_here_reads_a_record_book_of_its_own()
+            => Assert.True(CompanionPluginStatus.UsingOwnRecords);
 
         private string LegacyDir => Path.Combine(PluginsDir, MaxPlayersInstaller.LegacyFolderName);
 

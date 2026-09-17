@@ -5,7 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Valheim BakaLoader</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="app.css">
+<!--
+  CACHE STAMP. The halls are ordinary web files behind a virtual host, and the embedded
+  browser keeps a disk cache that outlives an update: same two addresses, so the window can
+  come up showing the interface you just replaced. Both includes therefore carry the version
+  they shipped with, which makes every release a new address. The host hands the page its
+  version before any script here runs; with no host in front of it (the mock preview, opened
+  straight off python http.server) the constant below stands in and the preview works exactly
+  as it always did. The plain address is kept as a fallback, because a cache stamp must never
+  be the reason the interface does not come up at all.
+-->
+<script>
+(function(){
+  var v = window.BAKA_VERSION || "1.1.1";
+  window.BAKA_ASSET_VERSION = v;
+  window.BAKA_ASSET = function(name){ return name + "?v=" + encodeURIComponent(v); };
+  window.BAKA_ASSET_PLAIN = function(el){
+    el.onerror = null;
+    var plain = String(el.tagName === "LINK" ? el.href : el.src).split("?")[0];
+    if (el.tagName === "LINK") { el.href = plain; return; }
+    var s = document.createElement("script"); s.src = plain; document.body.appendChild(s);
+  };
+  document.write('<link rel="stylesheet" href="' + BAKA_ASSET("app.css") +
+    '" onerror="BAKA_ASSET_PLAIN(this)">');
+})();
+</script>
 </head>
 <body>
 
@@ -41,7 +65,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.1.0</span></span>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.1.1</span></span>
         <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
@@ -627,7 +651,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.1.0</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.1.1</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>
@@ -691,6 +715,9 @@
   <div class="grip" data-edge="bottomright"></div>
 </div>
 
-<script src="app.js"></script>
+<script>
+document.write('<scr' + 'ipt src="' + BAKA_ASSET("app.js") +
+  '" onerror="BAKA_ASSET_PLAIN(this)"><' + '/scr' + 'ipt>');
+</script>
 </body>
 </html>

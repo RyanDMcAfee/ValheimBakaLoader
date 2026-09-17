@@ -2,6 +2,7 @@
 using System.IO;
 using System.Linq;
 using ValheimBakaLoader.Game;
+using ValheimBakaLoader.Tools;
 using ValheimBakaLoader.Tools.Models;
 using Xunit;
 
@@ -23,8 +24,15 @@ namespace ValheimBakaLoader.Tests.Game
         // swaps in MockProcessProvider.
         private readonly string SandboxDir;
 
+        // A record book of its own. Starting a server runs the companion plugin install pass,
+        // and that pass clears the record for the realm it is starting, which walks over what a
+        // class reading the shared record had written. See
+        // CompanionPluginStatusTests.Every_test_class_that_touches_the_record_keeps_a_book_of_its_own.
+        private readonly IDisposable OwnRecords;
+
         public ValheimServerLogRulesTests()
         {
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
             Server = GetService<ValheimServer>();
             Players = GetService<IPlayerDataRepository>();
 
@@ -36,6 +44,8 @@ namespace ValheimBakaLoader.Tests.Game
         public void Dispose()
         {
             try { Directory.Delete(SandboxDir, true); } catch { /* best-effort temp cleanup */ }
+            OwnRecords.Dispose();
+            GC.SuppressFinalize(this);
         }
 
         #region World saves

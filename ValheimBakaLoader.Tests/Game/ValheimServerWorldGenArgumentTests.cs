@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using ValheimBakaLoader.Game;
+using ValheimBakaLoader.Tools;
 using Xunit;
 
 namespace ValheimBakaLoader.Tests.Game
@@ -30,8 +31,15 @@ namespace ValheimBakaLoader.Tests.Game
         // Process it hands back.
         private readonly string SandboxDir;
 
+        // A record book of its own. Starting a server runs the companion plugin install pass,
+        // and that pass clears the record for the realm it is starting, which walks over what a
+        // class reading the shared record had written. See
+        // CompanionPluginStatusTests.Every_test_class_that_touches_the_record_keeps_a_book_of_its_own.
+        private readonly IDisposable OwnRecords;
+
         public ValheimServerWorldGenArgumentTests()
         {
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
             Server = GetService<ValheimServer>();
 
             SandboxDir = Path.Combine(Path.GetTempPath(), "vbl-worldgen-" + Guid.NewGuid().ToString("N"));
@@ -42,6 +50,8 @@ namespace ValheimBakaLoader.Tests.Game
         public void Dispose()
         {
             try { Directory.Delete(SandboxDir, true); } catch { /* best-effort temp cleanup */ }
+            OwnRecords.Dispose();
+            GC.SuppressFinalize(this);
         }
 
         [Fact]

@@ -396,7 +396,67 @@ namespace ValheimBakaLoader.Forms
 
             core.WebMessageReceived += OnWebMessageReceived;
 
+            // Both halves of "the interface you see is the interface you installed". The
+            // version reaches the page before any script of its own runs, so index.html can
+            // stamp app.css and app.js with it and a new release becomes a new address. And
+            // the first launch of a build that has never run here throws away what the
+            // browser kept, which covers whatever a stamp cannot reach. Neither is allowed
+            // to stop the window coming up.
+            await AnnounceVersionToPageAsync(core);
+            await ClearCacheOnceForThisVersionAsync(core);
+
             core.Navigate($"https://{VirtualHost}/index.html");
+        }
+
+        /// <summary>
+        /// Hands the page the version this build ships, before any of its own script runs.
+        /// index.html reads it to stamp its two includes; with no host in front of it (the
+        /// mock preview) it falls back to the constant written into the file.
+        /// </summary>
+        private async Task AnnounceVersionToPageAsync(CoreWebView2 core)
+        {
+            try
+            {
+                var version = AssemblyHelper.GetApplicationVersion();
+                if (string.IsNullOrWhiteSpace(version)) return;
+
+                await core.AddScriptToExecuteOnDocumentCreatedAsync(
+                    "window.BAKA_VERSION=" + JsonConvert.SerializeObject(version) + ";");
+            }
+            catch (Exception ex)
+            {
+                // The page falls back to its own constant, which is the version it shipped with.
+                Logger.Warning(ex, "Could not hand the interface its version");
+            }
+        }
+
+        /// <summary>
+        /// Throws away the browser's disk cache the first time each version runs, and never
+        /// again for that version. See WebUiCacheStamp for the rule and the marker.
+        /// </summary>
+        private async Task ClearCacheOnceForThisVersionAsync(CoreWebView2 core)
+        {
+            try
+            {
+                var current = AssemblyHelper.GetApplicationVersion();
+                var last = WebUiCacheStamp.ReadLastVersion();
+                if (!WebUiCacheStamp.ShouldClear(last, current)) return;
+
+                // The disk cache and nothing else: cookies, storage and settings belong to the
+                // interface's own state, and a version bump is no reason to throw those out.
+                await core.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache);
+                WebUiCacheStamp.RememberVersion(current);
+
+                Logger.Information(
+                    "Cleared the interface cache for version {version} (previous marker: {last}).",
+                    current, last ?? "none");
+            }
+            catch (Exception ex)
+            {
+                // A cache that will not clear is a stale hall at worst, and the stamped includes
+                // are the first line of defence anyway. Never worth failing a launch over.
+                Logger.Warning(ex, "Could not clear the interface cache for this version");
+            }
         }
 
         #region Messaging

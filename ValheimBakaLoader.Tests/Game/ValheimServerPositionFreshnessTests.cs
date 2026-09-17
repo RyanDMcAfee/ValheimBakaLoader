@@ -1,5 +1,6 @@
 using System;
 using ValheimBakaLoader.Game;
+using ValheimBakaLoader.Tools;
 using Xunit;
 
 namespace ValheimBakaLoader.Tests.Game
@@ -15,11 +16,22 @@ namespace ValheimBakaLoader.Tests.Game
     {
         private readonly ValheimServer Server;
 
-        public ValheimServerPositionFreshnessTests() => Server = GetService<ValheimServer>();
+        // A record book of its own. Starting a server runs the companion plugin install pass,
+        // and that pass clears the record for the realm it is starting, which walks over what a
+        // class reading the shared record had written. See
+        // CompanionPluginStatusTests.Every_test_class_that_touches_the_record_keeps_a_book_of_its_own.
+        private readonly IDisposable OwnRecords;
+
+        public ValheimServerPositionFreshnessTests()
+        {
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
+            Server = GetService<ValheimServer>();
+        }
 
         public void Dispose()
         {
             try { Server.Dispose(); } catch { /* best effort */ }
+            OwnRecords.Dispose();
             GC.SuppressFinalize(this);
         }
 

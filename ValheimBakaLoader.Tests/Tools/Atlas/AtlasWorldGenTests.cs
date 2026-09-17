@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using ValheimBakaLoader.Tools.Atlas;
 using Xunit;
 
@@ -249,18 +250,41 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }, header);
         }
 
+        /// <summary>
+        /// The render runs its rows in parallel and reports progress from whichever worker
+        /// finished one, so "the last percentage the callback was handed" is decided by thread
+        /// scheduling, not by the render: the row that reports 100 can hand its number over
+        /// before a slower row hands over 96, and then a finished render looks unfinished. The
+        /// claim worth making is that 100 was reported at all, which is true of every run, so
+        /// this collects what the callback was handed and reads the collection.
+        /// </summary>
         [Fact]
         public void Renderer_ReportsProgressAndHonorsCancellation()
         {
             var gen = new WorldGen(RefSeed);
-            int last = -1;
-            MapRenderer.Render(gen, 32, pct => last = pct);
-            Assert.Equal(100, last);
 
-            using (var cts = new System.Threading.CancellationTokenSource())
+            var reported = new List<int>();
+            MapRenderer.Render(gen, 32, pct => { lock (reported) reported.Add(pct); });
+
+            Assert.NotEmpty(reported);
+            Assert.All(reported, pct => Assert.InRange(pct, 0, 100));
+            Assert.Contains(100, reported);
+
+            // A token that was cancelled before the render was ever asked for: nothing runs.
+            using (var cts = new CancellationTokenSource())
             {
                 cts.Cancel();
                 Assert.Throws<OperationCanceledException>(() => MapRenderer.Render(gen, 32, null, cts.Token));
+            }
+
+            // And a cancel raised while the render is in flight. Raising it from inside the
+            // progress callback is what makes this exact rather than hopeful: the callback only
+            // runs from inside the render, so the render is provably mid-flight at that instant,
+            // with no sleeping and no window to guess at.
+            using (var cts = new CancellationTokenSource())
+            {
+                Assert.Throws<OperationCanceledException>(
+                    () => MapRenderer.Render(gen, 32, _ => cts.Cancel(), cts.Token));
             }
         }
 

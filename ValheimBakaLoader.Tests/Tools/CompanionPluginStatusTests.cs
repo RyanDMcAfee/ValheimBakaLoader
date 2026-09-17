@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Moq;
 using ValheimBakaLoader.Tools;
 using ValheimBakaLoader.Tools.Logging;
@@ -13,20 +15,154 @@ namespace ValheimBakaLoader.Tests.Tools
     /// application log, which no operator reads, so the feature it powers simply went missing.
     /// These cover the record that carries such a failure out to the server log and the interface.
     /// The record is process-wide, so every test class that touches it shares one collection and
-    /// they never run at the same time.
+    /// they never run at the same time. One collection was never enough on its own: a server
+    /// start files its news from a background task, and a class outside this collection that
+    /// starts a server under the same realm name walks over these records while they are being
+    /// read. Every test here therefore opens a record book of its own, which nothing outside
+    /// this test can reach.
     /// </summary>
     [Collection(CompanionPluginStatusTests.CollectionName)]
     public class CompanionPluginStatusTests : IDisposable
     {
         public const string CollectionName = "companion plugin status";
 
-        public CompanionPluginStatusTests() => CompanionPluginStatus.Clear();
+        private readonly IDisposable OwnRecords;
+
+        public CompanionPluginStatusTests()
+        {
+            OwnRecords = CompanionPluginStatus.BeginOwnRecords();
+            CompanionPluginStatus.Clear();
+        }
 
         public void Dispose()
         {
             CompanionPluginStatus.Clear();
+            OwnRecords.Dispose();
             GC.SuppressFinalize(this);
         }
+
+        /// <summary>
+        /// The book opened in the constructor has to be the one the test method reads, or every
+        /// test here is back on the shared record and back to reading another class's writes.
+        /// This is the gate on that: it fails if the scope ever stops reaching the test body.
+        /// </summary>
+        [Fact]
+        public void Every_test_here_reads_a_record_book_of_its_own()
+            => Assert.True(CompanionPluginStatus.UsingOwnRecords);
+
+        /// <summary>
+        /// The gate on the book itself. The record is process-wide while the writers are not:
+        /// a server start files its news from a background task, so a start elsewhere in the
+        /// run that happened to name the same realm ran the same install pass and its opening
+        /// clear took this test's record with it. A book of one's own has to be beyond the
+        /// reach of a flow that never opened it, and this drives exactly that shape: another
+        /// flow clearing the realm and writing its own news, with nothing of ours disturbed.
+        /// </summary>
+        [Fact]
+        public void A_book_of_its_own_is_beyond_the_reach_of_another_flow()
+        {
+            CompanionPluginStatus.ReportFailure("Item indexer", "ours");
+
+            // Started with the flow suppressed, so the task does NOT inherit this test's book
+            // and lands on the shared one, which is where every other class in the run writes.
+            using (ExecutionContext.SuppressFlow())
+            {
+                Task.Run(() =>
+                {
+                    Assert.False(CompanionPluginStatus.UsingOwnRecords);
+                    CompanionPluginStatus.ClearProfile(null);
+                    CompanionPluginStatus.Clear();
+                    CompanionPluginStatus.ReportFailure("Max Players", "theirs");
+                }).GetAwaiter().GetResult();
+            }
+
+            var failure = Assert.Single(CompanionPluginStatus.Failures);
+            Assert.Equal("Item indexer", failure.Plugin);
+            Assert.Equal("ours", failure.Message);
+        }
+
+        /// <summary>
+        /// Every way a test file can reach this record. Naming the record outright is the
+        /// obvious one. The other one is the reason this gate had to be widened: starting a
+        /// ValheimServer runs the companion plugin install pass, and that pass clears the record
+        /// for the realm it is starting without ever mentioning it by name. UpdateGateTests
+        /// starts servers and mentions nothing, so the old spelling of this gate waved it
+        /// through while its starts were walking over the records these tests were reading.
+        /// </summary>
+        private static readonly string[] WaysToReachTheRecord =
+        {
+            // Names the record itself.
+            "CompanionPluginStatus.",
+
+            // Or builds a server, which is the same thing once it is started: the install pass
+            // inside Start() clears the realm's records and files its own.
+            "GetService<ValheimServer>",
+            "new ValheimServer(",
+            "GetRequiredService<ValheimServer>",
+
+            // Or leans on a helper that starts one for it.
+            "SessionRunning(",
+            "RunningServer(",
+        };
+
+        /// <summary>
+        /// The rule generalised, so the next class to read this record cannot quietly reopen the
+        /// hole. Sharing a collection is not enough on its own and never was: it serialises the
+        /// classes that carry the attribute and nothing else, while a server start filing its
+        /// news from a background task belongs to whichever test set it going, whenever that
+        /// task happens to run. So the rule is about the book, not the collection: every test
+        /// class that touches this record keeps one of its own.
+        /// <para>
+        /// And "touches" means reaches, not mentions. A class that starts a server touches the
+        /// record whether it knows the record exists or not, which is exactly how the class that
+        /// caused the last flake got past the first version of this gate.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Every_test_class_that_touches_the_record_keeps_a_book_of_its_own()
+        {
+            var root = Path.GetDirectoryName(Path.GetDirectoryName(ThisFile()));
+            var offenders = new System.Collections.Generic.List<string>();
+
+            foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+            {
+                if (file.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar)) continue;
+                if (file.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar)) continue;
+
+                var text = File.ReadAllText(file);
+                if (!WaysToReachTheRecord.Any(way => text.Contains(way, StringComparison.Ordinal))) continue;
+                if (text.Contains("BeginOwnRecords()", StringComparison.Ordinal)) continue;
+
+                offenders.Add(Path.GetFileName(file));
+            }
+
+            Assert.True(offenders.Count == 0,
+                "these test files read the companion plugin record, or start a server whose "
+                + "install pass writes to it, without a book of their own, so another class's "
+                + "server start can walk over what they wrote: " + string.Join(", ", offenders));
+        }
+
+        /// <summary>
+        /// The gate has to fail on the shape it is there to catch, or it is only a comment. This
+        /// is the exact text UpdateGateTests had when the flake happened: a server built and
+        /// started, the record never named, and no book opened.
+        /// </summary>
+        [Fact]
+        public void The_gate_catches_a_class_that_only_starts_a_server()
+        {
+            const string beforeTheFix =
+                "public class Something : BaseTest { void Go() { var s = GetService<ValheimServer>(); s.Start(o); } }";
+            const string afterTheFix =
+                "public class Something : BaseTest { Something() { Own = CompanionPluginStatus.BeginOwnRecords(); } "
+                + "void Go() { var s = GetService<ValheimServer>(); s.Start(o); } }";
+
+            Assert.Contains(WaysToReachTheRecord, way => beforeTheFix.Contains(way, StringComparison.Ordinal));
+            Assert.DoesNotContain("BeginOwnRecords()", beforeTheFix, StringComparison.Ordinal);
+
+            Assert.Contains("BeginOwnRecords()", afterTheFix, StringComparison.Ordinal);
+        }
+
+        private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string here = "") => here;
 
         [Fact]
         public void ReportFailure_KeepsThePluginAndTheReason()

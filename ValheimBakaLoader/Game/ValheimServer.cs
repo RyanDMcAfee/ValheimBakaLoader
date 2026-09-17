@@ -319,6 +319,21 @@ namespace ValheimBakaLoader.Game
         public Func<IValheimServerOptions> RefreshOptions { get; set; }
 
         /// <summary>
+        /// How long a relaunch waits between the old process being gone and the new one being
+        /// launched. Half a second for an ordinary restart, so the exiting process has let go of
+        /// its port and its save files, and the profile's own crash delay after a crash.
+        /// </summary>
+        internal const int DefaultRelaunchDelayMs = 500;
+
+        /// <summary>
+        /// The wait itself, so a test can drive a restart end to end without sitting out a real
+        /// half second on a loaded build machine. Production keeps the real wait: this is only
+        /// ever replaced from a test, which hands back a completed task and lets the relaunch
+        /// run at once. Nothing about the order of the steps changes either way.
+        /// </summary>
+        internal Func<int, Task> RelaunchDelay { get; set; } = ms => Task.Delay(ms);
+
+        /// <summary>
         /// Optional hook (set by the UI) that checks GitHub for a newer BakaLoader release and,
         /// when auto-update is enabled and an update is found, stages a headless watchdog and
         /// begins closing the app. Returns <c>true</c> when an app update is taking over (the
@@ -724,8 +739,8 @@ namespace ValheimBakaLoader.Game
 
         private async Task ResumeAfterStopAsync()
         {
-            var delayMs = IsCrashRestart ? Options.AutoRestartDelay * 1000 : 500;
-            await Task.Delay(delayMs);
+            var delayMs = IsCrashRestart ? Options.AutoRestartDelay * 1000 : DefaultRelaunchDelayMs;
+            await (RelaunchDelay ?? (ms => Task.Delay(ms)))(delayMs);
 
             if (!IsRestarting) return;
 

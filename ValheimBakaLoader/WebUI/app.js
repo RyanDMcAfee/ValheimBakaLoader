@@ -7151,9 +7151,9 @@ if(!Native.available){
      looking at, so it is the default; index.html#uptodate walks the quiet one, where
      none of these surfaces show anything at all. */
   APP_UPD=location.hash==="#uptodate"
-    ?{installedVersion:"1.1.0",latestVersion:null,updateAvailable:false,releaseUrl:null,
+    ?{installedVersion:"1.1.1",latestVersion:null,updateAvailable:false,releaseUrl:null,
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true}
-    :{installedVersion:"1.1.0",latestVersion:"1.1.1",updateAvailable:true,
+    :{installedVersion:"1.1.1",latestVersion:"1.1.2",updateAvailable:true,
       releaseUrl:"https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest",
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true};
   renderAppUpdatePill();
