@@ -2001,7 +2001,7 @@ namespace ValheimBakaLoader.Forms
         /// What an RPC answers when it will not do the thing it was asked to do. The page shows
         /// the sentence exactly as it arrives, so the wording lives on this side.
         /// </summary>
-        private static object RefusedRpc(string error) => new { ok = false, error };
+        private static object RefusedRpc(string error, string reason = null) => new { ok = false, error, reason };
 
         /// <summary>
         /// The executable an update for this profile is rewriting. Taken from the operation this
@@ -2512,7 +2512,8 @@ namespace ValheimBakaLoader.Forms
             {
                 var name = p.Value<string>("name");
                 var prefs = ServerPrefsProvider.LoadPreferences(name)
-                    ?? throw new ArgumentException($"No profile named '{name}'");
+                    ?? throw new HostFacingException("profiles.get.noSuchProfile",
+                        $"No profile named '{name}'", ("name", name));
                 CurrentProfile = prefs.ProfileName;
                 // Loading a profile IS the server switch - refresh the chips' active marker.
                 PostEvent("servers.changed", BuildServersList());
@@ -2521,7 +2522,7 @@ namespace ValheimBakaLoader.Forms
 
             RegisterRpc("profiles.save", p =>
             {
-                var prefs = (p["prefs"] ?? throw new ArgumentException("prefs is required"))
+                var prefs = (p["prefs"] ?? throw new HostFacingException("profiles.save.prefsRequired", "prefs is required"))
                     .ToObject<ServerPreferences>();
                 // The form has no fields for the launch history, so carry it over rather than
                 // letting a plain save wipe it and make the next start look like the first.
@@ -2536,7 +2537,8 @@ namespace ValheimBakaLoader.Forms
             {
                 var name = p.Value<string>("name");
                 if (Sessions.TryGetValue(name, out var session) && session.Server.Status != ServerStatus.Stopped)
-                    throw new InvalidOperationException($"Stop the server '{name}' before removing its profile.");
+                    throw new HostFacingException("profiles.remove.serverRunning",
+                        $"Stop the server '{name}' before removing its profile.", ("name", name));
 
                 ServerPrefsProvider.RemovePreferences(name);
                 if (CurrentProfile == name) CurrentProfile = null;
@@ -2556,17 +2558,20 @@ namespace ValheimBakaLoader.Forms
                 var name = p.Value<string>("name");
                 var newName = (p.Value<string>("newName") ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(newName))
-                    throw new ArgumentException("A new name is required.");
+                    throw new HostFacingException("profiles.rename.nameRequired", "A new name is required.");
                 if (string.Equals(name, newName, StringComparison.Ordinal))
                     return Task.FromResult<object>(true);
 
                 var prefs = ServerPrefsProvider.LoadPreferences(name)
-                    ?? throw new ArgumentException($"No profile named '{name}'");
+                    ?? throw new HostFacingException("profiles.rename.noSuchProfile",
+                        $"No profile named '{name}'", ("name", name));
                 if (Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped)
-                    throw new InvalidOperationException($"Stop the server '{name}' before renaming it.");
+                    throw new HostFacingException("profiles.rename.serverRunning",
+                        $"Stop the server '{name}' before renaming it.", ("name", name));
                 if (ServerPrefsProvider.LoadPreferences()
                         .Any(x => string.Equals(x.ProfileName, newName, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidOperationException($"A server named '{newName}' already exists.");
+                    throw new HostFacingException("profiles.rename.nameTaken",
+                        $"A server named '{newName}' already exists.", ("newName", newName));
 
                 prefs.ProfileName = newName;
                 ServerPrefsProvider.SavePreferences(prefs);
@@ -2587,9 +2592,11 @@ namespace ValheimBakaLoader.Forms
             {
                 var name = p.Value<string>("name");
                 var prefs = ServerPrefsProvider.LoadPreferences(name)
-                    ?? throw new ArgumentException($"No profile named '{name}'");
+                    ?? throw new HostFacingException("profiles.archive.noSuchProfile",
+                        $"No profile named '{name}'", ("name", name));
                 if (Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped)
-                    throw new InvalidOperationException($"Stop the server '{name}' before archiving it.");
+                    throw new HostFacingException("profiles.archive.serverRunning",
+                        $"Stop the server '{name}' before archiving it.", ("name", name));
 
                 prefs.Archived = true;
                 ServerPrefsProvider.SavePreferences(prefs);
@@ -2604,7 +2611,8 @@ namespace ValheimBakaLoader.Forms
             {
                 var name = p.Value<string>("name");
                 var prefs = ServerPrefsProvider.LoadPreferences(name)
-                    ?? throw new ArgumentException($"No profile named '{name}'");
+                    ?? throw new HostFacingException("profiles.unarchive.noSuchProfile",
+                        $"No profile named '{name}'", ("name", name));
                 prefs.Archived = false;
                 ServerPrefsProvider.SavePreferences(prefs);
                 PostEvent("servers.changed", BuildServersList());
@@ -2617,7 +2625,8 @@ namespace ValheimBakaLoader.Forms
             {
                 var name = p.Value<string>("name");
                 var prefs = ServerPrefsProvider.LoadPreferences(name)
-                    ?? throw new ArgumentException($"No profile named '{name}'");
+                    ?? throw new HostFacingException("profiles.deleteInfo.noSuchProfile",
+                        $"No profile named '{name}'", ("name", name));
 
                 var running = Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped;
                 var installDir = GetManagedInstallDir(prefs);
@@ -2646,11 +2655,14 @@ namespace ValheimBakaLoader.Forms
                 var deleteFiles = p.Value<bool?>("deleteFiles") ?? false;
 
                 var prefs = ServerPrefsProvider.LoadPreferences(name)
-                    ?? throw new ArgumentException($"No profile named '{name}'");
+                    ?? throw new HostFacingException("profiles.delete.noSuchProfile",
+                        $"No profile named '{name}'", ("name", name));
                 if (Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped)
-                    throw new InvalidOperationException($"Stop the server '{name}' before deleting it.");
+                    throw new HostFacingException("profiles.delete.serverRunning",
+                        $"Stop the server '{name}' before deleting it.", ("name", name));
                 if (CountNonArchivedProfiles() <= 1 && !prefs.Archived)
-                    throw new InvalidOperationException("This is your only active server. Archive it instead of deleting the last one.");
+                    throw new HostFacingException("profiles.delete.lastServer",
+                        "This is your only active server. Archive it instead of deleting the last one.");
 
                 if (deleteFiles)
                 {
@@ -2667,9 +2679,10 @@ namespace ValheimBakaLoader.Forms
                             ServerPrefsProvider.LoadPreferences(), name, saveFolder);
 
                         if (sharedWith != null)
-                            throw new InvalidOperationException(
+                            throw new HostFacingException("profiles.delete.saveFolderShared",
                                 $"'{sharedWith.ProfileName}' keeps its worlds in the same folder, so the files were not deleted. "
-                                + "Point that server somewhere else first, or delete this one without its files.");
+                                + "Point that server somewhere else first, or delete this one without its files.",
+                                ("sharedWith", sharedWith.ProfileName));
                     }
 
                     // Slow file work off the UI thread; junction-safe delete never touches shared game data.
@@ -2718,11 +2731,12 @@ namespace ValheimBakaLoader.Forms
             {
                 var name = (p.Value<string>("name") ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(name))
-                    throw new ArgumentException("A server name is required.");
+                    throw new HostFacingException("servers.create.nameRequired", "A server name is required.");
 
                 if (ServerPrefsProvider.LoadPreferences()
                         .Any(x => string.Equals(x.ProfileName, name, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidOperationException($"A server named '{name}' already exists. Pick a different name.");
+                    throw new HostFacingException("servers.create.nameTaken",
+                        $"A server named '{name}' already exists. Pick a different name.", ("name", name));
 
                 // Optional world-generation dials for the NEW world, validated up front (shared
                 // with worldgen.save) so an invalid value is refused before any install is
@@ -2773,7 +2787,8 @@ namespace ValheimBakaLoader.Forms
                         ? created.SaveDataFolderPath
                         : ResolveSaveDataFolder(created.SaveDataFolderPath);
                     if (string.IsNullOrWhiteSpace(targetSaveFolder))
-                        throw new InvalidOperationException("No save folder is configured, so the world seed can't be applied.");
+                        throw new HostFacingException("servers.create.noSaveFolder",
+                            "No save folder is configured, so the world seed can't be applied.");
 
                     var written = FwlWriter.WriteNewWorld(targetSaveFolder, world, worldSeed);
                     Logger.Information("Pre-created world '{0}' with seed '{1}' ({2}).",
@@ -2878,7 +2893,7 @@ namespace ValheimBakaLoader.Forms
             {
                 var world = (p.Value<string>("world") ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(world))
-                    throw new ArgumentException("A world is required.");
+                    throw new HostFacingException("servers.adoptWorld.worldRequired", "A world is required.");
 
                 var sourceFolder = p.Value<string>("folder");
                 var sub = p.Value<string>("sub");
@@ -2899,15 +2914,17 @@ namespace ValheimBakaLoader.Forms
                     : WorldStore.EnumerateIn(sourceFolder, sub)
                         .FirstOrDefault(w => string.Equals(w.Name, world, StringComparison.OrdinalIgnoreCase));
                 if (sourceWorld == null)
-                    throw new ArgumentException(
-                        $"World '{world}' was not found under '{sourceFolder ?? "<null>"}\\{sub}', so nothing was adopted.");
+                    throw new HostFacingException("servers.adoptWorld.worldNotFound",
+                        $"World '{world}' was not found under '{sourceFolder ?? "<null>"}\\{sub}', so nothing was adopted.",
+                        ("world", world), ("folder", sourceFolder), ("sub", sub));
 
                 var name = (p.Value<string>("name") ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(name)) name = world;
 
                 if (ServerPrefsProvider.LoadPreferences()
                         .Any(x => string.Equals(x.ProfileName, name, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidOperationException($"A server named '{name}' already exists. Pick a different name.");
+                    throw new HostFacingException("servers.adoptWorld.nameTaken",
+                        $"A server named '{name}' already exists. Pick a different name.", ("name", name));
 
                 var seedMods = p.Value<bool?>("seedMods") ?? true;
                 var (suggestedGame, suggestedRcon) = SuggestFreePorts();
@@ -3391,17 +3408,18 @@ namespace ValheimBakaLoader.Forms
                 var sub = p.Value<string>("sub");
                 var includeBackups = p.Value<bool?>("includeBackups") ?? false;
 
-                if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+                if (string.IsNullOrWhiteSpace(world))
+                    throw new HostFacingException("worlds.delete.worldRequired", "world is required");
                 if (!WorldStore.IsSafeReferenceToken(world))
-                    throw new ArgumentException("Invalid characters in world reference.");
+                    throw new HostFacingException("worlds.delete.badWorldRef", "Invalid characters in world reference.");
                 if (sub != "worlds_local" && sub != "worlds")
-                    throw new ArgumentException("Invalid save subfolder.");
+                    throw new HostFacingException("worlds.delete.badSubfolder", "Invalid save subfolder.");
                 if (string.IsNullOrWhiteSpace(folder) || !KnownSaveFolders().Any(k => SameFolder(k, folder)))
-                    throw new ArgumentException("Unknown save folder.");
+                    throw new HostFacingException("worlds.delete.unknownSaveFolder", "Unknown save folder.");
 
                 if (!DeleteWorldNameConfirmed(world, p.Value<string>("confirmName")))
-                    throw new ArgumentException(
-                        $"Type the world's name exactly as it is spelled ('{world}') to delete it.");
+                    throw new HostFacingException("worlds.delete.confirmNameMismatch",
+                        $"Type the world's name exactly as it is spelled ('{world}') to delete it.", ("world", world));
 
                 var saveFolder = Path.GetFullPath(folder);
                 var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
@@ -3419,20 +3437,23 @@ namespace ValheimBakaLoader.Forms
 
                     if (string.Equals(live?.WorldName, world, StringComparison.OrdinalIgnoreCase)
                         && SameFolder(liveFolder, saveFolder))
-                        throw new InvalidOperationException(
-                            $"'{session.ProfileName}' is running world '{world}' right now. Stop it before deleting the world.");
+                        throw new HostFacingException("worlds.delete.worldRunning",
+                            $"'{session.ProfileName}' is running world '{world}' right now. Stop it before deleting the world.",
+                            ("profile", session.ProfileName), ("world", world));
                 }
 
                 var claimant = ProfileSelectingWorld(
                     ServerPrefsProvider.LoadPreferences(), world, saveFolder, userSave);
                 if (claimant != null)
-                    throw new InvalidOperationException(
-                        $"'{claimant.ProfileName}' still has '{world}' chosen as its world. Point that realm at another world first, or delete the realm.");
+                    throw new HostFacingException("worlds.delete.worldClaimed",
+                        $"'{claimant.ProfileName}' still has '{world}' chosen as its world. Point that realm at another world first, or delete the realm.",
+                        ("profile", claimant.ProfileName), ("world", world));
 
                 // A 1.0 world is a whole directory tree, so the delete goes off the UI thread.
                 var removed = await Task.Run(() => WorldStore.DeleteWorld(saveFolder, world, includeBackups));
                 if (removed.Count == 0)
-                    throw new ArgumentException($"There is no world named '{world}' in that save folder any more.");
+                    throw new HostFacingException("worlds.delete.noSuchWorld",
+                        $"There is no world named '{world}' in that save folder any more.", ("world", world));
 
                 Logger.Warning("Deleted world '{0}' from {1} ({2} item(s); backup layers {3}).",
                     world, saveFolder, removed.Count, includeBackups ? "deleted too" : "kept");
@@ -3737,19 +3758,21 @@ namespace ValheimBakaLoader.Forms
             RegisterRpc("atlas.render", async p =>
             {
                 if (_atlasRenderInProgress)
-                    throw new InvalidOperationException("A map render is already in progress.");
+                    throw new HostFacingException("atlas.render.alreadyRunning", "A map render is already in progress.");
                 _atlasRenderInProgress = true;
                 try
                 {
                     var world = p.Value<string>("world");
-                    if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
+                    if (string.IsNullOrWhiteSpace(world))
+                        throw new HostFacingException("atlas.render.worldRequired", "world is required");
                     var size = Math.Clamp(p.Value<int?>("size") ?? 2048, 256, 4096);
                     var force = p.Value<bool?>("force") ?? false;
 
                     var info = FwlReader.TryReadWorld(ResolveSaveDataFolder(null), world);
                     if (info == null)
-                        throw new InvalidOperationException(
-                            $"World '{world}' has no .fwl yet. Choose a seed or start the server once first.");
+                        throw new HostFacingException("atlas.render.noFwl",
+                            $"World '{world}' has no .fwl yet. Choose a seed or start the server once first.",
+                            ("world", world));
 
                     // Adapt to worldgen mods where possible; warn honestly where not.
                     var exePath = GetServerExePath();
@@ -4058,7 +4081,7 @@ namespace ValheimBakaLoader.Forms
                 // this: it compares builds, and the build on disk during a rewrite is whatever the
                 // writer has got to. Nothing is staged and nothing is started.
                 if (IsServerUpdateRunning(options?.ServerExePath))
-                    return Task.FromResult(RefusedRpc(ValheimServer.LaunchBlockedMessage));
+                    return Task.FromResult(RefusedRpc(ValheimServer.LaunchBlockedMessage, "updateRunning"));
 
                 EnsureNoServerCollisions(session, options);
                 StageLaunchAnswer(session.ProfileName, p.Value<string>("guard"));
@@ -4237,7 +4260,7 @@ namespace ValheimBakaLoader.Forms
                 // steamcmd is still writing. Refusing BEFORE the stop matters most here, because
                 // the alternative is an outage that lasts until somebody notices.
                 if (IsServerUpdateRunning(ResolveUpdateExePath(ActiveSession.ProfileName)))
-                    return RefusedRpc(ValheimServer.LaunchBlockedMessage);
+                    return RefusedRpc(ValheimServer.LaunchBlockedMessage, "updateRunning");
 
                 // A restart stops the server and starts it again, so it meets the same guard.
                 // The host's answer is staged here, before anything goes down.
@@ -4310,7 +4333,8 @@ namespace ValheimBakaLoader.Forms
 
                 var entry = ItemCatalog.Entries.FirstOrDefault(e =>
                         string.Equals(e.PrefabName, prefab, StringComparison.OrdinalIgnoreCase))
-                    ?? throw new ArgumentException($"Unknown prefab '{prefab}'");
+                    ?? throw new HostFacingException("players.spawn.unknownPrefab",
+                        $"Unknown prefab '{prefab}'", ("prefab", prefab));
 
                 var result = await Server.SpawnAtPlayerAsync(playerName, entry, amount, levelOrQuality);
 
@@ -4371,12 +4395,13 @@ namespace ValheimBakaLoader.Forms
             // --- Mods ---
             RegisterRpc("mods.scan", async p =>
             {
-                if (_modScanInProgress) throw new InvalidOperationException("A mod scan is already in progress");
+                if (_modScanInProgress)
+                    throw new HostFacingException("mods.scan.alreadyRunning", "A mod scan is already in progress");
                 _modScanInProgress = true;
                 try
                 {
                     var pluginsDir = GetPluginsDirectory()
-                        ?? throw new InvalidOperationException("Server exe path is not configured");
+                        ?? throw new HostFacingException("mods.scan.noServerPath", "Server exe path is not configured");
                     var mods = ModScanner.ScanPlugins(pluginsDir);
 
                     await Task.WhenAll(mods.Select(async mod =>
@@ -4426,12 +4451,13 @@ namespace ValheimBakaLoader.Forms
 
             RegisterRpc("mods.updateAll", async p =>
             {
-                if (_modUpdateInProgress) throw new InvalidOperationException("A mod update is already in progress");
+                if (_modUpdateInProgress)
+                    throw new HostFacingException("mods.updateAll.alreadyRunning", "A mod update is already in progress");
                 _modUpdateInProgress = true;
                 try
                 {
                     var pluginsDir = GetPluginsDirectory()
-                        ?? throw new InvalidOperationException("Server exe path is not configured");
+                        ?? throw new HostFacingException("mods.updateAll.noServerPath", "Server exe path is not configured");
                     var mods = ModScanner.ScanPlugins(pluginsDir);
 
                     // Push the same shape of progress the server update already streams: a bar
@@ -4488,7 +4514,8 @@ namespace ValheimBakaLoader.Forms
             // events the bulk update streams, so the row shows the update in place.
             RegisterRpc("mods.update", async p =>
             {
-                if (_modUpdateInProgress) throw new InvalidOperationException("A mod update is already in progress");
+                if (_modUpdateInProgress)
+                    throw new HostFacingException("mods.update.alreadyRunning", "A mod update is already in progress");
                 _modUpdateInProgress = true;
                 try
                 {
@@ -6347,13 +6374,15 @@ namespace ValheimBakaLoader.Forms
         private Tools.Models.InstalledMod FindInstalledMod(JObject p)
         {
             var fullName = p.Value<string>("fullName");
-            if (string.IsNullOrWhiteSpace(fullName)) throw new ArgumentException("fullName is required");
+            if (string.IsNullOrWhiteSpace(fullName))
+                throw new HostFacingException("mods.fullNameRequired", "fullName is required");
 
             var pluginsDir = GetPluginsDirectory()
-                ?? throw new InvalidOperationException("Server exe path is not configured");
+                ?? throw new HostFacingException("mods.noServerPath", "Server exe path is not configured");
 
             return ModScanner.ScanPlugins(pluginsDir).FirstOrDefault(m => m.FullName == fullName)
-                ?? throw new ArgumentException($"No installed mod named '{fullName}'");
+                ?? throw new HostFacingException("mods.noSuchMod",
+                    $"No installed mod named '{fullName}'", ("fullName", fullName));
         }
 
         private static string RequireTarget(JObject p)

@@ -30,6 +30,10 @@ namespace ValheimBakaLoader.Properties
         internal const string ValheimSteamAppId = "892970";
 
         // Where BakaLoader keeps its own data on disk.
+        // Installed language packs, one folder per language and app version. They live here
+        // rather than in the install folder because the install folder may be read-only and a
+        // manual re-extract carries nothing across.
+        internal const string LanguagesFolderPath = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\languages";
         internal const string LogsFolderPath = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\logs";
         internal const string PlayerListFilePath = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\players-cache.json";
         internal const string UserPrefsFilePathV2 = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\userprefs.json";

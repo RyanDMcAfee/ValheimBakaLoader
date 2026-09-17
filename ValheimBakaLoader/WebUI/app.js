@@ -6,7 +6,18 @@ const Native = (() => {
   let seq = 0; const pending = new Map(); const listeners = new Map();
   if (wv) wv.addEventListener('message', e => {
     const m = e.data;
-    if (m && m.id != null && pending.has(m.id)) { const {res, rej} = pending.get(m.id); pending.delete(m.id); m.ok ? res(m.result) : rej(new Error(m.error)); }
+    if (m && m.id != null && pending.has(m.id)) {
+      const {res, rej} = pending.get(m.id); pending.delete(m.id);
+      if (m.ok) { res(m.result); return; }
+      /* The English sentence is the Error's message, as it has always been. The host
+         also names the sentence now, and that id rides on the Error so the catch can
+         reach it without changing what anything already reads. Null when the throw
+         did not name itself (a framework failure, say). */
+      const err = new Error(m.error);
+      err.errorId = m.errorId ?? null;
+      err.errorParams = m.errorParams ?? null;
+      rej(err);
+    }
     else if (m && m.event) (listeners.get(m.event) || []).forEach(fn => fn(m.data));
   });
   return {
@@ -36,8 +47,20 @@ function agoAt(d){
 /* RPC wrapper: every call catches + toasts; returns FAIL sentinel instead of rejecting
    so no rejected promise is ever unhandled. */
 const FAIL=Symbol("rpc-failed");
+/* The last refusal the host named, kept for whoever asks. Two values rather than a
+   history: a toast is about the thing that just happened, and anything older is in
+   the log. Read by the debug console today; read by the catalog lookup tomorrow. */
+window.BAKA_ERR_ID=null;
+window.BAKA_ERR_PARAMS=null;
 function rpc(method,params){
   return Native.call(method,params).catch(err=>{
+    window.BAKA_ERR_ID=err?.errorId||null;
+    window.BAKA_ERR_PARAMS=err?.errorParams||null;
+    /* T-READY CALL SITE. When the catalog lands this line becomes
+         const said=T(window.BAKA_ERR_ID,window.BAKA_ERR_PARAMS)||err?.message;
+       and nothing else on either side of the bridge has to move: the id and its
+       values are already here, and the English sentence stays the fallback for every
+       refusal that has no id and every pack that is missing one. */
     toast("ᚦ "+method+" failed · "+(err?.message||"unknown error"));
     return FAIL;
   });
@@ -129,12 +152,31 @@ $$(".winbtn[data-win]").forEach(b=>b.addEventListener("click",()=>{
   Native.post("win."+b.dataset.win);
 }));
 
-/* draggable region: titlebar, minus interactive elements */
+/* draggable region: titlebar, minus interactive elements.
+   .tb-interactive is the convention for anything added to the titlebar later: put the
+   class on it and it stops being a drag handle, without this selector having to learn
+   its name. The three original classes stay listed so nothing existing changes. */
+const TB_NO_DRAG=".cmdchip,.winbtns,.winbtn,.tb-interactive";
 $("#titlebar").addEventListener("mousedown",e=>{
   if(e.button!==0||!Native.available) return;
-  if(e.target.closest(".cmdchip,.winbtns,.winbtn")) return;
+  if(e.target.closest(TB_NO_DRAG)) return;
   Native.post("win.dragStart");
 });
+
+/* ---------- LANGUAGE ATTRIBUTES ----------
+   Two attributes, set together, always. `lang` is what Chromium reads to pick a Han
+   face (without it Japanese renders with Simplified glyph shapes) and what a screen
+   reader announces; `data-lang` is what the per-language CSS block hangs off. They are
+   set here rather than written into index.html so there is one place that knows.
+   Called with "en" at boot; the switch will call it again with the chosen tag. */
+function setLanguageAttributes(code){
+  const tag=String(code||"en").trim()||"en";
+  const root=document.documentElement;
+  root.lang=tag;
+  root.dataset.lang=tag;
+  return tag;
+}
+setLanguageAttributes("en");
 
 /* resize grips */
 $$(".grip").forEach(g=>g.addEventListener("mousedown",e=>{
@@ -1551,11 +1593,40 @@ function drawLine(el,data,min,max){
   el.setAttribute("points",pts);
 }
 
-/* ---------- STATUS CLOCK ---------- */
+/* ---------- STATUS CLOCK ----------
+   The status bar used to append one hardcoded time zone abbreviation, which was right
+   on exactly one machine and a lie on every other. The time is the host's own wall
+   clock, so it is formatted for the host's own locale and labelled with the host's
+   own zone. */
 function clock(){const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");}
+const CLOCK_FMT=(()=>{
+  try{
+    return new Intl.DateTimeFormat(undefined,{
+      hour:"2-digit",minute:"2-digit",second:"2-digit",
+      hourCycle:"h23",timeZoneName:"short",
+    });
+  }catch(_){ return null; }
+})();
+/* The fallback is the old digits with the zone spelled out from the offset, so even a
+   runtime with no Intl at all still says which clock it is showing. */
+function clockOffsetName(d){
+  const mins=-d.getTimezoneOffset(), sign=mins<0?"-":"+", a=Math.abs(mins);
+  const hh=Math.floor(a/60), mm=a%60;
+  return "UTC"+sign+hh+(mm?":"+String(mm).padStart(2,"0"):"");
+}
+function clockBarText(d){
+  if(CLOCK_FMT){ try{ return CLOCK_FMT.format(d); }catch(_){} }
+  return [d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,"0")).join(":")+
+    " "+clockOffsetName(d);
+}
+function paintClockSeg(){
+  const el=$("#clockSeg"); if(el) el.textContent=clockBarText(new Date());
+}
+/* Painted once at boot as well as every second, so the first second of the window is
+   the host's own clock rather than the placeholder written into the page. */
+paintClockSeg();
 setInterval(()=>{
-  const d=new Date();
-  $("#clockSeg").textContent=[d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,"0")).join(":")+" JST";
+  paintClockSeg();
   if(!Native.available) $("#tickVal").textContent=running?(58+Math.floor(Math.random()*3))+"/60":"-";
 },1000);
 
@@ -2695,12 +2766,27 @@ document.addEventListener("keydown",e=>{
 
 /* ---------- TOASTS ---------- */
 const TOAST_MAX=3, TOAST_LIFE=4800;
-function toast(msg){
+/* The glyph in the ember slot. It used to be found by splitting on the first space and
+   putting whatever came back as innerHTML, which is two bugs standing together: a
+   language that does not put spaces between words (Chinese) hands the WHOLE sentence to
+   the slot, unescaped, leaving an empty body; and any sentence whose first word is a
+   word puts that word in ember. So the mark is now recognised for what it is, a single
+   glyph, and the body is escaped whatever happens.
+   The Runic block is the set the halls draw from. The two symbol marks already in use
+   (the house and the return arrow) are named beside it rather than left to regress. */
+const TOAST_MARK_RE=/^([\u16A0-\u16FF\u2302\u21BA])\s/;
+function toast(msg,opts){
   msg=TT(msg); // plain-terminology swap (rune glyph token is never matched)
+  let mark=(opts&&opts.mark)?String(opts.mark):"";
+  let body=String(msg==null?"":msg);
+  if(!mark){
+    const m=TOAST_MARK_RE.exec(body);
+    if(m){mark=m[1];body=body.slice(m[0].length);}
+  }
   const t=document.createElement("div");
   t.className="toast";
-  const parts=msg.split(" ");
-  t.innerHTML=`<span class="r">${parts[0]}</span><span>${esc(parts.slice(1).join(" "))}</span><span class="tt">${clock()}</span>`;
+  t.innerHTML=(mark?`<span class="r">${esc(mark)}</span>`:"")+
+    `<span>${esc(body)}</span><span class="tt">${clock()}</span>`;
   const box=$("#toasts");
   box.appendChild(t);
   /* three at a time, oldest first out - a taller stack just buries the controls */
@@ -3340,12 +3426,12 @@ function updMbPair(done,total){
   const mb=n=>Math.round((Number(n)||0)/1048576);
   return mb(done)+" "+TT("of")+" "+mb(total)+" MB";
 }
-/* What the bar says right now. The service sends its own sentence whenever it has one,
-   so the phase table below is the fallback, not the source of truth. */
-function updPhaseText(u){
-  const said=String((u&&u.message)||"").trim();
-  if(said) return said;
-  const k=updPhaseKey(u&&u.phase);
+/* The page's own sentence for a phase it knows, or "" for one it does not.
+   The host sets a message on every phase it reports, so this table used to be dead
+   code: the old order took u.message first and never reached here. The page owns the
+   wording for every phase it recognises, and the host's sentence is what covers the
+   phases it does not (a failure, whose reason only the host knows). */
+function updPhaseSentence(k,u){
   if(k==="backingUp") return TT("Backing up worlds");
   if(k==="askingSteam") return TT("Asking Steam to download the update");
   if(k==="downloading"){
@@ -3358,7 +3444,15 @@ function updPhaseText(u){
   if(k==="runningSteamCmd") return TT("Running steamcmd");
   if(k==="finished") return TT("Update finished.");
   if(k==="cancelled") return TT("Stopped waiting. Steam carries on downloading on its own.");
-  return TT("Updating the server");
+  return "";
+}
+/* What the bar says right now. A phase the page knows wins; the host's own sentence is
+   the fallback for everything else. */
+function updPhaseText(u){
+  const own=updPhaseSentence(updPhaseKey(u&&u.phase),u);
+  if(own) return own;
+  const said=String((u&&u.message)||"").trim();
+  return said||TT("Updating the server");
 }
 /* Normalised install kind. An answer we do not recognise counts as unknown, which is
    the shape that offers Steam and nothing else. */
@@ -6935,7 +7029,9 @@ if(Native.available){
   Native.on("server.launchHold",d=>{
     if(!isActiveProfile(d?.profile)) return;
     setLaunchHold(d);
-    toast("ᛊ "+TT("Start held · ")+(d?.message||TT("the server build changed")));
+    /* The same sentence the condition bar and the modal put, built from the facts in
+       the event rather than from the host's prose. One builder, one wording. */
+    toast("ᛊ "+TT("Start held · ")+guardBody(d||{}));
     logLine("warn","[BakaLoader] start held: "+(d?.message||"the launch guard did not clear it"));
   });
   Native.on("server.launchHoldCleared",d=>{
@@ -7151,9 +7247,9 @@ if(!Native.available){
      looking at, so it is the default; index.html#uptodate walks the quiet one, where
      none of these surfaces show anything at all. */
   APP_UPD=location.hash==="#uptodate"
-    ?{installedVersion:"1.1.1",latestVersion:null,updateAvailable:false,releaseUrl:null,
+    ?{installedVersion:"1.2.0",latestVersion:null,updateAvailable:false,releaseUrl:null,
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true}
-    :{installedVersion:"1.1.1",latestVersion:"1.1.2",updateAvailable:true,
+    :{installedVersion:"1.2.0",latestVersion:"1.2.1",updateAvailable:true,
       releaseUrl:"https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest",
       autoUpdateOnRestart:false,checkEnabled:true,anyServerRunning:true};
   renderAppUpdatePill();

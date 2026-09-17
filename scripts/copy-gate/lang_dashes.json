@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Which long dash characters a catalog is allowed to contain, per language.",
+    "The house rule is that no shipped English string carries a long dash: there is",
+    "always a way to write the sentence with grammar instead, so a dash is a choice and",
+    "the rule costs nothing. That escape does not exist in every language, so the rule",
+    "is a function of the language rather than a constant.",
+    "Source files are always read as English. Only ValheimBakaLoader/WebUI/i18n/<code>.json",
+    "is read under its own code.",
+    "Codepoints are written as U+XXXX. An empty list means no long dash at all."
+  ],
+  "default": [],
+  "languages": {
+    "en": [],
+    "ru": ["U+2014", "U+2013"],
+    "ja": ["U+2014"],
+    "zh-Hans": ["U+2014"],
+    "zh-Hant": ["U+2014"]
+  },
+  "_why": {
+    "ru": "U+2014 is required punctuation in Russian, not decoration: it stands in for the omitted copula, which is how Russian writes 'X is Y', and leaving it out is a grammatical error rather than a style choice. U+2013 is the standard separator between digits in a range.",
+    "ja": "U+2014 is the base character of the Japanese dash; the doubled form is ordinary prose punctuation.",
+    "zh-Hans": "U+2014 doubled is the Chinese em dash, ordinary prose punctuation with no substitute.",
+    "zh-Hant": "U+2014 doubled is the Chinese em dash, ordinary prose punctuation with no substitute."
+  }
+}

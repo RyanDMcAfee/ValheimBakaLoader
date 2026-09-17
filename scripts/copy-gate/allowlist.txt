@@ -1,0 +1,13 @@
+# Copy gate allowlist.
+#
+# One literal per line. A finding whose text contains a line from this file is not copy
+# and is not a finding. Blank lines and lines starting with # are ignored.
+#
+# This file replaced a hardcoded "expect exactly one C# hit" count. A count is not an
+# allowlist: it passes just as happily when the one hit is a different string than the
+# one somebody vouched for, which is a gate that reports the wrong thing while staying
+# green. Every entry here has to say what it is and why it is not copy.
+
+# A BepInEx .cfg section header. It is a file format written by another program, read
+# back by another program, and never shown to a host. Renaming it breaks mod configs.
+[1 - General]

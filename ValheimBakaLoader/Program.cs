@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using System;
+using System.Globalization;
+using System.Threading;
 using System.Windows.Forms;
 using ValheimBakaLoader.Forms;
 using ValheimBakaLoader.Game;
@@ -21,6 +23,8 @@ namespace ValheimBakaLoader
         [STAThread]
         public static void Main(string[] args)
         {
+            PinFrameworkMessagesToEnglish();
+
             Application.SetHighDpiMode(HighDpiMode.SystemAware);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -40,6 +44,28 @@ namespace ValheimBakaLoader
                 container.GetRequiredService<IExceptionHandler>()
                     .HandleException(e, "Application Run Exception");
             }
+        }
+
+        /// <summary>
+        /// Keeps .NET's own exception text in one language.
+        /// <para>
+        /// Any IO, permission, network or JSON failure that escapes a handler becomes page
+        /// text through <c>ex.Message</c>, and .NET writes those sentences in
+        /// <see cref="CultureInfo.CurrentUICulture"/>. Nothing pinned that, so a host on a
+        /// Japanese Windows install was already shown Japanese framework sentences inside an
+        /// English interface, with no way to tell where they came from.
+        /// </para>
+        /// <para>
+        /// Only the UI culture moves. <see cref="CultureInfo.CurrentCulture"/> is left alone
+        /// on purpose: how a host's machine writes numbers, dates and money is theirs, and
+        /// nothing about the language of a message should change it.
+        /// </para>
+        /// </summary>
+        private static void PinFrameworkMessagesToEnglish()
+        {
+            CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
+            Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
+            CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
         }
 
         /// <summary>

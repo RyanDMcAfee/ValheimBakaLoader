@@ -49,6 +49,21 @@ namespace ValheimBakaLoader.Forms
         private const string VirtualHost = "app.baka";
         private const string AtlasVirtualHost = "atlas.baka";
 
+        /// <summary>
+        /// Where an installed language pack is read from, on the page's own origin.
+        /// <para>
+        /// A pack's fonts have to have a URL, because <c>@font-face src</c> cannot read a
+        /// local file, and every font fetch is a CORS request. Serving the pack from this
+        /// origin rather than a host of its own means there is no CORS question to get
+        /// wrong, and it lets this side decide the content type and refuse any path that
+        /// resolves outside the languages folder.
+        /// </para>
+        /// </summary>
+        internal const string LanguagePathPrefix = "/lang/";
+
+        /// <summary>The address shape a pack file is asked for by: https://app.baka/lang/...</summary>
+        internal const string LanguageUrlPrefix = "https://" + VirtualHost + LanguagePathPrefix;
+
         #region Window sizing (DPI aware)
 
         // The Blend layout is designed in CSS pixels, and WebView2 measures its viewport
@@ -82,6 +97,103 @@ namespace ValheimBakaLoader.Forms
                 "ValheimBakaLoader", "AtlasCache");
             Directory.CreateDirectory(dir);
             return dir;
+        }
+
+        /// <summary>
+        /// Where installed language packs live: beside userprefs, not in the install folder,
+        /// which may be read-only and which a manual re-extract does not carry anything across.
+        /// </summary>
+        internal static string GetLanguagesDir()
+        {
+            var dir = Environment.ExpandEnvironmentVariables(Properties.Resources.LanguagesFolderPath);
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        /// <summary>
+        /// Turns a <c>/lang/...</c> request path into the file it names under the languages
+        /// folder, or null when it names anything else.
+        /// <para>
+        /// This is the whole security boundary of serving a pack, so it is a plain function
+        /// with no I/O in it and the tests drive it directly. The order matters: decode
+        /// first, canonicalise second, and only then ask whether the answer is still inside
+        /// the folder. Asking any earlier is how <c>%2e%2e</c> gets through.
+        /// </para>
+        /// </summary>
+        /// <param name="languagesRoot">The languages folder every answer must stay under.</param>
+        /// <param name="requestPath">The URL path, leading slash and all.</param>
+        /// <returns>A full path under <paramref name="languagesRoot"/>, or null.</returns>
+        internal static string MapLanguageResourcePath(string languagesRoot, string requestPath)
+        {
+            if (string.IsNullOrWhiteSpace(languagesRoot) || string.IsNullOrWhiteSpace(requestPath))
+                return null;
+
+            var path = requestPath.Replace('\\', '/');
+
+            // A query or a fragment is not part of the file name.
+            var cut = path.IndexOfAny(new[] { '?', '#' });
+            if (cut >= 0) path = path.Substring(0, cut);
+
+            if (!path.StartsWith(LanguagePathPrefix, StringComparison.OrdinalIgnoreCase)) return null;
+
+            var relative = path.Substring(LanguagePathPrefix.Length);
+            if (relative.Length == 0) return null;
+
+            // One decode. A double-encoded run decodes to a literal name rather than to a
+            // traversal, which is exactly what should happen: it names no file and 404s.
+            try { relative = Uri.UnescapeDataString(relative); }
+            catch (Exception) { return null; }
+
+            relative = relative.Replace('\\', '/').TrimStart('/');
+            if (relative.Length == 0) return null;
+
+            // A drive letter, an alternate data stream, a NUL, or anything Windows refuses
+            // in a path at all. None of these can name a file inside the folder.
+            if (relative.IndexOf(':') >= 0) return null;
+            if (relative.IndexOfAny(Path.GetInvalidPathChars()) >= 0) return null;
+            if (relative.IndexOf('\0') >= 0) return null;
+
+            try
+            {
+                var root = Path.GetFullPath(languagesRoot)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar;
+
+                var candidate = relative.Replace('/', Path.DirectorySeparatorChar);
+                if (Path.IsPathRooted(candidate)) return null;
+
+                var full = Path.GetFullPath(Path.Combine(root, candidate));
+
+                // The answer has to be a file INSIDE the folder. Equal to the folder itself
+                // is a directory, and one character past it is a sibling folder whose name
+                // merely starts the same way.
+                if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null;
+                if (full.Length == root.Length) return null;
+
+                return full;
+            }
+            catch (Exception)
+            {
+                // Too long, badly formed, or a path the platform will not canonicalise.
+                return null;
+            }
+        }
+
+        /// <summary>What a pack file is served as. Anything unrecognised is bytes.</summary>
+        internal static string LanguageContentType(string path)
+        {
+            var extension = Path.GetExtension(path ?? string.Empty).ToLowerInvariant();
+            return extension switch
+            {
+                ".woff2" => "font/woff2",
+                ".woff" => "font/woff",
+                ".ttf" => "font/ttf",
+                ".otf" => "font/otf",
+                ".json" => "application/json; charset=utf-8",
+                ".css" => "text/css; charset=utf-8",
+                ".txt" => "text/plain; charset=utf-8",
+                _ => "application/octet-stream",
+            };
         }
 
         #region Native interop (drag / resize for the borderless window)
@@ -387,6 +499,15 @@ namespace ValheimBakaLoader.Forms
             core.SetVirtualHostNameToFolderMapping(
                 AtlasVirtualHost, GetAtlasCacheDir(), CoreWebView2HostResourceAccessKind.Allow);
 
+            // An installed language pack is served from this origin, from the languages
+            // folder beside userprefs. Registered BEFORE Navigate, because a filter added
+            // afterwards only applies to requests made after it.
+            WebEnvironment = environment;
+            LanguagesDir = GetLanguagesDir();
+            core.AddWebResourceRequestedFilter(
+                LanguageUrlPrefix + "*", CoreWebView2WebResourceContext.All);
+            core.WebResourceRequested += OnLanguageResourceRequested;
+
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.IsZoomControlEnabled = false;
             core.Settings.IsStatusBarEnabled = false;
@@ -406,6 +527,47 @@ namespace ValheimBakaLoader.Forms
             await ClearCacheOnceForThisVersionAsync(core);
 
             core.Navigate($"https://{VirtualHost}/index.html");
+        }
+
+        /// <summary>The WebView2 environment, kept so a pack response can be built from it.</summary>
+        private CoreWebView2Environment WebEnvironment;
+
+        /// <summary>The languages folder, resolved once at startup rather than per request.</summary>
+        private string LanguagesDir;
+
+        /// <summary>
+        /// Answers a https://app.baka/lang/... request out of the languages folder.
+        /// Anything that does not resolve to a file inside that folder is a 404, and the
+        /// path question itself lives in <see cref="MapLanguageResourcePath"/> where the
+        /// tests can reach it.
+        /// </summary>
+        private void OnLanguageResourceRequested(object sender, CoreWebView2WebResourceRequestedEventArgs e)
+        {
+            var environment = WebEnvironment;
+            if (environment == null || e?.Request == null) return;
+
+            try
+            {
+                var path = new Uri(e.Request.Uri).GetComponents(UriComponents.Path, UriFormat.Unescaped);
+                var file = MapLanguageResourcePath(LanguagesDir, "/" + path);
+
+                if (file != null && File.Exists(file))
+                {
+                    var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    e.Response = environment.CreateWebResourceResponse(
+                        stream, 200, "OK",
+                        "Content-Type: " + LanguageContentType(file) + "\r\nCache-Control: no-cache");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                // A pack that cannot be read is a missing font, never a broken window.
+                Logger.Debug(ex, "A language pack file could not be served: {uri}", e.Request.Uri);
+            }
+
+            try { e.Response = environment.CreateWebResourceResponse(null, 404, "Not Found", string.Empty); }
+            catch (Exception) { /* the request went away while we answered it */ }
         }
 
         /// <summary>
@@ -507,7 +669,16 @@ namespace ValheimBakaLoader.Forms
             catch (Exception ex)
             {
                 Logger.Error(ex, "Blend UI RPC {method} failed", method);
-                PostReply(id.Value, ok: false, error: ex.Message);
+
+                // The English sentence travels exactly as it always has, and an id travels
+                // beside it when the throw wrote one. A page that reads only "error" is
+                // unaffected; a page that knows the id can say it in another language.
+                PostReply(
+                    id.Value,
+                    ok: false,
+                    error: ex.Message,
+                    errorId: HostFacingException.IdOf(ex),
+                    errorParams: HostFacingException.ParamsOf(ex));
             }
         }
 
@@ -560,9 +731,20 @@ namespace ValheimBakaLoader.Forms
             RpcHandlers[method] = handler;
         }
 
-        private void PostReply(long id, bool ok, object result = null, string error = null)
+        /// <summary>
+        /// One answer to one RPC. <c>error</c> is the English sentence and stays what it has
+        /// always been; <c>errorId</c> and <c>errorParams</c> are how that sentence can be
+        /// said in another language, and are null for anything that did not name itself.
+        /// </summary>
+        private void PostReply(
+            long id,
+            bool ok,
+            object result = null,
+            string error = null,
+            string errorId = null,
+            object errorParams = null)
         {
-            PostJson(new { id, ok, result, error });
+            PostJson(new { id, ok, result, error, errorId, errorParams });
         }
 
         /// <summary>Push an event to the Blend UI (safe to call from any thread).</summary>
