@@ -130,7 +130,7 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             TheHallNames(Hall("mods", "<!-- ============ PAGE: RUNES"), new[]
             {
-                "mods.head.title", "mods.search.aria", "mods.add.label", "mods.scan.label",
+                "mods.head.title", "mods.search.aria",
                 "mods.col.name", "common.sort.by_name", "mods.col.installed",
                 "mods.col.installed.title", "mods.col.latest", "mods.col.latest.title",
                 "mods.col.status", "mods.col.status.title", "mods.col.possibly_outdated",
@@ -138,10 +138,11 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// Two labels on the Mods hall are keyless because app.js writes them: the
-        /// Update all button carries a count, and the Possibly outdated tooltip is one
-        /// of two sentences chosen by whether the game's update date could be read.
-        /// Keying either one would put the walker and the render in a fight the render
+        /// Four labels on the Mods hall are keyless because app.js writes them: the
+        /// Update all button carries a count, the Possibly outdated tooltip is one of two
+        /// sentences chosen by whether the game's update date could be read, and Add and
+        /// Scan each have a wording for either side of the second-site switch.
+        /// Keying any of them would put the walker and the render in a fight the render
         /// wins on the next paint, leaving the id's English on screen for one frame.
         /// </summary>
         [Fact]
@@ -159,6 +160,16 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("data-i18n=\"mods.col.possibly_outdated\"", column);
             Assert.DoesNotContain("data-i18n-title", column);
             Assert.Contains("th.title=(scanned&&mods.length&&!anyGameDate)?MOD_PO_TIP_UNKNOWN:MOD_PO_TIP;", js);
+
+            // The two header buttons say which sites a scan reads, so their words follow
+            // the Upkeep switch and renderModSourceLabels owns them.
+            foreach (var id in new[] { "addModBtn", "scanBtn" })
+            {
+                var button = hall.Substring(hall.IndexOf("id=\"" + id + "\"", StringComparison.Ordinal) - 40, 140);
+                Assert.DoesNotContain("data-i18n", button);
+            }
+            Assert.Contains("add.textContent=both?T(\"mods.add.label.link\"):T(\"mods.add.label\");", js);
+            Assert.Contains("scan.textContent=both?T(\"mods.scan.label.sites\"):T(\"mods.scan.label\");", js);
         }
 
         // ------------------------------------------------------------------ C. Configs
@@ -410,7 +421,9 @@ namespace ValheimBakaLoader.Tests.Forms
             var catalog = Catalog();
 
             Assert.Equal("ᚨ  Add from Thunderstore", Lore(catalog, "mods.add.label"));
+            Assert.Equal("ᚨ  Add from link", Lore(catalog, "mods.add.label.link"));
             Assert.Equal("ᛋ  Scan Thunderstore", Lore(catalog, "mods.scan.label"));
+            Assert.Equal("ᛋ  Scan mod sites", Lore(catalog, "mods.scan.label.sites"));
             Assert.Equal("ᛃ  Open folder", Lore(catalog, "runes.open.label"));
             Assert.Equal("ᛋ  Reload", Lore(catalog, "runes.reload.label"));
             Assert.Equal("ᛉ  Save Config", Lore(catalog, "world.save.label"));

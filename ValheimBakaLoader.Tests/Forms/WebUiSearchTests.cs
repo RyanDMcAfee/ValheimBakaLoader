@@ -142,7 +142,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 "$(\"#modCount\").textContent=scanned?mods.length",
                 "$(\"#sbMods\").textContent=(scanned?mods.length",
                 "conditionModUpdates(upd.length);",             // the standing condition
-                "$(\"#modsSub\").textContent=mods.length+\" loaded",
+                "renderModIndexLine(mods.length);",
             })
             {
                 Assert.True(render.Contains(line, StringComparison.Ordinal),
@@ -278,7 +278,8 @@ namespace ValheimBakaLoader.Tests.Forms
             var expected = new[]
             {
                 "mods.possibly_outdated.yes", "mods.status.bundled", "mods.status.current",
-                "mods.status.held", "mods.status.update", "mods.tag.hexium", "mods.tag.patcher",
+                "mods.status.held", "mods.status.not_listed", "mods.status.update",
+                "mods.tag.hexium", "mods.tag.patcher",
             };
             Assert.Equal(expected, IdsAskedIn(text).ToArray());
 
@@ -295,7 +296,11 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.empty.unscanned.action", "mods.empty.unscanned.reason",
                 "mods.empty.unscanned.title",
             };
-            var drawn = IdsAskedIn(RenderMods()).ToArray();
+            // The Latest cell's own note is drawn on the row and is deliberately NOT in the
+            // haystack: it is the tooltip that explains the quiet pill, not a word the pill
+            // says, and a search is over what a row says rather than what it explains.
+            var rowTips = new[] { "mods.status.not_listed.tip" };
+            var drawn = IdsAskedIn(RenderMods()).Where(id => !rowTips.Contains(id)).ToArray();
             Assert.Equal(emptyStates, drawn.Where(id => id.StartsWith("mods.empty.", StringComparison.Ordinal)).ToArray());
             Assert.Equal(expected, drawn.Where(id => !id.StartsWith("mods.empty.", StringComparison.Ordinal)).ToArray());
 
@@ -306,6 +311,7 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal("Update", Lore("mods.status.update"));
             Assert.Equal("Current", Lore("mods.status.current"));
             Assert.Equal("held", Lore("mods.status.held"));
+            Assert.Equal("not listed", Lore("mods.status.not_listed"));
             Assert.Equal("Yes", Lore("mods.possibly_outdated.yes"));
         }
 

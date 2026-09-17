@@ -249,7 +249,7 @@ namespace ValheimBakaLoader.Tests.Tools
             var method = Between(BridgeSource(), "private async Task AddHexiumVersionsAsync", "private void RecordModManifest");
 
             Assert.Contains("UseHexiumSource", method);
-            Assert.Contains("HexiumScan.ApplyAsync(mods, enabled)", method);
+            Assert.Contains("HexiumScan.ApplyAsync(mods, enabled, force)", method);
             Assert.Contains("catch { return; }", method);
         }
 

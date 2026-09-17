@@ -561,6 +561,11 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
 .pill.amber{background:rgba(232,169,60,.13);color:var(--amber);border:1px solid rgba(232,169,60,.4)}
 .pill.blue{background:rgba(91,122,140,.15);color:var(--cold-hi);border:1px solid rgba(91,122,140,.4)}
 .pill.ember{background:var(--ember-dim);color:var(--ember-hi);border:1px solid rgba(255,122,26,.45)}
+/* A row whose package a fresh list came back without. It is not a warning and it is not a
+   clean bill of health, so it takes the quietest ground the palette has rather than one of
+   the coloured ones; it is built like the rest of them so it reads as a pill and not as
+   bare text somebody forgot to style. */
+.pill.grey{background:rgba(154,146,127,.14);color:var(--bone-dim);border:1px solid rgba(154,146,127,.4)}
 /* The chip on a mod row that came from the second site, and the mark on the Latest cell
    that says the other site is ahead. Both are quieter than a pill on purpose: they are a
    note about where files came from, not the row's status. The mark is the offer as well

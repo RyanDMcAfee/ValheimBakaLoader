@@ -1,0 +1,31 @@
+[
+  {
+    "full_name": "aedenthorn-QuickLoad",
+    "owner": "aedenthorn",
+    "name": "QuickLoad",
+    "package_url": "https://thunderstore.io/c/valheim/p/aedenthorn/QuickLoad/",
+    "date_created": "2021-02-16T17:47:38.137349+00:00",
+    "date_updated": "2021-02-16T17:47:38.510318+00:00",
+    "is_deprecated": true,
+    "is_pinned": false,
+    "rating_score": 3,
+    "categories": [],
+    "versions": [
+      {
+        "name": "QuickLoad",
+        "full_name": "aedenthorn-QuickLoad-0.2.0",
+        "description": "Allows you to quickly load the last character and world using a hotkey (F7 by default)",
+        "icon": "https://gcdn.thunderstore.io/live/repository/icons/aedenthorn-QuickLoad-0.2.0.png",
+        "version_number": "0.2.0",
+        "dependencies": [],
+        "download_url": "https://thunderstore.io/package/download/aedenthorn/QuickLoad/0.2.0/",
+        "downloads": 1127,
+        "date_created": "2021-02-16T17:47:38.510318+00:00",
+        "website_url": "https://github.com/aedenthorn/ValheimMods",
+        "is_active": true,
+        "uuid4": "5f5cf8c1-b9de-4556-a37e-bdadc73ffd51",
+        "file_size": 43942
+      }
+    ]
+  }
+]

@@ -37,8 +37,14 @@ namespace ValheimBakaLoader.Tools
         /// Fills in each row's Hexium version when <paramref name="enabled"/> is true, and
         /// answers how many rows the site actually had something for. A false does nothing
         /// at all: no lookup, no connection, no change to any row.
+        /// <para>
+        /// <paramref name="force"/> is a host pressing Scan rather than a background check:
+        /// the held index is read again before the rows are filled in, so both sites answer
+        /// with what they hold right now. It is still inside the "off means off" gate, so a
+        /// forced scan with the switch off contacts nobody.
+        /// </para>
         /// </summary>
-        public async Task<int> ApplyAsync(IEnumerable<InstalledMod> mods, bool enabled)
+        public async Task<int> ApplyAsync(IEnumerable<InstalledMod> mods, bool enabled, bool force = false)
         {
             // The whole of "off means off". Nothing below this line runs without a yes.
             if (!enabled) return 0;
@@ -46,6 +52,15 @@ namespace ValheimBakaLoader.Tools
 
             var rows = mods.Where(m => m != null).ToList();
             if (rows.Count == 0) return 0;
+
+            // Asked before the rows are read, so every row is filled in from the same
+            // fresh copy. The client's own cooldown is what stops two presses meaning
+            // two reads.
+            if (force)
+            {
+                try { await Hexium.RefreshAsync(); }
+                catch (Exception e) { Logger?.Debug("Hexium refresh did not answer: {0}", e.Message); }
+            }
 
             var matched = 0;
 

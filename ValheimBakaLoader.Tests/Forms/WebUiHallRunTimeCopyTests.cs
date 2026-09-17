@@ -177,14 +177,19 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_mod_row_menu_reads_every_label_and_every_refusal_from_the_catalog()
         {
-            var menu = Between(AppJs(), "function modRowItems(mod){", "/* Update a single mod");
+            // The menu ends where the helper that writes a checked row begins: everything
+            // after that belongs to the check itself and has its own inventory.
+            var menu = Between(AppJs(), "function modRowItems(mod){",
+                "/* What one check's answer does to the row");
 
             Assert.Equal(new[]
             {
+                "mods.menu.check_one", "mods.menu.check_one.tip.bundled",
+                "mods.menu.check_one.tip.no_package",
                 "mods.menu.hexium", "mods.menu.install_hexium", "mods.menu.install_thunderstore",
                 "mods.menu.remove", "mods.menu.thunderstore", "mods.menu.thunderstore.tip.missing",
                 "mods.menu.update", "mods.menu.update.tip.current", "mods.menu.update.tip.hexium",
-                "mods.menu.update.tip.patcher",
+                "mods.menu.update.tip.not_listed", "mods.menu.update.tip.patcher",
             }, IdsAskedIn(menu).ToArray());
 
             // Nothing in the menu still spells a label or a reason out in English.

@@ -79,6 +79,19 @@ namespace ValheimBakaLoader.Tools.Models
         public string ThunderstoreName { get; set; }
 
         /// <summary>
+        /// True when a package list that was actually read had no entry for this mod.
+        /// <para>
+        /// It says "the site answered and this was not in it", which is not the same as
+        /// "nobody could be asked": it is only ever set from an index that came back, so a
+        /// site that is down leaves it false and the row says nothing. An author who pulls
+        /// a package, or a package that has been taken down, is what turns it true, and the
+        /// next scan that finds the package again turns it off. Nothing acts on it: no
+        /// file is removed, nothing is rolled back, the row simply says so on hover.
+        /// </para>
+        /// </summary>
+        public bool NotListedOnThunderstore { get; set; }
+
+        /// <summary>
         /// Where this copy of the mod came from, when BakaLoader installed it from
         /// somewhere other than Thunderstore and left a note saying so: "hexium", or
         /// null for everything else. Only ever set from a note BakaLoader wrote and

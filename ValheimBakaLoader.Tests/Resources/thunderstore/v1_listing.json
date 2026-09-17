@@ -1,0 +1,105 @@
+[
+  {
+    "full_name": "Vapok-XPortalNetworks",
+    "owner": "Vapok",
+    "name": "XPortalNetworks",
+    "package_url": "https://thunderstore.io/c/valheim/p/Vapok/XPortalNetworks/",
+    "date_created": "2026-09-13T21:09:27.638685+00:00",
+    "date_updated": "2026-09-17T09:07:37.039755+00:00",
+    "is_deprecated": false,
+    "is_pinned": false,
+    "rating_score": 1,
+    "categories": [
+      "Mods",
+      "Tweaks",
+      "Tools",
+      "Server-side",
+      "Client-side",
+      "Utility",
+      "Transportation",
+      "Deep North Update"
+    ],
+    "versions": [
+      {
+        "name": "XPortalNetworks",
+        "full_name": "Vapok-XPortalNetworks-2.0.3",
+        "description": "Select portal destination from a list of existing portals with custom networks and private portals support. No more tag pairing, and no more portal hubs!",
+        "icon": "https://gcdn.thunderstore.io/live/repository/icons/Vapok-XPortalNetworks-2.0.3.png",
+        "version_number": "2.0.3",
+        "dependencies": [
+          "denikson-BepInExPack_Valheim-5.4.2350",
+          "ValheimModding-Jotunn-2.30.0"
+        ],
+        "download_url": "https://thunderstore.io/package/download/Vapok/XPortalNetworks/2.0.3/",
+        "downloads": 616,
+        "date_created": "2026-09-16T18:41:02.000000+00:00",
+        "website_url": "https://github.com/Vapok/XPortalNetworks",
+        "is_active": true,
+        "uuid4": "8379772a-453a-44cf-bce3-2b71984335cb",
+        "file_size": 315025
+      }
+    ]
+  },
+  {
+    "full_name": "denikson-BepInExPack_Valheim",
+    "owner": "denikson",
+    "name": "BepInExPack_Valheim",
+    "package_url": "https://thunderstore.io/c/valheim/p/denikson/BepInExPack_Valheim/",
+    "date_created": "2021-02-14T18:07:34.498403+00:00",
+    "date_updated": "2026-09-09T12:30:44.554712+00:00",
+    "is_deprecated": false,
+    "is_pinned": true,
+    "rating_score": 596,
+    "categories": [
+      "Hildir's Request Update",
+      "Ashlands Update",
+      "Bog Witch Update"
+    ],
+    "versions": [
+      {
+        "name": "BepInExPack_Valheim",
+        "full_name": "denikson-BepInExPack_Valheim-5.4.2350",
+        "description": "BepInEx pack for Valheim. Preconfigured with the correct entry point for mods and preferred defaults for the community.",
+        "icon": "https://gcdn.thunderstore.io/live/repository/icons/denikson-BepInExPack_Valheim-5.4.2350.png",
+        "version_number": "5.4.2350",
+        "dependencies": [],
+        "download_url": "https://thunderstore.io/package/download/denikson/BepInExPack_Valheim/5.4.2350/",
+        "downloads": 333135,
+        "date_created": "2026-09-09T12:30:43.920443+00:00",
+        "website_url": "https://github.com/AzumattDev/BepInEx",
+        "is_active": true,
+        "uuid4": "e037ad51-ce62-4127-aed5-066f8f47e46d",
+        "file_size": 706129
+      }
+    ]
+  },
+  {
+    "full_name": "aedenthorn-QuickLoad",
+    "owner": "aedenthorn",
+    "name": "QuickLoad",
+    "package_url": "https://thunderstore.io/c/valheim/p/aedenthorn/QuickLoad/",
+    "date_created": "2021-02-16T17:47:38.137349+00:00",
+    "date_updated": "2021-02-16T17:47:38.510318+00:00",
+    "is_deprecated": true,
+    "is_pinned": false,
+    "rating_score": 3,
+    "categories": [],
+    "versions": [
+      {
+        "name": "QuickLoad",
+        "full_name": "aedenthorn-QuickLoad-0.2.0",
+        "description": "Allows you to quickly load the last character and world using a hotkey (F7 by default)",
+        "icon": "https://gcdn.thunderstore.io/live/repository/icons/aedenthorn-QuickLoad-0.2.0.png",
+        "version_number": "0.2.0",
+        "dependencies": [],
+        "download_url": "https://thunderstore.io/package/download/aedenthorn/QuickLoad/0.2.0/",
+        "downloads": 1127,
+        "date_created": "2021-02-16T17:47:38.510318+00:00",
+        "website_url": "https://github.com/aedenthorn/ValheimMods",
+        "is_active": true,
+        "uuid4": "5f5cf8c1-b9de-4556-a37e-bdadc73ffd51",
+        "file_size": 43942
+      }
+    ]
+  }
+]

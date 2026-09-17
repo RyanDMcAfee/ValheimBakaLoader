@@ -78,6 +78,22 @@ namespace ValheimBakaLoader.Tests.Forms
                 ? value.GetString()
                 : null;
 
+        /// <summary>
+        /// Where app.js first asks for this id, whichever way it asks: <c>T("id")</c> for a
+        /// sentence that stands on its own, <c>T("id",{...})</c> for one that names slots.
+        /// Minus one when nothing asks for it. Written once here because a rule that only
+        /// knew the first shape would quietly stop covering every sentence with a value in
+        /// it, which is the half of the catalog a translator needs most.
+        /// </summary>
+        private static int AskedAnyhow(string source, string id)
+        {
+            var bare = source.IndexOf("T(\"" + id + "\")", StringComparison.Ordinal);
+            var withParams = source.IndexOf("T(\"" + id + "\",", StringComparison.Ordinal);
+            if (bare < 0) return withParams;
+            if (withParams < 0) return bare;
+            return Math.Min(bare, withParams);
+        }
+
         // ------------------------------------------------- A. the inventory of the surfaces
 
         /// <summary>
@@ -205,15 +221,19 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var source = AppJs();
             var catalog = Catalog();
+            // Either shape of the call: T("id") for a sentence that stands on its own, and
+            // T("id",{...}) for one with values in named slots. A toast that interpolates a
+            // version or a mod name still leads with a rune, so the second shape counts here
+            // exactly as the first does.
             var marked = catalog.Where(pair => Field(pair.Value, "mark") != null)
                                 .Select(pair => pair.Key)
-                                .Where(id => source.Contains("T(\"" + id + "\")", StringComparison.Ordinal))
+                                .Where(id => AskedAnyhow(source, id) >= 0)
                                 .OrderBy(id => id, StringComparer.Ordinal).ToList();
 
             // Every entry that carries a mark is asked for by app.js: a mark on a sentence
             // nothing prints would be a rune waiting to appear out of nowhere.
             Assert.Equal(catalog.Count(pair => Field(pair.Value, "mark") != null), marked.Count);
-            Assert.Equal(32, marked.Count);
+            Assert.Equal(41, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the
@@ -222,7 +242,7 @@ namespace ValheimBakaLoader.Tests.Forms
             var glyph = new Regex("\"([^\\x00-\\x7F]) \"", RegexOptions.Compiled);
             foreach (var id in marked)
             {
-                var call = source.IndexOf("T(\"" + id + "\")", StringComparison.Ordinal);
+                var call = AskedAnyhow(source, id);
                 var window = source.Substring(Math.Max(0, call - 160), Math.Min(160, call));
                 var printed = glyph.Matches(window).Cast<Match>().LastOrDefault();
                 Assert.True(printed != null, id + " carries a mark but nothing prints a glyph before it");

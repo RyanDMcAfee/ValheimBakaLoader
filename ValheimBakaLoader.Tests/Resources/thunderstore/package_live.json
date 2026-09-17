@@ -1,0 +1,47 @@
+{
+  "namespace": "Vapok",
+  "name": "XPortalNetworks",
+  "full_name": "Vapok-XPortalNetworks",
+  "owner": "Vapok",
+  "package_url": "https://thunderstore.io/package/Vapok/XPortalNetworks/",
+  "date_created": "2026-09-13T21:09:27.638685Z",
+  "date_updated": "2026-09-17T09:07:37.039755Z",
+  "rating_score": -1,
+  "is_pinned": false,
+  "is_deprecated": false,
+  "total_downloads": -1,
+  "latest": {
+    "namespace": "Vapok",
+    "name": "XPortalNetworks",
+    "version_number": "2.0.5",
+    "full_name": "Vapok-XPortalNetworks-2.0.5",
+    "description": "Select portal destination from a list of existing portals with custom networks and private portals support. No more tag pairing, and no more portal hubs!",
+    "icon": "https://gcdn.thunderstore.io/live/repository/icons/Vapok-XPortalNetworks-2.0.5.png",
+    "dependencies": [
+      "denikson-BepInExPack_Valheim-5.4.2350",
+      "ValheimModding-Jotunn-2.30.0"
+    ],
+    "download_url": "https://thunderstore.io/package/download/Vapok/XPortalNetworks/2.0.5/",
+    "downloads": 634,
+    "date_created": "2026-09-17T09:07:36.349313Z",
+    "website_url": "https://github.com/Vapok/XPortalNetworks",
+    "is_active": true
+  },
+  "community_listings": [
+    {
+      "has_nsfw_content": false,
+      "categories": [
+        "Mods",
+        "Tweaks",
+        "Tools",
+        "Server-side",
+        "Client-side",
+        "Utility",
+        "Transportation",
+        "Deep North Update"
+      ],
+      "community": "valheim",
+      "review_status": "approved"
+    }
+  ]
+}
