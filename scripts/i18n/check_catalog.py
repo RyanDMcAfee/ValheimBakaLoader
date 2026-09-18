@@ -15,11 +15,12 @@ catalog and everything about it that a person cannot hold in their head:
   * the words that are names rather than words survive translation
   * the long dash rules, which are a function of the language: English has a way
     to write any sentence without one, Russian does not
-  * that no entry quietly changes the plain wording of a sentence the TT() bridge
-    still answers, nor of one a T() call site now asks for by id, nor of one the
-    walker writes into the page: three roads into the same regression, which is
-    one no English screenshot can show because it only appears with the plain
-    terminology switch the other way
+  * that a sentence carrying a word from the Norse register carries the plain wording
+    of that sentence beside it. Three rules used to watch this, one per road a
+    sentence could take into the old swap table; the table is gone and the entry is
+    the only thing there is, so there is one rule and it reads the register off
+    scripts/i18n/norse_terms.json. It is the half no English screenshot can show,
+    because it only appears with the Norse names switched off
   * and, for English, that the catalog and the interface agree BOTH WAYS. Every
     id the interface asks for exists, and every id the catalog holds is asked
     for by something. An orphan key is a sentence nobody reads that a translator
@@ -28,6 +29,7 @@ catalog and everything about it that a person cannot hold in their head:
 Usage:
   check_catalog.py                          the shipped catalog, every check
   check_catalog.py --dir DIR                catalogs in DIR, no completeness
+  check_catalog.py --norse TERMS.json       another Norse register list
   check_catalog.py --dir DIR --app A --html H [--i18n I]   with completeness
 
 Prints one finding per line, then TOTAL n, and exits non zero when n is not 0.
@@ -39,8 +41,6 @@ import os
 import re
 import subprocess
 import sys
-
-from html.parser import HTMLParser
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
@@ -77,7 +77,7 @@ DO_NOT_TRANSLATE = [
 # node is not on the machine. Node is asked first so the gate and the lookup are
 # reading the same CLDR data rather than two copies of it.
 FALLBACK_CATEGORIES = {
-    "en": ["one", "other"],
+    "en": ["one", "other"],   # and xx, the pseudo locale built from it
     "ru": ["one", "few", "many", "other"],
     "ja": ["other"],
     "zh-hans": ["other"],
@@ -114,7 +114,15 @@ def plural_categories(language, findings):
     Asked of Intl.PluralRules through node, which is the same machinery the page
     selects with, so a plural entry cannot be complete at the gate and short in
     the window. Falls back to a written down table only when node is missing.
+
+    The one exception is xx, the generated pseudo locale. It is not a language and
+    Intl does not know it, so every runtime quietly answers with the categories of
+    whatever the machine's own locale is - which would make this gate pass here and
+    fail on a build machine in Tokyo. It is built from the English catalog, so it
+    has English's plural shape, and that is said here rather than asked.
     """
+    if str(language).lower() == "xx":
+        return sorted(FALLBACK_CATEGORIES["en"])
     script = (
         "try{process.stdout.write("
         "new Intl.PluralRules(process.argv[1]).resolvedOptions()"
@@ -321,7 +329,6 @@ def unescape(text):
 
 JS_STRING = r'"((?:[^"\\\n]|\\.)*)"'
 T_CALL = re.compile(r"(?<![A-Za-z0-9_$])T\(\s*" + JS_STRING)
-TT_CALL = re.compile(r"(?<![A-Za-z0-9_$])TT\(\s*" + JS_STRING)
 HTML_ATTR = re.compile(r'data-i18n(?:-title|-placeholder|-aria)?="([^"]*)"')
 
 # A table that holds catalog ids rather than English names them in a property whose name
@@ -379,7 +386,6 @@ def table_english_drift(keys, app_path, findings):
 def completeness(keys, app_path, html_path, i18n_path, findings):
     """The catalog and the interface, checked against each other BOTH ways."""
     asked = set()
-    lore_used = set()
 
     for path in [p for p in (app_path, i18n_path) if p and os.path.isfile(p)]:
         source = read_text(path)
@@ -388,8 +394,6 @@ def completeness(keys, app_path, html_path, i18n_path, findings):
             asked.add((unescape(match.group(1)), rel))
         for entry_id in table_ids(source):
             asked.add((entry_id, rel))
-        for match in TT_CALL.finditer(source):
-            lore_used.add(unescape(match.group(1)))
 
     if html_path and os.path.isfile(html_path):
         page = read_text(html_path)
@@ -401,362 +405,87 @@ def completeness(keys, app_path, html_path, i18n_path, findings):
         if entry_id not in keys:
             findings.append((where, "asks for an id the English catalog does not have: %s" % entry_id))
 
-    # The other direction. A key is used when something asks for it by id, or
-    # when its English sentence is still going through the TT() bridge, which is
-    # how a half migrated call site and a migrated one stay in step.
+    # The other direction, and it is strict now: an id nothing asks for is a sentence
+    # nobody reads that a translator still pays for. There used to be a second way to
+    # be used - an English sentence the TT() bridge still spelled out - and that bridge
+    # is gone, so being asked for by id is the only way.
     asked_ids = {entry_id for entry_id, _ in asked}
     for entry_id in sorted(keys):
         if entry_id in asked_ids:
             continue
-        lore = keys[entry_id].get("lore") if isinstance(keys[entry_id], dict) else None
-        if isinstance(lore, str) and lore in lore_used:
-            continue
         findings.append(("en.json", "orphan key: nothing asks for %s" % entry_id))
 
 
-TERM_PAIRS_BLOCK = re.compile(r"const TERM_PAIRS\s*=\s*\[(.*?)\n\];", re.S)
-TERM_PAIR = re.compile(r'\[\s*' + JS_STRING + r'\s*,\s*' + JS_STRING + r'\s*\]')
+DEFAULT_NORSE = os.path.join(HERE, "norse_terms.json")
 
 
-def term_pairs(source):
-    """The plain-wording swap table as app.js holds it, or None once it is gone."""
-    block = TERM_PAIRS_BLOCK.search(source)
-    if not block:
+def norse_register(path, findings):
+    """The Norse register, and the ids that are allowed to carry it alone."""
+    if not os.path.isfile(path):
+        findings.append((shown(path), "the Norse register list is missing"))
         return None
-    return [(unescape(a), unescape(b)) for a, b in TERM_PAIR.findall(block.group(1))]
+    try:
+        rules = json.loads(read_text(path))
+    except ValueError as problem:
+        findings.append((shown(path), "the Norse register list is not valid JSON: %s" % problem))
+        return None
+    terms = [str(t) for t in (rules.get("terms") or []) if str(t).strip()]
+    if not terms:
+        findings.append((shown(path), "the Norse register list names no terms"))
+        return None
+    return {
+        "res": [(t, re.compile(r"(?<![A-Za-z])" + re.escape(t) + r"(?![A-Za-z])", re.I))
+                for t in terms],
+        "exempt": {k: v for k, v in (rules.get("exempt") or {}).items()
+                   if not k.startswith("_")},
+        "suffix": str(rules.get("caption_suffix") or ""),
+        "prefix": str(rules.get("caption_prefix") or ""),
+    }
 
 
-def plainify(text, pairs):
-    """The swap, spelled the way app.js spells it: word boundaries only where the
-    phrase starts or ends on a word character, longest phrases first because the
-    table is written in that order."""
-    for frm, to in pairs:
-        pattern = (r"\b" if re.match(r"\w", frm) else "") \
-            + re.escape(frm) \
-            + (r"\b" if re.search(r"\w$", frm) else "")
-        text = re.sub(pattern, lambda _m, t=to: t, text)
-    return text
+def norse_register_drift(keys, rules, findings):
+    """A sentence in the Norse register has to carry the plain wording of itself.
 
+    This is the one rule left where three used to stand. All three watched the same
+    regression from different sides - a sentence the swap table would have reworded,
+    now answered by an entry that names only one wording - and all three were written
+    to switch themselves off the day the table went. It has gone, so they are gone.
 
-def register_drift(keys, app_path, findings):
-    """The plain register cannot move quietly while the TT() bridge is up.
-
-    TT(sentence) asks idFor() first, so the moment the catalog knows that exact
-    English the bridge answers out of the entry instead of running the swap. An
-    entry whose lore the swap WOULD have reworded, with no plain register of its
-    own and no second entry sharing the text to make idFor refuse, therefore
-    changes what a host with plain wording on reads. Nothing in an English
-    screenshot can show that: it only appears with the switch the other way.
+    What replaces them asks the question directly rather than by simulating a regex
+    table: if the lore wording carries a word from the Norse register, the entry owes
+    a plain wording of the same sentence. Two kinds of id are exempt. A Norse CAPTION
+    (an id ending `.norse`, or anything under `common.norse.`) IS the Norse word, and
+    CSS hides every one of them when the switch is off, so a plain register there is a
+    wording nobody can read. And a handful of sentences quote a Norse word as data
+    rather than speaking in it; those are named in norse_terms.json with the reason.
     """
-    if not app_path or not os.path.isfile(app_path):
+    if not rules:
         return
-    source = read_text(app_path)
-    pairs = term_pairs(source)
-    if pairs is None:
-        return  # TERM_PAIRS is gone, and the bridge went with it
-
-    bridged = {unescape(match.group(1)) for match in TT_CALL.finditer(source)}
-
-    shared = {}
-    for entry_id, entry in keys.items():
-        lore = entry.get("lore") if isinstance(entry, dict) else None
-        if isinstance(lore, str):
-            shared.setdefault(lore, []).append(entry_id)
-
     for entry_id in sorted(keys):
         entry = keys[entry_id]
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or entry.get("plain") is not None:
             continue
-        lore = entry.get("lore")
-        if not isinstance(lore, str) or lore not in bridged:
+        last = entry_id.rsplit(".", 1)[-1]
+        if rules["suffix"] and last == rules["suffix"]:
             continue
-        if len(shared.get(lore, ())) > 1:
-            continue  # idFor refuses a shared text, so the swap still runs
-        if entry.get("plain") is not None:
+        if rules["prefix"] and entry_id.startswith(rules["prefix"]):
             continue
-        if plainify(lore, pairs) != lore:
-            findings.append((
-                "en.json",
-                "%s answers a TT() sentence the plain swap would have reworded to %r, "
-                "and names no plain register" % (entry_id, plainify(lore, pairs))))
-
-
-# A sentence app.js sets RAW today - never through TT() - and that a later pass moved
-# into the catalog by id. The swap never reached it, so naming a plain register there
-# would move English where nothing moves it, and the rule below has to be told. Written
-# as id -> the wording the swap WOULD have produced, so the exemption cannot rot: change
-# the pairs and the gate speaks up again instead of staying quiet.
-#
-# Empty on purpose. Every id a T() call site asks for today came out of a TT() call site,
-# which means the swap did reach it and the plain register has to say what the swap said.
-DYNAMIC_SWAP_EXEMPT = {}
-
-
-def dynamic_register_drift(keys, app_path, findings):
-    """The plain register cannot move quietly on the run-time half either.
-
-    register_drift above watches the sentences the bridge still answers by their English.
-    static_register_drift watches the words the walker writes into index.html. This one
-    watches the third road into the same regression, and the one the migration actually
-    travels: a sentence app.js has stopped spelling out and now asks for BY ID.
-
-    While TERM_PAIRS is still here, TT(sentence) rewords that sentence for a host reading
-    plain wording. T(id) rewords nothing: it hands back the plain register when the entry
-    has one and the lore wording when it does not. So an entry a T() call site asks for
-    has to carry exactly what the swap produced, or the words move under a switch that no
-    English screenshot is ever taken with. The inverse is the same defect the other way:
-    a plain register on a sentence the swap left alone moves English where nothing moved
-    it today.
-
-    Switches itself off once TERM_PAIRS is gone, because at that point the catalog is the
-    only thing there is and a writer may word the plain register however they like.
-    """
-    if not app_path or not os.path.isfile(app_path):
-        return
-    source = read_text(app_path)
-    pairs = term_pairs(source)
-    if pairs is None:
-        return  # TERM_PAIRS is gone, and the swap went with it
-
-    for entry_id in sorted({unescape(m.group(1)) for m in T_CALL.finditer(source)}
-                           | set(table_ids(source))):
-        entry = keys.get(entry_id)
-        if not isinstance(entry, dict):
-            continue                       # named by the completeness check
-        lore = entry.get("lore")
-        if not isinstance(lore, str):
-            continue                       # a plural object is checked category by category
-        plain = entry.get("plain")
-        swapped = plainify(lore, pairs)
-
-        if entry_id in DYNAMIC_SWAP_EXEMPT:
-            if swapped != DYNAMIC_SWAP_EXEMPT[entry_id]:
+        said = texts(entry.get("lore"))
+        hit = [term for term, rx in rules["res"] if any(rx.search(t) for t in said)]
+        if not hit:
+            if entry_id in rules["exempt"]:
                 findings.append((
-                    "en.json",
-                    "%s is exempt from the plain swap for rewording to %r, but the swap now "
-                    "says %r: check the exemption is still the right call"
-                    % (entry_id, DYNAMIC_SWAP_EXEMPT[entry_id], swapped)))
-            elif plain is not None:
-                findings.append((
-                    "en.json",
-                    "%s is exempt from the plain swap and also names a plain register, "
-                    "which are two different answers to the same question" % entry_id))
+                    "norse_terms.json",
+                    "%s is exempted from the Norse register rule, but nothing in it is in"
+                    " the register any more: drop the exemption" % entry_id))
             continue
-
-        if swapped != lore:
-            if plain is None:
-                findings.append((
-                    "en.json",
-                    "%s is asked for by a T() call and the plain swap rewords that sentence "
-                    "to %r, and it names no plain register" % (entry_id, swapped)))
-            elif plain != swapped:
-                findings.append((
-                    "en.json",
-                    "%s names the plain register %r where the swap on the same sentence "
-                    "says %r" % (entry_id, plain, swapped)))
-        elif plain is not None:
-            findings.append((
-                "en.json",
-                "%s is asked for by a T() call, but nothing rewords that sentence today, "
-                "so the plain wording would move where it never moved" % entry_id))
-
-
-TERM_STATIC_SEL = re.compile(r'const TERM_STATIC_SEL\s*=\s*"([^"]*)"')
-
-# Places where the swap was WRONG, and the entry deliberately stops it.
-#
-# The swap is 129 regexes over whatever text happens to be on screen, so a word
-# that belongs to one hall reaches an unrelated label in another. Naming the
-# wording it produced, rather than just the id, means the exemption cannot rot:
-# change the pairs and the gate speaks up again instead of staying quiet.
-#
-#   atlas.layers.label  The Map hall's layer bar says "Layers" over the chips
-#                       that draw portals, altars, builds and pins. The Barrow's
-#                       pair ["Layers","Backups"] was rewriting it to "Backups"
-#                       whenever plain wording was on, which named the bar after
-#                       a feature on a different hall. The Barrow's own heading
-#                       keeps the swap through barrow.sec.layers, which shares
-#                       the text so idFor() refuses it and TT("Layers") still
-#                       runs the regex.
-SWAP_COLLISIONS = {
-    "atlas.layers.label": "Backups",
-}
-
-
-class _Walk(HTMLParser):
-    """index.html as a stack of elements, remembering which ones name an id.
-
-    Only what the rule needs: for every data-i18n* attribute, the chain of
-    (tag, id, classes) it sits under, so a descendant selector can be answered.
-    """
-
-    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
-            "link", "meta", "param", "source", "track", "wbr"}
-
-    def __init__(self):
-        HTMLParser.__init__(self, convert_charrefs=True)
-        self.stack = []
-        self.named = []          # (entry_id, kind, chain)
-
-    def handle_starttag(self, tag, attrs):
-        got = dict(attrs)
-        node = (tag, got.get("id") or "", (got.get("class") or "").split())
-        chain = self.stack + [node]
-        for name, value in got.items():
-            if name == "data-i18n" or name.startswith("data-i18n-"):
-                kind = name[len("data-i18n"):]
-                self.named.append((value, kind, chain))
-        if tag not in self.VOID:
-            self.stack.append(node)
-
-    def handle_startendtag(self, tag, attrs):
-        self.handle_starttag(tag, attrs)
-        if tag not in self.VOID and self.stack:
-            self.stack.pop()
-
-    def handle_endtag(self, tag):
-        for index in range(len(self.stack) - 1, -1, -1):
-            if self.stack[index][0] == tag:
-                del self.stack[index:]
-                return
-
-
-def _simple_matches(simple, node):
-    tag, node_id, classes = node
-    if simple.startswith("#"):
-        return node_id == simple[1:]
-    if simple.startswith("."):
-        return simple[1:] in classes
-    return tag == simple
-
-
-def _read_selectors(selector_list, findings):
-    """The selector list as shapes this can answer, said once.
-
-    Understands exactly the shapes TERM_STATIC_SEL uses: one simple selector, or
-    two with a descendant space between them. Anything else is reported here,
-    once, rather than quietly answered false for every element on the page,
-    because a selector this cannot read is a hole in the rule below, not a pass.
-    """
-    parsed = []
-    for selector in selector_list:
-        parts = selector.split()
-        if len(parts) in (1, 2) and all(re.match(r"^[#.]?[A-Za-z][\w-]*$", p) for p in parts):
-            parsed.append(parts)
+        if entry_id in rules["exempt"]:
             continue
         findings.append((
-            "app.js",
-            "TERM_STATIC_SEL holds %r, which the static register rule cannot read; "
-            "teach it that shape before shipping it" % selector))
-    return parsed
-
-
-def _selector_matches(parts, chain):
-    """Does the last element of the chain match this already-read selector?"""
-    if not _simple_matches(parts[-1], chain[-1]):
-        return False
-    if len(parts) == 1:
-        return True
-    return any(_simple_matches(parts[0], node) for node in chain[:-1])
-
-
-def static_register_drift(keys, app_path, html_path, findings):
-    """The plain register cannot move quietly on the static half of the page either.
-
-    register_drift above watches the sentences the TT() bridge answers. This one
-    watches the other road into the same regression: the words the walker writes
-    into index.html. applyTerms rewrites the text (and the tooltip) of every
-    element under TERM_STATIC_SEL through the swap, so for those elements the
-    catalog has to say the same thing the swap says, or a host with plain wording
-    on reads something different after the walk than before it. And for every
-    OTHER element the walker fills, the swap never ran, so naming a plain register
-    there moves English where nothing moved it today.
-
-    Both arms switch themselves off once TERM_PAIRS is gone, because at that point
-    the catalog is the only thing there is and a plain register is free to say
-    whatever a writer wants.
-    """
-    if not app_path or not os.path.isfile(app_path):
-        return
-    if not html_path or not os.path.isfile(html_path):
-        return
-    source = read_text(app_path)
-    pairs = term_pairs(source)
-    if pairs is None:
-        return  # TERM_PAIRS is gone, and the swap went with it
-
-    bridged = {unescape(match.group(1)) for match in TT_CALL.finditer(source)}
-
-    walk = _Walk()
-    walk.feed(read_text(html_path))
-
-    found = TERM_STATIC_SEL.search(source)
-    if not found:
-        # Quiet when the page names no ids at all, which is a fixture with no static
-        # half rather than a tree that lost its selector list. Loud when there are ids
-        # to walk, because then the rule really cannot see half of what it guards.
-        if walk.named:
-            findings.append((
-                "app.js",
-                "the swap table is still here but TERM_STATIC_SEL is gone, so the static "
-                "register rule cannot tell which labels the swap still rewrites"))
-        return
-    selectors = _read_selectors(
-        [s.strip() for s in found.group(1).split(",") if s.strip()], findings)
-
-    said = set()   # one finding per entry, however many elements name it
-    for entry_id, kind, chain in walk.named:
-        if entry_id in said:
-            continue
-        entry = keys.get(entry_id)
-        if not isinstance(entry, dict):
-            continue                       # named by the completeness check
-        lore = entry.get("lore")
-        if not isinstance(lore, str):
-            continue
-        plain = entry.get("plain")
-        swapped = plainify(lore, pairs)
-
-        # applyTerms reaches the text of these elements, and their tooltip with it.
-        reached = kind in ("", "-title") and any(
-            _selector_matches(selector, chain) for selector in selectors)
-
-        if entry_id in SWAP_COLLISIONS:
-            # A deliberate stop. It still has to be the wording the exemption was
-            # written for, and it still has to name no plain register, or it is a
-            # different decision wearing the same id.
-            if swapped != SWAP_COLLISIONS[entry_id]:
-                findings.append((
-                    "en.json",
-                    "%s is exempt from the plain swap for rewording to %r, but the swap "
-                    "now says %r: check the exemption is still the right call"
-                    % (entry_id, SWAP_COLLISIONS[entry_id], swapped)))
-            elif plain is not None:
-                findings.append((
-                    "en.json",
-                    "%s is exempt from the plain swap and also names a plain register, "
-                    "which are two different answers to the same question" % entry_id))
-            continue
-
-        if reached and swapped != lore:
-            if plain is None:
-                said.add(entry_id)
-                findings.append((
-                    "en.json",
-                    "%s is written into an element the plain swap rewords to %r, "
-                    "and names no plain register" % (entry_id, swapped)))
-            elif plain != swapped:
-                said.add(entry_id)
-                findings.append((
-                    "en.json",
-                    "%s names the plain register %r where the swap on the same element "
-                    "says %r" % (entry_id, plain, swapped)))
-        elif plain is not None and swapped == lore and lore not in bridged:
-            said.add(entry_id)
-            findings.append((
-                "en.json",
-                "%s names a plain register, but nothing rewords that sentence today, "
-                "so the plain wording would move where it never moved" % entry_id))
+            "en.json",
+            "%s speaks in the Norse register (%s) and names no plain wording, so a host"
+            " with the Norse names off reads it anyway"
+            % (entry_id, ", ".join(sorted(set(hit))))))
 
 
 def shipped_version(path, findings):
@@ -775,6 +504,7 @@ def main(argv):
     html_path = None
     i18n_path = None
     dash_path = DEFAULT_DASHES
+    norse_path = DEFAULT_NORSE
     csproj = None
     defaults = True
 
@@ -797,6 +527,9 @@ def main(argv):
             index += 2
         elif flag == "--dashes":
             dash_path = value
+            index += 2
+        elif flag == "--norse":
+            norse_path = value
             index += 2
         elif flag == "--csproj":
             csproj = value
@@ -874,11 +607,11 @@ def main(argv):
             elif version and not stamped:
                 findings.append((rel, "_meta names no appVersion"))
 
+        if language == "en":
+            norse_register_drift(keys, norse_register(norse_path, findings), findings)
+
         if language == "en" and (app_path or html_path):
             completeness(keys, app_path, html_path, i18n_path, findings)
-            register_drift(keys, app_path, findings)
-            dynamic_register_drift(keys, app_path, findings)
-            static_register_drift(keys, app_path, html_path, findings)
             table_english_drift(keys, app_path, findings)
 
     for where, what in findings:

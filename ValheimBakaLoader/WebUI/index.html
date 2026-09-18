@@ -66,7 +66,9 @@
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
         <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.0</span></span>
-        <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead" data-i18n-title="side.mead.title">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
+        <!-- app.js writes the words and lights the embers over them; the English here is
+           what the link reads on the frame before the catalog lands. -->
+      <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead" data-i18n-title="side.mead.title">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
       </div>
     </nav>
 
@@ -131,7 +133,7 @@
                      for the other: this one is ember and names the version, the Valheim one is
                      amber and does not. app.js fills the text and lights the embers. -->
                 <button type="button" class="pill ember updpill" id="hAppUpdPill" style="display:none">BakaLoader ready</button>
-                <button class="btn btn-ghost btn-sm" id="stokeBtn" title="Stoke the hearth: restarts the server, warning players in-game first">Restart</button>
+                <button class="btn btn-ghost btn-sm" id="stokeBtn" title="Stoke the hearth: restarts the server, warning players in-game first if any are online">Restart</button>
                 <button class="btn btn-cold btn-sm" id="douseBtn" title="Douse the hearth: stops the server">Stop</button>
               </div>
             </div>
@@ -147,7 +149,7 @@
               <div class="microlabel" data-i18n="hearth.saves.label">World saves<span style="margin-left:auto" class="copychip" id="openWorlds" title="Open the worlds save folder" data-i18n="hearth.saves.open.chip" data-i18n-title="hearth.saves.open.title">OPEN</span></div>
               <div style="display:flex;align-items:baseline;gap:14px">
                 <div><div class="bigval" id="saveCountdown">04:12</div><div class="subval" data-i18n="hearth.saves.next.caption">until next save</div></div>
-                <div style="margin-left:auto;text-align:right"><div class="subval" id="lastSaveLbl">last rune-check</div><div class="subval" style="color:var(--bone)" id="lastSave">22:05 · 8.4 MB</div><div class="subval" id="saveAvg">avg -</div></div>
+                <div style="margin-left:auto;text-align:right"><div class="subval" id="lastSaveLbl" data-i18n="hearth.saves.last.label">last rune-check</div><div class="subval" style="color:var(--bone)" id="lastSave">22:05 · 8.4 MB</div><div class="subval" id="saveAvg">avg -</div></div>
               </div>
               <div class="savebars" id="saveBars">
                 <i style="height:40%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:62%"></i>
@@ -166,7 +168,7 @@
               <div class="netline"><span id="netLoc">127.0.0.1:2456</span><span class="copychip" id="copyLoc" data-i18n="common.chip.copy">COPY</span></div>
               <div class="netline" id="netInviteLine" style="display:none"><span id="netInvite">invite -</span><span class="copychip" id="copyInv" data-i18n="common.chip.copy">COPY</span></div>
               <div class="netline" id="netRconLine"><span id="netRcon">RCON 127.0.0.1:25575</span></div>
-              <div style="margin-top:8px;display:flex;align-items:center;gap:8px"><span class="pill green" id="netPill">rcon bound</span><span class="copychip" id="waystoneBtn" title="Raise a Waystone. Give the server a name (like valheim.your-domain.com) so friends join by name instead of a raw IP. Guided setup with per-step DNS instructions. Needs a domain you own, or a free dynamic-DNS name." data-i18n="hearth.net.domain.chip">DOMAIN</span></div>
+              <div style="margin-top:8px;display:flex;align-items:center;gap:8px"><span class="pill green" id="netPill">rcon bound</span><span class="copychip" id="waystoneBtn" title="Raise a Waystone. Give the server a name (like valheim.your-domain.com) so friends join by name instead of a raw IP. Guided setup with per-step DNS instructions. Needs a domain you own, or a free dynamic-DNS name." data-i18n="hearth.net.domain.chip" data-i18n-title="hearth.net.domain.title">DOMAIN</span></div>
             </div>
 
             <!-- MODS -->
@@ -264,7 +266,7 @@
             <span class="sub" id="modsSub">63 loaded · Thunderstore index · last scan 21:38</span>
             <!-- Narrows the rows on screen and nothing else: every count in this header, the
                  Update all button and the unattended paths keep reading the whole list. -->
-            <input id="modSearch" class="pagesearch" placeholder="search the mods…" spellcheck="false" autocomplete="off" aria-label="Search the mods" data-i18n-aria="mods.search.aria">
+            <input id="modSearch" class="pagesearch" placeholder="search the mods…" spellcheck="false" autocomplete="off" aria-label="Search the mods" data-i18n-aria="mods.search.aria" data-i18n-placeholder="mods.search.placeholder">
             <span class="sub pagesearch-count" id="modShowing"></span>
             <div class="grow"></div>
             <button class="btn btn-ghost btn-sm" id="addModBtn">ᚨ&nbsp; Add from Thunderstore</button>
@@ -304,7 +306,7 @@
                 <div class="microlabel" data-i18n="runes.list.label">Config files<span class="cnorse" data-i18n="common.norse.scrolls">Scrolls</span></div>
                 <!-- Narrows the list on screen only. Reading, saving and reverting all act on
                      the whole file, whatever the list is showing. -->
-                <input id="runeSearch" class="pagesearch cfgsearch" placeholder="search the config files…" spellcheck="false" autocomplete="off" aria-label="Search the config files" data-i18n-aria="runes.search.aria">
+                <input id="runeSearch" class="pagesearch cfgsearch" placeholder="search the config files…" spellcheck="false" autocomplete="off" aria-label="Search the config files" data-i18n-aria="runes.search.aria" data-i18n-placeholder="runes.search.placeholder">
                 <div class="sub pagesearch-count" id="runeShowing"></div>
                 <div class="cfg-list" id="cfgList"></div>
               </div>
@@ -315,7 +317,7 @@
                      writes the whole document. -->
                 <div class="cfg-findbar">
                   <span class="cfg-findr">ᚲ</span>
-                  <input id="cfgFind" class="pagesearch cfgfind" placeholder="find in this file…" spellcheck="false" autocomplete="off" aria-label="Find in this config file" data-i18n-aria="runes.find.aria">
+                  <input id="cfgFind" class="pagesearch cfgfind" placeholder="find in this file…" spellcheck="false" autocomplete="off" aria-label="Find in this config file" data-i18n-aria="runes.find.aria" data-i18n-placeholder="runes.find.placeholder">
                   <span class="sub pagesearch-count" id="cfgFindCount"></span>
                   <span class="fpill" id="cfgFindNext" role="button" tabindex="0" title="Jump to the next match" data-i18n="runes.find.next" data-i18n-title="runes.find.next.title">next</span>
                 </div>
@@ -324,7 +326,7 @@
                        editor. The find bar marks the match on this layer, so the highlight
                        stays put whatever has the keyboard. -->
                   <div class="cfg-edmark" id="cfgEdMark" aria-hidden="true"></div>
-                  <textarea class="cfg-editor" id="cfgEditor" spellcheck="false" placeholder="choose a rune-scroll from the left…"></textarea>
+                  <textarea class="cfg-editor" id="cfgEditor" spellcheck="false" placeholder="choose a rune-scroll from the left…" data-i18n-placeholder="runes.editor.placeholder"></textarea>
                 </div>
               </div>
             </div>
@@ -483,7 +485,7 @@
 
             <div class="atlas-side">
               <div class="card">
-                <div class="microlabel">Skies over <span id="atlasWorldName">-</span></div>
+                <div class="microlabel"><span data-i18n="atlas.wx.label">Skies over</span> <span id="atlasWorldName">-</span></div>
                 <div class="bigval" id="atlasDay">-</div>
                 <div class="subval" id="atlasClock">world clock unknown</div>
                 <div class="atlas-facts">
@@ -576,10 +578,13 @@
             <div class="card b-herald">
               <div class="microlabel" data-i18n="herald.sharing.label">Discord sharing<span class="cnorse" data-i18n="common.norse.herald">Herald</span></div>
               <!-- The one sentence on this hall with markup inside it. The walker replaces
-                   a text node, so it would translate "BakaLoader keeps " and leave the rest
-                   of the sentence in English around the bold word. It needs a value that may
-                   carry markup, which is the run-time message slice's call, not this one. -->
-              <div class="subval" style="margin:2px 0 10px">BakaLoader keeps <strong>one</strong> status post in your Discord channel and quietly edits it whenever the realm changes: players joining, mods updating, the next restart drawing near. One post, forever fresh. No spam.</div>
+                   a text node, so an id here would translate "BakaLoader keeps " and leave
+                   the rest in English around the bold word. So the bold word rides in a
+                   NAMED SLOT instead: heraldRenderIntro writes the whole sentence, escaped,
+                   with <strong> put round the slot value at the call site. The English below
+                   is the seed a window with no catalog reads, and the render replaces it the
+                   moment the words land. -->
+              <div class="subval" id="heraldIntro" style="margin:2px 0 10px">BakaLoader keeps <strong>one</strong> status post in your Discord channel and quietly edits it whenever the realm changes: players joining, mods updating, the next restart drawing near. One post, forever fresh. No spam.</div>
               <div class="togglerow"><span class="tl" data-i18n="herald.sharing.toggle">Share this server on Discord</span><span class="toggle" id="tHerald" data-t title="Master switch. On: the status post keeps itself up to date. Off: nothing is ever sent." data-i18n-title="herald.sharing.toggle.title"></span></div>
               <div class="field" style="margin-top:10px"><label data-i18n="herald.field.webhook">Webhook URL <span class="r" title="In Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL. The setup wizard walks you through it." data-i18n-title="herald.field.webhook.title">ᛟ</span></label>
                 <input type="text" id="heraldUrl" spellcheck="false" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></div>
@@ -676,8 +681,8 @@
         <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.0</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
-        <span class="seg" id="sbRconSeg">RCON <span class="em" id="sbRcon">bound</span></span>
-        <span class="seg">tick <span class="em" id="tickVal">60/60</span></span>
+        <span class="seg" id="sbRconSeg"><span data-i18n="status.rcon.label">RCON</span> <span class="em" id="sbRcon">bound</span></span>
+        <span class="seg"><span data-i18n="status.tick.label">tick</span> <span class="em" id="tickVal">60/60</span></span>
         <span class="seg" style="margin-left:auto" id="clockSeg">22:15:04</span>
       </div>
     </div>
@@ -686,7 +691,7 @@
   <!-- COMMAND PALETTE -->
   <div class="palette-bg" id="paletteBg">
     <div class="palette">
-      <div class="pin"><span class="r">ᛒ</span><input id="palInput" placeholder="Summon a command…"></div>
+      <div class="pin"><span class="r">ᛒ</span><input id="palInput" placeholder="Summon a command…" data-i18n-placeholder="pal.input.placeholder"></div>
       <!--
         KEY AND LABEL ARE TWO DIFFERENT THINGS. data-cmd is the command's name in
         the program: it never changes, it is never shown, and every gate and every

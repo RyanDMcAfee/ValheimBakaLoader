@@ -104,16 +104,19 @@ namespace ValheimBakaLoader.Tests.Forms
         /// </summary>
         public static IEnumerable<object[]> Prefixes() => new[]
         {
-            new object[] { "hearth.appbar.", 6 },
-            new object[] { "hearth.card.", 5 },
+            new object[] { "hearth.appbar.", 14 },
+            new object[] { "hearth.card.", 20 },
             new object[] { "hearth.upkeep.auto_update.gated.", 2 },
-            new object[] { "hearth.upkeep.hexium.", 2 },
-            new object[] { "appupd.", 24 },
-            new object[] { "guard.", 14 },
+            new object[] { "hearth.upkeep.hexium.", 4 },
+            new object[] { "appupd.", 28 },
+            // 25 with the held-start toast, which used to glue "Start held · " in front of
+            // the sentence guardBody already built and now asks for one key that carries it.
+            new object[] { "guard.", 25 },
             // 30, not 29: the pre-update world copy's refusal joined this family when the
-            // remaining TT() sites were keyed.
-            new object[] { "srvupd.", 30 },
-            new object[] { "cond.", 28 },
+            // remaining TT() sites were keyed. 35 once the composed ones came with it, and
+            // 36 with the world-copy toast that counts the worlds it copied aside.
+            new object[] { "srvupd.", 36 },
+            new object[] { "cond.", 35 },
         };
 
         [Theory]
@@ -128,7 +131,10 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal(howMany, mine.Count);
             foreach (var id in mine)
             {
-                Assert.Contains("T(\"" + id + "\")", source);
+                // Either shape: a sentence that stands on its own, and one that names
+                // slots. Half of this family carries a value now, so a rule that only knew
+                // T("id") would have stopped covering the half a translator needs most.
+                Assert.True(AskedAnyhow(source, id) >= 0, "app.js never asks for " + id);
                 Assert.DoesNotContain("data-i18n=\"" + id + "\"", html);
                 Assert.DoesNotContain("data-i18n-title=\"" + id + "\"", html);
                 Assert.DoesNotContain("data-i18n-placeholder=\"" + id + "\"", html);
@@ -137,45 +143,62 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The sentences these surfaces still compose in code rather than key, named so the
-        /// pass that keys them is a decision and not a discovery. Each one is a piece of a
-        /// sentence, not a sentence: a translator handed " online" or "The update did not
-        /// finish: " cannot produce correct Russian from it, which is why they wait for the
-        /// composed-message pass instead of becoming keys that read as fragments forever.
+        /// The composed-message pass landed on these surfaces, so what was a list of
+        /// fragments is now a list of whole sentences with named slots. Each one is pinned
+        /// by the id it became AND by the fragment no longer being spelled out, because a
+        /// key that exists while the old concatenation also still runs is two sentences
+        /// where the host reads one.
         /// </summary>
         [Fact]
-        public void The_fragments_these_surfaces_still_compose_are_still_composed()
+        public void The_fragments_these_surfaces_composed_are_whole_sentences_now()
         {
             var source = AppJs();
-            foreach (var fragment in new[]
+            var catalog = Catalog();
+            foreach (var (fragment, id) in new[]
             {
-                "\" online\"",                              // the app bar's player count
-                "\"last ran Valheim \"",                    // the status card's version line
-                "\"session · \"",                      // the chronicle's per-session rule
-                "\"ready\"", "\"is ready\"",                // the sidebar and the pill
-                "\"a build it has not recorded\"",          // the guard's build names
-                "\"of\"", "\"Steam is downloading: \"",     // the megabyte pair
-                "\"no reason was given\"",
-                "\"The update did not finish · \"",
-                "\"The update did not finish: \"",
-                "\"The server could not write the world to disk\"",
-                "\" is available.\"",
+                ("\" online\"", "hearth.appbar.players.value"),          // the app bar's player count
+                ("\"last ran Valheim \"", "hearth.card.version.last"),   // the status card's version
+                ("\"ready\"", "appupd.side.line"),                       // the sidebar version line
+                ("\"is ready\"", "appupd.modal.title"),                  // the dialog's own title
+                ("\"a build it has not recorded\"", "guard.build.from.unknown"),
+                ("\"Steam is downloading: \"", "srvupd.phase.downloading.progress"),
+                ("\"no reason was given\"", "srvupd.failed.reason.fallback"),
+                ("\"The update did not finish · \"", "srvupd.failed.toast"),
+                ("\"The update did not finish: \"", "cond.launch.update_failed"),
+                ("\"The server could not write the world to disk\"", "cond.save.msg"),
+                ("\" is available.\"", "cond.appupd.body.version"),
             })
             {
-                Assert.Contains("TT(" + fragment + ")", source);
+                Assert.DoesNotContain("TT(" + fragment + ")", source);
+                Assert.True(catalog.ContainsKey(id), "the catalog has no " + id);
+                Assert.True(AskedAnyhow(source, id) >= 0, "app.js never asks for " + id);
             }
+
+            // The rules drawn across the chronicle are the Saga's own chrome rather than a
+            // line the server wrote, so they are catalog sentences with named slots like the
+            // rest. What stays English by decision is the LINES: every logLine body is still
+            // written where it is read, and the session rule's own timestamp is still the
+            // host's locale rather than a second clock.
+            Assert.Contains("logDivider(T(\"saga.divider.session\",", source);
+            Assert.Contains("{name:S.profileName||T(\"saga.divider.session.unnamed\")", source);
+            Assert.Equal("session · {name} · {when}", Field(catalog["saga.divider.session"], "lore"));
+            Assert.Contains("logLine(\"ok\",\"[BakaLoader] start requested · profile \"", source);
         }
 
         // ------------------------------------------- B. the three decisions inside the keys
 
         /// <summary>
-        /// The five sentences the plain-terminology switch rewords. The plain register has
-        /// to be exactly what the swap produces today, awkward wording included: this pass
-        /// moved where the words come from, and was not licensed to change them. Two of
-        /// these read badly - "Stop the server: stops the server" is what a host with plain
-        /// wording on has always read on that tooltip, because the swap turns both "Douse"
-        /// and "hearth" into the same word. Written down here so the writer who fixes it
-        /// does so on purpose, in a change that says it is changing English.
+        /// The five sentences the plain-terminology switch rewords, in both registers.
+        /// <para>
+        /// The first two were written by hand rather than by the old swap table, which is
+        /// the change this row pair records. The swap turned both "Douse" and "hearth"
+        /// into the same word, so the tooltip a host with plain wording on used to read
+        /// was "Stop the server: stops the server", and the start one matched it. Each
+        /// now says the thing the Norse half says poetically: stopping saves the world on
+        /// the way down, which is what ValheimServer.Stop does, and starting ends with a
+        /// server players can join. The other three are still exactly what the swap
+        /// produced, because those three read correctly.
+        /// </para>
         /// </summary>
         [Fact]
         public void The_sentences_the_plain_switch_rewords_carry_the_wording_it_produces()
@@ -184,9 +207,11 @@ namespace ValheimBakaLoader.Tests.Forms
             foreach (var (id, lore, plain) in new[]
             {
                 ("hearth.appbar.lifecycle.stop.title",
-                 "Douse the hearth: stops the server", "Stop the server: stops the server"),
+                 "Douse the hearth: stops the server",
+                 "Stop the server. The world is saved on the way down"),
                 ("hearth.appbar.lifecycle.start.title",
-                 "Kindle the hearth: starts the server", "Start the server: starts the server"),
+                 "Kindle the hearth: starts the server",
+                 "Start the server. Players can join once it has finished loading"),
                 ("hearth.card.state.stopping",
                  "STOPPING · dousing the embers", "STOPPING · shutting down"),
                 ("hearth.card.state.stopped",
@@ -233,7 +258,10 @@ namespace ValheimBakaLoader.Tests.Forms
             // Every entry that carries a mark is asked for by app.js: a mark on a sentence
             // nothing prints would be a rune waiting to appear out of nowhere.
             Assert.Equal(catalog.Count(pair => Field(pair.Value, "mark") != null), marked.Count);
-            Assert.Equal(41, marked.Count);
+            // 167 after the last slice marked the Map, Log, Discord, Statistics, palette,
+            // wizard and realm toasts it keyed. The number is the gate: a new toast whose
+            // rune is spelled at the call site and nowhere else lands here.
+            Assert.Equal(167, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the
@@ -391,11 +419,11 @@ namespace ValheimBakaLoader.Tests.Forms
             var said = RepoScript.Run(RepoScript.Python(), FirstFrameGate(),
                 Fixture("try{renderHearth();}catch(_){}", "/* dropped */"));
             Assert.False(said.Ok, "a Hearth that is never repainted passed:\n" + said);
-            // Named by the function that actually asks for the words, not by the one that
-            // was dropped: renderHearth carries no T() call of its own.
-            Assert.Contains("renderHearthNative", said.Output);
+            // renderHearth asks for its own words now: the preview arm of the card says
+            // STOPPED and names the two lifecycle buttons out of the catalog, so the gate
+            // names the painter itself as well as the pill under it.
+            Assert.Contains("renderHearth paints", said.Output);
             Assert.Contains("renderUpdatePill", said.Output);
-            Assert.Contains("repaintBootCopy runs neither of them again", said.Output);
             // renderAppBar is the one helper under the Hearth the gate does NOT name any
             // more, and rightly: the roster repaint reaches it too, so dropping the Hearth
             // no longer leaves the app bar showing ids. A second owner is the difference

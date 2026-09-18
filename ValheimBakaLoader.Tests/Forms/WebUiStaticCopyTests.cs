@@ -284,7 +284,7 @@ namespace ValheimBakaLoader.Tests.Forms
 
             foreach (var id in new[] { "douseBtn", "stokeBtn", "hUpdPill", "hAppUpdPill", "srvMore",
                                        "hexiumSwitchLabel", "hexiumHelp", "hState", "hPid", "hearthSub",
-                                       "netPill", "homeVikPill", "modCount", "lastSaveLbl" })
+                                       "netPill", "homeVikPill", "modCount", "saveAvg" })
             {
                 var open = html.IndexOf("id=\"" + id + "\"", StringComparison.Ordinal);
                 Assert.True(open > 0, "index.html no longer has #" + id);
@@ -293,13 +293,22 @@ namespace ValheimBakaLoader.Tests.Forms
                     "#" + id + " carries an id but app.js writes its words at run time");
             }
 
-            // and the reason: each one really is written from app.js, bar the one that is
-            // still static because its two registers differ and the old cache owns them.
+            // and the reason: each one really is written from app.js.
             Assert.Contains("douseBtn.textContent=", js);
             Assert.Contains("stokeBtn.textContent=", js);
             Assert.Contains("more.textContent=", js);
-            Assert.Contains("label.textContent=TT(HEXIUM_SWITCH_LABEL)", js);
-            Assert.Contains("#lastSaveLbl", AppSourceTree.Web("app.js"));   // named by TERM_STATIC_SEL
+            Assert.Contains("label.textContent=T(\"hearth.upkeep.hexium.label\")", js);
+            Assert.Contains("function renderSaveAvg()", js);
+            Assert.Contains("try{renderSaveAvg();}catch(_){}", js);   // and the second paint runs it
+
+            // The one that came off this list: nothing writes #lastSaveLbl at run time, so
+            // the walker owns it outright, and it is keyed with both registers because the
+            // Norse names switch rewords it. The selector list that used to name it as well
+            // is gone with the swap it fed, so there is one owner now and the register is
+            // picked inside the lookup rather than by a regex over what is on screen.
+            Assert.Contains("id=\"lastSaveLbl\" data-i18n=\"hearth.saves.last.label\"", html);
+            Assert.DoesNotContain("$(\"#lastSaveLbl\").textContent", js);
+            Assert.DoesNotContain("const TERM_STATIC_SEL", js);
         }
 
         /// <summary>
@@ -317,20 +326,30 @@ namespace ValheimBakaLoader.Tests.Forms
         /// <summary>
         /// The horn of mead is the one label on the rail that cannot carry an id.
         /// emberize() rebuilds its words into one span per letter while app.js is still
-        /// parsing, long before the catalog lands, so by the time the walker arrives the
-        /// element has no text node of its own left: setText() would APPEND the sentence
-        /// instead of replacing it and the link would read its words twice. The tooltip
-        /// is an attribute and is untouched by emberize, so that half is keyed.
+        /// parsing, so by the time the walker arrives the element has no text node of its
+        /// own left: setText() would APPEND the sentence instead of replacing it and the
+        /// link would read its words twice. So renderMead() writes the words out of the
+        /// catalog and lights the embers over them, in that order, and the second paint
+        /// runs it again when the catalog lands. The tooltip is an attribute and is
+        /// untouched by emberize, so that half is keyed the ordinary way.
         /// </summary>
         [Fact]
-        public void The_mead_link_keys_its_tooltip_and_not_its_letters()
+        public void The_mead_link_keys_its_letters_through_its_own_painter()
         {
             var html = Html();
+            var js = AppJs();
             var tag = html.Substring(html.IndexOf("<a class=\"mead\"", StringComparison.Ordinal), 220);
 
             Assert.Contains("data-i18n-title=\"side.mead.title\"", tag);
             Assert.DoesNotContain("data-i18n=\"", tag);
-            Assert.Contains("emberize($(\"#meadLink\"))", AppJs());
+
+            var painter = js.Substring(js.IndexOf("function renderMead()", StringComparison.Ordinal), 320);
+            Assert.Contains("T(\"side.mead.label\")", painter);
+            // the write first, the embers after it, or the spans are thrown away
+            Assert.True(painter.IndexOf("textContent=", StringComparison.Ordinal)
+                        < painter.IndexOf("emberize(", StringComparison.Ordinal),
+                "renderMead lights the embers before it writes the words");
+            Assert.Contains("try{renderMead();}catch(_){}", js);
         }
 
         // ------------------------------------------------- C. the walk, and the bridge

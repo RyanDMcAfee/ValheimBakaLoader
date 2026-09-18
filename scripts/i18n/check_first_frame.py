@@ -42,8 +42,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 DEFAULT_APP = os.path.join(REPO, "ValheimBakaLoader", "WebUI", "app.js")
 
-# T("id"), the lookup. The lookbehind keeps TT("English") out of it, which is the bridge
-# and has words of its own whatever the catalog is doing.
+# T("id"), the lookup. The lookbehind is what keeps a T at the end of some other name
+# from being read as a call into it. It was written for TT(), the migration bridge that
+# spelled its English out and needed no catalog; that is gone, and the guard is worth
+# keeping for the next name that ends in T.
 T_CALL = re.compile(r'(?<![A-Za-z0-9_$])T\(\s*"')
 
 NAME = r"[A-Za-z_$][A-Za-z0-9_$]*"

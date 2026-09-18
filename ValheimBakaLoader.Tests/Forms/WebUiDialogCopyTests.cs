@@ -105,9 +105,12 @@ namespace ValheimBakaLoader.Tests.Forms
         /// the walker fills and a dialog overwrites is a sentence with two owners.
         /// </summary>
         [Theory]
-        [InlineData("realm.", 44)]
-        [InlineData("barrow.", 25)]
-        [InlineData("waystone.wiz.", 37)]
+        // realm 63 and waystone.wiz 46 after the last slice: the realm dialogs' own
+        // buttons and toasts, and the four Waystone sentences that used to be built from
+        // fragments either side of an address.
+        [InlineData("realm.", 63)]
+        [InlineData("barrow.", 54)]
+        [InlineData("waystone.wiz.", 46)]
         [InlineData("world.wg.", 65)]
         public void Every_dialog_key_is_asked_for_by_app_js_and_by_nothing_else(string prefix, int howMany)
         {
@@ -149,10 +152,11 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// And every call site hands in catalog words. The one exception says TT() out
-        /// loud: the mod search's reason counts the rows it is hiding, so it is a composed
-        /// sentence and stays on the bridge until the composed-message pass gives it a
-        /// slot. Pinned by count so a new empty state written in English fails here.
+        /// And every call site hands in catalog words. There is no exception left: the
+        /// mod search's reason counts the rows it is hiding, and the Mods slice gave it a
+        /// named slot and a plural category either side of the number, so it comes out of
+        /// the catalog like the rest. Pinned by count so a new empty state written in
+        /// English, or one that goes back to the bridge, fails here.
         /// </summary>
         [Fact]
         public void Every_empty_state_hands_in_words_the_catalog_owns()
@@ -176,19 +180,19 @@ namespace ValheimBakaLoader.Tests.Forms
                 }
             }
 
-            Assert.Equal(1, composed);
-            Assert.Contains("reason:TT(\"Nothing in this server's mod list carries every word that was typed. "
-                            + "Clear the box to see all \"+mods.length+\" again.\")", source);
+            Assert.Equal(0, composed);
+            Assert.Contains("reason:T(\"mods.empty.no_match.reason\",{count:mods.length})", source);
         }
 
         // ------------------------------------------------- C. the world-difficulty dials
 
         /// <summary>
         /// The dial table holds catalog ids now. Its `label` is the one field that keeps
-        /// its English beside the id, because two composed sentences still read it: the
-        /// forge dialog's help button and the first-run wizard's summary line. Keeping
-        /// both halves is only safe while something holds them together, and that is the
-        /// gate rule below this test.
+        /// its English beside the id, because one composed sentence still reads it: the
+        /// first-run wizard's summary line. The forge dialog's help button used to be the
+        /// second, and now names the same id the settings page does through `ariaId`.
+        /// Keeping both halves is only safe while something holds them together, and that
+        /// is the gate rule below this test.
         /// </summary>
         [Fact]
         public void The_world_dials_read_their_wording_out_of_the_catalog()
@@ -251,38 +255,89 @@ namespace ValheimBakaLoader.Tests.Forms
         // ------------------------------------------------- D. what is deliberately left
 
         /// <summary>
-        /// What the bridge still answers, and why. Every literal left is a piece of a
-        /// sentence rather than a sentence: a joiner, a fallback that reads as half a
-        /// clause, or a fragment either side of a value. Handing " for good:" or "of" to
-        /// a translator produces nothing usable in Russian, so they wait for the pass
-        /// that turns each one into a whole sentence with a named slot.
+        /// The bridge is gone, and so is the last sentence that went through it. TT() was
+        /// the migration's seam - the catalog first, the old regex swap underneath - and
+        /// L2b deleted both arms. The count stays as the gate: a new English sentence
+        /// written straight into app.js and wrapped in TT() would land here, and there is
+        /// no TT() left for it to be wrapped in.
         /// <para>
-        /// The count is what makes this a gate rather than a note: a new English sentence
-        /// written straight into app.js and wrapped in TT() lands here.
+        /// The one sentence that was left, "no reply from the server", sat inside a
+        /// logLine body. The log stays English and verbatim by decision, so it is a plain
+        /// literal there now rather than a call into a lookup that would never have
+        /// changed it.
         /// </para>
         /// </summary>
         [Fact]
-        public void What_the_bridge_still_answers_is_fragments_and_is_counted()
+        public void Nothing_goes_through_the_bridge_because_there_is_no_bridge()
         {
             var left = BridgedLiterals();
-            Assert.Equal(136, left.Count);
+            Assert.Empty(left);
 
-            // and the shape of what is left: a handful named, so the list cannot quietly
-            // become a place to leave a whole sentence.
-            foreach (var fragment in new[]
-            {
-                " for good:", "of", " and ", " online", "preview only",
-                "its .fwl and .db pair", "and its paired .db", "unknown error",
-            })
-            {
-                Assert.Contains(fragment, left);
-            }
+            var js = AppJs();
+            Assert.DoesNotContain("function TT(", js);
+            Assert.DoesNotContain("function plainify(", js);
+            Assert.DoesNotContain("const TERM_PAIRS=", js);
+            // and the log line kept its English, as a literal rather than a lookup
+            Assert.Contains("(said||\"no reply from the server\")", js);
 
-            // Nothing this pass keyed is still spelled out beside its id.
+            // Nothing this pass keyed is still spelled out beside its id. The dashboard
+            // slice took the rest of the Hearth, the sidebar, the condition bar and the
+            // two update dialogs off this list with it.
             foreach (var sentence in new[]
             {
                 "Delete realm", "Log settings", "Reset the statistics?", "Summon the Herald",
                 "Raise a Waystone", "Backups", "Layers", "World", "Cancel", "Name", "Password",
+                " online", "ready", "is ready", "last ran Valheim ", "a build it has not recorded",
+                "Steam is downloading: ", "no reason was given", "The update did not finish: ",
+                "The server could not write the world to disk", " is available.",
+                // and the Mods slice, which took the row pills, the bulk bar, the row menu,
+                "Failed", "unknown", "Updating", "Updating ", "Updating mods", "Updated",
+                // the Update all and remove flows, and both install paths with it.
+                "failed", "already up to date", "Fetching from Hexium", "Installed from Hexium",
+                "Hexium install did not go ahead", "Hexium page did not open · ",
+                // "unknown error" went with them: every fallback that said it now asks
+                // for common.error.unknown, which is a whole sentence with an entry.
+                "unknown error",
+                "Thunderstore page did not open · ",
+                // and the roster and Configs slice, which took the last two lists of
+                // fragments off the bridge: the two words either side of a pair of numbers,
+                // the word that joined a list in English order, and the four that were glued
+                // to a player, a column or a stack count.
+                "showing", "of", " and ", "Actions for ", "position", "deaths",
+                "spawn failed", "server running & player online?", "level", "quality",
+                // and the Settings, World and Barrow slice, which took the last three
+                // fragments this list vouched for with it: the two either side of a world
+                // name in the delete prompt, and the clause naming which files go with a
+                // layer. Each is now inside a whole sentence with a named slot, so the
+                // delete prompt is two sentences and the layer prompt three rather than
+                // one sentence with a noun phrase swapped into the middle.
+                " for good:", "its .fwl and .db pair", "its whole world folder",
+                "and its paired .db", "and everything inside it",
+                "will be deleted from disk. This cannot be undone.",
+                "Nothing else on this machine holds this world.",
+                "This deletes", "World deleted", "Layer deleted", "Layer unearthed",
+                "World brought back", "safety copy laid down", "folder",
+                "is running this world right now. Stop the server first.",
+                "There is no live world for this layer any more.",
+                "The live realm is copied to a fresh safety layer first, then",
+                "will claim game port ", "Password rule", "ᛟ seed copied · ",
+                // and the last slice, which took the Map, the Log's own chrome, Discord,
+                // Statistics, the palette's refusals and every toast and dialog literal
+                // left anywhere in the page. These four were the ones this list vouched
+                // for a moment ago; each is inside a whole sentence with a named slot now.
+                "preview only", "alight", "the webhook answers", "back to the raw IP",
+                "Statistics reset", "old journal kept as", "unique souls", "visits",
+                "chronicled since ", "counted on this machine only, nothing leaves it",
+                "The Waystone stands", "The Waystone falls", "a well-formed name",
+                "the name does not resolve yet", "give DNS a few minutes, then Check again",
+                "Teach DNS that", "lives at this server's public IP:", "BakaLoader asks DNS for",
+                "and compares the answer with this server's public IP.",
+                "the name only replaces the IP, so friends still need the port",
+                ", and port-forwarding stays exactly as it is today.",
+                "Start held · ", "Could not start the server · ", "see the log for what stopped it",
+                "ᚦ Server crashed · consult the saga", "The save could not be read: ",
+                "⌂ Realm restored · ", "↺ Realm restored · ", "ᛒ Helm turned · ", "helm turned · ",
+                "session · ", "files · ", " · cannot be undone", "world", "worlds",
             })
             {
                 Assert.DoesNotContain(sentence, left);
@@ -290,19 +345,32 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The Log settings dialog keeps one sentence on the bridge for a reason worth
-        /// writing down: it spells a file name with angle-bracket placeholders, and the
-        /// catalog's markup rule reads &lt;realm&gt; as a tag. Marking the entry allowsHtml
-        /// would be a lie on a value that goes through esc(), so it waits for the pass
-        /// that gives it {slot} placeholders instead.
+        /// The Log settings dialog's file-name note got the slots it was waiting for. The
+        /// catalog's markup rule reads &lt;realm&gt; as a tag and marking the entry allowsHtml
+        /// would be a lie on a value that goes through esc(), so the sentence names two
+        /// slots and the angle brackets are put round the words at the call site, where
+        /// they are punctuation rather than wording. The host reads what they read before.
         /// </summary>
         [Fact]
-        public void The_one_note_with_angle_brackets_waits_for_its_slots()
+        public void The_note_with_angle_brackets_carries_slots_instead()
         {
-            var left = BridgedLiterals();
-            Assert.Contains(left, line => line.StartsWith("each server session writes its own scroll: ServerLogs-<realm>-",
-                                                          StringComparison.Ordinal));
-            Assert.DoesNotContain("saga.vellum.serverlog", string.Join(" ", Catalog().Keys));
+            var catalog = Catalog();
+            var note = Field(catalog["saga.vellum.serverlog.note"], "lore");
+
+            Assert.StartsWith("each server session writes its own scroll: ServerLogs-{server}-{start}.txt",
+                              note, StringComparison.Ordinal);
+            Assert.DoesNotContain("<", note);
+            Assert.False(catalog["saga.vellum.serverlog.note"].TryGetProperty("allowsHtml", out _),
+                         "the note goes through esc(), so it may not claim markup");
+            Assert.Equal("realm", Field(catalog["saga.vellum.serverlog.realm"], "lore"));
+            Assert.Equal("start time", Field(catalog["saga.vellum.serverlog.start"], "lore"));
+
+            // and the brackets are the call site's, round the two words the catalog owns
+            var js = AppJs();
+            Assert.Contains("{server:\"<\"+T(\"saga.vellum.serverlog.realm\")+\">\"", js);
+            Assert.Contains("start:\"<\"+T(\"saga.vellum.serverlog.start\")+\">\"", js);
+            Assert.DoesNotContain(BridgedLiterals(),
+                                  left => left.Contains("ServerLogs-", StringComparison.Ordinal));
         }
 
         /// <summary>
@@ -326,10 +394,226 @@ namespace ValheimBakaLoader.Tests.Forms
                             || id.StartsWith("waystone.wiz.", StringComparison.Ordinal)
                             || id.StartsWith("setup.wiz.", StringComparison.Ordinal),
                             id + " says allowsHtml but is not a wizard step");
-                Assert.True(AppJs().Contains("${T(\"" + id + "\")}", StringComparison.Ordinal)
-                            || AppJs().Contains("+T(\"" + id + "\")+", StringComparison.Ordinal),
-                            id + " says allowsHtml but its call site escapes it");
+                // Either shape of the call, and neither of them escaped: a wizard step that
+                // names a slot is written in exactly as one that does not, which is the
+                // point of the flag. What may never appear is esc() round the lookup, so
+                // that is asserted rather than inferred from the shape.
+                var js = AppJs();
+                Assert.True(js.Contains("${T(\"" + id + "\")}", StringComparison.Ordinal)
+                            || js.Contains("+T(\"" + id + "\")+", StringComparison.Ordinal)
+                            || js.Contains("${T(\"" + id + "\",", StringComparison.Ordinal),
+                            id + " says allowsHtml but nothing writes it into the page");
+                Assert.DoesNotContain("esc(T(\"" + id + "\"", js);
             }
+        }
+
+        // ------------------------------------------- E. a dialog follows the language
+
+        /// <summary>
+        /// The arguments that are not copy, and why. The rename prompt's placeholder is
+        /// the realm's CURRENT NAME: data the host typed, which reads the same in every
+        /// language and has nothing to ask the catalog for. Anything else that wants on
+        /// this list is a sentence, and a sentence belongs in a thunk.
+        /// </summary>
+        private static readonly HashSet<string> NotCopy = new(StringComparer.Ordinal)
+        {
+            "promptModal(2): name",
+        };
+
+        /// <summary>
+        /// Every dialog is handed its words as something that can be ASKED AGAIN.
+        /// <para>
+        /// confirmModal and promptModal both keep the arrow that built them and run it
+        /// again when the language changes, and that redraw puts the same arguments back
+        /// through worded(). An argument that was a STRING when the call was made is the
+        /// string it was: the dialog on screen keeps the wording it opened with while
+        /// every other surface switches, and nothing reports it, because from the
+        /// dialog's own side nothing went wrong. So the shape is the rule.
+        /// </para>
+        /// <para>
+        /// A bare T("id") in the argument list is refused for the same reason a literal
+        /// is: it is worded at the moment of the call, once. What passes is an arrow, or
+        /// a name the file declares as one, which is how the two dialogs that build a
+        /// body out of several sentences hand theirs over.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Every_dialog_is_handed_its_words_as_something_that_can_be_asked_again()
+        {
+            var js = AppJs();
+            var code = CodeOnly(js);
+            var frozen = new List<string>();
+            var sites = 0;
+
+            foreach (var (name, howMany) in new[] { ("confirmModal", 3), ("promptModal", 2) })
+            {
+                var call = name + "(";
+                for (var at = code.IndexOf(call, StringComparison.Ordinal); at >= 0;
+                         at = code.IndexOf(call, at + 1, StringComparison.Ordinal))
+                {
+                    // the declaration itself is not a call site
+                    var before = at - "function ".Length;
+                    if (before >= 0 && string.CompareOrdinal(js, before, "function ", 0, "function ".Length) == 0)
+                        continue;
+
+                    sites++;
+                    var line = js.Take(at).Count(c => c == '\n') + 1;
+                    var arguments = Arguments(js, code, at + call.Length, howMany);
+                    for (var which = 0; which < Math.Min(howMany, arguments.Count); which++)
+                    {
+                        var argument = arguments[which].Trim();
+                        if (NotCopy.Contains(name + "(" + (which + 1) + "): " + argument)) continue;
+                        if (Regex.IsMatch(argument, @"^(?:async\s*)?\(\s*\)\s*=>")) continue;
+                        if (Regex.IsMatch(argument, @"^[A-Za-z_$][A-Za-z0-9_$]*$")
+                            && DeclaredAsAThunk(js, argument)) continue;
+
+                        frozen.Add($"app.js:{line} {name} argument {which + 1} is "
+                                   + Shorten(argument) + ", which is worded once and never again");
+                    }
+                }
+            }
+
+            // Written down so a scanner that quietly stops finding calls fails too. A new
+            // dialog moves this number and reads the rule above on its way past.
+            Assert.Equal(17, sites);
+            Assert.True(frozen.Count == 0,
+                "a dialog would keep its wording through a language switch:\n  "
+                + string.Join("\n  ", frozen));
+        }
+
+        private static string Shorten(string argument) =>
+            argument.Length <= 60 ? argument : argument.Substring(0, 57) + "...";
+
+        /// <summary>A name app.js declares as an arrow that takes nothing, or as a function.</summary>
+        private static bool DeclaredAsAThunk(string js, string name) =>
+            Regex.IsMatch(js, @"\b(?:const|let|var)\s+" + Regex.Escape(name) + @"\s*=\s*(?:async\s*)?\(\s*\)\s*=>")
+            || Regex.IsMatch(js, @"\bfunction\s+" + Regex.Escape(name) + @"\s*\(");
+
+        /// <summary>
+        /// The first few arguments of the call whose bracket is at <paramref name="from"/>,
+        /// split on the commas that are the call's own. The masked copy is what the split
+        /// reads, so a comma inside a string, a template or a comment is not a comma here;
+        /// the text handed back is the real one.
+        /// </summary>
+        private static List<string> Arguments(string js, string code, int from, int howMany)
+        {
+            var found = new List<string>();
+            var depth = 0;
+            var start = from;
+            for (var i = from; i < code.Length && found.Count < howMany; i++)
+            {
+                var c = code[i];
+                if (c == '(' || c == '[' || c == '{') depth++;
+                else if (c == ')' || c == ']' || c == '}')
+                {
+                    if (depth == 0) { found.Add(js.Substring(start, i - start)); break; }
+                    depth--;
+                }
+                else if (c == ',' && depth == 0)
+                {
+                    found.Add(js.Substring(start, i - start));
+                    start = i + 1;
+                }
+            }
+            return found;
+        }
+
+        /// <summary>
+        /// The source with every string, template, regular expression and comment blanked
+        /// out, the same length and the same line breaks, so a bracket inside a sentence
+        /// never closes a call and the word confirmModal inside a comment is never read as
+        /// one. The regular expression arm earns its keep on one line: the escaper's
+        /// character class holds both kinds of quote, and without it every quote after it
+        /// pairs up with the wrong one.
+        /// </summary>
+        private static string CodeOnly(string js)
+        {
+            var made = js.ToCharArray();
+            void Wipe(int at) { if (at < made.Length) made[at] = js[at] == '\n' ? '\n' : ' '; }
+
+            const string StartsRegex = "(,=:[!&|?{};+-*%~^<>\n";
+            var templates = new Stack<int>();       // the brace depth each ${ } opened at
+            var braces = 0;
+            var inTemplate = false;
+            var previous = '\0';
+            var i = 0;
+
+            while (i < js.Length)
+            {
+                var c = js[i];
+
+                if (inTemplate)
+                {
+                    if (c == '\\') { Wipe(i); Wipe(i + 1); i += 2; continue; }
+                    if (c == '`') { Wipe(i); inTemplate = false; i++; continue; }
+                    if (c == '$' && i + 1 < js.Length && js[i + 1] == '{')
+                    {
+                        Wipe(i); Wipe(i + 1);
+                        templates.Push(braces);
+                        inTemplate = false;
+                        i += 2;
+                        continue;
+                    }
+                    Wipe(i);
+                    i++;
+                    continue;
+                }
+
+                if (c == '/' && i + 1 < js.Length && js[i + 1] == '/')
+                {
+                    while (i < js.Length && js[i] != '\n') { Wipe(i); i++; }
+                    continue;
+                }
+                if (c == '/' && i + 1 < js.Length && js[i + 1] == '*')
+                {
+                    while (i + 1 < js.Length && !(js[i] == '*' && js[i + 1] == '/')) { Wipe(i); i++; }
+                    Wipe(i); Wipe(i + 1);
+                    i += 2;
+                    continue;
+                }
+                if (c == '/' && (previous == '\0' || StartsRegex.IndexOf(previous) >= 0))
+                {
+                    Wipe(i); i++;
+                    while (i < js.Length && js[i] != '/' && js[i] != '\n')
+                    {
+                        if (js[i] == '\\') { Wipe(i); Wipe(i + 1); i += 2; continue; }
+                        Wipe(i); i++;
+                    }
+                    if (i < js.Length && js[i] == '/') { Wipe(i); i++; }
+                    previous = 'x';
+                    continue;
+                }
+                if (c == '"' || c == '\'')
+                {
+                    Wipe(i); i++;
+                    while (i < js.Length && js[i] != c)
+                    {
+                        if (js[i] == '\\') { Wipe(i); Wipe(i + 1); i += 2; continue; }
+                        Wipe(i); i++;
+                    }
+                    if (i < js.Length) { Wipe(i); i++; }
+                    previous = 'x';
+                    continue;
+                }
+                if (c == '`') { Wipe(i); inTemplate = true; previous = 'x'; i++; continue; }
+
+                if (c == '{') braces++;
+                else if (c == '}')
+                {
+                    if (templates.Count > 0 && braces == templates.Peek())
+                    {
+                        templates.Pop();
+                        Wipe(i);
+                        inTemplate = true;
+                        i++;
+                        continue;
+                    }
+                    braces--;
+                }
+                if (!char.IsWhiteSpace(c) || c == '\n') previous = c;
+                i++;
+            }
+            return new string(made);
         }
 
         private static string Between(string source, string open, string shut)

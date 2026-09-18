@@ -45,7 +45,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_switch_text_names_every_thing_the_host_is_agreeing_to()
         {
-            var help = Between(AppJs(), "const HEXIUM_HELP=", "function renderHexiumCopy");
+            var help = Lore("hearth.upkeep.hexium.note");
 
             foreach (var (thing, phrase) in new[]
             {
@@ -63,12 +63,21 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         [Fact]
-        public void The_switch_text_and_its_label_both_go_through_the_wording_pass()
+        public void The_switch_text_and_its_label_both_come_out_of_the_catalog()
         {
             var render = Between(AppJs(), "function renderHexiumCopy", "\n/*");
 
-            Assert.Contains("TT(HEXIUM_SWITCH_LABEL)", render);
-            Assert.Contains("TT(HEXIUM_HELP)", render);
+            Assert.Contains("T(\"hearth.upkeep.hexium.label\")", render);
+            Assert.Contains("T(\"hearth.upkeep.hexium.note\")", render);
+            Assert.Equal("Also check Hexium", Lore("hearth.upkeep.hexium.label"));
+
+            // The page still carries the English of both, because renderHexiumCopy runs
+            // while app.js is being evaluated and the catalog is fetched: without that
+            // floor in the markup the card would read two dotted ids on the first frame.
+            var html = AppSourceTree.Web("index.html");
+            Assert.Contains(">Also check Hexium<", html);
+            Assert.Contains(">Hexium is a second mod site.", html);
+            Assert.Contains("try{renderHexiumCopy();}catch(_){}", AppJs());
         }
 
         // --- Nothing acts on the second site without being asked ---
@@ -145,7 +154,11 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var add = Between(AppJs(), "function addModFlow()", "async function doAddMod");
 
-            Assert.Contains("const hexNote=S.hexium", add);
+            // A thunk rather than a string, so the note is worded again when the dialog
+            // is drawn again: confirmModal rebuilds itself on a language switch, and a
+            // value computed before the call would come back in the language before it.
+            Assert.Contains("const hexNote=()=>S.hexium", add);
+            Assert.Contains("hexNote()+", add);
         }
 
         [Fact]

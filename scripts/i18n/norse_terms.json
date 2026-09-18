@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "The Norse register, as a short list of words rather than as 129 ordered regular",
+    "expressions. The regexes are gone: they rewrote already-rendered English, which is",
+    "a mechanism that cannot survive a second language (a JavaScript word boundary is",
+    "defined against ASCII, so the table was a bare substring replace in Cyrillic and in",
+    "Han). The register is picked inside the lookup now, out of one entry that holds both",
+    "wordings.",
+    "",
+    "What is left to guard is the half that a swap table used to guarantee by accident:",
+    "a sentence carrying a Norse word has to carry the plain wording of that sentence",
+    "too, or a host who turned the Norse names off reads one hall saying world and the",
+    "next saying realm. check_catalog.py holds that rule, and reads it from here.",
+    "",
+    "The match is case insensitive and stops at a letter on either side, so realm catches",
+    "Realm and realms but not realm-like compounds spelled into one word.",
+    "",
+    "Deliberately NOT here: forge. The old table held [\"forge\",\"mods\"], a noun rule",
+    "applied to a verb, and it produced 'Could not mods that world'. In every sentence",
+    "that is left, forge is ordinary English and needs no second register."
+  ],
+  "terms": [
+    "hearth", "saga", "barrow", "waystone", "skald", "herald", "vellum",
+    "viking", "vikings", "realm", "realms", "rune-scroll", "rune-scrolls",
+    "kindle", "kindled", "kindling", "kindlings",
+    "douse", "doused", "dousing", "stoke", "stoked", "ember", "embers",
+    "unearth", "unearthed", "unearthing",
+    "chronicle", "chronicled", "souls", "happenings", "deeds", "rites",
+    "sail forth", "sailing forth", "valkyries"
+  ],
+  "_captions": [
+    "An id whose last segment is `norse`, and everything under `common.norse.`, IS the",
+    "Norse caption: the small word that sits beside a plain label in the sidebar, the",
+    "card headers and the microlabels. CSS hides every one of them when the switch is",
+    "off (.plain-terms .norse, .hnorse, .cnorse), so a plain register there would be a",
+    "wording nobody can ever read. They are exempt from the rule, not forbidden a plain",
+    "register: two of them carry one because they are also used as a tooltip."
+  ],
+  "caption_suffix": "norse",
+  "caption_prefix": "common.norse.",
+  "exempt": {
+    "hearth.upkeep.norse_names.note": "This is the note under the Show Norse names switch, and it NAMES the three Norse words as examples of what the switch adds. The sentence is right in both registers, which is why it has one wording; the swap used to rewrite it to 'Keeps Dashboard, Players and Console beside their plain names', which described nothing the switch does.",
+    "side.mead.title": "The skald here is the poet the mead is poured for, not the Statistics hall, and the swap rewrote it to 'pour the analytics a horn of mead'. The whole mead group keeps its Norse voice in both registers on purpose: the link itself reads 'a horn of mead' and the toast says 'Skal!', neither of which has a plain register either.",
+    "_note": "Every entry above is live: the rule flags that id and reads the reason here. An id the rule no longer flags does not belong in this object, it belongs in _decisions."
+  },
+  "_decisions": {
+    "atlas.layers.label": "The Map hall's layer bar, over the chips that draw portals, altars, builds and pins. These are map layers; the Barrow's Layer is a backup, and the swap's [\"Layers\",\"Backups\"] pair was renaming this bar after a feature on a different hall. Recorded here rather than in exempt because layer is not a Norse word and is not on the list, so nothing flags it."
+  }
+}

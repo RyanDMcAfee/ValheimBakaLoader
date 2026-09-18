@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using ValheimBakaLoader.Tests.Tools;
 using ValheimBakaLoader.Tools;
@@ -31,6 +32,22 @@ namespace ValheimBakaLoader.Tests.Forms
         private static string Bridge() => AppSourceTree.Files()["BlendWindow.Bridge.cs"];
 
         private static string AppJs() => AppSourceTree.Web("app.js");
+
+        /// <summary>The English catalog, read the way the lookup reads it.</summary>
+        private static Dictionary<string, JsonElement> Catalog()
+        {
+            using var document = JsonDocument.Parse(AppSourceTree.Web("i18n/en.json"));
+            var map = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var entry in document.RootElement.GetProperty("keys").EnumerateObject())
+                map[entry.Name] = entry.Value.Clone();
+            return map;
+        }
+
+        private static string Lore(Dictionary<string, JsonElement> catalog, string id)
+        {
+            Assert.True(catalog.ContainsKey(id), "the catalog has no " + id);
+            return catalog[id].GetProperty("lore").GetString();
+        }
 
         // ------------------------------------------------------------------ A. the exception
 
@@ -137,18 +154,23 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The hook the catalog lookup will read, and the note that says where it goes.
-        /// Until then the English sentence is still what is shown, unchanged.
+        /// The hook the catalog lookup will read, and the sentence the host reads until the
+        /// native side words its refusals by id. That sentence is a catalog entry now, and
+        /// the method name and the reason travel as named slots rather than as three pieces
+        /// concatenated in an order only English keeps.
         /// </summary>
         [Fact]
-        public void The_rpc_catch_records_the_id_and_still_toasts_the_english_sentence()
+        public void The_rpc_catch_records_the_id_and_toasts_the_keyed_sentence()
         {
             var js = AppJs();
+            var catalog = Catalog();
 
             Assert.Contains("window.BAKA_ERR_ID=err?.errorId||null;", js);
             Assert.Contains("window.BAKA_ERR_PARAMS=err?.errorParams||null;", js);
-            Assert.Contains("T-READY CALL SITE", js);
-            Assert.Contains("toast(\"ᚦ \"+method+\" failed · \"+(err?.message||\"unknown error\"));", js);
+            Assert.Contains("T(\"common.rpc.failed.toast\",", js);
+            Assert.Contains("{method,detail:err?.message||T(\"common.error.unknown\")}", js);
+            Assert.Equal("{method} failed · {detail}", Lore(catalog, "common.rpc.failed.toast"));
+            Assert.Equal("unknown error", Lore(catalog, "common.error.unknown"));
         }
 
         // ------------------------------------------------------------------ C. the ids themselves

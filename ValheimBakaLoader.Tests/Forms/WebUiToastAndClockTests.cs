@@ -242,10 +242,13 @@ namespace ValheimBakaLoader.Tests.Forms
             // guardBody is handed an object whatever arrives, so an event with no payload
             // is a plainly worded hold rather than a handler that throws half way through
             // and never reaches the log line under it.
-            Assert.Contains("toast(\"ᛊ \"+TT(\"Start held · \")+guardBody(d||{}));", handler);
+            Assert.Contains("toast(\"ᛊ \"+T(\"guard.held.toast\",{reason:guardBody(d||{})}));", handler);
+            // One sentence with the reason in a named slot, rather than two words glued in
+            // front of a sentence guardBody already built.
+            Assert.DoesNotContain("TT(\"Start held · \")", handler);
             // The toast no longer prints the host's prose. The log line beside it still
             // does, deliberately: the log stays English and verbatim by decision.
-            Assert.DoesNotContain("TT(\"Start held · \")+(d?.message", handler);
+            Assert.DoesNotContain("T(\"guard.held.toast\",{reason:d?.message", handler);
             Assert.Contains("logLine(\"warn\",\"[BakaLoader] start held: \"+(d?.message", handler);
         }
     }

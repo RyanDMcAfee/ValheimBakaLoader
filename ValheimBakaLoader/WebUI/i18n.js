@@ -20,6 +20,11 @@
    around them. A plural is an object of CLDR categories, chosen by
    Intl.PluralRules from the parameter the entry names. The order at every call
    site is T(id, params) then esc() then the DOM, and esc() stays last.
+   There is no path from English text back to an id any more. There was one while the
+   halls were being migrated, so a call site still spelling a sentence out and one
+   already asking by id could not word the same thing two ways; every call site asks by
+   id now, and a reverse map kept past that point is a second way to name a sentence
+   and therefore a second thing to keep in step.
    ============================================================================ */
 
 (function (root, factory) {
@@ -40,17 +45,22 @@
   var active = null;
   var activeTag = "en";
 
-  /* English text to id, for the TT() bridge (see idFor). A text two entries
-     share is ambiguous and is dropped rather than guessed at. */
-  var reverse = null;
-
   /* Ids the active catalog did not have and English answered for. Read by the
      pack tests and worth reading in the console while a translation is in
      review: a long list means the pack is behind the app. */
   var missing = [];
   var missingSeen = Object.create(null);
 
+  /* Ids already complained about. Cleared by load(), so a catalog that arrives without
+     an id still says so even if something asked for it before the file landed. */
   var warned = Object.create(null);
+
+  /* True once a catalog is in. app.js paints as it is evaluated and the English catalog
+     is FETCHED, so every painter on that road asks for words nothing can answer yet:
+     warning about those 57 ids says only that a fetch had not resolved, which is not a
+     defect and buried the one line that would be. Silence until there is a catalog to
+     be missing from; the boot path says its own piece when the fetch fails. */
+  var loaded = false;
 
   /* What the app says about the register right now. The app owns the answer
      (it is a preference, and the switch is in Upkeep), so it hands a getter in
@@ -65,23 +75,6 @@
     return (catalog && typeof catalog === "object" && catalog.keys) || null;
   }
 
-  /* Text to id, built once per English catalog. A text that two entries share
-     names neither of them, so it is removed: the bridge falls back to the old
-     behaviour for that sentence, which is what it did yesterday anyway. */
-  function buildReverse(keys) {
-    var map = Object.create(null);
-    var clash = Object.create(null);
-    for (var id in keys) {
-      if (!has.call(keys, id)) continue;
-      var lore = keys[id] && keys[id].lore;
-      if (typeof lore !== "string" || !lore.length) continue;
-      if (has.call(map, lore)) { clash[lore] = true; continue; }
-      map[lore] = id;
-    }
-    for (var text in clash) if (has.call(clash, text)) delete map[text];
-    return map;
-  }
-
   /**
    * Installs a catalog as the active one, and as the English fallback when it
    * is the English one. Sets the locale the formatters read.
@@ -94,11 +87,14 @@
     var tag = String(langCode || meta.language || "en").trim() || "en";
     var keys = keysOf(catalog) || Object.create(null);
 
-    if (tag === "en" || meta.language === "en") {
-      english = keys;
-      reverse = buildReverse(keys);
-    }
+    if (tag === "en" || meta.language === "en") english = keys;
     active = keys;
+    loaded = true;
+    /* A new catalog answers for its own ids, so what the one before it could not
+       answer for says nothing about this one. Both lists start again. */
+    missing.length = 0;
+    missingSeen = Object.create(null);
+    warned = Object.create(null);
     setLocale(tag);
     return activeTag;
   }
@@ -137,12 +133,20 @@
 
   /* A plural value is an object of CLDR categories. The category the language
      does not have, or a parameter that is not a number, both land on "other",
-     which every language has. */
+     which every language has.
+
+     A caller that formats its own number hands the raw one in pluralValue and the
+     category is picked from THAT. A formatted number cannot be read back: ar-EG
+     writes ١ for 1 and Number("١") is NaN, so a slot carrying the words for a
+     number would have put every Arabic sentence on "other" and written the plural
+     of a sentence about one thing. */
   function resolveValue(entry, params) {
     var value = pickRegister(entry);
     if (value && typeof value === "object") {
       var name = entry.plural;
-      var picked = pluralCategory(params ? params[name] : NaN);
+      var counted = NaN;
+      if (params) counted = has.call(params, "pluralValue") ? params.pluralValue : params[name];
+      var picked = pluralCategory(counted);
       value = value[picked] != null ? value[picked] : value.other;
     }
     return value == null ? null : String(value);
@@ -161,7 +165,7 @@
   }
 
   function warnOnce(id) {
-    if (warned[id]) return;
+    if (!loaded || warned[id]) return;
     warned[id] = true;
     if (typeof console !== "undefined" && console && console.warn) {
       console.warn("[i18n] no wording for " + id);
@@ -171,7 +175,9 @@
   /**
    * The words for an id. Falls back to English, then to the id itself.
    * @param {string} id dotted catalog id
-   * @param {object} [params] named slot values
+   * @param {object} [params] named slot values, plus the optional pluralValue: the
+   *   raw number to choose the plural category with, for a caller whose slot already
+   *   carries that number written out in the host's own digits
    * @returns {string} plain text, never markup: esc() still comes after this
    */
   function T(id, params) {
@@ -195,18 +201,6 @@
   function mark(id) {
     var entry = id == null ? null : entryFor(String(id));
     return entry && entry.mark != null ? String(entry.mark) : "";
-  }
-
-  /**
-   * The id an English lore sentence belongs to, or null.
-   * This is what lets a call site that has not been rewritten yet and one that
-   * has agree on the same words: a TT() still holding the English sentence and
-   * a rewritten call site holding the id come out of the same entry. Null for a
-   * sentence two entries share, and for everything the catalog never heard of.
-   */
-  function idFor(text) {
-    if (!reverse || typeof text !== "string") return null;
-    return has.call(reverse, text) ? reverse[text] : null;
   }
 
   /** The app hands in the getter that answers "plain wording, or lore?". */
@@ -496,7 +490,6 @@
     T: T,
     has: hasKey,
     mark: mark,
-    idFor: idFor,
     setRegister: setRegister,
     plain: plain,
     locale: locale,

@@ -46,6 +46,10 @@ allow_filter() {
   local text="$1" line
   if [ -f "$ALLOWLIST" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
+      # A Windows checkout writes this file with CRLF, and the carriage return
+      # rides along into the pattern: every entry then matched nothing, and the
+      # gate reported a literal the allowlist vouches for as copy.
+      line=${line%$'\r'}
       case "$line" in ''|'#'*) continue;; esac
       text=$(printf '%s\n' "$text" | grep -vF -- "$line" || true)
     done < "$ALLOWLIST"
@@ -167,6 +171,32 @@ if [ -f "$CHECK_FIRST_FRAME" ]; then
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 else
   echo "  the first frame check is missing: $CHECK_FIRST_FRAME"; fail=1
+fi
+
+echo "== 11. the map's age line, tier by tier =="
+# The one formatter whose English no Intl style can write, so its four sentences are
+# catalog entries and a copy edit can move them. Run as a table against both arms: the
+# catalog one and the hand-rolled floor for a window whose lookup never arrived.
+ATLAS_AGE="$(dirname "$HERE")/i18n/atlas_age_selftest.js"
+if [ -f "$ATLAS_AGE" ]; then
+  if out=$(node "$ATLAS_AGE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the map age table is missing: $ATLAS_AGE"; fail=1
+fi
+
+echo "== 12. the pseudo locale, against the English it is made from =="
+# xx.json is generated, and a generated file that drifts is worse than no file: the
+# language walk is driven with it, so a sentence added to en.json and missing here
+# reads as plain English under xx and the walk calls the surface unreachable. The
+# check builds it into a temporary file and compares the bytes; it never writes into
+# the tree, so running the gate can never be what updates the file.
+MAKE_PSEUDO="$(dirname "$HERE")/i18n/make_pseudo.py"
+if [ -f "$MAKE_PSEUDO" ]; then
+  if out=$("$py" "$MAKE_PSEUDO" --check); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the pseudo locale builder is missing: $MAKE_PSEUDO"; fail=1
 fi
 
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"

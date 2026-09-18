@@ -93,6 +93,9 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var catalog = Catalog();
             var js = AppJs();
+            // The seven whose two registers really differ. They used to differ because a
+            // pair in the swap table said so; they differ because the entry says so now,
+            // and the English on screen is the same in both registers either way.
 
             var both = new (string Word, string Plain)[]
             {
@@ -101,16 +104,23 @@ namespace ValheimBakaLoader.Tests.Forms
             };
 
             foreach (var (word, plain) in both)
-            {
                 Assert.Equal(plain, Plain(catalog, "pal.k." + word));
-                Assert.Contains("[\"" + word + "\",\"" + plain + "\"]", js);
-            }
 
-            foreach (var word in new[] { "rcon", "steam", "net", "herald", "barrow", "path", "vellum" })
+            // Three more carry a plain register since the swap table went: the table only
+            // held a pair for a badge whose word it happened to name, and barrow, herald
+            // and vellum were not in it. A host with the Norse names off was reading the
+            // Norse badge on those three rows and the plain one on the other seven.
+            foreach (var (word, plain) in new (string Word, string Plain)[]
+                     { ("barrow", "backups"), ("herald", "discord"), ("vellum", "log settings") })
+                Assert.Equal(plain, Plain(catalog, "pal.k." + word));
+
+            // The four that are plain English already, in either register.
+            foreach (var word in new[] { "rcon", "steam", "net", "path" })
                 Assert.Null(Plain(catalog, "pal.k." + word));
 
-            // and the swap still reaches them, which is why both registers have to agree
-            Assert.Contains(".pitem .k", js);
+            // Nothing reaches these badges but the walker, and the register it writes is
+            // picked inside the lookup rather than by a regex over what is on screen.
+            Assert.DoesNotContain("const TERM_STATIC_SEL", js);
         }
 
         /// <summary>
@@ -162,24 +172,31 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The box a host types into keeps its placeholder out of the catalog for now.
-        /// applyTerms caches that placeholder and five like it so it can put the Norse
-        /// wording back when the switch goes the other way, and a placeholder written
-        /// from two places at once is the fight this whole phase is arranged to avoid.
-        /// The cache and the key move together, in one change, or not at all.
+        /// The box a host types into carries its id at last. It was kept out of the
+        /// catalog while applyTerms cached that placeholder and four like it so it could
+        /// put the Norse wording back when the switch went the other way: an id there
+        /// would have let the cache restore the English seed over a pack's word on the
+        /// first toggle. The cache and the key had to move in one change or not at all,
+        /// and this is that change. The seed stays in index.html because that is what a
+        /// window whose catalog never arrived reads.
         /// </summary>
         [Fact]
-        public void The_palette_box_keeps_its_placeholder_until_the_cache_goes()
+        public void The_palette_box_keys_its_placeholder_now_that_the_cache_is_gone()
         {
             var palette = Palette();
             var js = AppJs();
 
-            var box = palette.Substring(palette.IndexOf("<input id=\"palInput\"", StringComparison.Ordinal), 120);
+            var box = palette.Substring(palette.IndexOf("<input id=\"palInput\"", StringComparison.Ordinal), 160);
             Assert.Contains("placeholder=\"Summon a command…\"", box);
-            Assert.DoesNotContain("data-i18n-placeholder", box);
+            Assert.Contains("data-i18n-placeholder=\"pal.input.placeholder\"", box);
 
-            Assert.Contains("[$(\"#palInput\"),$(\"#cfgEditor\"),$(\"#modSearch\"),$(\"#runeSearch\"),$(\"#cfgFind\")]", js);
-            Assert.Contains("[\"Summon a command…\",\"Type a command…\"]", js);
+            // Both registers, out of one entry, which is what the cache used to fake.
+            var catalog = Catalog();
+            Assert.Equal("Summon a command…", Lore(catalog, "pal.input.placeholder"));
+            Assert.Equal("Type a command…", Plain(catalog, "pal.input.placeholder"));
+
+            Assert.DoesNotContain("$(\"#palInput\"),$(\"#cfgEditor\")", js);
+            Assert.DoesNotContain("[\"Summon a command…\",\"Type a command…\"]", js);
         }
 
         // ----------------------------------------------------------- C. the overlays

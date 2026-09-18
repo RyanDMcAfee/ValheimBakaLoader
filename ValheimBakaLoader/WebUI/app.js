@@ -34,6 +34,15 @@ const Native = (() => {
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+/* A name to stand out inside a sentence the catalog owns. The markup goes into the SLOT
+   rather than into the entry, so the entry stays a plain sentence a translator can move
+   the name around inside, and the catalog's no-markup rule still holds over it. esc()
+   runs on the name first, which is the whole reason this is a helper and not a template
+   spelled out at each call site. */
+const bold=s=>"<b>"+esc(s)+"</b>";
+/* The same trick for a value that keeps the monospaced face: an address, a port, a file
+   name. The markup rides the slot so the catalog entry stays a plain sentence. */
+const mono=s=>"<span class=\"mono\">"+esc(s)+"</span>";
 const pad=n=>String(n).padStart(2,"0");
 
 /* ---------- THE FORMATTERS ----------
@@ -65,16 +74,17 @@ function fmtT(d){
   return L?L.fmtTime(t):pad(t.getHours())+":"+pad(t.getMinutes());
 }
 /* "3d ago at 1945" - delta plus wall-clock, the way you'd tell a friend.
-   The span is the lookup's; "just now" and the joiner are still English here
-   and become catalog keys with the rest of the composed messages. */
+   The span is the lookup's, and the two words around it are the catalog's: the
+   joiner is one key with both halves in it, because a language that puts the
+   clock first cannot reorder two string concatenations. */
 function agoAt(d){
   const t=new Date(d); if(isNaN(t)) return "-";
   const s=Math.max(0,(Date.now()-t.getTime())/1000);
   const L=intl();
-  const ago=s<60?"just now"
+  const ago=s<60?T("common.ago.just_now")
     :L?L.fmtRelative(s)
     :s<3600?Math.floor(s/60)+"m ago":s<86400?Math.floor(s/3600)+"h ago":Math.floor(s/86400)+"d ago";
-  return ago+" at "+pad(t.getHours())+pad(t.getMinutes());
+  return T("common.ago.at",{ago,clock:pad(t.getHours())+pad(t.getMinutes())});
 }
 
 /* RPC wrapper: every call catches + toasts; returns FAIL sentinel instead of rejecting
@@ -82,19 +92,24 @@ function agoAt(d){
 const FAIL=Symbol("rpc-failed");
 /* The last refusal the host named, kept for whoever asks. Two values rather than a
    history: a toast is about the thing that just happened, and anything older is in
-   the log. Read by the debug console today; read by the catalog lookup tomorrow. */
+   the log. Read by the debug console today.
+   THE RECIPE, when the native side starts wording its refusals by id: ask
+   I18N.has(errorId) FIRST and only then call T(errorId, errorParams). T() never
+   answers null - an id it cannot look up comes back as the id itself - so
+   `T(errorId) ?? err.message` would put a dotted name in a toast rather than fall
+   back to the English sentence the bridge is still sending beside it. */
 window.BAKA_ERR_ID=null;
 window.BAKA_ERR_PARAMS=null;
 function rpc(method,params){
   return Native.call(method,params).catch(err=>{
     window.BAKA_ERR_ID=err?.errorId||null;
     window.BAKA_ERR_PARAMS=err?.errorParams||null;
-    /* T-READY CALL SITE. When the catalog lands this line becomes
-         const said=T(window.BAKA_ERR_ID,window.BAKA_ERR_PARAMS)||err?.message;
-       and nothing else on either side of the bridge has to move: the id and its
-       values are already here, and the English sentence stays the fallback for every
-       refusal that has no id and every pack that is missing one. */
-    toast("ᚦ "+method+" failed · "+(err?.message||"unknown error"));
+    /* The bridge's own id and values are held above for the day the native side
+       words its refusals by id. Until then the sentence the host reads is this one,
+       and the method name and the reason travel as named slots so a language that
+       puts the reason first can. */
+    toast("ᚦ "+T("common.rpc.failed.toast",
+      {method,detail:err?.message||T("common.error.unknown")}));
     return FAIL;
   });
 }
@@ -223,153 +238,22 @@ $$(".grip").forEach(g=>g.addEventListener("mousedown",e=>{
   Native.post("win.resizeStart",{edge:g.dataset.edge});
 }));
 
-/* ---------- TERMINOLOGY (plain-English toggle, Upkeep card) ----------
-   PLAIN swaps the Norse-lore wording for plain English. Ordered pairs:
-   longest / most specific phrases first so generic word swaps never
-   pre-empt them. Server log lines are NEVER plainified (raw data). */
+/* ---------- TERMINOLOGY (the "Show Norse names" switch, Upkeep card) ----------
+   PLAIN is the one bit the switch answers with: true when the host asked for plain
+   English rather than the Norse wording. It used to drive 129 ordered regular
+   expressions over text that had already been rendered, which worked for exactly as
+   long as the product had one language in it: a word boundary in JavaScript is
+   defined against ASCII, so the table was a bare substring replace in Cyrillic and
+   in Han, and running it over a translated sentence is silently destructive rather
+   than loudly broken.
+   So the register is picked inside the lookup instead. I18N.setRegister is handed the
+   getter below and T(id) answers with entry.plain when this is true and the entry has
+   one, and with entry.lore when it does not. One entry, two registers, no ordering
+   hazard, no inflection bleed, and the Norse register becomes something a translator
+   can write rather than something a regex produces.
+   The switch itself does two things and nothing else: it flips this bit, and it calls
+   applyLanguage(), which draws every surface again. */
 let PLAIN=false;
-const TERM_PAIRS=[
-  ["No vikings have set sail for this realm yet.","No players have connected yet."],
-  ["Some deeds are sleeping","Some features are unavailable"],
-  ["right-click a viking for deeds","right-click a player for actions"],
-  ["Hearth stoked · vikings warned","Restart scheduled · players warned"],
-  ["Hearth stoked · no vikings online","Restarting · no players online"],
-  ["Hearth stoked · server restarting","Server restarting"],
-  ["Hearth stoked","Restart scheduled"],
-  ["Hearth doused · server stopping","Server stopping"],
-  ["Hearth doused · server stopped","Server stopped"],
-  ["Hearth kindled · server starting","Server starting"],
-  ["STOPPED · embers doused","STOPPED"],
-  ["dousing the embers","shutting down"],
-  ["embers doused","server stopped"],
-  ["consult the saga","check the console log"],
-  ["Open the Saga hall for the full chronicle","Open the full console log"],
-  ["Saga log","console log"],
-  ["Join prompt copied · sailing forth","Join prompt copied"],
-  ["sailing forth","connecting"],
-  ["Sail Forth","Copy Join Info"],
-  ["sail forth","connect"],
-  ["The Herald speaks","Status post published"],
-  ["The Herald falls silent","Status post removed"],
-  ["Summon the Herald","Discord sharing setup"],
-  ["Let the Herald speak","Publish the post"],
-  ["The Herald","Discord sharing"],
-  ["the Herald","the Discord post"],
-  ["HERALD","DISCORD"],
-  ["Herald","Discord"],
-  ["Forge the webhook","Create the webhook"],
-  ["Choose the tidings","Choose what to share"],
-  ["Raise the Waystone","Save the domain"],
-  ["Raise a Waystone","Set up a custom domain"],
-  ["The Waystone stands","Domain saved"],
-  ["The Waystone falls","Domain removed"],
-  ["Name the Waystone","Choose the name"],
-  ["Prove the Waystone","Verify the domain"],
-  ["current Waystone","current domain"],
-  ["WAYSTONE","DOMAIN"],
-  ["Waystone","Domain"],
-  ["waystone","domain"],
-  ["Unearth this layer","Restore this backup"],
-  ["Layer unearthed","Backup restored"],
-  ["Layer deleted","Backup deleted"],
-  ["The Barrow","Backups"],
-  ["the Barrow","the backup manager"],
-  ["Unearthing","Restoring"],
-  ["UNEARTH","RESTORE"],
-  ["Unearth","Restore"],
-  ["unearth","restore"],
-  ["unearthing","restore"],
-  ["BARROW","BACKUPS"],
-  ["Barrow","Backups"],
-  ["Layers","Backups"],
-  ["Layer","Backup"],
-  ["layers","backups"],
-  ["layer","backup"],
-  ["nothing chronicled yet: happenings appear as the realm lives","nothing recorded yet: events appear as the server runs"],
-  ["counted on this machine only, nothing leaves it","stored on this machine only, never uploaded"],
-  ["no mod updates chronicled yet","no mod updates recorded yet"],
-  ["the realm's story in numbers","the server's history in numbers"],
-  ["the hearth collapsed","server crashed"],
-  ["valkyries dispatched","player deaths"],
-  ["chronicled since","recorded since"],
-  ["hearth kindled","server started"],
-  ["hearth doused","server stopped"],
-  ["Hearth burned","Server uptime"],
-  ["fell in battle","died"],
-  ["Mod chronicle","Mod history"],
-  ["unique souls","unique players"],
-  ["came ashore","joined"],
-  ["raiding now","online now"],
-  ["sailed off","left"],
-  ["Happenings","Recent events"],
-  ["Kindlings","Starts"],
-  ["visits","sessions"],
-  ["alight","running"],
-  ["SKALD","ANALYTICS"],
-  ["Skald","Analytics"],
-  ["skald","analytics"],
-  ["BepInEx config scrolls","BepInEx config files"],
-  ["no .cfg scrolls found","no .cfg files found"],
-  ["Scrolls reloaded","Configs reloaded"],
-  ["in the config vault","in the config folder"],
-  ["rune-scrolls","config files"],
-  ["rune-scroll","config file"],
-  ["last rune-check","last save"],
-  ["unsaved rune-work","unsaved changes"],
-  ["live chronicle of the realm","live server log"],
-  ["ADVANCED RITES","ADVANCED SETTINGS"],
-  ["Hearth Status","Server Status"],
-  ["Forge Load","System Load"],
-  ["Summon a command…","Type a command…"],
-  ["KINDLING…","STARTING…"],
-  ["FADING…","STOPPING…"],
-  ["BURNING","RUNNING"],
-  ["COLD","STOPPED"],
-  ["Kindle","Start"],
-  ["Douse","Stop"],
-  ["Stoke","Restart"],
-  ["HEARTH","DASHBOARD"],
-  ["Hearth","Dashboard"],
-  ["hearth","server"],
-  ["VIKINGS","PLAYERS"],
-  ["Vikings","Players"],
-  ["vikings","players"],
-  ["Viking","Player"],
-  ["viking","player"],
-  ["raiding","online"],
-  ["deeds","actions"],
-  ["RUNES","CONFIGS"],
-  ["Runes","Configs"],
-  ["SAGA","CONSOLE"],
-  /* These two run before the bare "saga" pair on purpose: "the saga log" through that one
-     alone comes out as "the log log". */
-  ["The saga log","The log"],
-  ["the saga log","the log"],
-  ["Saga","Console"],
-  ["saga","log"],
-  ["Helm turned","Switched to"],
-  ["helm turned","switched to"],
-  ["Vellum inscribed · log settings saved","Log settings saved"],
-  ["The Vellum","Log settings"],
-  ["where the chronicle is kept","file locations & retention"],
-  ["each server session writes its own scroll","each server session writes its own file"],
-  ["new scrolls land here","new log files land here"],
-  ["rune in the","toggle in the"],
-  ["Inscribe","Save"],
-  ["rites","settings"],
-  ["rite","action"],
-  ["forge","mods"],
-  ["realm","world"],
-];
-const TERM_RES=TERM_PAIRS.map(([f,t])=>[
-  new RegExp((/^\w/.test(f)?"\\b":"")+f.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+(/\w$/.test(f)?"\\b":""),"g"),
-  t
-]);
-function plainify(s){
-  if(!PLAIN||typeof s!=="string") return s;
-  for(const [re,t] of TERM_RES) s=s.replace(re,t);
-  return s;
-}
 
 /* ---------- THE CATALOG ----------
    T(id, params) is the lookup. i18n.js holds it; this is the short name the
@@ -379,19 +263,21 @@ function plainify(s){
    stays T() then esc() then the DOM. */
 const T=(id,params)=>window.I18N?window.I18N.T(id,params):String(id==null?"":id);
 
-/* TT() used to BE plainify, and is now the bridge across the migration. A
-   sentence the catalog knows is answered by the catalog; everything it has not
-   been taught yet still goes through the regex swap underneath. Both arms give
-   the same English today, which is the whole point: a call site that has been
-   rewritten and one that has not cannot word the same thing two ways.
-   L2b deletes the second arm, and TERM_PAIRS with it. */
-function TT(s){
-  if(typeof s==="string"&&window.I18N){
-    const id=window.I18N.idFor(s);
-    if(id) return window.I18N.T(id);
-  }
-  return plainify(s);
+/* One sentence, one entry, and a value inside it that keeps its own typeface. A
+   catalog value carries no markup (the gate allows that only on the wizard steps, which
+   are written into the page unescaped), so the slot takes a marker instead: the whole
+   sentence is escaped, and only then does each marker become a <span class="mono">
+   around a value escaped on its own. esc() is still the last thing that touched both
+   halves, and the translator still gets one whole sentence with named slots.
+   The marker is U+0000, which no sentence and no file name on Windows can hold. */
+const monoSlot=name=>"\u0000"+name+"\u0000";
+function monoFill(text,values){
+  let out=esc(text);
+  for(const name in values)
+    out=out.split(monoSlot(name)).join(`<span class="mono">${esc(values[name])}</span>`);
+  return out;
 }
+
 
 /* The English catalog is a file beside the page, fetched once at boot through
    the same cache stamp the other two includes carry. A fetch rather than
@@ -451,11 +337,28 @@ function repaintBootCopy(){
   try{renderAppUpdatePill();}catch(_){}   /* the BakaLoader-update pill */
   try{renderMods();}catch(_){}            /* the mod table's pills, tags and marks */
   try{renderPlayers();}catch(_){}         /* the roster's tooltips and its online cell */
+  try{renderCaps();}catch(_){}            /* the missing-mods banner's button */
   try{renderCfgList();}catch(_){}         /* the config list's two empty lines */
+  try{resetCfgSaveBtn();}catch(_){}       /* the Configs hall's Save button */
   try{renderHearthLog();}catch(_){}       /* the Hearth log card's empty state */
   try{renderSaveBars();}catch(_){}        /* the save-timing card's empty state */
+  try{renderSaveAvg();}catch(_){}         /* the rolling write-time average */
+  try{renderServerChips();}catch(_){}     /* the sidebar strip's chip tooltips */
+  try{renderHexiumCopy();}catch(_){}      /* the Upkeep card's second-mod-site switch */
+  try{heraldRenderIntro();}catch(_){}     /* the Discord hall's opening sentence */
+  try{heraldRenderPost();}catch(_){}      /* whether a status post is placed */
+  try{heraldRenderUrlStat();}catch(_){}   /* and the line under the webhook box */
+  try{renderTermStream();}catch(_){}      /* the Saga console's live or paused chip */
+  try{renderMead();}catch(_){}            /* the horn of mead, embers and all */
   try{renderTermEmpty();}catch(_){}       /* the Saga console's empty state */
+  try{renderAtlasMsg();}catch(_){}        /* the line the Map hall is showing right now */
+  try{renderWxBiomes();}catch(_){}        /* the weather box's nine biome pills */
+  try{syncCollapsibleTerms();}catch(_){}  /* every folded header's "n settings" hint */
   try{renderCfgRunningNote();}catch(_){}  /* the Settings hall's running-server note */
+  try{renderStatusRconPreview();}catch(_){}  /* the status bar's RCON word in the preview */
+  try{updAdvLabels();}catch(_){}          /* the three Advanced labels that carry a number */
+  try{renderEyeChips();}catch(_){}        /* the two password chips' SHOW / HIDE word */
+  try{repaintWorldDialCopy();}catch(_){}  /* the five world dials: options, notes, footnote */
   /* These two are async, so a throw inside them lands on the promise rather than in the
      try around the call, and an unhandled rejection is a console error on every boot. */
   try{renderWorldSeed()?.catch(()=>{});}catch(_){}   /* the seed field's not-created-yet line */
@@ -463,55 +366,57 @@ function repaintBootCopy(){
   try{rerenderConditions();}catch(_){}    /* every row already standing on the bar */
 }
 
-/* Static lore-bearing elements: text nodes only (rune glyphs + pills untouched).
-   Dynamic surfaces (#vikSub, #runesSub, hState/hPid, toasts…) route through TT()
-   at render time instead - caching their originals would restore stale values. */
-const TERM_STATIC_SEL="h1,.navitem .lbl,#sailBtn,.microlabel,#lastSaveLbl,#saveCap,#openSagaChip,.capshead,#page-vikings th,#page-skald th,#skDeathsSub,#secRites,#page-saga .sub,#page-world .sub,.pitem .k,#waystoneBtn";
-const TERM_ORIG=new Map();
-const TERM_TITLE_ORIG=new Map();
-function applyTerms(){
-  /* Plain labels are the default now, so the toggle's job is the Norse CAPTIONS:
-     off hides every one of them. TERM_PAIRS still runs underneath for the Norse
-     wording that is not a caption (toasts, log dividers, the launch guard). */
+/* ---------- THE LANGUAGE SWITCH ----------
+   One path, and every surface on it is drawn AGAIN rather than patched. There is no
+   reload: a reload would take the Saga scrollback, both search boxes and, worst of
+   the three, whatever is unsaved in the config editor (CFG.dirty). None of those is
+   worth a language switch.
+   The order matters. The attributes go first, because Chromium picks its Han face off
+   `lang` and every measurement after this reads the face that choice lands on. Then
+   the static half, which is one walk over every element that carries an id. Then the
+   dynamic half: repaintBootCopy() is the painters that draw from S, and after it come
+   the surfaces that cannot be open on the first frame and can be open now - an open
+   dialog, a wizard pane, the Atlas side panel and its weather box, a row menu, the
+   palette's gating tooltips.
+   What is deliberately NOT redrawn: the lines already in the Saga console. The
+   server's own output is English whatever the interface is reading, and rewriting
+   scrollback that arrived in one language into another would be a lie about what the
+   server said. The chrome around it is drawn again with everything else. */
+function applyLanguage(code){
+  const tag=setLanguageAttributes(code||(intl()?intl().locale():"en"));
+  /* The Norse CAPTIONS are CSS, not copy: .plain-terms hides every one of them. */
   document.documentElement.classList.toggle("plain-terms",PLAIN);
-  $$(TERM_STATIC_SEL).forEach(el=>{
-    [...el.childNodes].forEach(n=>{
-      if(n.nodeType!==3||!n.nodeValue.trim()) return;
-      if(!TERM_ORIG.has(n)) TERM_ORIG.set(n,n.nodeValue);
-      const o=TERM_ORIG.get(n);
-      n.nodeValue=PLAIN?plainify(o):o;
-    });
-    /* the tooltip is the same lore as the label it hangs off, so it swaps with it -
-       a chip reading "Console" that explains the "Saga hall" reads as a bug */
-    if(!el.title&&!TERM_TITLE_ORIG.has(el)) return;
-    if(!TERM_TITLE_ORIG.has(el)) TERM_TITLE_ORIG.set(el,el.title);
-    const t=TERM_TITLE_ORIG.get(el);
-    el.title=PLAIN?plainify(t):t;
-  });
-  [$("#palInput"),$("#cfgEditor"),$("#modSearch"),$("#runeSearch"),$("#cfgFind")].forEach(el=>{
-    if(!el) return;
-    if(!TERM_ORIG.has(el)) TERM_ORIG.set(el,el.placeholder);
-    const o=TERM_ORIG.get(el);
-    el.placeholder=PLAIN?plainify(o):o;
-  });
-  /* refresh the lore-bearing dynamic surfaces so the swap is immediate */
-  try{renderHearth();}catch{}
-  try{renderAppBar();}catch{}
-  try{renderConditionBar();}catch{}
-  /* The Upkeep switch that opens the second mod site writes its label and its
-     explanation through TT() as well, so both follow the swap. */
-  try{renderHexiumCopy();}catch{}
-  /* The two surfaces that say which BakaLoader is waiting. Both write their text through
-     TT() at render time, so the swap only reaches them if they are re-rendered here. */
-  try{renderAppUpdatePill();}catch{}
-  try{renderSideVer();}catch{}
-  try{renderCaps();}catch{}
-  try{syncCollapsibleTerms();}catch{}
-  try{renderHearthLog();}catch{}
-  try{renderPlayers();}catch{}
-  try{if(CFG.files&&CFG.files.length)renderCfgList();}catch{}
-  try{if(SKALD)renderSkald();}catch{}
+  try{if(window.I18N)window.I18N.applyStatic(document);}catch(_){}
+  /* Every painter that draws from S, including the whole of the first-frame set. */
+  try{repaintBootCopy();}catch(_){}
+  /* And the surfaces repaintBootCopy leaves alone because nothing can be open on the
+     first frame. Each is wrapped on its own so one throw cannot stop the rest. */
+  try{renderAppBar();}catch(_){}            /* the Hearth's lifecycle buttons */
+  try{renderConditionBar();}catch(_){}      /* the standing condition, words and all */
+  try{renderNet();}catch(_){}               /* the network card's labels */
+  try{renderWaystone();}catch(_){}          /* the custom-domain chip */
+  try{renderVikCols();}catch(_){}           /* the roster's column chooser */
+  try{if(SKALD)renderSkald();}catch(_){}    /* the Statistics hall, once it has numbers */
+  try{renderModSourceLabels();}catch(_){}   /* the Mods header's site names */
+  try{renderModUpdateProgress();}catch(_){} /* a bulk update's progress line */
+  try{renderServerUpdate();}catch(_){}      /* the server-update card */
+  try{renderUpdatePill();}catch(_){}        /* the waiting-update pill */
+  try{renderLaunchHold();}catch(_){}        /* the held start, if one is standing */
+  try{heraldRenderIntro();}catch(_){}       /* the Discord hall's opening sentence */
+  try{heraldRenderPost();}catch(_){}        /* and its post status */
+  try{heraldRenderUrlStat();}catch(_){}     /* and the line under its webhook box */
+  try{renderTermStream();}catch(_){}        /* the Saga console's live/paused chip */
+  try{renderAtlasSide();}catch(_){}         /* the Map hall's side panel */
+  try{renderWeather();}catch(_){}           /* and the weather box inside it */
+  try{updatePalGating();}catch(_){}         /* the palette's greyed-out reasons */
+  try{redrawOpenModal();}catch(_){}         /* a dialog or a wizard pane, from state */
+  try{redrawContextMenu();}catch(_){}       /* an open row menu, at the same corner */
+  return tag;
 }
+/* The terminology switch is a language switch with the language left alone: the words
+   come out of the same entries, the other register of them. One path, so a surface
+   that follows one follows both and neither can quietly grow a hole the other has. */
+function applyTerms(){return applyLanguage();}
 
 /* ---------- EMPTY STATES ----------
    One shape for every "there is nothing here yet": a mark, a sentence-case title of
@@ -521,11 +426,12 @@ function applyTerms(){
    header note in app.css).
 
    title, reason and label arrive already worded: every caller asks the catalog for
-   them by id before calling in. This used to word them itself, through TT(), which meant the
-   table of empty states was a table of English the completeness gate could not see
-   and a translator could not reach. Passing the wording in keeps the one composed
-   reason (the mod search, which counts the mods it is hiding) honest too: that call
-   site still says TT() out loud, so nobody has to guess why it is the odd one. */
+   them by id before calling in. This used to word them itself, through the terminology
+   swap, which meant the table of empty states was a table of English the completeness
+   gate could not see and a translator could not reach. Passing the wording in keeps
+   the one composed reason honest too: the mod search counts the mods it is hiding, and
+   that count is a named slot in one catalog entry rather than three pieces glued
+   together here. */
 function emptyState(o){
   o=o||{};
   const a=o.action;
@@ -738,7 +644,9 @@ const COLLAPSIBLES=[];
 function syncCollapsible(rec){
   const open=rec.target.classList.contains("open");
   rec.head.setAttribute("aria-expanded",open?"true":"false");
-  rec.hint.textContent=open?"":TT(rec.count+" settings");
+  /* One folded setting used to read "1 settings": the number was glued to the word
+     before the lookup ever saw it, so no catalog could tell the two forms apart. */
+  rec.hint.textContent=open?"":T("common.collapsible.folded",{count:rec.count});
   /* An open Upkeep card is taller than a fixed bento row, so the last row is
      told to take its content height while the card is unfolded. */
   if(rec.target.id==="upkeepCard"){
@@ -746,7 +654,14 @@ function syncCollapsible(rec){
     if(bento) bento.classList.toggle("upkeep-open",open);
   }
 }
-function syncCollapsibleTerms(){COLLAPSIBLES.forEach(syncCollapsible);}
+function syncCollapsibleTerms(){
+  /* Spelled as a loop with a call of its own rather than forEach(syncCollapsible), because
+     the first-frame gate reads statement calls: a header wired before the catalog landed has
+     to be visibly one of the things the boot repaint runs again. */
+  for(const rec of COLLAPSIBLES){
+    syncCollapsible(rec);
+  }
+}
 function wireCollapsible(headId,body,targetEl){
   const head=document.getElementById(headId); if(!head) return;
   const target=targetEl||head;
@@ -824,13 +739,18 @@ function renderServerChips(){
     const cls="srvchip"+(s.active?" active":"")+(s.running?" running":"");
     const initial=(s.name||"?").trim().charAt(0).toUpperCase();
     const badge=s.playersOnline>0?`<span class="srvbadge">${s.playersOnline}</span>`:"";
-    return `<div class="${cls}" data-srv="${esc(s.name)}" title="${esc(s.name)}${s.running?" · "+esc(s.status):""} · right-click for options"><span class="srvdot${s.running?" on":""}"></span><span class="srvinit">${esc(initial)}</span>${badge}</div>`;
+    /* The running chip says what it is doing as well as who it is, so the two
+       shapes are two entries rather than one with a gap in the middle. */
+    const tip=s.running
+      ?T("side.strip.chip.title.running",{name:s.name,status:s.status})
+      :T("side.strip.chip.title",{name:s.name});
+    return `<div class="${cls}" data-srv="${esc(s.name)}" title="${esc(tip)}"><span class="srvdot${s.running?" on":""}"></span><span class="srvinit">${esc(initial)}</span>${badge}</div>`;
   }).join("");
-  html+=`<div class="srvchip add" id="srvAdd" title="Found a new realm"><span class="srvinit">+</span></div>`;
+  html+=`<div class="srvchip add" id="srvAdd" title="${esc(T("side.strip.add.title"))}"><span class="srvinit">+</span></div>`;
   const archBadge=archived.length?`<span class="srvbadge">${archived.length}</span>`:"";
   const restoreTip=archived.length
-    ?`Restore a realm · ${archived.length} archived, or bring back a past world`
-    :`Restore a past realm from its world files`;
+    ?T("side.strip.restore.title.archived",{count:archived.length})
+    :T("side.strip.restore.title");
   html+=`<div class="srvchip arch" id="srvRestore" title="${restoreTip}"><span class="srvinit">↺</span>${archBadge}</div>`;
   el.innerHTML=html;
   const sep=$("#srvSep"); if(sep) sep.style.display=list.length?"":"none";
@@ -884,8 +804,8 @@ function fitServerStrip(){
     more.style.display=hidden>0?"":"none";
     more.textContent=hidden>0?"▾ +"+hidden:"▾";
     more.title=hidden>0
-      ?hidden+" more below. Scroll the strip to reach them."
-      :"More realms below. Scroll the strip to reach them.";
+      ?T("side.strip.more.title.hidden",{count:hidden})
+      :T("side.strip.more.title");
   }
   updateScrollCue(strip);
 }
@@ -895,23 +815,24 @@ if(document.fonts&&document.fonts.ready) document.fonts.ready.then(fitServerStri
 /* Right-click a chip → per-realm actions. */
 function serverChipMenu(name,x,y){
   const s=(S.servers||[]).find(v=>String(v.name)===String(name)); if(!s) return;
+  const stopFirst=T("realm.menu.stop_first.tip");
   const items=[
-    {r:"ᛒ",label:"Turn helm here",fn:()=>switchServer(name),disabled:s.active,tip:"Already the active realm"},
-    {r:"ᚱ",label:"Rename…",fn:()=>renameServer(name),disabled:s.running,tip:"Stop the server first"},
-    {r:"ᛞ",label:"Duplicate…",fn:()=>duplicateServer(name)},
+    {r:"ᛒ",label:T("realm.menu.switch"),fn:()=>switchServer(name),disabled:s.active,tip:T("realm.menu.switch.tip")},
+    {r:"ᚱ",label:T("realm.menu.rename"),fn:()=>renameServer(name),disabled:s.running,tip:stopFirst},
+    {r:"ᛞ",label:T("realm.menu.duplicate"),fn:()=>duplicateServer(name)},
     "hr",
-    {r:"⌂",label:"Archive",fn:()=>archiveServer(name),disabled:s.running,tip:"Stop the server first"},
-    {r:"ᛟ",label:"Delete…",fn:()=>deleteServerFlow(name),danger:true,disabled:s.running,tip:"Stop the server first"},
+    {r:"⌂",label:T("realm.menu.archive"),fn:()=>archiveServer(name),disabled:s.running,tip:stopFirst},
+    {r:"ᛟ",label:T("realm.menu.delete"),fn:()=>deleteServerFlow(name),danger:true,disabled:s.running,tip:stopFirst},
   ];
-  ctxOpen(x,y,name,items);
+  ctxOpen(x,y,name,items,()=>serverChipMenu(name,x,y));
 }
 async function renameServer(name){
-  promptModal(T("realm.rename.title"),name,async v=>{
+  promptModal(()=>T("realm.rename.title"),name,async v=>{
     v=(v||"").trim(); if(!v||v===name) return;
     const r=await rpc("profiles.rename",{name,newName:v});
     if(r===FAIL) return;
     if(S.profileName===name){S.profileName=v;if(S.prefs)S.prefs.ProfileName=v;}
-    await refreshServers(); toast(TT("ᚱ Realm renamed · ")+v);
+    await refreshServers(); toast("ᚱ "+T("realm.renamed.toast",{name:v}));
   });
 }
 async function duplicateServer(name){
@@ -935,15 +856,15 @@ async function deleteServerFlow(name){
   const sizeStr=mb>=1024?(mb/1024).toFixed(1)+" GB":Math.max(0,mb).toFixed(mb<10?1:0)+" MB";
   const hasFiles=(info.hasIsolatedInstall||info.saveFolder)&&info.fileCount>0;
   const dangerLine=hasFiles
-    ?`<label class="togglerow" style="cursor:pointer"><span class="tl" style="color:var(--danger,#E8560F)">${esc(T("realm.delete.files.label"))}<br><span style="font-size:9.5px;opacity:.7">${info.fileCount} ${esc(TT("files · "))}${esc(sizeStr)}${esc(TT(" · cannot be undone"))}</span></span><div class="toggle" id="delFiles"></div></label>`
+    ?`<label class="togglerow" style="cursor:pointer"><span class="tl" style="color:var(--danger,#E8560F)">${esc(T("realm.delete.files.label"))}<br><span style="font-size:9.5px;opacity:.7">${esc(T("realm.delete.files.note",{count:info.fileCount,size:sizeStr}))}</span></span><div class="toggle" id="delFiles"></div></label>`
     :`<div class="fieldnote">${esc(T("realm.delete.shared.note"))}</div>`;
   const m=modalOpen(
     `<div class="mtitle">${esc(T("realm.delete.title"))} · ${esc(name)}</div>`+
     `<div class="mbody"><p>${esc(T("realm.delete.body"))}</p>`+
       dangerLine+
       `<div class="mbody-note" id="delStatus"></div></div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="delCancel">Cancel</button>`+
-      `<button class="btn btn-ember btn-sm" id="delOk">${esc(T("common.button.delete"))}</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="delCancel">${esc(T("common.button.cancel"))}</button>`+
+      `<button class="btn btn-ember btn-sm" id="delOk">${esc(T("common.button.delete"))}</button></div>`,()=>deleteServerFlow(name));
   const delFiles=m.querySelector("#delFiles");
   if(delFiles) delFiles.addEventListener("click",()=>delFiles.classList.toggle("on"));
   m.querySelector("#delCancel").addEventListener("click",modalClose);
@@ -981,7 +902,7 @@ async function restoreModal(){
     const sizeStr=mb>=1024?(mb/1024).toFixed(1)+" GB":Math.max(0,mb).toFixed(mb<10?1:0)+" MB";
     let when="";
     try{const d=new Date(o.modifiedUtc);if(!isNaN(d))when=d.toLocaleDateString(LOC());}catch{}
-    const older=o.olderCount>0?` · +${o.olderCount} older`:"";
+    const older=o.olderCount>0?" · "+T("realm.restore.orphans.older",{count:o.olderCount}):"";
     return `<div class="arow" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line,#2A2E34)">`+
       `<span class="cilbl">${esc(o.world)}<br><span style="font-size:9.5px;opacity:.6">${esc(sizeStr)}${when?" · "+esc(when):""}${esc(older)}</span></span>`+
       `<button class="btn btn-ghost btn-sm oadopt" data-i="${i}">${esc(T("common.button.bring_back"))}</button></div>`;
@@ -997,12 +918,12 @@ async function restoreModal(){
   const m=modalOpen(
     `<div class="mtitle">${esc(T("realm.restore.title"))}</div>`+
     archSection+orphanSection+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="arClose">Close</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="arClose">${esc(T("common.button.close"))}</button></div>`,restoreModal);
   m.querySelector("#arClose").addEventListener("click",modalClose);
   m.querySelectorAll(".arst").forEach(b=>b.addEventListener("click",async()=>{
     const r=await rpc("profiles.unarchive",{name:b.dataset.name});
     if(r===FAIL) return;
-    modalClose(); await refreshServers(); toast(TT("⌂ Realm restored · ")+b.dataset.name);
+    modalClose(); await refreshServers(); toast("⌂ "+T("realm.unarchived.toast",{name:b.dataset.name}));
   }));
   m.querySelectorAll(".ardel").forEach(b=>b.addEventListener("click",async()=>{
     modalClose(); deleteServerFlow(b.dataset.name);
@@ -1026,8 +947,8 @@ async function adoptWorldFlow(o){
         `<div class="toggle on" id="awSeed"></div></label>`+
       `<div class="fieldnote" id="awStatus">${esc(T("realm.adopt.status"))}</div>`+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="awCancel">Cancel</button>`+
-      `<button class="btn btn-ember btn-sm" id="awOk">${esc(T("common.button.bring_back"))}</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="awCancel">${esc(T("common.button.cancel"))}</button>`+
+      `<button class="btn btn-ember btn-sm" id="awOk">${esc(T("common.button.bring_back"))}</button></div>`,()=>adoptWorldFlow(o));
   const seed=m.querySelector("#awSeed");
   seed.addEventListener("click",()=>seed.classList.toggle("on"));
   m.querySelector("#awCancel").addEventListener("click",modalClose);
@@ -1042,7 +963,7 @@ async function adoptWorldFlow(o){
     modalClose();
     await refreshServers();
     if(r&&r.ProfileName){await switchServer(r.ProfileName);goPage("world");}
-    toast(TT("↺ Realm restored · ")+name);
+    toast("↺ "+T("realm.adopted.toast",{name}));
   });
 }
 async function switchServer(name){
@@ -1071,7 +992,7 @@ async function switchServer(name){
   try{renderUpdatePill();}catch(_){}
   S.journal={}; S.vikSort={col:null,dir:0}; S.crashed=false;
   /* the previous realm's write times belong to the previous realm */
-  $("#saveAvg").textContent="avg -";
+  renderSaveAvg();
   try{atlasReset();}catch{}
   const st=await rpc("server.state");
   if(st!==FAIL){S.state=null;applyState(st);}
@@ -1084,12 +1005,12 @@ async function switchServer(name){
   try{renderWorldMods();}catch{}
   try{renderMaxPlayers();}catch{}
   refreshServers();
-  logDivider(TT("helm turned · ")+prefs.ProfileName);
+  logDivider(T("realm.switched.divider",{name:prefs.ProfileName}));
   // replay this server's in-memory session tail so the saga isn't blank after a switch
   const sbuf=await rpc("logs.serverBuffer");
   if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length) sbuf.slice(-200).forEach(logRaw);
   logLine("info","[BakaLoader] switched to profile '"+name+"'");
-  toast(TT("ᛒ Helm turned · ")+prefs.ProfileName);
+  toast("ᛒ "+T("realm.switched.toast",{name:prefs.ProfileName}));
   if(currentPage==="mods") scanMods();
   if(currentPage==="runes") refreshCfgList(true);
   renderSaveBars();
@@ -1104,14 +1025,14 @@ async function addServerProfile(){
   const wsModsHtml=Object.entries(WORLDGEN).map(([key,def])=>
     `<div class="field"><label>${esc(T(def.labelId))}`+
       `<button type="button" class="wginfo" id="wsInfo_${key}" aria-controls="wgTip" `+
-        `aria-label="${esc(TT("What each "+def.label+" option does"))}">?</button></label>`+
+        `aria-label="${esc(T(def.ariaId))}">?</button></label>`+
       `<select id="wsMod_${key}">${wgOptions(key,"")}</select>`+
       `<div class="fieldnote wgnote" id="wsNote_${key}"></div></div>`).join("");
   const m=modalOpen(
     `<div class="mtitle">${esc(T("realm.new.title"))}</div>`+
     `<div class="mbody" style="display:flex;flex-direction:column;gap:2px">`+
       `<div class="field"><label>${esc(T("realm.new.name.label"))}</label>`+
-        `<input type="text" id="wsName" placeholder="e.g. Midgard Two" spellcheck="false" autocomplete="off"></div>`+
+        `<input type="text" id="wsName" placeholder="${esc(T("realm.new.name.placeholder"))}" spellcheck="false" autocomplete="off"></div>`+
       `<div class="field"><label>${esc(T("realm.new.world.label"))}</label>`+
         `<input type="text" id="wsWorld" placeholder="${esc(T("realm.new.world.placeholder"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote" id="wsPorts">${esc(T("realm.new.ports.finding"))}</div></div>`+
@@ -1121,30 +1042,16 @@ async function addServerProfile(){
       `<div class="fieldnote" style="margin:2px 0 0">${esc(T("realm.new.difficulty.note"))}</div>`+
       wsModsHtml+
       `<div class="fieldnote" style="margin:6px 0 2px">${esc(T("world.wg.own_note"))}</div>`+
-      `<div class="togglerow" title="${esc(TT(
-        "ON: this realm gets its own BepInEx: its own mods, mod configs, and cache, fully independent of your other servers. "+
-        "Example: run Epic Loot here while your main server stays vanilla, or trial a mod update without risking the live world. "+
-        "The bulky game files are shared behind the scenes, so this does NOT duplicate the multi-gigabyte install.\n\n"+
-        "OFF: the realm runs from the same install and mod folder as the base server: installing, updating, or removing a mod on either one changes both."
-      ))}"><span class="tl">${esc(T("realm.new.iso.label"))}</span>`+
+      `<div class="togglerow" title="${esc(T("realm.new.iso.title"))}"><span class="tl">${esc(T("realm.new.iso.label"))}</span>`+
         `<div class="toggle on" id="wsIso"></div></div>`+
-      `<div class="togglerow" title="${esc(TT(
-        "ON: the new realm starts with a copy of the current server's mods and their configs, then goes its own way: updating or removing a mod here never touches the original. "+
-        "Example: clone your main server's whole mod set to build a matching test server.\n\n"+
-        "OFF: the realm starts clean with no mods; add them later in the MODS hall.\n\n"+
-        "Only applies with a separate install. On a shared install the mods are shared by definition."
-      ))}"><span class="tl">${esc(T("realm.new.seedmods.label"))}</span>`+
+      `<div class="togglerow" title="${esc(T("realm.new.seedmods.title"))}"><span class="tl">${esc(T("realm.new.seedmods.label"))}</span>`+
         `<div class="toggle on" id="wsSeed"></div></div>`+
-      `<div class="togglerow" title="${esc(TT(
-        "ON: this realm keeps its worlds and backups in its own save folder, so two servers can never write to the same world file and backups never mix. "+
-        "Example: Midgard Two saves under its own folder instead of the shared IronGate\\Valheim one.\n\n"+
-        "OFF: the realm uses the shared Valheim save folder. That works, as long as two realms never host the same world at the same time (BakaLoader warns if they would)."
-      ))}"><span class="tl">${esc(T("realm.new.savedir.label"))}</span>`+
+      `<div class="togglerow" title="${esc(T("realm.new.savedir.title"))}"><span class="tl">${esc(T("realm.new.savedir.label"))}</span>`+
         `<div class="toggle on" id="wsSaveIso"></div></div>`+
       `<div class="mbody-note" id="wsStatus"></div>`+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="wsCancel">Cancel</button>`+
-      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(T("realm.new.ok"))}</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="wsCancel">${esc(T("common.button.cancel"))}</button>`+
+      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(T("realm.new.ok"))}</button></div>`,addServerProfile);
 
   const nameI=m.querySelector("#wsName"), worldI=m.querySelector("#wsWorld");
   const iso=m.querySelector("#wsIso"), seed=m.querySelector("#wsSeed"), saveIso=m.querySelector("#wsSaveIso");
@@ -1173,7 +1080,7 @@ async function addServerProfile(){
   let ports=null;
   if(Native.available){
     rpc("servers.suggestPort",{}).then(r=>{
-      if(r&&r!==FAIL){ports=r; portsN.textContent=TT("will claim game port ")+r.gamePort+" (+"+(r.gamePort+1)+") · RCON "+r.rconPort;}
+      if(r&&r!==FAIL){ports=r; portsN.textContent=T("realm.new.ports.claim",{game:r.gamePort,next:r.gamePort+1,rcon:r.rconPort});}
       else portsN.textContent=T("realm.new.ports.auto");
     });
   }else{
@@ -1403,6 +1310,16 @@ const hCard=$("#hearthCard"), hState=$("#hState"), hPid=$("#hPid"),
    on purpose: it belongs with the dashboard card and the command palette, where the
    in-game countdown it triggers is explained. */
 const AB_PILL={Running:"green",Starting:"amber",Stopping:"amber",Stopped:"blue"};
+/* The status the header pill says out loud. The four the app can be in each carry
+   their own entry; a status the host invents is shown exactly as it came, which is
+   what the pill did before there was a catalog to ask. */
+function abStateLabel(status){
+  if(status==="Running") return T("hearth.appbar.state.running");
+  if(status==="Starting") return T("hearth.appbar.state.starting");
+  if(status==="Stopping") return T("hearth.appbar.state.stopping");
+  if(status==="Stopped") return T("hearth.appbar.state.stopped");
+  return String(status==null?"":status);
+}
 function abStatus(){
   if(Native.available) return (S.state&&S.state.status)||"Stopped";
   return running?"Running":"Stopped";
@@ -1423,7 +1340,7 @@ function renderAppBar(){
   const pill=$("#abState"), dot=$("#abDot"); if(!pill||!dot) return;
   const st=abStatus();
   const name=(Native.available?(S.prefs&&S.prefs.Name)||S.profileName:null)
-    ||($("#tbSrv")&&$("#tbSrv").textContent)||"server";
+    ||($("#tbSrv")&&$("#tbSrv").textContent)||T("hearth.appbar.name.fallback");
   const nameEl=$("#abName");
   nameEl.textContent=name; nameEl.title=name;
 
@@ -1431,17 +1348,19 @@ function renderAppBar(){
   /* keep the dot element (and its id) and swap only the label text node beside it */
   let lbl=pill.lastChild;
   if(!lbl||lbl.nodeType!==3){lbl=document.createTextNode("");pill.appendChild(lbl);}
-  lbl.nodeValue=TT(st);
+  lbl.nodeValue=abStateLabel(st);
 
   const up=abUptime();
   const upEl=$("#abUptime");
-  upEl.textContent=up?"up "+up:"";
+  upEl.textContent=up?T("hearth.appbar.uptime.value",{span:up}):"";
   upEl.title=up?T("hearth.appbar.uptime.title"):"";
 
   const online=abOnline();
   const max=Native.available?(S.prefs&&S.prefs.MaxPlayers):10;
   const pEl=$("#abPlayers");
-  pEl.textContent=max?online+" / "+max+TT(" online"):online+TT(" online");
+  pEl.textContent=max
+    ?T("hearth.appbar.players.value",{online,max})
+    :T("hearth.appbar.players.value.nomax",{online});
   pEl.title=T("hearth.appbar.players.title");
 
   const b=$("#abLifecycle"); if(!b) return;
@@ -1464,9 +1383,9 @@ async function lifecycleToggle(){
     const st=S.state||{};
     if(st.canStop){
       const r=await rpc("server.stop");
-      if(r!==FAIL){applyState(r);toast("ᛪ Hearth doused · server stopping");logLine("warn","[BakaLoader] stop requested, dousing the embers");}
+      if(r!==FAIL){applyState(r);toast("ᛪ "+T("hearth.stopping.toast"));logLine("warn","[BakaLoader] stop requested, dousing the embers");}
     }else if(st.canStart){
-      if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
+      if(!S.prefs){toast("ᚦ "+T("hearth.no_profile.toast"));return;}
       if(updateBlocksStart()){toast("ᚦ "+updBlockMsg());return;}
       // Nothing changed -> straight to the same start call as before. A changed build or a
       // waiting Steam update puts the choice to the host first, and only then starts.
@@ -1474,14 +1393,14 @@ async function lifecycleToggle(){
         if(answer){startWithAnswer(answer);return;}
         const r=await rpc("server.start",{prefs:S.prefs});
         if(r===FAIL||rpcRefused(r)) return;
-        applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));
+        applyState(r);toast("ᚠ "+T("hearth.starting.toast"));logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));
       });
     }
     return;
   }
   running=!running; if(running) upMin=0;
   renderHearth();
-  toast(running?"ᚠ Hearth kindled · server starting":"ᛪ Hearth doused · server stopped");
+  toast(running?"ᚠ "+T("hearth.starting.toast"):"ᛪ "+T("hearth.stopped.toast"));
   logLine(running?"ok":"warn",running?"[BakaLoader] server process launched (PID 150428)":"[BakaLoader] graceful shutdown: world saved, embers doused");
 }
 function renderHearth(){
@@ -1490,16 +1409,17 @@ function renderHearth(){
   flameSetState(running?"burning":"cold");
   if(running){
     hCard.classList.remove("cold");
-    hState.innerHTML=`RUNNING · ${Math.floor(upMin/60)}h ${String(upMin%60).padStart(2,"0")}m`;
-    hPid.textContent="RUNNING · PID 150428 · valheim_server.x86_64";
-    douseBtn.textContent="Stop";
-    douseBtn.title="Douse the hearth: stops the server";
+    hState.textContent=T("hearth.card.hstate.running",
+      {span:Math.floor(upMin/60)+"h "+String(upMin%60).padStart(2,"0")+"m"});
+    hPid.textContent="RUNNING · PID 150428 · valheim_server.x86_64";   // preview fixture
+    douseBtn.textContent=T("hearth.appbar.lifecycle.stop");
+    douseBtn.title=T("hearth.appbar.lifecycle.stop.title");
   }else{
     hCard.classList.add("cold");
-    hState.textContent="STOPPED";
-    hPid.textContent="STOPPED · embers doused · world saved";
-    douseBtn.textContent="Start";
-    douseBtn.title="Kindle the hearth: starts the server";
+    hState.textContent=T("hearth.card.hstate.stopped");
+    hPid.textContent=T("hearth.card.state.stopped_saved");
+    douseBtn.textContent=T("hearth.appbar.lifecycle.start");
+    douseBtn.title=T("hearth.appbar.lifecycle.start.title");
   }
   hState.title=hState.textContent;
   hPid.title=hPid.textContent;
@@ -1524,27 +1444,34 @@ function renderHearthNative(){
     :"cold");
   if(st.status==="Running"){
     const up=S.upSince?Date.now()-S.upSince:0;
-    hState.textContent=`RUNNING · ${Math.floor(up/3600000)}h ${pad(Math.floor(up/60000)%60)}m`;
-    hPid.textContent="RUNNING · "+(S.prefs?.WorldName||"world")+" · valheim_server"+(st.adopted?" · adopted":"");
+    hState.textContent=T("hearth.card.hstate.running",
+      {span:Math.floor(up/3600000)+"h "+pad(Math.floor(up/60000)%60)+"m"});
+    /* An adopted install is a whole sentence of its own rather than a tail the
+       running one grows, because a trailing clause is not where every language
+       puts it. */
+    const world=S.prefs?.WorldName||T("hearth.card.pid.world.unnamed");
+    hPid.textContent=st.adopted
+      ?T("hearth.card.pid.running.adopted",{world})
+      :T("hearth.card.pid.running",{world});
   }else if(st.status==="Starting"){
-    hState.textContent="STARTING…";
+    hState.textContent=T("hearth.card.hstate.starting");
     hPid.textContent=T("hearth.card.state.starting");
   }else if(st.status==="Stopping"){
-    hState.textContent="STOPPING…";
+    hState.textContent=T("hearth.card.hstate.stopping");
     hPid.textContent=T("hearth.card.state.stopping");
   }else{
-    hState.textContent="STOPPED";
+    hState.textContent=T("hearth.card.hstate.stopped");
     hPid.textContent=T("hearth.card.state.stopped");
   }
   /* the state line is one nowrap line: say the whole of it on hover */
   hState.title=hState.textContent;
   hPid.title=hPid.textContent;
   renderHearthVersion();
-  douseBtn.textContent=st.canStop?"Stop":"Start";
-  douseBtn.title=st.canStop?"Douse the hearth: stops the server":"Kindle the hearth: starts the server";
+  douseBtn.textContent=st.canStop?T("hearth.appbar.lifecycle.stop"):T("hearth.appbar.lifecycle.start");
+  douseBtn.title=st.canStop?T("hearth.appbar.lifecycle.stop.title"):T("hearth.appbar.lifecycle.start.title");
   douseBtn.disabled=!(st.canStart||st.canStop);
-  stokeBtn.textContent=st.countdownActive?"Restart now":"Restart";
-  stokeBtn.title=st.countdownActive?"Skip the countdown and restart immediately":"Stoke the hearth: restarts the server, warning players in-game first if any are online";
+  stokeBtn.textContent=st.countdownActive?T("hearth.card.restart.now"):T("hearth.card.restart");
+  stokeBtn.title=st.countdownActive?T("hearth.card.restart.now.title"):T("hearth.card.restart.title");
   stokeBtn.disabled=!(st.canStop||st.countdownActive);
   stokeBtn.classList.toggle("btn-ember",!!st.countdownActive);
   stokeBtn.classList.toggle("btn-ghost",!st.countdownActive);
@@ -1564,10 +1491,11 @@ function renderHearthVersion(){
   const live=S.gameVersion, net=S.networkVersion;
   const last=S.prefs?.LastLaunchedGameVersion;
   if(live){
-    el.textContent="Valheim "+live+(net?" (net "+net+")":"");
+    el.textContent=net?T("hearth.card.version.live.net",{version:live,net})
+                      :T("hearth.card.version.live",{version:live});
     el.title=T("hearth.card.version.live.title");
   }else if(last){
-    el.textContent=TT("last ran Valheim ")+last;
+    el.textContent=T("hearth.card.version.last",{version:last});
     el.title=T("hearth.card.version.last.title");
   }else{
     el.style.display="none";
@@ -1584,7 +1512,7 @@ function applyState(st){
   if(st.status==="Starting"||st.status==="Running"){S.crashed=false;clearCondition("crashRelaunch");}
   if(st.status==="Starting"&&prev!=="Starting"){
     // each server session opens under its own rule in the chronicle
-    logDivider(TT("session · ")+(S.profileName||"server")+" · "+new Date().toLocaleString(LOC()));
+    logDivider(T("saga.divider.session",{name:S.profileName||T("saga.divider.session.unnamed"),when:new Date().toLocaleString(LOC())}));
   }
   if(st.status==="Running"&&prev!=="Running"){
     S.upSince=Date.now();
@@ -1639,23 +1567,23 @@ function smartRestartNow(answer){
       // countdown task spins up async - flip the button to "Restart NOW" right away
       if(S.state) S.state.countdownActive=true;
       renderHearthNative();
-      toast("ᚱ Hearth stoked · vikings warned · restart in 1 min");
+      toast("ᚱ "+T("hearth.restart.countdown.toast"));
       logLine("warn","[BakaLoader] restart requested: players online, 1-minute warning broadcast");
     }else if(r.restart==="bypassed"){
-      toast("ᚱ Restarting NOW · countdown skipped");
+      toast("ᚱ "+T("hearth.restart.now.toast"));
       logLine("warn","[BakaLoader] restart countdown bypassed. Restarting now");
     }else if(r.restart==="now"){
-      toast("ᚱ Hearth stoked · no vikings online · restarting now");
+      toast("ᚱ "+T("hearth.restart.empty.toast"));
       logLine("warn","[BakaLoader] restart requested: server empty, restarting immediately");
     }else{
-      toast("ᚦ Restart unavailable · server not running");
+      toast("ᚦ "+T("hearth.restart.unavailable.toast"));
     }
   });
 }
 stokeBtn.addEventListener("click",e=>{
   e.stopPropagation();
   if(Native.available){smartRestart();return;}
-  toast("ᚱ Hearth stoked · server restarting");
+  toast("ᚱ "+T("hearth.restart.preview.toast"));
   logLine("warn","[BakaLoader] restart requested. Stoking the hearth");
 });
 /* Sail Forth copies a full join prompt - everything a friend needs to connect:
@@ -1666,24 +1594,36 @@ function joinHost(){return S.domain||S.extIp||"…";}
 function buildJoinPrompt(){
   const p=S.prefs||{};
   const addr=joinHost()+":"+(p.Port??2456);
-  const lines=[p.Name||"Valheim server", p.WorldName||"-", addr];
+  const lines=[p.Name||T("hearth.sail.name.fallback"), p.WorldName||"-", addr];
   if(p.Password) lines.push(p.Password);
-  if(p.Crossplay&&S.invite) lines.push("crossplay code "+S.invite);
+  if(p.Crossplay&&S.invite) lines.push(T("hearth.sail.crossplay",{code:S.invite}));
   return {text:lines.join("\n"), addr};
 }
 sailBtn.addEventListener("click",()=>{
   if(Native.available){
     const jp=buildJoinPrompt();
     navigator.clipboard?.writeText(jp.text).catch(()=>{});
-    toast("ᛟ Join prompt copied · "+jp.addr);
+    toast("ᛟ "+T("hearth.sail.copied.toast",{addr:jp.addr}));
     return;
   }
   if(!running){running=true;upMin=0;renderHearth();}
   const jp=buildJoinPrompt();
   navigator.clipboard?.writeText(jp.text).catch(()=>{});
-  toast("ᛟ Join prompt copied · sailing forth");
+  toast("ᛟ "+T("hearth.sail.copied.preview.toast"));
 });
 renderHearth();
+
+/* The rolling average of the last dozen world writes, or a dash while nothing has been
+   timed yet. A painter rather than five assignments, because the browser preview seeds
+   the numbers while app.js is still being evaluated and the catalog is fetched: without
+   somewhere for the second paint to run again, that one line read its own id. */
+function renderSaveAvg(){
+  const el=$("#saveAvg"); if(!el) return;
+  const d=S.saveDur||[];
+  el.textContent=d.length
+    ?T("hearth.saves.avg.value",{ms:Math.round(d.reduce((a,b)=>a+b,0)/d.length)})
+    :T("hearth.saves.avg.none");
+}
 
 /* Save-time bars: the last dozen world writes, tallest bar = slowest write.
    Each bar carries its own value so the chart is readable, not decorative. */
@@ -1703,14 +1643,14 @@ function renderSaveBars(){
   if(cap) cap.style.display="";
   const max=Math.max.apply(null,d.concat([1]));
   box.innerHTML=d.map((ms,i)=>
-    `<i class="${i===d.length-1?"hot":""}" style="height:${Math.max(10,Math.round(ms/max*100))}%" title="${esc(ms+" ms")}"></i>`
+    `<i class="${i===d.length-1?"hot":""}" style="height:${Math.max(10,Math.round(ms/max*100))}%" title="${esc(T("hearth.saves.ms",{ms}))}"></i>`
   ).join("");
 }
 
 /* Named empty-state actions. Each one is a command the interface already offers,
    so an empty panel can hand the host the same button the toolbar would. */
 Object.assign(ES_ACTIONS,{
-  scanMods:()=>{ if(Native.available) scanMods(); else toast("ᛋ Scan Thunderstore · preview only"); },
+  scanMods:()=>{ if(Native.available) scanMods(); else toast("ᛋ "+T("mods.scan.preview.toast")); },
   addMod:()=>addModFlow(),
   openBackups:()=>barrowModal(),
   redrawMap:()=>{ const b=$("#atlasRedraw"); if(b) b.click(); },
@@ -1778,14 +1718,14 @@ $("#copyIp").addEventListener("click",e=>{
   if(Native.available){
     const addr=(S.extIp||"…")+":"+(S.prefs?.Port??2456);
     navigator.clipboard?.writeText(addr).catch(()=>{});
-    e.target.textContent="COPIED";
-    toast("ᚾ Address copied · "+addr);
-    setTimeout(()=>e.target.textContent="COPY",1400);
+    e.target.textContent=T("hearth.net.chip.copied");
+    toast("ᚾ "+T("hearth.net.copied.toast",{addr}));
+    setTimeout(()=>e.target.textContent=T("common.chip.copy"),1400);
     return;
   }
-  e.target.textContent="COPIED";
-  toast("ᚾ Address copied · 203.0.113.42:2456");
-  setTimeout(()=>e.target.textContent="COPY",1400);
+  e.target.textContent=T("hearth.net.chip.copied");
+  toast("ᚾ "+T("hearth.net.copied.toast",{addr:"203.0.113.42:2456"}));   // preview fixture
+  setTimeout(()=>e.target.textContent=T("common.chip.copy"),1400);
 });
 function renderWaystone(){
   const line=$("#netDomainLine"); if(!line) return;
@@ -1798,26 +1738,37 @@ function renderNet(){
   const port=S.prefs?.Port??2456;
   renderWaystone();
   $("#netAddr").textContent=(S.extIp||"…")+":"+port;
-  $("#netLan").textContent="LAN "+(S.intIp||"…")+":"+port;
+  /* The chips copy what the line is ABOUT, not the words around it: a label that
+     reads "LAN" in English is a different word in every other language, and the old
+     chip found the address by stripping the English prefix off the text. */
+  const lan=(S.intIp||"…")+":"+port;
+  $("#netLan").textContent=T("hearth.net.addr.lan.value",{addr:lan});
+  $("#netLan").dataset.value=lan;
   $("#netLoc").textContent="127.0.0.1:"+port;
   const il=$("#netInviteLine");
   il.style.display=S.invite?"":"none";
-  if(S.invite) $("#netInvite").textContent="invite "+S.invite;
+  if(S.invite){
+    $("#netInvite").textContent=T("hearth.net.addr.invite.value",{code:S.invite});
+    $("#netInvite").dataset.value=S.invite;
+  }
   const rl=$("#netRconLine"), on=!!S.prefs?.RconEnabled;
   rl.style.display=on?"":"none";
-  if(on) $("#netRcon").textContent="RCON 127.0.0.1:"+(S.prefs.RconPort??25575);
-  $("#netPill").textContent=on?"rcon bound":"rcon off";
+  if(on) $("#netRcon").textContent=T("hearth.net.addr.rcon.value",{addr:"127.0.0.1:"+(S.prefs.RconPort??25575)});
+  $("#netPill").textContent=on?T("hearth.net.pill.on"):T("hearth.net.pill.off");
   $("#netPill").className="pill "+(on?"green":"blue");
 }
 /* LAN / local / invite copy chips - copy exactly what's displayed (works in mock + native) */
 [["#copyLan","#netLan"],["#copyLoc","#netLoc"],["#copyInv","#netInvite"],["#copyDomain","#netDomain"]].forEach(([chip,src])=>{
   $(chip).addEventListener("click",e=>{
     e.stopPropagation();
-    const txt=$(src).textContent.replace(/^(LAN|invite)\s+/,"");
+    const el=$(src);
+    /* The value the line was built from where the app wrote one, and the English
+       shape for the browser preview, which has no app behind it. */
+    const txt=el.dataset.value||el.textContent.replace(/^(LAN|invite)\s+/,"");
     navigator.clipboard?.writeText(txt).catch(()=>{});
-    e.target.textContent="COPIED";
-    toast("ᚾ Copied · "+txt);
-    setTimeout(()=>e.target.textContent="COPY",1400);
+    e.target.textContent=T("hearth.net.chip.copied");
+    toast("ᚾ "+T("hearth.net.copied.value.toast",{value:txt}));
+    setTimeout(()=>e.target.textContent=T("common.chip.copy"),1400);
   });
 });
 /* Recent-log card header: jump straight to the full chronicle */
@@ -1827,11 +1778,11 @@ $("#openSagaChip")?.addEventListener("click",e=>{e.stopPropagation();goPage("sag
 $("#openWorlds").addEventListener("click",e=>{
   e.stopPropagation();
   if(Native.available) rpc("shell.open",{target:"saveData"});
-  else toast("ᛃ Worlds folder · preview only");
+  else toast("ᛃ "+T("hearth.saves.open.preview.toast"));
 });
 $("#openLogs").addEventListener("click",()=>{
   if(Native.available) rpc("shell.open",{target:"logs"});
-  else toast("ᛃ Logs folder · preview only");
+  else toast("ᛃ "+T("saga.logs.open.preview.toast"));
 });
 
 /* ember smoulder - wrap every letter in its own span so each ember glows on its
@@ -1855,14 +1806,23 @@ function emberize(el){
     node.replaceWith(frag);
   });
 }
-emberize($("#meadLink"));
+/* The link's words come out of the catalog and the embers are lit over them,
+   in that order: emberize wraps every letter in its own span, and a textContent
+   write afterwards would throw those spans away and leave the link dead. The rune
+   and the pennant either side are ornament, so they stay here. */
+function renderMead(){
+  const el=$("#meadLink"); if(!el) return;
+  el.textContent="ᛥ\u00a0"+T("side.mead.label")+"\u00a0⚑";
+  emberize(el);
+}
+renderMead();
 emberize($("#lchipFog")); // fog now defaults on (may veil the whole realm) - keep its switch eye-catching
 
 /* horn-of-mead - opens the donate page in the default browser (native only) */
 $("#meadLink").addEventListener("click",e=>{
   e.preventDefault();
-  if(Native.available){ rpc("shell.openUrl",{target:"donate"}); toast("ᛥ Skål! Opening the mead hall…"); }
-  else toast("ᛥ A horn of mead · preview only");
+  if(Native.available){ rpc("shell.openUrl",{target:"donate"}); toast("ᛥ "+T("side.mead.opening.toast")); }
+  else toast("ᛥ "+T("side.mead.preview.toast"));
 });
 
 /* ---------- BAKALOADER'S OWN UPDATE ----------
@@ -1921,7 +1881,7 @@ function renderSideVer(){
     foot.setAttribute("role","button");
     foot.setAttribute("tabindex","0");
     foot.title=T("appupd.side.title");
-    el.textContent=sideVerBase()+" · "+u.latestVersion+" "+TT("ready");
+    el.textContent=T("appupd.side.line",{installed:sideVerBase(),latest:u.latestVersion});
     emberize(el);   /* AFTER the write, always: textContent replaces the ember spans */
   }else{
     foot.classList.remove("upd");
@@ -1938,7 +1898,7 @@ function renderAppUpdatePill(){
   const u=APP_UPD||{};
   if(!u.updateAvailable||!u.latestVersion){el.style.display="none";return;}
   el.style.display="";
-  el.textContent=TT("BakaLoader")+" "+u.latestVersion+" "+TT("ready");
+  el.textContent=T("appupd.pill.label",{version:u.latestVersion});
   emberize(el);   /* AFTER the write, every time, or the pill sits there unlit */
   el.title=u.anyServerRunning
     ?T("appupd.pill.title.running")
@@ -1977,7 +1937,7 @@ async function appUpdateModal(){
   const primary=running?T("appupd.modal.go.running"):T("appupd.modal.go.idle");
   const m=modalOpen(
     `<div class="mtitle"><span class="r" style="margin-right:8px">ᛟ</span>`+
-      `${esc(TT("BakaLoader")+(v?" "+v:"")+" "+TT("is ready"))}</div>`+
+      `${esc(v?T("appupd.modal.title",{version:v}):T("appupd.modal.title.noversion"))}</div>`+
     `<div class="mbody">`+body+
       `<div class="subval" id="auWhy" style="margin-top:8px;display:none"></div>`+
     `</div>`+
@@ -1985,7 +1945,7 @@ async function appUpdateModal(){
       `<button class="btn btn-ember btn-sm" id="auGo">${esc(primary)}</button>`+
       `<button class="btn btn-ghost btn-sm" id="auNotes">${esc(T("appupd.modal.notes"))}</button>`+
       `<button class="btn btn-ghost btn-sm" id="auLater">${esc(T("appupd.modal.later"))}</button>`+
-    `</div>`);
+    `</div>`,appUpdateModal);
   const why=m.querySelector("#auWhy");
   const say=text=>{why.textContent=text;why.style.display="";};
   /* The one way the button cannot work whatever the host clicks, said here rather than
@@ -2182,20 +2142,18 @@ function wireSort(sel,state,onChange){
 const MOD_DESC_FIRST=new Set(["installed","latest"]);
 function renderModSortMarks(){renderSortMarks("#page-mods th.sortable",S.modSort,MOD_DESC_FIRST);}
 wireSort("#page-mods th.sortable",S.modSort,()=>renderMods());
-/* The "Possibly outdated" hint, said plainly: a nudge to check, never a verdict. */
-const MOD_PO_TIP="The newest version on Thunderstore came out before Valheim last updated, and that update is at least a week old, so the mod may not account for the current game version. The column stays blank for the first week after a Valheim update so authors can catch up. It is a hint, not proof the mod is broken.";
-const MOD_PO_TIP_UNKNOWN="Valheim's last update date could not be read for this server, so this hint is left blank for every mod.";
-/* What the Hexium chip on a row means, said in full on hover. */
-const HEXIUM_ROW_TIP="These files came from Hexium, so BakaLoader leaves them alone: this mod sits out Update all, the waiting count and the unattended restart. Swapping back to the Thunderstore build is offered from the row menu, and it asks first.";
-/* The Status pill on a Hexium copy Thunderstore has moved past. It is not CURRENT: there
-   is something newer on the other site and BakaLoader is deliberately not taking it. */
-const MOD_HELD_TIP="installed from Hexium; BakaLoader will not replace it on its own";
-/* The Latest cell on a mod the package list came back without is said plainly, and it is
-   all that happens: the files stay exactly where they are. Its words are asked for by id
-   at both places that show them (mods.status.not_listed.tip) rather than held in a
-   constant here, because a constant handed to the lookup is a sentence no gate can see. */
-const HEXIUM_MARK_TIP="Hexium holds a higher version than both what is installed and what Thunderstore has. Nothing is downloaded until you ask for it and read what it is.";
-const THUNDERSTORE_MARK_TIP="Thunderstore has moved past this Hexium copy. Installing the Thunderstore build replaces these files and hands the mod back to the ordinary update path.";
+/* The six sentences a Mods row explains itself with used to stand as consts here, and
+   every one of them is asked for by id now. The Latest cell on a delisted mod was already
+   written that way (mods.status.not_listed.tip) and the reason it gave holds for all six:
+   a constant handed to the lookup is a sentence no gate can see, no translator can reach
+   and no completeness check can count.
+     mods.col.possibly_outdated.tip          the hint under the column
+     mods.col.possibly_outdated.tip.unknown  what it says instead when the game's own
+                                             update date could not be read for this server
+     mods.tag.hexium.tip                     the chip a copy from the second site carries
+     mods.status.held.tip                    the HELD pill standing beside that chip
+     mods.mark.hexium_newer.tip              and the two offers that hang off Latest
+     mods.mark.thunderstore_newer.tip                                                    */
 /* The mark that hangs off the Latest cell, or nothing. At most one: a row is either a
    Thunderstore install the other site is ahead of, or a Hexium install Thunderstore is
    ahead of, and never both. */
@@ -2211,9 +2169,9 @@ function modLatestMark(m){
   const cell=String(m.LatestVersion||"");
   const say=(words,version)=>esc(words)+(String(version||"")===cell?"":" "+esc(version));
   if(m.hexiumNewer&&m.hexiumLatest)
-    return ` <span class="modmark" data-hex="${key}" role="button" tabindex="0" title="${esc(HEXIUM_MARK_TIP)}">${say(T("mods.mark.hexium_newer"),m.hexiumLatest)}</span>`;
+    return ` <span class="modmark" data-hex="${key}" role="button" tabindex="0" title="${esc(T("mods.mark.hexium_newer.tip"))}">${say(T("mods.mark.hexium_newer"),m.hexiumLatest)}</span>`;
   if(m.thunderstoreNewer&&m.LatestVersion)
-    return ` <span class="modmark ts" data-ts="${key}" role="button" tabindex="0" title="${esc(THUNDERSTORE_MARK_TIP)}">${say(T("mods.mark.thunderstore_newer"),m.LatestVersion)}</span>`;
+    return ` <span class="modmark ts" data-ts="${key}" role="button" tabindex="0" title="${esc(T("mods.mark.thunderstore_newer.tip"))}">${say(T("mods.mark.thunderstore_newer"),m.LatestVersion)}</span>`;
   return "";
 }
 /* The transient status a row shows while a bulk update runs. Cleared by the fresh scan
@@ -2226,8 +2184,10 @@ function renderRowStatus(st){
     const move=(st.from||"?")+" → "+(st.to||"?");
     return `<span class="pill green" title="${esc(move)}">✓ ${esc(move)}</span>`;
   }
+  /* Two entries rather than one with a ternary inside it: a run that failed with nothing
+     to say would otherwise read "Failed:" with a colon hanging off the end of it. */
   if(st.phase==="failed")
-    return `<span class="pill" style="color:var(--blood);border-color:var(--blood)" title="${esc(st.error||"")}">${esc(TT("Failed")+": "+(st.error||TT("unknown")))}</span>`;
+    return `<span class="pill" style="color:var(--blood);border-color:var(--blood)" title="${esc(st.error||"")}">${esc(st.error?T("mods.row.failed",{detail:st.error}):T("mods.row.failed.nodetail"))}</span>`;
   return "";
 }
 /* The bulk-update bar's own record: how many mods, how many finished, which one is running.
@@ -2246,9 +2206,11 @@ function renderModUpdateProgress(){
   }
   const total=u.total||0;
   const pct=total>0?Math.max(0,Math.min(100,Math.round((u.done||0)/total*100))):0;
+  /* One whole sentence per shape, with the mod and the two numbers in named slots: the
+     bar used to be two words glued to three values, which no translator can reorder. */
   const label=(u.phase==="updating"&&u.current)
-    ? TT("Updating ")+u.current+" ("+u.index+" "+TT("of")+" "+total+")"
-    : TT("Updating mods")+" ("+(u.done||0)+" "+TT("of")+" "+total+")";
+    ? T("mods.progress.updating.one",{mod:u.current,index:u.index,total:total})
+    : T("mods.progress.updating.all",{done:u.done||0,total:total});
   wrap.innerHTML=
     `<span class="hbmsg">${esc(label)}</span>`+
     `<span class="hbprog" role="progressbar" aria-label="${esc(T("mods.progress.aria"))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" title="${pct}%"><i style="width:${pct}%"></i></span>`+
@@ -2344,10 +2306,15 @@ function renderMods(){
   const scanned=S.mods!==null;
   const mods=sortedMods(S.mods||[]);
   const upd=mods.filter(m=>m.UpdateAvailable);
-  $("#updAllBtn").innerHTML="ᚱ&nbsp; Update all ("+(scanned?upd.length:"-")+")";
+  /* The rune and the no break space after it belong to the entry, the way they do on
+     every other runed button, and the count sits in a slot. esc() still stands between
+     the words and innerHTML: the button is markup, and a translated sentence is text. */
+  $("#updAllBtn").innerHTML=esc(T("mods.update_all.label",{count:scanned?upd.length:"-"}));
   $("#updAllBtn").disabled=busy||!upd.length;
   $("#modCount").textContent=scanned?mods.length:"-";
-  $("#sbMods").textContent=(scanned?mods.length:"-")+" mods";
+  /* The rail's own count. A hall that has not been scanned has no number to show, and
+     "-" is not a number, so the plural falls to the category every language has. */
+  $("#sbMods").textContent=T("side.mods.count",{count:scanned?mods.length:"-"});
   renderModSortMarks();
   if(!scanned){
     $("#modTable").innerHTML=`<tr><td colspan="5">${S.modsScanning
@@ -2358,7 +2325,10 @@ function renderMods(){
     esWire($("#modTable"));
     $("#modTable")._list=[];
     $("#modUpdWrap").innerHTML="";
-    $("#modsSub").textContent="Thunderstore index · "+(S.modsScanning?"scanning…":"not yet scanned");
+    /* Two whole sentences rather than a stem and two endings: a language that says the
+       state before the thing it is a state of has nowhere to put "scanning". */
+    $("#modsSub").textContent=S.modsScanning
+      ?T("mods.index.line.scanning"):T("mods.index.line.not_scanned");
     /* Nothing has been read, so the note saying which address answered goes with it. */
     $("#modsSub").title="";
     renderModShowing(0,0);
@@ -2366,7 +2336,8 @@ function renderMods(){
   }
   const anyGameDate=mods.some(m=>m.gameUpdatedUtc);
   const th=$("#thPossiblyOutdated");
-  if(th) th.title=(scanned&&mods.length&&!anyGameDate)?MOD_PO_TIP_UNKNOWN:MOD_PO_TIP;
+  if(th) th.title=(scanned&&mods.length&&!anyGameDate)
+    ?T("mods.col.possibly_outdated.tip.unknown"):T("mods.col.possibly_outdated.tip");
   /* The one use of the search: the rows that get drawn. Everything above and below this
      line counts the whole list. */
   const shown=modsForBody(mods);
@@ -2380,7 +2351,7 @@ function renderMods(){
        it cannot read CURRENT either. It says the one thing that is known: Thunderstore is
        not listing it at the moment, and nothing has been done about that. */
     const pill=m.Bundled?`<span class="pill ember">${esc(T("mods.status.bundled"))}</span>`
-      :held?`<span class="pill amber" title="${esc(TT(MOD_HELD_TIP))}">${esc(T("mods.status.held"))}</span>`
+      :held?`<span class="pill amber" title="${esc(T("mods.status.held.tip"))}">${esc(T("mods.status.held"))}</span>`
       :m.notListed?`<span class="pill grey" title="${esc(T("mods.status.not_listed.tip"))}">${esc(T("mods.status.not_listed"))}</span>`
       :`<span class="pill ${has?"amber":"green"}">${esc(has?T("mods.status.update"):T("mods.status.current"))}</span>`;
     const st=S.modRowStatus&&S.modRowStatus[m.FullName];
@@ -2388,14 +2359,14 @@ function renderMods(){
     /* Patcher-only mods are not update-tracked (the install path is plugins-oriented), so the
        possibly-outdated hint stays blank for them. */
     const po=(m.possiblyOutdated&&!m.IsPatcher)
-      ?`<td class="mod-po" style="color:var(--amber)" title="${esc(MOD_PO_TIP)}">${esc(T("mods.possibly_outdated.yes"))}</td>`
+      ?`<td class="mod-po" style="color:var(--amber)" title="${esc(T("mods.col.possibly_outdated.tip"))}">${esc(T("mods.possibly_outdated.yes"))}</td>`
       :`<td class="mod-po"></td>`;
     const patcherTag=m.IsPatcher
       ?` <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(T("mods.tag.patcher"))}</span>`:"";
     /* A copy the host took from the second site says so, and keeps saying so whatever
        happens to the switch afterwards: it is why this row sits out Update all. */
     const srcChip=(m.installedSource==="hexium")
-      ?` <span class="modchip" title="${esc(HEXIUM_ROW_TIP)}">${esc(T("mods.tag.hexium"))}</span>`:"";
+      ?` <span class="modchip" title="${esc(T("mods.tag.hexium.tip"))}">${esc(T("mods.tag.hexium"))}</span>`:"";
     /* One mark at most on the Latest cell. Either the other site is ahead of both what
        is installed and what Thunderstore has, or this is a Hexium copy Thunderstore has
        moved past. Both are offers, and both ask before they do anything. */
@@ -2407,18 +2378,20 @@ function renderMods(){
       po+`</tr>`;
   }).join("")||`<tr><td colspan="5">${mods.length
     ?emptyState({mark:"ᚱ",title:T("mods.empty.no_match.title"),
-        /* The one reason that counts what it is hiding, so it stays a composed
-           sentence on the bridge until the composed-message pass hands it a slot. */
-        reason:TT("Nothing in this server's mod list carries every word that was typed. Clear the box to see all "+mods.length+" again."),
+        /* The one reason that counts what it is hiding. The count is a slot and the
+           sentence is a plural entry, so a language that inflects around the number
+           has both halves to work with. */
+        reason:T("mods.empty.no_match.reason",{count:mods.length}),
         action:{name:"clearModSearch",label:T("mods.empty.no_match.action")}})
     :emptyState({mark:"ᚱ",title:T("mods.empty.none.title"),
         reason:T("mods.empty.none.reason"),
         action:{name:"addMod",label:T("mods.empty.none.action")}})}</td></tr>`;
   esWire($("#modTable"));
   $("#modTable")._list=mods;
+  /* A real plural rather than an English "s", and both pills escaped on the way in. */
   $("#modUpdWrap").innerHTML=upd.length
-    ?`<span class="pill amber">${upd.length} update${upd.length===1?"":"s"}</span>`
-    :`<span class="pill green">up to date</span>`;
+    ?`<span class="pill amber">${esc(T("mods.updates_waiting",{count:upd.length}))}</span>`
+    :`<span class="pill green">${esc(T("mods.up_to_date"))}</span>`;
   /* waiting mod updates are a standing condition, not a toast that repeats forever */
   conditionModUpdates(upd.length);
   renderModIndexLine(mods.length);
@@ -2429,7 +2402,7 @@ function renderMods(){
 function renderModShowing(shown,total){
   const el=$("#modShowing"); if(!el) return;
   const on=searchTokens(S.modFilter).length>0;
-  el.textContent=on?TT("showing")+" "+shown+" "+TT("of")+" "+total:"";
+  el.textContent=on?T("common.showing",{shown:shown,total:total}):"";
   /* With the table narrowed, Update all is the one button whose reach is wider than
      what is on screen, so it says so on hover. */
   const btn=$("#updAllBtn");
@@ -2471,7 +2444,7 @@ async function doUpdateAll(){
   (S.mods||[]).filter(m=>m.UpdateAvailable).forEach(m=>{S.modRowStatus[m.FullName]={phase:"queued"};});
   MOD_UPD={phase:"checking",total:0,done:0,current:null,index:0};
   renderModUpdateProgress(); renderMods();
-  toast("ᚱ Updating mods · fetching from Thunderstore…");
+  toast("ᚱ "+T("mods.update_all.begun.toast"));
   const r=await rpc("mods.updateAll");
   S.modsUpdating=false;
   /* The run is over: drop the transient bar and row states so the fresh scan renders the
@@ -2480,7 +2453,11 @@ async function doUpdateAll(){
   if(r===FAIL||!Array.isArray(r)){renderMods();return;}
   const okN=r.filter(x=>x.Updated).length, errN=r.filter(x=>x.Error).length;
   r.forEach(x=>logLine(x.Updated?"ok":"warn","[Thunderstore] "+x.mod+" "+(x.Updated?(x.FromVersion+" → "+x.ToVersion):("failed: "+(x.Error||"unknown")))));
-  toast(errN?("ᚦ Updated "+okN+" mods · "+errN+" failed"):("ᚱ Updated "+okN+" mod"+(okN===1?"":"s")));
+  /* Two whole sentences, each a plural on the count that leads it. The failing one used
+     to say "1 mods" the moment a single update went wrong. */
+  toast(errN
+    ?"ᚦ "+T("mods.update_all.failed.toast",{ok:okN,failed:errN})
+    :"ᚱ "+T("mods.update_all.done.toast",{count:okN}));
   await scanMods(); // re-render from a fresh scan
 }
 $("#updAllBtn").addEventListener("click",()=>{
@@ -2488,14 +2465,15 @@ $("#updAllBtn").addEventListener("click",()=>{
     const upd=(S.mods||[]).filter(m=>m.UpdateAvailable);
     if(!upd.length) return;
     /* NOTE: mods.updateAll in the bridge does NOT stop/restart the server - reflect that. */
-    const runWarn=(S.state?.status==="Running")
-      ?`<div class="mwarn">⚠ The server is RUNNING. Updating does NOT stop or restart it. New versions only load after a restart, and locked files may fail to update. Stopping the server first is recommended.</div>`:"";
-    confirmModal("Update "+upd.length+" mod"+(upd.length===1?"":"s"),
-      `<div class="mono-list">${upd.map(m=>esc(m.FullName)+"  "+esc(m.InstalledVersion)+" → "+esc(m.LatestVersion)).join("<br>")}</div>`+runWarn,
-      "Update all",()=>doUpdateAll());
+    const runWarn=()=>(S.state?.status==="Running")
+      ?`<div class="mwarn">⚠ ${esc(T("mods.update_all.running.warn"))}</div>`:"";
+    confirmModal(()=>T("mods.update_all.confirm.title",{count:upd.length}),
+      ()=>`<div class="mono-list">${upd.map(m=>esc(m.FullName)+"  "+esc(m.InstalledVersion)+" → "+esc(m.LatestVersion)).join("<br>")}</div>`+runWarn(),
+      ()=>T("mods.update_all.confirm.ok"),()=>doUpdateAll());
     return;
   }
-  toast("ᚱ Updating 2 mods · WorldEditCommands, ExtraSlots");
+  toast("ᚱ "+T("mods.update_all.preview.toast",
+    {count:2,names:"WorldEditCommands, ExtraSlots"}));   // preview fixture
   logLine("info","[Thunderstore] downloading WorldEditCommands 1.66.0 …");
 });
 $("#scanBtn").addEventListener("click",()=>{
@@ -2526,7 +2504,8 @@ function openThunderstorePage(mod){
   const namespace=mod&&mod.thunderstoreNamespace, name=mod&&mod.thunderstoreName;
   if(!namespace||!name) return;
   Native.call("shell.openThunderstore",{namespace,name})
-    .catch(err=>toast("ᚦ "+TT("Thunderstore page did not open · ")+(err&&err.message||"unknown error")));
+    .catch(err=>toast("ᚦ "+T("mods.page.thunderstore.failed.toast",
+      {detail:(err&&err.message)||T("common.error.unknown")})));
 }
 /* Opens the mod's page on Hexium in the host's browser. The app builds the address
    from the two halves of the identity the scan matched, so this only ever lands on
@@ -2534,7 +2513,8 @@ function openThunderstorePage(mod){
 function openHexiumPage(mod){
   if(!mod||!mod.hexiumUrl) return;
   Native.call("shell.openHexium",{owner:readHexiumOwner(mod),name:readHexiumName(mod)})
-    .catch(err=>toast("ᚦ "+TT("Hexium page did not open · ")+(err&&err.message||TT("unknown error"))));
+    .catch(err=>toast("ᚦ "+T("mods.page.hexium.failed.toast",
+      {detail:(err&&err.message)||T("common.error.unknown")})));
 }
 /* The scan hands back the built page address rather than the two halves, so the halves
    are read back off it when the menu needs them. The app built that address from
@@ -2649,13 +2629,16 @@ async function doUpdateOne(mod){
   S.modsUpdating=true;
   S.modRowStatus={}; S.modRowStatus[mod.FullName]={phase:"queued"};
   renderMods();
-  toast("ᚱ "+TT("Updating")+" "+mod.FullName+" …");
+  toast("ᚱ "+T("mods.update_one.begun.toast",{mod:mod.FullName}));
   const r=await rpc("mods.update",{fullName:mod.FullName});
   S.modsUpdating=false;
   MOD_UPD=null; S.modRowStatus={}; renderModUpdateProgress();
   if(r===FAIL||!r){renderMods();return;}
   logLine(r.Updated?"ok":"warn","[Thunderstore] "+r.mod+" "+(r.Updated?(r.FromVersion+" → "+r.ToVersion):("failed: "+(r.Error||"unknown"))));
-  toast(r.Updated?("ᚱ "+TT("Updated")+" "+r.mod):(r.Error?("ᚦ "+r.mod+" "+TT("failed")):("ᚱ "+r.mod+" "+TT("already up to date"))));
+  /* Three answers, three whole sentences, each naming the mod in a slot. */
+  toast(r.Updated?("ᚱ "+T("mods.update_one.done.toast",{mod:r.mod}))
+    :(r.Error?("ᚦ "+T("mods.update_one.failed.toast",{mod:r.mod}))
+             :("ᚱ "+T("mods.update_one.current.toast",{mod:r.mod}))));
   await scanMods();
 }
 $("#modTable").addEventListener("contextmenu",e=>{
@@ -2663,7 +2646,9 @@ $("#modTable").addEventListener("contextmenu",e=>{
   const tr=e.target.closest("tr[data-key]"); if(!tr) return;
   e.preventDefault();
   const mod=modByKey(tr.dataset.key); if(!mod) return;
-  ctxOpen(e.clientX,e.clientY,mod.FullName,modRowItems(mod));
+  const x=e.clientX,y=e.clientY;
+  const again=()=>ctxOpen(x,y,mod.FullName,modRowItems(mod),again);
+  again();
 });
 async function removeModFlow(mod){
   /* Config files and the mods that depend on this one, both read locally. Dependents come
@@ -2675,20 +2660,20 @@ async function removeModFlow(mod){
   if(files===FAIL) return;
   const cfgs=Array.isArray(files)?files:[];
   const dependents=(deps===FAIL||!Array.isArray(deps))?[]:deps;
-  const depBlock=dependents.length
-    ?`<div class="mbody-note" style="margin-top:10px">These installed mods depend on ${esc(mod.ModName)} and may stop working:</div>`+
-     `<label class="mchk"><input type="checkbox" id="mDepAll"> Also remove these ${dependents.length} mod${dependents.length===1?"":"s"}</label>`+
+  const depBlock=()=>dependents.length
+    ?`<div class="mbody-note" style="margin-top:10px">${esc(T("mods.remove.dependents.note",{name:mod.ModName}))}</div>`+
+     `<label class="mchk"><input type="checkbox" id="mDepAll"> ${esc(T("mods.remove.dependents.also",{count:dependents.length}))}</label>`+
      `<div class="mono-list">${dependents.map(d=>esc(d.displayName||d.fullName)).join("<br>")}</div>`
     :"";
-  const body=
-    `<div class="mbody-note">The plugin folder is backed up to BepInEx\\.bakaloader-removed, then removed.</div>`+
+  const body=()=>
+    `<div class="mbody-note">${esc(T("mods.remove.backup.note"))}</div>`+
     (cfgs.length
-      ?`<label class="mchk"><input type="checkbox" id="mIncCfg" checked> Also delete ${cfgs.length} config file${cfgs.length===1?"":"s"}:</label><div class="mono-list">${cfgs.map(f=>esc(String(f).split(/[\\/]/).pop())).join("<br>")}</div>`
-      :`<div class="mbody-note">No config files found for this mod.</div>`)+
-    depBlock+
+      ?`<label class="mchk"><input type="checkbox" id="mIncCfg" checked> ${esc(T("mods.remove.configs.also",{count:cfgs.length}))}</label><div class="mono-list">${cfgs.map(f=>esc(String(f).split(/[\\/]/).pop())).join("<br>")}</div>`
+      :`<div class="mbody-note">${esc(T("mods.remove.configs.none"))}</div>`)+
+    depBlock()+
     ((S.state?.status==="Running")
-      ?`<div class="mwarn">⚠ The server is RUNNING. Removal does not stop it, and locked files may fail. Stopping first is recommended.</div>`:"");
-  confirmModal("Remove "+mod.FullName+"?",body,"Remove",m=>{
+      ?`<div class="mwarn">⚠ ${esc(T("mods.remove.running.warn"))}</div>`:"");
+  confirmModal(()=>T("mods.remove.confirm.title",{name:mod.FullName}),body,()=>T("common.button.remove"),m=>{
     const includeConfig=!!m.querySelector("#mIncCfg")?.checked;
     const alsoRemove=!!m.querySelector("#mDepAll")?.checked;
     doRemoveMod(mod,includeConfig,alsoRemove?dependents:[]);
@@ -2699,7 +2684,11 @@ async function doRemoveMod(mod,includeConfig,dependents){
   /* Dependents first (they were ordered for it), then the mod itself. Each reuses the
      one-mod remove RPC and carries the same delete-config choice. */
   const targets=dependents.map(d=>d.fullName).concat([mod.FullName]);
-  toast("ᛪ Removing "+(targets.length>1?targets.length+" mods":mod.FullName)+"…");
+  /* One mod is named; several are counted. Two entries rather than one sentence with a
+     name or a number dropped into the same hole, which no language can inflect around. */
+  toast("ᛪ "+(targets.length>1
+    ?T("mods.remove.begun.count.toast",{count:targets.length})
+    :T("mods.remove.begun.named.toast",{name:mod.FullName})));
   let okN=0,failN=0,lastErr="";
   for(const fullName of targets){
     const r=await rpc("mods.remove",{fullName,includeConfig});
@@ -2712,8 +2701,12 @@ async function doRemoveMod(mod,includeConfig,dependents){
       logLine("warn","[BakaLoader] remove failed "+fullName+": "+lastErr);
     }
   }
-  if(failN) toast("ᚦ Removed "+okN+" · "+failN+" failed"+(lastErr?" · "+lastErr:""));
-  else toast("ᛪ Removed "+okN+" mod"+(okN===1?"":"s")+" · backup kept");
+  /* The detail is its own entry rather than a slot that may be empty: a trailing
+     separator with nothing after it reads as a typo, not as a message with no detail. */
+  if(failN) toast("ᚦ "+(lastErr
+    ?T("mods.remove.failed.detail.toast",{ok:okN,failed:failN,detail:lastErr})
+    :T("mods.remove.failed.toast",{ok:okN,failed:failN})));
+  else toast("ᛪ "+T("mods.remove.done.toast",{count:okN}));
   scanMods();
 }
 /* ---- The second mod site: ask first, then fetch ----
@@ -2727,8 +2720,8 @@ function hexiumFailToast(r){
     toast("ᚦ "+T("mods.hexium.source_off.toast"));
     return;
   }
-  const why=r.Error||TT("unknown error");
-  toast("ᚦ "+TT("Hexium install did not go ahead")+" · "+why);
+  const why=r.Error||T("common.error.unknown");
+  toast("ᚦ "+T("mods.hexium.failed.toast",{detail:why}));
   logLine("warn","[Hexium] "+why);
 }
 /* The stand-in answer the browser preview feeds the real dialog, so the wording and the
@@ -2739,7 +2732,7 @@ const HEXIUM_PREVIEW={Owner:"JereKuusela",Name:"WorldEditCommands",Version:"1.67
 function hexiumConsentModal(pay,onAccept){
   const size=(pay.FileSize!=null&&Number(pay.FileSize)>0)?fmtBytes(pay.FileSize):null;
   const deps=Array.isArray(pay.Dependencies)?pay.Dependencies:[];
-  const body=
+  const body=()=>
     `<div class="mbody-note">${esc(T("mods.hexium.consent.note"))}</div>`+
     `<div class="mono-list">`+
       `${esc(pay.Owner)} / ${esc(pay.Name)}<br>`+
@@ -2755,7 +2748,7 @@ function hexiumConsentModal(pay,onAccept){
       :"")+
     ((S.state?.status==="Running")
       ?`<div class="mwarn">⚠ ${esc(T("mods.hexium.consent.running"))}</div>`:"");
-  confirmModal(T("mods.hexium.consent.title"),body,T("mods.hexium.consent.accept"),()=>onAccept());
+  confirmModal(()=>T("mods.hexium.consent.title"),body,()=>T("mods.hexium.consent.accept"),()=>onAccept());
 }
 /* Resolves what installing would do, then puts it to the host. A row hands its own
    identity in; a pasted link has already been resolved by the host side. */
@@ -2775,7 +2768,7 @@ async function hexiumInstallFlow(mod){
 async function doInstallFromHexium(pay){
   if(S.modsUpdating||S.modsScanning) return;
   S.modsUpdating=true; renderMods();
-  toast("ᚺ "+TT("Fetching from Hexium")+"…");
+  toast("ᚺ "+T("mods.hexium.fetching.toast"));
   logLine("info","[Hexium] downloading "+pay.Owner+"-"+pay.Name+" v"+pay.Version);
   const r=await rpc("mods.installFromHexium",
     {owner:pay.Owner,name:pay.Name,version:pay.Version,token:pay.Token});
@@ -2783,7 +2776,9 @@ async function doInstallFromHexium(pay){
   if(r===FAIL){renderMods();return;}
   if(r.Installed){
     const full=r.Owner+"-"+r.Name;
-    toast("ᚺ "+TT("Installed from Hexium")+" · "+full+" "+(r.Version||""));
+    toast("ᚺ "+(r.Version
+      ?T("mods.hexium.installed.toast",{name:full,version:r.Version})
+      :T("mods.hexium.installed.noversion.toast",{name:full})));
     logLine("ok","[Hexium] installed "+full+" v"+(r.Version||"?")+(r.Replaced?" (previous copy backed up)":""));
     if(Array.isArray(r.Dependencies)&&r.Dependencies.length)
       logLine("info","[Hexium] "+full+" says it needs: "+r.Dependencies.join(", "));
@@ -2799,11 +2794,11 @@ async function doInstallFromHexium(pay){
 function thunderstoreSwapFlow(mod){
   const owner=mod.thunderstoreNamespace, name=mod.thunderstoreName, version=mod.LatestVersion;
   if(!owner||!name||!version) return;
-  confirmModal(T("mods.swap.title"),
-    `<div class="mbody-note">${esc(T("mods.swap.body"))}</div>`+
+  confirmModal(()=>T("mods.swap.title"),
+    ()=>`<div class="mbody-note">${esc(T("mods.swap.body"))}</div>`+
     `<div class="mono-list">${esc(owner)} / ${esc(name)}<br>${esc(T("common.label.version"))} ${esc(version)}</div>`+
     `<div class="mwarn">⚠ ${esc(T("mods.swap.warn"))}</div>`,
-    T("mods.menu.install_thunderstore"),
+    ()=>T("mods.menu.install_thunderstore"),
     ()=>{
       if(!Native.available){toast("ᛋ "+T("mods.add.preview.toast"));return;}
       doAddMod("https://thunderstore.io/c/valheim/p/"+owner+"/"+name+"/v/"+version+"/");
@@ -2820,26 +2815,26 @@ $("#modTable").addEventListener("click",e=>{
 /* ---- Add a mod from any pasted Thunderstore link ---- */
 function addModFlow(){
   if(S.modsUpdating||S.modsScanning) return;
-  const runWarn=(S.state?.status==="Running")
-    ?`<div class="mwarn">⚠ The server is RUNNING. New mods only load after a restart, and replacing an existing mod may fail on locked files.</div>`:"";
+  const runWarn=()=>(S.state?.status==="Running")
+    ?`<div class="mwarn">⚠ ${esc(T("mods.add.running.warn"))}</div>`:"";
   /* With the second site switched on, a hexium.gg address is accepted here too. It
      never installs from the paste: it comes back with what the download would be, and
      the host reads that and answers. */
-  const hexNote=S.hexium
+  const hexNote=()=>S.hexium
     ?`<div class="mbody-note" style="margin-top:8px">${esc(T("mods.add.hexium_note"))}</div>`
     :"";
   /* The title and the box follow the same switch the two header buttons do: with the
      second site on, this dialog takes a link from either of them, so it says that rather
      than naming one of the two. */
   const both=!!S.hexium;
-  confirmModal(both?T("mods.add.title.link"):T("mods.add.title.store"),
-    `<div class="mbody-note">Paste any Thunderstore link: the mod's page, its versions page, a direct download link, or a ror2mm:// mod-manager link. If the link has no version, the latest release is installed.</div>`+
+  confirmModal(()=>both?T("mods.add.title.link"):T("mods.add.title.store"),
+    ()=>`<div class="mbody-note">${esc(T("mods.add.paste.note"))}</div>`+
     `<input type="text" id="mModUrl" placeholder="${esc(both?T("mods.add.placeholder.link"):"https://thunderstore.io/c/valheim/p/Author/ModName/")}" spellcheck="false" autocomplete="off" style="margin-top:10px">`+
-    hexNote+
-    runWarn,
-    "Install",m=>{
+    hexNote()+
+    runWarn(),
+    ()=>T("common.button.install"),m=>{
       const url=(m.querySelector("#mModUrl")?.value||"").trim();
-      if(!url){toast("ᚦ No link pasted");return;}
+      if(!url){toast("ᚦ "+T("mods.add.no_link.toast"));return;}
       doAddMod(url);
     });
   const inp=document.querySelector("#mModUrl");
@@ -2851,7 +2846,7 @@ function addModFlow(){
 async function doAddMod(url){
   if(S.modsUpdating||S.modsScanning) return;
   S.modsUpdating=true; renderMods();
-  toast("ᚨ Fetching from Thunderstore…");
+  toast("ᚨ "+T("mods.add.fetching.toast"));
   logLine("info","[Thunderstore] resolving pasted link: "+url);
   const r=await rpc("mods.addFromUrl",{url});
   S.modsUpdating=false;
@@ -2872,19 +2867,27 @@ async function doAddMod(url){
   }
   if(r.Installed){
     const full=r.Owner+"-"+r.Name;
-    toast("ᚨ Installed "+full+" "+(r.Version||"")+(r.Replaced?" · replaced previous install":""));
+    /* Four whole sentences rather than a name, a version that may be missing and a
+       tail that may not be there: a language that inflects around either of them has
+       nothing to work with when the words are glued together here. */
+    if(r.Replaced) toast("ᚨ "+(r.Version
+      ?T("mods.add.installed.replaced.toast",{name:full,version:r.Version})
+      :T("mods.add.installed.replaced.noversion.toast",{name:full})));
+    else toast("ᚨ "+(r.Version
+      ?T("mods.add.installed.toast",{name:full,version:r.Version})
+      :T("mods.add.installed.noversion.toast",{name:full})));
     logLine("ok","[Thunderstore] installed "+full+" v"+(r.Version||"?")+(r.Replaced?" (previous copy backed up)":""));
     if(S.state?.status==="Running") logLine("warn","[Thunderstore] server is running, so "+full+" loads on the next restart");
     await scanMods();
   }else{
-    toast("ᚦ Install failed · "+(r.Error||"unknown"));
+    toast("ᚦ "+T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")}));
     logLine("warn","[Thunderstore] install failed: "+(r.Error||"unknown"));
     renderMods();
   }
 }
 $("#addModBtn").addEventListener("click",()=>{
   if(Native.available){addModFlow();return;}
-  toast("ᚨ Add from Thunderstore · native app only");
+  toast("ᚨ "+T("mods.add.native_only.toast"));
 });
 
 /* ---------- COMMAND PALETTE ---------- */
@@ -2907,22 +2910,22 @@ function updatePalGating(){
   const st=S.state||{}, running=st.status==="Running";
   $$(".pitem").forEach(it=>{
     const cmd=it.dataset.cmd; let dis=false, why="";
-    if(it.id==="palConsole"||PAL_NEEDS_RUNNING[cmd]){dis=!running;why="Server not running, so there is nothing to send the command to";}
+    if(it.id==="palConsole"||PAL_NEEDS_RUNNING[cmd]){dis=!running;why=T("pal.gate.needs_running");}
     else if(cmd==="update_server"){
       const u=S.update||{};
-      if(u.running){dis=true;why="An update is already running";}
-      else if(!u.updatePending){dis=true;why="No server update is waiting";}
-      else if(!updCanUpdate(null)){dis=true;why=u.reason||"BakaLoader cannot apply this update itself";}
-      else if(st.status!=="Stopped"){dis=true;why="Stop the server to update";}
+      if(u.running){dis=true;why=T("pal.gate.update_running");}
+      else if(!u.updatePending){dis=true;why=T("pal.gate.no_update");}
+      else if(!updCanUpdate(null)){dis=true;why=u.reason||T("pal.gate.update_by_hand");}
+      else if(st.status!=="Stopped"){dis=true;why=T("pal.gate.stop_first");}
     }
     else if(cmd==="restart_server"){
       if(updateBlocksStart()){dis=true;why=updBlockMsg();}
-      else{dis=!(st.canStop||st.countdownActive);why="Server not running";}
+      else{dis=!(st.canStop||st.countdownActive);why=T("pal.gate.not_running");}
     }
-    else if(cmd==="stop_server"){dis=!st.canStop;why="Server not running";}
+    else if(cmd==="stop_server"){dis=!st.canStop;why=T("pal.gate.not_running");}
     else if(cmd==="start_server"){
       if(updateBlocksStart()){dis=true;why=updBlockMsg();}
-      else{dis=!st.canStart;why="Server already running";}
+      else{dis=!st.canStart;why=T("pal.gate.already_running");}
     }
     it.classList.toggle("disabled",dis);
     it.title=dis?why:"";
@@ -2936,7 +2939,7 @@ async function sendConsole(cmd,okToast){
   const r=await rpc("server.command",{command:cmd});
   if(r===FAIL) return;
   if(!r.ok){
-    toast("ᚦ Command not delivered · server running & RCON bound?");
+    toast("ᚦ "+T("pal.console.undelivered.toast"));
     logLine("warn","[RCON] command failed. Is the server running with RCON enabled?");
     return;
   }
@@ -2969,7 +2972,7 @@ function filterPal(q){
 function invokePal(){
   const sel=$(".pitem.sel:not(.hidden)")||$(".pitem:not(.hidden)");
   if(!sel) return;
-  if(sel.classList.contains("disabled")){toast("ᚦ "+(sel.title||"Unavailable right now"));return;}
+  if(sel.classList.contains("disabled")){toast("ᚦ "+(sel.title||T("pal.gate.unavailable")));return;}
   closePal();
   if(sel.dataset.cmd==="discord_sharing"){goPage("herald");return;} // works in preview too
   if(sel.dataset.cmd==="custom_domain"){waystoneWizard();return;}   // works in preview too, the Waystone
@@ -2985,30 +2988,30 @@ function invokePal(){
     }else if(cmd==="start_server"){
       const st=S.state||{};
       if(updateBlocksStart()){toast("ᚦ "+updBlockMsg());}
-      else if(!st.canStart){toast("ᚦ Start unavailable · already running?");}
-      else if(!S.prefs){toast("ᚦ no profile loaded · cannot start");}
+      else if(!st.canStart){toast("ᚦ "+T("pal.start.unavailable.toast"));}
+      else if(!S.prefs){toast("ᚦ "+T("hearth.no_profile.toast"));}
       /* the same gate the Kindle button goes through: a changed build or a waiting
          Steam update is put to the host here too, not started past silently */
       else withLaunchGuard(async answer=>{
         if(answer){startWithAnswer(answer);return;}
         const r=await rpc("server.start",{prefs:S.prefs});
         if(r===FAIL||rpcRefused(r)) return;
-        applyState(r);toast("ᚠ Hearth kindled · server starting");logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));
+        applyState(r);toast("ᚠ "+T("hearth.starting.toast"));logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?"));
       });
     }else if(cmd==="stop_server"){
-      if(!(S.state||{}).canStop){toast("ᚦ Stop unavailable · server not running");}
+      if(!(S.state||{}).canStop){toast("ᚦ "+T("pal.stop.unavailable.toast"));}
       else rpc("server.stop").then(r=>{
-        if(r!==FAIL){applyState(r);toast("ᛪ Hearth doused · server stopping");logLine("warn","[BakaLoader] stop requested, dousing the embers");}
+        if(r!==FAIL){applyState(r);toast("ᛪ "+T("hearth.stopping.toast"));logLine("warn","[BakaLoader] stop requested, dousing the embers");}
       });
     }else if(cmd==="save_world"){
-      sendConsole("save","ᛉ World save requested");
+      sendConsole("save","ᛉ "+T("pal.save_world.done.toast"));
     }else if(cmd==="kill_monsters"){
-      sendConsole("baka_killall","ᚦ KillAll unleashed · players, pets & allies spared");
+      sendConsole("baka_killall","ᚦ "+T("pal.kill_monsters.done.toast"));
     }else if(cmd==="broadcast"){
-      promptModal(T("vikings.broadcast.title"),"message shown in-game to everyone online",m=>{
+      promptModal(()=>T("vikings.broadcast.title"),()=>T("vikings.broadcast.placeholder"),m=>{
         rpc("server.broadcast",{message:m}).then(r=>{
           if(r===FAIL) return;
-          toast(r?"ᛒ Broadcast delivered":"ᚦ Broadcast failed · RCON bound?");
+          toast(r?"ᛒ "+T("pal.broadcast.done.toast"):"ᚦ "+T("pal.broadcast.failed.toast"));
           logLine(r?"ok":"warn",r?"[RCON] broadcast delivered":"[RCON] broadcast failed. Is RCON enabled and bound?");
         });
       });
@@ -3022,11 +3025,11 @@ function invokePal(){
       $("#updAllBtn").click();
     }else if(cmd==="kick_player"){
       goPage("vikings");
-      toast("ᚲ Right-click a viking to kick");
+      toast("ᚲ "+T("pal.kick.hint.toast"));
     }else if(cmd==="copy_join_address"){
       const addr=joinHost()+":"+(S.prefs?.Port??2456);
       navigator.clipboard?.writeText(addr).catch(()=>{});
-      toast("ᛟ Join address copied · "+addr);
+      toast("ᛟ "+T("pal.join_address.copied.toast",{addr}));
     }else if(cmd==="open_world_folder"){
       rpc("shell.open",{target:"saveData"});
     }else if(cmd==="open_config_folder"){
@@ -3040,14 +3043,14 @@ function invokePal(){
   }
   /* Preview only. It echoes the LABEL, because that is the thing the host just
      clicked; the name behind it is not something they have ever seen. */
-  toast("ᛒ "+palLabel(sel)+" · invoked");
+  toast("ᛒ "+T("pal.invoked.preview.toast",{label:palLabel(sel)}));
   logLine("cmd","> "+palLabel(sel).toLowerCase().replace(/…/,""));
 }
 $("#cmdchip").addEventListener("click",openPal);
 palIn.addEventListener("input",()=>filterPal(palIn.value));
 palBg.addEventListener("click",e=>{if(e.target===palBg)closePal();});
 $$(".pitem").forEach(it=>it.addEventListener("click",()=>{
-  if(it.classList.contains("disabled")){toast("ᚦ "+(it.title||"Unavailable right now"));return;}
+  if(it.classList.contains("disabled")){toast("ᚦ "+(it.title||T("pal.gate.unavailable")));return;}
   $$(".pitem").forEach(x=>x.classList.remove("sel")); it.classList.add("sel"); invokePal();
 }));
 document.addEventListener("keydown",e=>{
@@ -3095,7 +3098,9 @@ const TOAST_MAX=3, TOAST_LIFE=4800;
    (the house and the return arrow) are named beside it rather than left to regress. */
 const TOAST_MARK_RE=/^([\u16A0-\u16FF\u2302\u21BA])\s/;
 function toast(msg,opts){
-  msg=TT(msg); // plain-terminology swap (rune glyph token is never matched)
+  /* The sentence arrives worded. Every caller asks T() for it and the register is
+     picked inside the lookup, so there is nothing left here to swap: a toast used to
+     be rewritten one more time on its way to the screen, and now it is not. */
   let mark=(opts&&opts.mark)?String(opts.mark):"";
   let body=String(msg==null?"":msg);
   if(!mark){
@@ -3134,11 +3139,11 @@ function renderTermStream(){
   const chip=$("#termNew"), pill=$("#termStream");
   if(termPin){
     chip.classList.add("hidden");
-    pill.textContent="streaming"; pill.className="pill green";
+    pill.textContent=T("saga.stream.live"); pill.className="pill green";
   }else{
-    chip.textContent="↓ "+termUnseen+" new";
+    chip.textContent="↓ "+T("saga.stream.unseen",{count:termUnseen});
     chip.classList.toggle("hidden",termUnseen===0);
-    pill.textContent="paused"; pill.className="pill amber";
+    pill.textContent=T("saga.stream.paused"); pill.className="pill amber";
   }
 }
 /* The console starts empty on a cold launch, so say so rather than showing a blank
@@ -3235,7 +3240,7 @@ $("#termCopy").addEventListener("click",()=>{
   const lines=$$("#term .ln").filter(l=>l.style.display!=="none"&&l.dataset.k!=="div")
     .map(l=>l.textContent);
   navigator.clipboard?.writeText(lines.join("\n")).catch(()=>{});
-  toast("ᛝ "+lines.length+" saga lines copied");
+  toast("ᛝ "+T("saga.copied.toast",{count:lines.length}));
 });
 
 /* ---------- THE VELLUM (log settings) ---------- */
@@ -3246,21 +3251,27 @@ async function vellumModal(){
     `<div class="mtitle">${esc(T("saga.vellum.modal.title"))}<span class="cnorse">${esc(T("common.norse.vellum"))}</span></div>`+
     `<div class="mbody">`+
       `<div class="field"><label>${esc(T("saga.vellum.folder.label"))}</label>`+
-        `<input type="text" id="vlPath" value="${esc(up?.LogsFolderPath||"")}" placeholder="${esc(up?.DefaultLogsFolderPath||"the default folder")}" spellcheck="false" autocomplete="off">`+
+        `<input type="text" id="vlPath" value="${esc(up?.LogsFolderPath||"")}" placeholder="${esc(up?.DefaultLogsFolderPath||T("saga.vellum.folder.placeholder"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote">${esc(T("saga.vellum.folder.note"))}</div></div>`+
       `<label class="togglerow" style="cursor:pointer"><span class="tl">${esc(T("saga.vellum.applog.label"))}`+
-        `<br><span style="font-size:9.5px;opacity:.7">ApplicationLogs_&lt;day&gt;.txt · ${esc(T("saga.vellum.applog.keep"))}</span></span>`+
+        `<br><span style="font-size:9.5px;opacity:.7">ApplicationLogs_&lt;${esc(T("saga.vellum.applog.day"))}&gt;.txt · ${esc(T("saga.vellum.applog.keep"))}</span></span>`+
         `<div class="toggle${(up?up.WriteApplicationLogsToFile:true)?" on":""}" id="vlApp"></div></label>`+
-      `<div class="fieldnote">${esc(TT("each server session writes its own scroll: ServerLogs-<realm>-<start time>.txt, pruned after 30 days. Per-realm writing is the 'Write server logs to file' rune in the realm's settings."))}</div>`+
+      /* The file-name pattern is two angle-bracketed words, and an angle bracket inside a
+         catalog value reads as a tag to the gate that forbids markup there. So the sentence
+         holds two named slots and the brackets are put round the words here, where they are
+         punctuation rather than wording: the entry stays plain text a translator can move
+         the pattern around inside, and the host reads exactly what they read before. */
+      `<div class="fieldnote">${esc(T("saga.vellum.serverlog.note",
+        {server:"<"+T("saga.vellum.serverlog.realm")+">",start:"<"+T("saga.vellum.serverlog.start")+">"}))}</div>`+
       `<div class="fieldnote" id="vlStatus"></div>`+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="vlCancel">Cancel</button>`+
-      `<button class="btn btn-ember btn-sm" id="vlOk" title="${esc(T("saga.vellum.save.title"))}">${esc(T("common.button.save"))}</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="vlCancel">${esc(T("common.button.cancel"))}</button>`+
+      `<button class="btn btn-ember btn-sm" id="vlOk" title="${esc(T("saga.vellum.save.title"))}">${esc(T("common.button.save"))}</button></div>`,vellumModal);
   const tApp=m.querySelector("#vlApp");
   tApp.addEventListener("click",()=>tApp.classList.toggle("on"));
   m.querySelector("#vlCancel").addEventListener("click",modalClose);
   m.querySelector("#vlOk").addEventListener("click",async()=>{
-    if(!Native.available){modalClose();toast("ᚹ Vellum · preview only");return;}
+    if(!Native.available){modalClose();toast("ᚹ "+T("saga.vellum.preview.toast"));return;}
     const st=m.querySelector("#vlStatus");
     const r=await rpc("userprefs.save",{prefs:{
       LogsFolderPath:m.querySelector("#vlPath").value.trim(),
@@ -3308,29 +3319,35 @@ function renderCaps(){
       banner.style.display="";
     }else banner.style.display="none";
   }
+  /* The banner's own button. It is written here rather than carried in the page so its
+     words come out of the catalog, and it is left alone mid-install: a terminology
+     toggle while Thunderstore is answering must not wipe "Fetching from Thunderstore…"
+     off a button that is still busy. */
+  const install=$("#capsInstallBtn");
+  if(install&&!capsInstallBusy) install.textContent=T("vikings.caps.install.label");
   const gated=Native.available&&!S.caps?.devcommands;
   tIn.disabled=gated;
   tIn.placeholder=gated
     ?T("saga.term.gated.placeholder")
-    :"devcommand… (Enter to send)";
+    :T("saga.term.placeholder");
 }
 let capsInstallBusy=false;
 $("#capsInstallBtn")?.addEventListener("click",async()=>{
   if(capsInstallBusy||!Native.available) return;
   capsInstallBusy=true;
   const btn=$("#capsInstallBtn");
-  btn.disabled=true; btn.textContent="ᚠ  Fetching from Thunderstore…";
+  btn.disabled=true; btn.textContent=T("vikings.caps.install.busy");
   const r=await rpc("caps.install");
   if(r!==FAIL){
     const ok=(r.results||[]).filter(x=>x.installed).length;
     const still=(r.stillMissing||[]).length;
     toast(still
-      ?"ᚦ installed "+ok+" · "+still+" still missing. Check the Saga log"
-      :"ᚠ "+ok+" mod"+(ok===1?"":"s")+" installed · loads on the next server start");
+      ?"ᚦ "+T("vikings.caps.install.partial.toast",{installed:ok,missing:still})
+      :"ᚠ "+T("vikings.caps.install.done.toast",{count:ok}));
     const caps=await rpc("caps.get");
     if(caps!==FAIL&&caps) S.caps=caps;
   }
-  btn.disabled=false; btn.textContent="ᚠ\u00a0 Install missing mods";
+  btn.disabled=false; btn.textContent=T("vikings.caps.install.label");
   capsInstallBusy=false;
   renderCaps();
 });
@@ -3368,13 +3385,12 @@ syncUpkeepGates();
 
 /* ---------- THE SECOND MOD SITE (Hexium) ----------
    Turning the switch on IS the consent: there is no separate notice anywhere, so the
-   switch has to carry the whole of what it means. The wording lives here rather than
-   in the page so the plain-terminology pass reaches it like every other line. */
-const HEXIUM_SWITCH_LABEL="Also check Hexium";
-const HEXIUM_HELP="Hexium is a second mod site. Whoever runs it is not named on the site, and its accounts are Discord sign-ins, so BakaLoader cannot tell you that an author there is the same person as the author of the same name on Thunderstore. With this on, your machine contacts hexium.gg about four times an hour while BakaLoader is open, and that site says it keeps request logs for up to ninety days. Nothing is installed from Hexium unless you ask for it and accept what it is.";
+   switch has to carry the whole of what it means. Both halves are catalog entries,
+   and the page carries the English of both so the card reads correctly on the frame
+   before the catalog lands. */
 function renderHexiumCopy(){
-  const label=$("#hexiumSwitchLabel"); if(label) label.textContent=TT(HEXIUM_SWITCH_LABEL);
-  const help=$("#hexiumHelp"); if(help) help.textContent=TT(HEXIUM_HELP);
+  const label=$("#hexiumSwitchLabel"); if(label) label.textContent=T("hearth.upkeep.hexium.label");
+  const help=$("#hexiumHelp"); if(help) help.textContent=T("hearth.upkeep.hexium.note");
 }
 renderHexiumCopy();
 
@@ -3450,11 +3466,18 @@ async function initUpkeep(){
    same message forever. This hall only reads/writes prefs + the 3 discord.* RPCs. */
 let HERALD_HAS_POST=false;
 const HERALD_URL_RE=/^https:\/\/((ptb|canary)\.)?discord(app)?\.com\/api\/(v\d+\/)?webhooks\/\d+\/[\w-]+/;
+/* The Discord hall's opening sentence. One entry with one named slot, and the bold
+   goes round the slot VALUE at this call site rather than into the entry, so the
+   catalog keeps its no-markup rule and a translator gets a whole sentence with the
+   emphasised word somewhere they can move it. */
+function heraldRenderIntro(){
+  const el=$("#heraldIntro"); if(!el) return;
+  el.innerHTML=esc(T("herald.intro.body",{one:"\u0000one\u0000"}))
+    .split("\u0000one\u0000").join("<strong>"+esc(T("herald.intro.one"))+"</strong>");
+}
 function heraldRenderPost(){
   const el=$("#heraldPostStat"); if(!el) return;
-  el.textContent=TT(HERALD_HAS_POST
-    ?"post is placed · it edits itself whenever the realm changes"
-    :"no post yet · publish to place the Herald in your channel");
+  el.textContent=HERALD_HAS_POST?T("herald.post.placed"):T("herald.post.none");
 }
 function heraldApply(up){
   setT("tHerald",up.DiscordSharingEnabled);
@@ -3483,24 +3506,45 @@ function heraldSave(extra){
 }
 ["tHerald","tHeraldAddr","tHeraldPass","tHeraldEvents"].forEach(id=>
   $("#"+id).addEventListener("click",()=>heraldSave()));
+/* What the webhook line is saying, as a fact rather than as text already on screen.
+   It used to be four textContent writes and no state at all, which meant a language
+   switch left whatever the last keystroke had put there: the line is the one place on
+   this hall that says whether the host's webhook answered, and reading it in the
+   language before the switch is worse than reading nothing.
+   An id where the sentence is ours, and `text` where it is the host side's own words,
+   which a catalog cannot reword and which are shown exactly as they arrived. */
+let HERALD_URL_STAT={cls:"wiz-stat dim",wordId:"herald.hook.stat.idle"};
+function heraldRenderUrlStat(){
+  const el=$("#heraldUrlStat"); if(!el) return;
+  const s=HERALD_URL_STAT||{};
+  el.className=s.cls||"wiz-stat dim";
+  el.textContent=(s.mark?s.mark+" ":"")+(s.text!=null?s.text:T(s.wordId||"herald.hook.stat.idle",s.params));
+}
 {
-  const inp=$("#heraldUrl"),stat=$("#heraldUrlStat");
+  const inp=$("#heraldUrl");
   let t=null;
   inp.addEventListener("input",()=>{
     clearTimeout(t);
     const v=inp.value.trim();
     if(!v){
-      stat.className="wiz-stat dim";stat.textContent="paste a webhook URL, or run the setup wizard";
+      HERALD_URL_STAT={cls:"wiz-stat dim",wordId:"herald.hook.stat.idle"};heraldRenderUrlStat();
       t=setTimeout(()=>heraldSave(),400);return;
     }
-    stat.className="wiz-stat dim";stat.textContent="checking…";
+    HERALD_URL_STAT={cls:"wiz-stat dim",wordId:"common.stat.checking"};heraldRenderUrlStat();
     t=setTimeout(async()=>{
       const r=Native.available?await rpc("discord.validate",{url:v})
-        :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:"that doesn't look like a Discord webhook URL"};
+        :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:T("herald.hook.stat.malformed")};
       if(r===FAIL) return;
-      stat.className="wiz-stat "+(r.ok?"ok":"bad");
-      stat.textContent=r.ok?("ᛉ webhook answers · \""+(r.name||"webhook")+"\"")
-                           :("ᚦ "+(r.error||"that webhook does not answer"));
+      /* Named and unnamed are two sentences, not one with a ternary in the middle: a
+         webhook that answered without giving a name must not leave a dangling separator.
+         A refusal the host side worded itself is kept as text, because no id came with it. */
+      HERALD_URL_STAT=r.ok
+        ?{cls:"wiz-stat ok",mark:"ᛉ",
+          wordId:r.name?"herald.hook.stat.answers":"herald.hook.stat.answers.unnamed",
+          params:r.name?{name:r.name}:null}
+        :(r.error?{cls:"wiz-stat bad",mark:"ᚦ",text:r.error}
+                 :{cls:"wiz-stat bad",mark:"ᚦ",wordId:"herald.hook.stat.no_answer"});
+      heraldRenderUrlStat();
       if(r.ok) heraldSave();
     },500);
   });
@@ -3508,34 +3552,56 @@ function heraldSave(extra){
 }
 $("#heraldPublish").addEventListener("click",async()=>{
   const url=$("#heraldUrl").value.trim();
-  if(!url){toast("ᚦ No webhook URL · paste one or run the setup wizard");return;}
+  if(!url){toast("ᚦ "+T("herald.publish.no_url.toast"));return;}
   setT("tHerald",true); /* publishing implies sharing is on */
   await heraldSave();
-  if(!Native.available){HERALD_HAS_POST=true;heraldRenderPost();toast("ᚺ preview · post published");return;}
+  if(!Native.available){HERALD_HAS_POST=true;heraldRenderPost();toast("ᚺ "+T("herald.publish.preview.toast"));return;}
   const r=await rpc("discord.publish");
   if(r===FAIL) return;
   if(r.ok){
     HERALD_HAS_POST=true;heraldRenderPost();
-    toast("ᚺ The Herald speaks · status post placed in Discord");
+    toast("ᚺ "+T("herald.publish.done.toast"));
     logLine("ok","[Herald] Discord status post published");
-  }else toast("ᚦ "+(r.error||"publish failed"));
+  }else toast("ᚦ "+(r.error||T("herald.publish.failed.toast")));
 });
 $("#heraldRemove").addEventListener("click",async()=>{
-  if(!Native.available){HERALD_HAS_POST=false;heraldRenderPost();toast("ᚺ preview · post removed");return;}
+  if(!Native.available){HERALD_HAS_POST=false;heraldRenderPost();toast("ᚺ "+T("herald.remove.preview.toast"));return;}
   const r=await rpc("discord.remove");
   if(r===FAIL) return;
   if(r.ok){
     HERALD_HAS_POST=false;heraldRenderPost();
-    toast("ᚺ The Herald falls silent · post removed from Discord");
+    toast("ᚺ "+T("herald.remove.done.toast"));
     logLine("warn","[Herald] Discord status post removed");
-  }else toast("ᚦ "+(r.error||"remove failed"));
+  }else toast("ᚦ "+(r.error||T("herald.remove.failed.toast")));
 });
 $("#heraldWizBtn").addEventListener("click",()=>heraldWizard());
 
 /* ---------- CONTEXT MENU (live, JS-positioned) ---------- */
 const ctxEl=$("#ctxMenu");
-function ctxClose(){ctxEl.classList.remove("open");ctxEl.style.display="none";ctxEl._items=null;}
-function ctxOpen(x,y,head,items){
+/* Opens the row menu again where it stands, in the words that are current now. A menu
+   that named no rebuilder is closed instead: it is a transient the host opened a moment
+   ago, and half of it in the language before would read as a bug rather than a menu. */
+function redrawContextMenu(){
+  if(!ctxEl.classList.contains("open")) return false;
+  const again=CTX_REDRAW;
+  if(typeof again!=="function"){ctxClose();return false;}
+  again();
+  return true;
+}
+function ctxClose(){ctxEl.classList.remove("open");ctxEl.style.display="none";ctxEl._items=null;CTX_REDRAW=null;}
+/* What would open this menu again, at the same corner, in the words that are current
+   now. Same reason as the dialog above: a menu is innerHTML written once. */
+let CTX_REDRAW=null;
+/**
+ * Opens the row menu.
+ * @param {number} x window coordinates of the corner it hangs from
+ * @param {number} y
+ * @param {string} head the heading, already worded
+ * @param {Array} items the rows, each already worded
+ * @param {function} [again] opens this same menu from state, for the language switch
+ */
+function ctxOpen(x,y,head,items,again){
+  CTX_REDRAW=typeof again==="function"?again:null;
   ctxEl.innerHTML=`<div class="ctxhead">${esc(head)}</div>`+items.map((it,i)=>it==="hr"?"<hr>":
     `<div class="ci${it.danger?" danger":""}${it.disabled?" disabled":""}" data-i="${i}"${it.disabled&&it.tip?` title="${esc(it.tip)}"`:""}><span class="r">${it.r}</span><span class="cilbl">${esc(it.label)}</span></div>`
   ).join("");
@@ -3553,7 +3619,7 @@ ctxEl.addEventListener("click",e=>{
   if(!it||it.disabled) return;
   if(it.confirm&&!ci.classList.contains("confirm")){
     ci.classList.add("confirm");
-    ci.querySelector(".cilbl").textContent="Confirm "+it.label.replace(/…$/,"")+"?";
+    ci.querySelector(".cilbl").textContent=T("common.ctx.confirm",{label:it.label.replace(/…$/,"")});
     return;
   }
   ctxClose(); it.fn();
@@ -3568,19 +3634,54 @@ window.addEventListener("blur",ctxClose);
 
 /* ---------- MODALS ---------- */
 const modalBg=$("#modalBg");
+/* What would build the open dialog AGAIN, from state. A dialog is written into the
+   page once with innerHTML and never drawn again, so it is the one surface a walk
+   cannot reach: its words were chosen the moment it opened. An opener that can rebuild
+   itself hands that rebuilder to modalOpen, and the language switch replays it.
+   A flow that reads before it draws reads AGAIN when this fires. Every one of them is
+   a read, so that costs a round trip and nothing else; a read that fails closes the
+   dialog with the same toast it would have shown the first time.
+   The spawn picker is the one that loses something real: it reopens with the player it
+   was aimed at and an empty search, because the item it had picked lived in the
+   closure that is being replaced. A language switch is a deliberate act and a rare
+   one, and a dialog frozen in the language before it would be worse. */
+let MODAL_REDRAW=null;
+/* True while a dialog is on screen. */
+function modalIsOpen(){return modalBg.classList.contains("open");}
+/* Draws the open dialog again in the words that are current now. Answers false when
+   there is nothing open, and when what is open was handed its sentences already
+   worded and named no rebuilder: that dialog keeps the wording it opened with, and
+   says which one it was rather than leaving a reader to wonder. */
+function redrawOpenModal(){
+  if(!modalIsOpen()) return false;
+  if(typeof MODAL_REDRAW!=="function"){
+    console.warn("[i18n] the open dialog named no rebuilder and keeps its wording");
+    return false;
+  }
+  MODAL_REDRAW();
+  return true;
+}
 function modalClose(){
   wgTipClose();               // a dial panel must not outlive the dialog that opened it
   releaseModalScrollCues();   // let go of this modal's panes before the nodes are dropped
   modalBg.classList.remove("open");
   modalBg.innerHTML="";
+  MODAL_REDRAW=null;
   updateToastLift();
 }
 modalBg.addEventListener("mousedown",e=>{if(e.target===modalBg)modalClose();});
-function modalOpen(html){
+/**
+ * Puts one dialog on screen.
+ * @param {string} html the dialog, worded and escaped by the caller
+ * @param {function} [again] rebuilds this same dialog from state, for the language
+ *   switch. Left out, the dialog keeps the words it opened with.
+ */
+function modalOpen(html,again){
   /* Several flows swap one modal for the next without closing first (the Barrow's
      world drill-down, a wizard step). The outgoing panes are discarded right here,
      so they are released here too. */
   releaseModalScrollCues();
+  MODAL_REDRAW=typeof again==="function"?again:null;
   modalBg.innerHTML=`<div class="modal">${html}</div>`;
   modalBg.classList.add("open");
   esWire(modalBg);
@@ -3588,25 +3689,45 @@ function modalOpen(html){
   updateToastLift();
   return modalBg.firstElementChild;
 }
+/* A sentence, or a function that words one. Every call site that wants its dialog to
+   follow a language switch hands in the function, an arrow that asks the catalog for the
+   asks it again when the words change. A plain string still works and reads the same;
+   it simply keeps the wording it was given. */
+const worded=v=>typeof v==="function"?String(v()):String(v==null?"":v);
 function promptModal(title,placeholder,onOk){
-  const m=modalOpen(
-    `<div class="mtitle">${esc(title)}</div>`+
-    `<input type="text" id="mIn" placeholder="${esc(placeholder)}" spellcheck="false" autocomplete="off">`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Cancel</button><button class="btn btn-ember btn-sm" id="mOk">Confirm</button></div>`);
-  const inp=m.querySelector("#mIn");
-  const ok=()=>{const v=inp.value.trim(); if(!v)return; modalClose(); onOk(v);};
-  m.querySelector("#mOk").addEventListener("click",ok);
-  m.querySelector("#mCancel").addEventListener("click",modalClose);
-  inp.addEventListener("keydown",e=>{if(e.key==="Enter")ok();});
-  setTimeout(()=>inp.focus(),30);
+  /* What is typed survives the redraw. Losing a half-typed name to a language switch
+     would be the same class of loss a reload was rejected for. */
+  let typed="";
+  const again=()=>{
+    const m=modalOpen(
+      `<div class="mtitle">${esc(worded(title))}</div>`+
+      `<input type="text" id="mIn" placeholder="${esc(worded(placeholder))}" spellcheck="false" autocomplete="off">`+
+      `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(T("common.button.confirm"))}</button></div>`,
+      again);
+    const inp=m.querySelector("#mIn");
+    inp.value=typed;
+    inp.addEventListener("input",()=>{typed=inp.value;});
+    const ok=()=>{const v=inp.value.trim(); if(!v)return; modalClose(); onOk(v);};
+    m.querySelector("#mOk").addEventListener("click",ok);
+    m.querySelector("#mCancel").addEventListener("click",modalClose);
+    inp.addEventListener("keydown",e=>{if(e.key==="Enter")ok();});
+    setTimeout(()=>inp.focus(),30);
+    return m;
+  };
+  return again();
 }
 function confirmModal(title,bodyHtml,okLabel,onOk){
-  const m=modalOpen(
-    `<div class="mtitle">${esc(title)}</div>`+
-    `<div class="mbody">${bodyHtml}</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(okLabel)}</button></div>`);
-  m.querySelector("#mOk").addEventListener("click",()=>{try{onOk(m);}finally{modalClose();}});
-  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  const again=()=>{
+    const m=modalOpen(
+      `<div class="mtitle">${esc(worded(title))}</div>`+
+      `<div class="mbody">${worded(bodyHtml)}</div>`+
+      `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(worded(okLabel))}</button></div>`,
+      again);
+    m.querySelector("#mOk").addEventListener("click",()=>{try{onOk(m);}finally{modalClose();}});
+    m.querySelector("#mCancel").addEventListener("click",modalClose);
+    return m;
+  };
+  return again();
 }
 /* ---------- LAUNCH GUARD (build changed / Steam update waiting) ----------
    Valheim 1.0 upgrades a world the first time it saves it, and there is no way back:
@@ -3619,22 +3740,28 @@ function confirmModal(title,bodyHtml,okLabel,onOk){
    differs from TargetBuildID but the download has not been staged), and rounding that
    up to "1 MB" states a number nobody measured. */
 function guardMb(bytes){const n=Number(bytes)||0;return n>0?Math.max(1,Math.round(n/1048576)):0;}
-function guardSizeSuffix(bytes){const mb=guardMb(bytes);return mb>0?` (${mb} MB)`:"";}
 function guardBuildLabel(g){
-  const to=g.currentBuildShort||"a new build";
+  const to=g.currentBuildShort||T("guard.build.to.unknown");
   const from=g.lastBuildShort
-    ?(g.lastVersion?`build ${g.lastBuildShort} (${g.lastVersion})`:`build ${g.lastBuildShort}`)
-    :TT("a build it has not recorded");
+    ?(g.lastVersion?T("guard.build.from.recorded.version",{build:g.lastBuildShort,version:g.lastVersion})
+                   :T("guard.build.from.recorded",{build:g.lastBuildShort}))
+    :T("guard.build.from.unknown");
   return {from,to};
 }
-/* The prompt body, shared by the modal and the banner tooltip. */
+/* The prompt body, shared by the modal and the banner tooltip.
+   A size Steam has not staged is a whole second sentence rather than a gap in the
+   middle of the first one: a bracket with nothing in it reads as a typo, and the
+   two shapes are not the same sentence in every language. */
 function guardBody(g){
-  if(g.outcome==="updatePending")
-    return TT(`Steam has a Valheim server update waiting${guardSizeSuffix(g.pendingBytes)}. `)+
-           T("guard.body.update_pending.risk");
+  if(g.outcome==="updatePending"){
+    const risk=T("guard.body.update_pending.risk");
+    const mb=guardMb(g.pendingBytes);
+    return mb>0?T("guard.body.update_pending.sized",{size:mb,risk})
+               :T("guard.body.update_pending",{risk});
+  }
   const b=guardBuildLabel(g);
-  return TT(`The Valheim server changed from ${b.from} to build ${b.to}. `)+
-         T("guard.body.build_changed.risk");
+  return T("guard.body.build_changed",
+    {from_build:b.from,to_build:b.to,risk:T("guard.body.build_changed.risk")});
 }
 /* Puts the question to the host. onPick gets "proceed", "backup" or null (not now).
    For a waiting Steam update the button set follows how this server was installed, so
@@ -3683,10 +3810,10 @@ async function launchGuardModal(g,onPick){
     (g.manifest?`<div class="subval mono" style="word-break:break-all">${esc(g.manifest)}</div>`:"")+
     steamLink+
     `</div>`+
-    `<div class="mbtns">${buttons}</div>`);
+    `<div class="mbtns">${buttons}</div>`,()=>launchGuardModal(g,onPick));
   const openSteam=()=>{
     rpc("shell.openUrl",{target:"steam-downloads"});
-    toast("ᛊ Steam downloads opened · apply the update, then start again");
+    toast("ᛊ "+T("guard.steam.opened.toast"));
   };
   const steam=m.querySelector("#mSteam");
   steam?.addEventListener("click",openSteam);
@@ -3709,7 +3836,10 @@ function withLaunchGuard(go){
     /* The modal is async now (it asks what kind of install this is first), and nothing
        awaits it, so catch here rather than leave a rejection nobody handles. */
     Promise.resolve(launchGuardModal(g,answer=>{ if(answer) go(answer); }))
-      .catch(e=>{toast("ᚦ "+TT("Could not put the question · ")+(e&&e.message||""));});
+      .catch(e=>{
+        const detail=String(e&&e.message||"").trim();
+        toast("ᚦ "+(detail?T("guard.ask.failed.toast",{detail}):T("guard.ask.failed.toast.nodetail")));
+      });
   });
 }
 
@@ -3745,7 +3875,7 @@ function updWasCancelled(d,why){
 }
 function updMbPair(done,total){
   const mb=n=>Math.round((Number(n)||0)/1048576);
-  return mb(done)+" "+TT("of")+" "+mb(total)+" MB";
+  return T("srvupd.phase.downloading.progress",{done:mb(done),total:mb(total)});
 }
 /* The page's own sentence for a phase it knows, or "" for one it does not.
    The host sets a message on every phase it reports, so this table used to be dead
@@ -3758,7 +3888,7 @@ function updPhaseSentence(k,u){
   if(k==="downloading"){
     const total=Number(u&&u.bytesTotal)||0;
     return total>0
-      ?TT("Steam is downloading: ")+updMbPair(u.bytesDone,total)
+      ?updMbPair(u.bytesDone,total)
       :T("srvupd.phase.downloading");
   }
   if(k==="verifying") return T("srvupd.phase.verifying");
@@ -3824,8 +3954,8 @@ async function runServerUpdate(opts){
   finally{ _updSending=false; }
   if(r===FAIL) return;
   if(r&&r.started===false){
-    const why=r.reason||TT("see the saga log");
-    toast("ᚦ "+TT("The update was not started · ")+why);
+    const why=r.reason||T("srvupd.not_started.reason.fallback");
+    toast("ᚦ "+T("srvupd.not_started.toast",{reason:why}));
     logLine("warn","[BakaLoader] the server update was not started: "+why);
     return;
   }
@@ -3850,7 +3980,7 @@ function updateBackupPrompt(startAfter){
       `<button class="btn btn-ember btn-sm" id="muYes">${esc(T("srvupd.prompt.backup"))}</button>`+
       `<button class="btn btn-ghost btn-sm" id="muNo">${esc(T("srvupd.prompt.no_backup"))}</button>`+
       `<button class="btn btn-ghost btn-sm" id="muCancel">${esc(T("common.button.cancel"))}</button>`+
-    `</div>`);
+    `</div>`,()=>updateBackupPrompt(startAfter));
   m.querySelector("#muCancel").addEventListener("click",modalClose);
   m.querySelector("#muNo").addEventListener("click",()=>{modalClose();runServerUpdate({backup:false,startAfter});});
   m.querySelector("#muYes").addEventListener("click",()=>{modalClose();runServerUpdate({backup:true,startAfter});});
@@ -3934,8 +4064,8 @@ function onUpdateFailed(d){
     refreshUpdateInfo();
     return;
   }
-  const said=why||TT("no reason was given");
-  toast("ᚦ "+TT("The update did not finish · ")+said);
+  const said=why||T("srvupd.failed.reason.fallback");
+  toast("ᚦ "+T("srvupd.failed.toast",{reason:said}));
   /* A held start is put back with the failure written across it. An update run from the
      pill or the palette held no start, so there is none to put back and none to mention. */
   if(!LAUNCH_HOLD&&startAfter&&S.update.updatePending)
@@ -3967,6 +4097,33 @@ window.BakaPreview={
   modUpdateEnd:()=>{
     S.modsUpdating=false; MOD_UPD=null; S.modRowStatus={};
     renderModUpdateProgress(); renderMods();
+  },
+  /* The language seam. Hands a catalog straight to the lookup and redraws the window
+     in place, which is the whole of what the titlebar's globe will do once there is
+     one: there is no other path and no reload anywhere in it.
+     It is here rather than behind a native check because this is exactly what a walk
+     needs - WebUI/i18n/xx.json is a generated pseudo-locale that wraps every English
+     sentence and pads it by a third, so a screenshot of the page under it shows every
+     surface that did NOT follow the switch as plain English, and every one that did as
+     a bracketed one. Left without a catalog it just redraws in the language already
+     loaded, which is how the terminology switch is walked.
+     @param {string} code a BCP 47 tag
+     @param {object} [catalog] a parsed strings.json; left out, only the redraw runs */
+  setLanguage:(code,catalog)=>{
+    if(catalog&&window.I18N) window.I18N.load(catalog,code);
+    else if(window.I18N&&code) window.I18N.setLocale(code);
+    return applyLanguage(code);
+  },
+  /* Fetches that catalog from beside the page first. Answers false when there is none,
+     because a walk that silently proved nothing is worse than one that says so. */
+  loadLanguage:async code=>{
+    const url=window.BAKA_ASSET?window.BAKA_ASSET("i18n/"+code+".json"):"i18n/"+code+".json";
+    try{
+      const r=await fetch(url,{cache:"no-cache"});
+      if(!r.ok) return false;
+      window.BakaPreview.setLanguage(code,await r.json());
+      return true;
+    }catch(e){console.warn("[i18n] no catalog for "+code,e);return false;}
   },
 };
 /* Dashboard Server card: the waiting update, said once, where the state is said. */
@@ -4058,7 +4215,9 @@ function renderLaunchHold(){
   const canUpd=pending&&updCanUpdate(g);
   /* A failed update leaves this hold standing, so it carries the reason it failed and
      every action it had before. */
-  const why=g.updateError?TT("The update did not finish: ")+updTrimStop(g.updateError)+TT(". The server was not started. "):"";
+  const why=g.updateError
+    ?T("cond.launch.update_failed",{reason:updTrimStop(g.updateError)})+" "
+    :"";
   setCondition("launchHold",{
     sev:g.updateError?"err":"warn",
     title:pending?T("cond.launch.title.update_pending"):T("cond.launch.title.build_changed"),
@@ -4075,7 +4234,7 @@ function renderLaunchHold(){
     wire:bar=>{
       bar.querySelector("#lhSteam")?.addEventListener("click",()=>{
         rpc("shell.openUrl",{target:"steam-downloads"});
-        toast("ᛊ Steam downloads opened · apply the update, then start again");
+        toast("ᛊ "+T("guard.steam.opened.toast"));
       });
       bar.querySelector("#lhUpdate")?.addEventListener("click",()=>updateBackupPrompt(true));
       bar.querySelector("#lhBackup")?.addEventListener("click",()=>startWithAnswer("backup"));
@@ -4085,7 +4244,7 @@ function renderLaunchHold(){
       const profile=LAUNCH_HOLD?.profile;
       LAUNCH_HOLD=null;
       rpc("server.dismissLaunchHold",{profile});
-      toast("ᛊ Left as it is · the server stays down until you start it");
+      toast("ᛊ "+T("cond.launch.dismissed.toast"));
     },
   });
 }
@@ -4095,8 +4254,10 @@ function clearLaunchHold(){LAUNCH_HOLD=null;renderLaunchHold();}
 /* ---- the other conditions, each raised by a real signal ---- */
 function conditionSaveFailed(ms){
   setCondition("saveFailed",{sev:"err",title:T("cond.save.title"),
-    msg:TT("The server could not write the world to disk")+(ms?" ("+ms+"ms)":"")+". "+
-        T("cond.save.body"),
+    /* The write time is a whole second shape rather than a bracket that is
+       sometimes empty, which is the rule every composed sentence here follows. */
+    msg:ms?T("cond.save.msg.timed",{ms,body:T("cond.save.body")})
+          :T("cond.save.msg",{body:T("cond.save.body")}),
     actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbSaga">${esc(T("cond.btn.open_log"))}</button>`,
     again:()=>conditionSaveFailed(ms),
     wire:bar=>bar.querySelector("#cbSaga").addEventListener("click",()=>goPage("saga")),
@@ -4137,11 +4298,11 @@ function renderModsPluginNote(fails){
   if(!names.length){el.style.display="none";el.textContent="";return;}
   /* "A and B", "A, B and C": a bare comma list reads as a fragment, not a sentence. */
   const who=names.length===1?names[0]
-    :names.slice(0,-1).join(", ")+TT(" and ")+names[names.length-1];
+    :T("common.list.and",{names:names.slice(0,-1).join(", "),last:names[names.length-1]});
   el.style.display="";
   el.textContent=names.length===1
-    ?who+TT(" is not installed. BakaLoader could not put it in place when the server started, so the features it powers are off. It tries again at the next start.")
-    :who+TT(" are not installed. BakaLoader could not put them in place when the server started, so the features they power are off. It tries again at the next start.");
+    ?T("mods.plugin_note.one",{names:who})
+    :T("mods.plugin_note.many",{names:who});
 }
 function conditionPluginFailures(list,status){
   const fails=Array.isArray(list)?list.filter(Boolean):[];
@@ -4162,8 +4323,7 @@ function conditionPluginFailures(list,status){
   setCondition("pluginFailure",{sev:"warn",title:T("cond.plugin.title"),
     /* The first failure said in full, then a count for the rest: four plugin sentences
        in one bar reads as noise, and the log carries every one of them. */
-    msg:text+(more>0?" "+TT(more===1?"And one more plugin did not install."
-                                    :"And "+more+" more plugins did not install."):""),
+    msg:text+(more>0?" "+T("cond.plugin.more",{count:more}):""),
     actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbPluginLog">${esc(T("cond.btn.open_log"))}</button>`,
     again:()=>conditionPluginFailures(fails,status),
     wire:bar=>bar.querySelector("#cbPluginLog").addEventListener("click",()=>goPage("saga")),
@@ -4182,9 +4342,7 @@ function conditionModUpdates(n){
   const key=String(n);
   if(MOD_UPDATES_HIDDEN===key){clearCondition("modUpdates");return;}
   setCondition("modUpdates",{sev:"info",title:T("cond.mods.title"),
-    msg:n+TT(n===1?" mod has a newer version on Thunderstore."
-                  :" mods have newer versions on Thunderstore.")+
-        TT(" New versions load the next time the server starts."),
+    msg:T("cond.mods.msg",{count:n}),
     actionsHtml:`<button class="btn btn-ember btn-sm" id="cbMods">${esc(T("cond.mods.review"))}</button>`,
     again:()=>conditionModUpdates(n),
     wire:bar=>bar.querySelector("#cbMods").addEventListener("click",()=>goPage("mods")),
@@ -4240,7 +4398,7 @@ function conditionAppUpdate(v){
     ?T("cond.appupd.manual.running")
     :T("cond.appupd.manual.idle");
   setCondition("appUpdate",{sev:"info",title:T("cond.appupd.title"),
-    msg:(v?TT("BakaLoader ")+v+TT(" is available."):T("cond.appupd.body.generic"))+" "+
+    msg:(v?T("cond.appupd.body.version",{version:v}):T("cond.appupd.body.generic"))+" "+
         (auto?T("cond.appupd.auto")
              :checking?notAuto
                       :T("cond.appupd.checking_off")),
@@ -4260,7 +4418,7 @@ function conditionAppUpdate(v){
 }
 /* Start the server carrying the host's answer to the guard. */
 function startWithAnswer(answer){
-  if(!S.prefs){toast("ᚦ no profile loaded · cannot start");return;}
+  if(!S.prefs){toast("ᚦ "+T("hearth.no_profile.toast"));return;}
   /* Asked before the hold is cleared: a refused start must leave the question standing. */
   if(updateBlocksStart()){
     toast("ᚦ "+updBlockMsg());
@@ -4273,9 +4431,9 @@ function startWithAnswer(answer){
     applyState(r);
     /* The copy has not happened yet: server.worldsBackedUp is what says how many
        worlds actually landed, and it is the only thing allowed to claim it is done. */
-    toast(answer==="backup"
-      ?"ᚠ Copying the worlds aside · the server starts once that is done"
-      :"ᚠ Hearth kindled · server starting");
+    toast("ᚠ "+(answer==="backup"
+      ?T("hearth.start.backup.toast")
+      :T("hearth.starting.toast")));
     logLine("ok","[BakaLoader] start requested · profile "+(S.profileName||"?")+" · "+answer);
   });
 }
@@ -4283,29 +4441,31 @@ function startWithAnswer(answer){
 /* Server-console picker: curated commands the modded server understands
    (BakaLoaderCommander natives + devcommands staples). Clicking a complete
    command sends it; commands that take arguments prefill the input instead. */
+/* The command and its argument shape are what a host types at a server console, so both
+   stay verbatim; only the line that says what it does is wording. descId rather than a
+   sentence, because that is how the catalog gate sees a table that holds ids. */
 const CONSOLE_CMDS=[
-  ["save","","write the world to disk"],
-  ["playerlist","","online vikings + their positions"],
-  ["baka_killall","","slay hostile mobs only · players, pets & allies spared"],
-  ["broadcast center ","<message>","banner message shown to everyone online"],
-  ["dmg ","<player> <amount>","damage a player · negative amount heals"],
-  ["tp ","<player> <x,z,y | player>","teleport a player to coords or another player"],
-  ["kick ","<player | hostId>","remove a viking from the server"],
-  ["baka_spawn ","<prefab> <x,z,y> [amount] [level or quality]",
-   "spawn an object into the world · the fourth number is a star level on a creature and a quality on an item"],
-  ["skiptime ","<seconds>","advance world time (devcommands)"],
-  ["sleep","","skip to morning (devcommands)"],
+  {cmd:"save",args:"",descId:"pal.console.cmd.save"},
+  {cmd:"playerlist",args:"",descId:"pal.console.cmd.playerlist"},
+  {cmd:"baka_killall",args:"",descId:"pal.console.cmd.killall"},
+  {cmd:"broadcast center ",args:"<message>",descId:"pal.console.cmd.broadcast"},
+  {cmd:"dmg ",args:"<player> <amount>",descId:"pal.console.cmd.dmg"},
+  {cmd:"tp ",args:"<player> <x,z,y | player>",descId:"pal.console.cmd.tp"},
+  {cmd:"kick ",args:"<player | hostId>",descId:"pal.console.cmd.kick"},
+  {cmd:"baka_spawn ",args:"<prefab> <x,z,y> [amount] [level or quality]",descId:"pal.console.cmd.spawn"},
+  {cmd:"skiptime ",args:"<seconds>",descId:"pal.console.cmd.skiptime"},
+  {cmd:"sleep",args:"",descId:"pal.console.cmd.sleep"},
 ];
 function consoleModal(){
-  const rows=CONSOLE_CMDS.map(([c,a,d])=>
-    `<div class="crow" data-cmd="${esc(c)}" data-complete="${a?"":"1"}">`+
-    `<span class="cc">${esc(c.trim())}${a?` <span class="ca">${esc(a)}</span>`:""}</span>`+
-    `<span class="cd">${esc(TT(d))}</span></div>`).join("");
+  const rows=CONSOLE_CMDS.map(c=>
+    `<div class="crow" data-cmd="${esc(c.cmd)}" data-complete="${c.args?"":"1"}">`+
+    `<span class="cc">${esc(c.cmd.trim())}${c.args?` <span class="ca">${esc(c.args)}</span>`:""}</span>`+
+    `<span class="cd">${esc(T(c.descId))}</span></div>`).join("");
   const m=modalOpen(
-    `<div class="mtitle">Server console</div>`+
-    `<input type="text" id="mIn" placeholder="type a command, or pick one below…" spellcheck="false" autocomplete="off">`+
+    `<div class="mtitle">${esc(T("pal.console.modal.title"))}</div>`+
+    `<input type="text" id="mIn" placeholder="${esc(T("pal.console.modal.placeholder"))}" spellcheck="false" autocomplete="off">`+
     `<div class="clist">${rows}</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Cancel</button><button class="btn btn-ember btn-sm" id="mOk">Send</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(T("pal.console.modal.send"))}</button></div>`,consoleModal);
   const inp=m.querySelector("#mIn");
   const ok=()=>{const v=inp.value.trim(); if(!v)return; modalClose(); sendConsole(v);};
   m.querySelector("#mOk").addEventListener("click",ok);
@@ -4331,47 +4491,49 @@ function netModal(){
   const port=S.prefs?.Port??2456;
   const addrRow=(label,val,copyable)=>
     `<div class="drow"><span class="dk">${esc(label)}</span><span class="dv mono">${esc(val)}</span>`+
-    (copyable&&val&&!String(val).startsWith("-")?`<span class="copychip" data-copy="${esc(val)}">COPY</span>`:"")+`</div>`;
+    (copyable&&val&&!String(val).startsWith("-")?`<span class="copychip" data-copy="${esc(val)}">${esc(T("common.chip.copy"))}</span>`:"")+`</div>`;
   const n=S.net;
   const asOf=n.at?new Date(n.at):null;
   const stat=(k,v)=>`<div class="dstat"><div class="bigval" style="font-size:20px">${v}</div><div class="subval">${k}</div></div>`;
   const online=S.players.filter(p=>p.status==="Online"||p.status==="Joining");
   const sess=online.length
     /* Same platformName() the roster uses, so one player never has two names. */
-    ?online.map(p=>`<div class="drow"><span class="dk">${esc(p.displayName)}</span><span class="dv mono">${esc(playerPlatform(p)||"?")} · ${esc(p.PlayerId||"")}</span><span class="dv" style="flex:0 0 auto">joined ${fmtT(p.lastStatusChange)}</span></div>`).join("")
+    ?online.map(p=>`<div class="drow"><span class="dk">${esc(p.displayName)}</span><span class="dv mono">${esc(playerPlatform(p)||"?")} · ${esc(p.PlayerId||"")}</span><span class="dv" style="flex:0 0 auto">${esc(T("hearth.vikings.row.joined",{when:fmtT(p.lastStatusChange)}))}</span></div>`).join("")
     :`<div class="subval" style="padding:4px 2px">${T("hearth.net.players.empty")}</div>`;
   const m=modalOpen(
-    `<div class="mtitle"><span class="r" style="margin-right:8px">ᚾ</span>Network</div>`+
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᚾ</span>${esc(T("hearth.net.modal.title"))}</div>`+
     `<div class="mbody">`+
-    `<div class="dsec">Addresses</div>`+
+    `<div class="dsec">${esc(T("hearth.net.modal.sec.addresses"))}</div>`+
     (S.domain?addrRow(T("hearth.net.addr.waystone"),S.domain+":"+port,true):"")+
-    addrRow("Public",(S.extIp||"-")+":"+port,true)+
-    addrRow("LAN",(S.intIp||"-")+":"+port,true)+
-    addrRow("Local","127.0.0.1:"+port,true)+
-    (S.invite?addrRow("Crossplay invite",S.invite,true):"")+
-    addrRow("RCON",S.prefs?.RconEnabled?"127.0.0.1:"+(S.prefs.RconPort??25575):"off",false)+
-    addrRow("Steam query port",String(port+1),false)+
+    addrRow(T("hearth.net.addr.public"),(S.extIp||"-")+":"+port,true)+
+    addrRow(T("hearth.net.addr.lan"),(S.intIp||"-")+":"+port,true)+
+    addrRow(T("hearth.net.addr.local"),"127.0.0.1:"+port,true)+
+    (S.invite?addrRow(T("hearth.net.addr.crossplay"),S.invite,true):"")+
+    addrRow(T("hearth.net.addr.rcon"),S.prefs?.RconEnabled?"127.0.0.1:"+(S.prefs.RconPort??25575):T("hearth.net.addr.rcon.off"),false)+
+    addrRow(T("hearth.net.addr.query"),String(port+1),false)+
     // Clients must match the network version exactly, so it belongs next to the addresses.
     addrRow(T("hearth.net.game_version"),
       S.gameVersion||S.prefs?.LastLaunchedGameVersion||"-",false)+
     addrRow(T("hearth.net.network_version"),
-      S.networkVersion?S.networkVersion+" "+TT("(clients must match)"):"-",false)+
-    `<div class="dsec">Traffic <span class="subval" style="text-transform:none;letter-spacing:0">· reported by the server every ~10 min${asOf?" · as of "+pad(asOf.getHours())+":"+pad(asOf.getMinutes()):""}</span></div>`+
+      S.networkVersion?T("hearth.net.network_version.value",{version:S.networkVersion}):"-",false)+
+    `<div class="dsec">${esc(T("hearth.net.modal.sec.traffic"))} <span class="subval" style="text-transform:none;letter-spacing:0">${esc(asOf
+        ?T("hearth.net.modal.traffic.note.asof",{clock:pad(asOf.getHours())+":"+pad(asOf.getMinutes())})
+        :T("hearth.net.modal.traffic.note"))}</span></div>`+
     `<div class="dstats">`+
-      stat("connections",n.conns??"-")+
-      stat("sent /s",n.sent!=null?fmtBytes(n.sent):"-")+
-      stat("recv /s",n.recv!=null?fmtBytes(n.recv):"-")+
-      stat("world objects (ZDOs)",n.zdos!=null?n.zdos.toLocaleString(LOC()):"-")+
+      stat(esc(T("hearth.net.stat.connections")),n.conns??"-")+
+      stat(esc(T("hearth.net.stat.sent")),n.sent!=null?fmtBytes(n.sent):"-")+
+      stat(esc(T("hearth.net.stat.recv")),n.recv!=null?fmtBytes(n.recv):"-")+
+      stat(esc(T("hearth.net.stat.zdos")),n.zdos!=null?n.zdos.toLocaleString(LOC()):"-")+
     `</div>`+
-    (n.at?"":`<div class="subval" style="margin:2px 0 6px">no report yet. The first one arrives in the first ~10 min after the server starts</div>`)+
-    `<div class="dsec">Sessions</div>`+sess+
-    `<div class="subval" style="margin-top:8px">per-player ping isn't reported by the dedicated server, so players can check theirs in-game with F2</div>`+
+    (n.at?"":`<div class="subval" style="margin:2px 0 6px">${esc(T("hearth.net.modal.no_report"))}</div>`)+
+    `<div class="dsec">${esc(T("hearth.net.modal.sec.sessions"))}</div>`+sess+
+    `<div class="subval" style="margin-top:8px">${esc(T("hearth.net.modal.ping.note"))}</div>`+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.close"))}</button></div>`,netModal);
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelectorAll("[data-copy]").forEach(c=>c.addEventListener("click",()=>{
     navigator.clipboard?.writeText(c.dataset.copy);
-    toast("ᛜ Copied · "+c.dataset.copy);
+    toast("ᚾ "+T("hearth.net.copied.value.toast",{value:c.dataset.copy}));
   }));
 }
 
@@ -4383,8 +4545,8 @@ function netModal(){
 function worldDeleteBlock(ctx){
   if(!ctx||!ctx.world) return T("world.delete.block.no_world");
   if(!ctx.folder||!ctx.sub) return T("world.delete.block.no_folder");
-  if(ctx.running) return "'"+(ctx.owner||"")+"' "+TT("is running this world right now. Stop the server first.");
-  if(ctx.owner) return "'"+ctx.owner+"' "+TT("has this world chosen. Point that realm at another world first, or delete the realm.");
+  if(ctx.running) return T("world.delete.block.running",{owner:ctx.owner||""});
+  if(ctx.owner) return T("world.delete.block.owned",{owner:ctx.owner});
   return "";
 }
 function worldDeleteBackupNote(alsoBackups){
@@ -4398,8 +4560,14 @@ function worldDeleteModal(ctx,after){
   const m=modalOpen(
     `<div class="mtitle">${esc(T("world.delete.title"))}<span class="cnorse">${esc(ctx.world)}</span></div>`+
     `<div class="mbody">`+
-      `<div class="subval">${esc(TT("This deletes"))} <span class="mono">${esc(ctx.world)}</span>${esc(TT(" for good:"))} `+
-        `${esc(ctx.format==="legacy"?TT("its .fwl and .db pair"):TT("its whole world folder"))}${esc(TT(", any world of the same name sitting in the other worlds folder, and the biome cache the game keeps for it."))}</div>`+
+      /* Two whole sentences rather than one with a noun phrase swapped into the middle:
+         which files go is the only difference, and a translator handed the tail alone
+         cannot agree it with the rest of the clause. */
+      `<div class="subval">${monoFill(
+        ctx.format==="legacy"
+          ?T("world.delete.body.legacy",{world:monoSlot("world")})
+          :T("world.delete.body.folder",{world:monoSlot("world")}),
+        {world:ctx.world})}</div>`+
       `<div class="subval mono" style="margin-top:6px;word-break:break-all">${esc(String(ctx.folder||""))}/${esc(String(ctx.sub||""))}</div>`+
       `<label class="togglerow" style="cursor:pointer;margin-top:10px"><span class="tl">${esc(T("world.delete.backups.label"))}</span><div class="toggle" id="dwBk"></div></label>`+
       `<div class="subval" id="dwBkNote" style="margin-top:6px">${esc(worldDeleteBackupNote(false))}</div>`+
@@ -4407,8 +4575,8 @@ function worldDeleteModal(ctx,after){
         `<input type="text" id="dwName" placeholder="${esc(ctx.world)}" spellcheck="false" autocomplete="off"></div>`+
       `<div class="subval" id="dwStat" style="margin-top:6px;color:var(--blood)">${esc(T("world.delete.warning"))}</div>`+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="dwCancel">Cancel</button>`+
-      `<button class="btn btn-blood btn-sm" id="dwOk" disabled>${esc(T("world.delete.button"))}</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="dwCancel">${esc(T("common.button.cancel"))}</button>`+
+      `<button class="btn btn-blood btn-sm" id="dwOk" disabled>${esc(T("world.delete.button"))}</button></div>`,()=>worldDeleteModal(ctx,after));
   const bk=m.querySelector("#dwBk"), name=m.querySelector("#dwName"), ok=m.querySelector("#dwOk");
   bk.addEventListener("click",()=>{
     bk.classList.toggle("on");
@@ -4426,7 +4594,7 @@ function worldDeleteModal(ctx,after){
     const also=bk.classList.contains("on");
     if(!Native.available){
       modalClose();
-      toast("ᛪ "+TT("World deleted")+" · "+TT("preview only"));
+      toast("ᛪ "+T("world.delete.preview.toast"));
       if(after) after();
       return;
     }
@@ -4435,7 +4603,7 @@ function worldDeleteModal(ctx,after){
     busy=false;
     if(r===FAIL){ok.disabled=false;return;}
     modalClose();
-    toast("ᛪ "+TT("World deleted")+" · "+ctx.world);
+    toast("ᛪ "+T("world.delete.done.toast",{world:ctx.world}));
     logLine("warn","[BakaLoader] deleted world '"+ctx.world+"' ("+((r.deleted||[]).length)
       +" item(s) removed · backups "+(also?"deleted too":"kept")+")");
     if(after) after();
@@ -4462,10 +4630,10 @@ async function savesModal(){
     info=WORLD_INFO_MOCK; world=world||info.world;
   }
   const frow=f=>`<div class="drow"><span class="dk mono">${esc(f.name)}</span><span class="dv mono">${fmtBytes(f.sizeBytes)}</span><span class="dv" style="flex:0 0 auto">${fmtT(f.modifiedUtc)}</span></div>`;
-  const files=info?.files?.length?info.files.map(frow).join(""):`<div class="subval" style="padding:4px 2px">world files not found yet, they are created on the first save</div>`;
+  const files=info?.files?.length?info.files.map(frow).join(""):`<div class="subval" style="padding:4px 2px">${esc(T("hearth.saves.modal.files.none"))}</div>`;
   const bk=info?.backups||[];
   const bkRows=bk.length
-    ?bk.slice(-5).reverse().map(frow).join("")+(bk.length>5?`<div class="subval" style="padding:2px 2px">…and ${bk.length-5} older</div>`:"")
+    ?bk.slice(-5).reverse().map(frow).join("")+(bk.length>5?`<div class="subval" style="padding:2px 2px">${esc(T("hearth.saves.modal.older",{count:bk.length-5}))}</div>`:"")
     :emptyState({compact:true,mark:"\u16DD",title:T("barrow.saves.empty.title"),
         reason:T("barrow.saves.empty.reason"),
         action:{name:"openBackups",label:T("barrow.saves.empty.action")}});
@@ -4473,22 +4641,22 @@ async function savesModal(){
   const delCtx={world,folder:info?.folder,sub:info?.sub,owner:info?.owner,running:info?.running,format:info?.format};
   const delBlock=worldDeleteBlock(delCtx);
   const m=modalOpen(
-    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛉ</span>World Saves · ${esc(world||"-")}</div>`+
+    `<div class="mtitle"><span class="r" style="margin-right:8px">ᛉ</span>${esc(T("hearth.saves.modal.title",{world:world||"-"}))}</div>`+
     `<div class="mbody">`+
-    `<div class="dsec">Rhythm</div>`+
+    `<div class="dsec">${esc(T("hearth.saves.modal.sec.rhythm"))}</div>`+
     `<div class="dstats">`+
-      `<div class="dstat"><div class="bigval" style="font-size:20px">${$("#saveCountdown").textContent}</div><div class="subval">until next save</div></div>`+
-      `<div class="dstat"><div class="bigval" style="font-size:20px">${Math.round((S.saveInterval??600)/60)} min</div><div class="subval">save interval</div></div>`+
-      `<div class="dstat"><div class="bigval" style="font-size:20px">${S.lastSaveAt?pad(S.lastSaveAt.getHours())+":"+pad(S.lastSaveAt.getMinutes()):"-"}</div><div class="subval">last save</div></div>`+
-      `<div class="dstat"><div class="bigval" style="font-size:20px">${avg!=null?avg+" ms":"-"}</div><div class="subval">avg write (last ${S.saveDur.length||"-"})</div></div>`+
+      `<div class="dstat"><div class="bigval" style="font-size:20px">${$("#saveCountdown").textContent}</div><div class="subval">${esc(T("hearth.saves.next.caption"))}</div></div>`+
+      `<div class="dstat"><div class="bigval" style="font-size:20px">${esc(T("hearth.saves.modal.interval",{minutes:Math.round((S.saveInterval??600)/60)}))}</div><div class="subval">${esc(T("hearth.saves.modal.interval.caption"))}</div></div>`+
+      `<div class="dstat"><div class="bigval" style="font-size:20px">${S.lastSaveAt?pad(S.lastSaveAt.getHours())+":"+pad(S.lastSaveAt.getMinutes()):"-"}</div><div class="subval">${esc(T("hearth.saves.modal.last.caption"))}</div></div>`+
+      `<div class="dstat"><div class="bigval" style="font-size:20px">${avg!=null?esc(T("hearth.saves.ms",{ms:avg})):"-"}</div><div class="subval">${esc(T("hearth.saves.modal.avg.caption",{count:S.saveDur.length||"-"}))}</div></div>`+
     `</div>`+
-    `<div class="dsec">World files</div>`+files+
-    `<div class="dsec">Backups <span class="subval" style="text-transform:none;letter-spacing:0">· ${bk.length} on disk</span></div>`+bkRows+
+    `<div class="dsec">${esc(T("hearth.saves.modal.sec.files"))}</div>`+files+
+    `<div class="dsec">${esc(T("hearth.saves.modal.sec.backups"))} <span class="subval" style="text-transform:none;letter-spacing:0">· ${esc(T("hearth.saves.modal.backups.count",{count:bk.length}))}</span></div>`+bkRows+
     (info?.folder?`<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(info.folder)}</div>`:"")+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBarrow" title="${esc(T("common.norse.barrow"))}">${esc(T("barrow.title"))}</button><button class="btn btn-ghost btn-sm" id="mOpenWorlds">Open folder</button>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBarrow" title="${esc(T("common.norse.barrow"))}">${esc(T("barrow.title"))}</button><button class="btn btn-ghost btn-sm" id="mOpenWorlds">${esc(T("hearth.saves.modal.open_folder"))}</button>`+
     `<button class="btn btn-blood btn-sm" id="mDelWorld"${delBlock?` disabled title="${esc(delBlock)}"`:` title="${esc(T("world.delete.button.title"))}"`}>${esc(T("world.delete.button"))}</button>`+
-    `<button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+    `<button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.close"))}</button></div>`,savesModal);
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelector("#mBarrow").addEventListener("click",()=>barrowModal());
   m.querySelector("#mDelWorld").addEventListener("click",()=>{
@@ -4498,7 +4666,7 @@ async function savesModal(){
     worldDeleteModal(delCtx,()=>{try{renderWorldSelect();}catch(_){}});
   });
   m.querySelector("#mOpenWorlds").addEventListener("click",()=>{
-    if(!Native.available){toast("ᛃ Preview · folder opens in the app");return;}
+    if(!Native.available){toast("ᛃ "+T("hearth.saves.modal.open.preview.toast"));return;}
     rpc("shell.open",{target:"saveData"});
   });
 }
@@ -4538,28 +4706,49 @@ const BARROW_ORPHAN_MOCK=[
       modifiedUtc:new Date(Date.now()-300*86400000).toISOString()},
    ]},
 ];
-/* "legacy" is the untouched pre-conversion pair Valheim renames aside the first time it
+/* What kind of layer a row is, by the kind the host sends. The property names end in Id
+   because the words are in the catalog and the value here is the id that fetches them:
+   spelled that way, the completeness gate can see all seven without one lookup call site
+   per kind, and the lookup still happens when the row is drawn rather than when this
+   file is evaluated, which is before a catalog has been loaded.
+   "legacy" is the untouched pre-conversion pair Valheim renames aside the first time it
    saves an older world into the 1.0 directory format. */
-const BARROW_KIND={auto:"AUTO SNAPSHOT",old:"LAST GOOD",restore:"PRE-RESTORE",
-  legacy:"PRE-1.0 ORIGINAL",cloud:"CLOUD COPY",preupdate:"PRE-UPDATE SNAPSHOT",other:"BACKUP"};
+const BARROW_KIND={autoId:"barrow.kind.auto",oldId:"barrow.kind.old",restoreId:"barrow.kind.restore",
+  legacyId:"barrow.kind.legacy",cloudId:"barrow.kind.cloud",preupdateId:"barrow.kind.preupdate",
+  otherId:"barrow.kind.other"};
+const barrowKind=kind=>T(BARROW_KIND[kind+"Id"]||BARROW_KIND.otherId);
 /* Extra warning under the unearth prompt, when this layer needs one. */
 function barrowUnearthNote(g,b){
-  const warn=t=>" <span style='color:var(--warn,#e0a35c)'>"+esc(TT(t))+"</span>";
+  const warn=t=>" <span style='color:var(--warn,#e0a35c)'>"+esc(t)+"</span>";
   if(b.isDirectory&&b.committed===false)
-    return warn("This snapshot holds no finished save, so there is nothing to restore from it yet.");
+    return warn(T("barrow.layer.block.uncommitted"));
   if(b.kind==="legacy"&&g.format==="chunked")
-    return warn("This is the world as it was before Valheim 1.0. Restoring it puts the old files back, and the game converts the world again on its next save.");
+    return warn(T("barrow.unearth.note.legacy"));
   if(b.kind==="preupdate")
-    return warn("This is the world as it was just before the server ran a newer build. Restoring it undoes everything played since then.");
+    return warn(T("barrow.unearth.note.preupdate"));
   if(!b.isDirectory&&!b.hasDb)
-    return warn("This layer has no .db, so only the world seed and settings are restored.");
+    return warn(T("barrow.unearth.note.nodb"));
   return "";
+}
+/* The sentence under a layer-delete confirm. What goes with the layer is the whole
+   difference between the three shapes, so each is a sentence of its own rather than one
+   sentence with a clause swapped into the middle: a translator handed " and its paired
+   .db" alone cannot agree it with the rest of the clause. The orphan pane says one more
+   thing after it, joined with a space, which is the documented separator for the pair. */
+function barrowLayerDeleteBody(b,orphan){
+  const sentence=b.isDirectory
+    ?T("barrow.layer.delete.body.folder",{file:monoSlot("file")})
+    :(b.hasDb&&b.damaged!==true
+        ?T("barrow.layer.delete.body.pair",{file:monoSlot("file")})
+        :T("barrow.layer.delete.body.plain",{file:monoSlot("file")}));
+  const note=orphan?" "+T("barrow.layer.delete.orphan.note"):"";
+  return `<div class="subval">${monoFill(sentence+note,{file:b.file})}</div>`;
 }
 /* "1.0" = the world is a directory of chunks; "Legacy" = the older .fwl and .db pair. */
 function worldFormatLabel(g){
   if(!g) return "";
   if(g.formatLabel) return g.formatLabel;
-  return g.format==="chunked"?"1.0":(g.format==="legacy"?"Legacy":"");
+  return g.format==="chunked"?"1.0":(g.format==="legacy"?T("barrow.format.legacy"):"");
 }
 function barrowFolderLabel(g){
   const parts=String(g.folder||"").split(/[\\/]/).filter(Boolean);
@@ -4593,15 +4782,15 @@ async function barrowFetch(){
 }
 async function barrowModal(){
   const all=await barrowFetch();
-  if(!all){toast("ᚦ Could not read the backups");return;}
+  if(!all){toast("ᚦ "+T("barrow.read.failed.toast"));return;}
   const groups=all.groups||[], orphans=all.orphans||[];
   const rows=groups.length?groups.map((g,i)=>
     `<div class="drow browRow" data-i="${i}" style="cursor:pointer">`+
     `<span class="dk mono">${esc(g.world)}</span>`+
-    `<span class="dv">${g.owner?esc(g.owner):"<span style='opacity:.55'>unclaimed</span>"}${g.running?` <span style="color:var(--ok,#7dc98f)">● ${esc(T("barrow.world.raiding"))}</span>`:""}</span>`+
-    `<span class="dv mono">${(g.backups||[]).length} ${TT((g.backups||[]).length===1?"layer":"layers")} · ${fmtBytes((g.sizeBytes||0)+(g.backupBytes||0))}</span>`+
+    `<span class="dv">${g.owner?esc(g.owner):`<span style='opacity:.55'>${esc(T("barrow.world.unclaimed"))}</span>`}${g.running?` <span style="color:var(--ok,#7dc98f)">● ${esc(T("barrow.world.raiding"))}</span>`:""}</span>`+
+    `<span class="dv mono">${esc(T("barrow.layers.count",{count:(g.backups||[]).length}))} · ${fmtBytes((g.sizeBytes||0)+(g.backupBytes||0))}</span>`+
     `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span>`+
-    `</div><div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(g))}${worldFormatLabel(g)?" · "+esc(worldFormatLabel(g)):""}${g.day!=null?" · day "+g.day:""}</div>`
+    `</div><div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(g))}${worldFormatLabel(g)?" · "+esc(worldFormatLabel(g)):""}${g.day!=null?" · "+esc(T("barrow.day",{day:g.day})):""}</div>`
   ).join(""):emptyState({mark:"\u16DD",title:T("barrow.worlds.empty.title"),
     reason:T("barrow.worlds.empty.reason")});
   /* Layers whose world is gone. Nothing else on the machine shows them, and until now
@@ -4612,7 +4801,7 @@ async function barrowModal(){
      orphans.map((o,oi)=>
        `<div class="drow"><span class="dk mono">${esc(o.world)}</span>`+
        `<span class="dv">${esc(T("barrow.orphans.no_world"))}</span>`+
-       `<span class="dv mono">${o.backups.length} ${TT(o.backups.length===1?"layer":"layers")} · `+
+       `<span class="dv mono">${esc(T("barrow.layers.count",{count:o.backups.length}))} · `+
        `${fmtBytes(o.backups.reduce((n,b)=>n+(Number(b.sizeBytes)||0),0))}</span></div>`+
        `<div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(o))}</div>`+
        o.backups.map((b,i)=>barrowLayerRowHtml(o,b,i,
@@ -4628,7 +4817,7 @@ async function barrowModal(){
     `<div class="mbody">`+
     `<div class="subval" style="margin-bottom:8px">${esc(T("barrow.note"))}</div>`+
     rows+orphanRows+`</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.close"))}</button></div>`,barrowModal);
   m.classList.add("mwide");
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelectorAll(".browRow").forEach(r=>r.addEventListener("click",()=>barrowWorldModal(groups[+r.dataset.i])));
@@ -4637,16 +4826,18 @@ async function barrowModal(){
     const b=o.backups[+c.dataset.i];
     const block=barrowLayerBlock(o,b);
     if(block){toast("ᚦ "+block);return;}
-    confirmModal(T("barrow.orphan.restore.title"),
-      `<div class="subval">${esc(TT("There is no live world for this layer any more."))} <span class="mono">${esc(b.file)}</span> ${esc(TT("is written back into the save folder as"))} <span class="mono">${esc(o.world)}</span>${esc(TT(", and it becomes a world a realm can point at again."))}</div>`,
-      T("common.button.restore"),async()=>{
+    confirmModal(()=>T("barrow.orphan.restore.title"),
+      ()=>`<div class="subval">${monoFill(
+        T("barrow.orphan.restore.body",{file:monoSlot("file"),world:monoSlot("world")}),
+        {file:b.file,world:o.world})}</div>`,
+      ()=>T("common.button.restore"),async()=>{
         if(!Native.available){
-          toast("ᛝ "+TT("World brought back")+" · "+TT("preview only"));
+          toast("ᛝ "+T("barrow.world.brought_back.preview.toast"));
           return;
         }
         const r=await rpc("backups.restore",{world:o.world,folder:o.folder,sub:o.sub,file:b.file});
         if(r===FAIL) return;
-        toast("ᛝ "+TT("World brought back")+" · "+o.world);
+        toast("ᛝ "+T("barrow.world.brought_back.toast",{world:o.world}));
         logLine("ok","[BakaLoader] brought '"+o.world+"' back from "+b.file+" · it had no world on disk");
         barrowModal();
       });
@@ -4654,18 +4845,17 @@ async function barrowModal(){
   m.querySelectorAll(".oDrop").forEach(c=>c.addEventListener("click",()=>{
     const o=orphans[+c.dataset.o]; if(!o) return;
     const b=o.backups[+c.dataset.i];
-    confirmModal(T("barrow.layer.delete.title"),
-      `<div class="subval"><span class="mono">${esc(b.file)}</span>${b.isDirectory?" "+esc(TT("and everything inside it")):(b.hasDb&&b.damaged!==true?" "+esc(TT("and its paired .db")):"")} ${esc(TT("will be deleted from disk. This cannot be undone."))} ${esc(TT("Nothing else on this machine holds this world."))}</div>`,
-      "Delete",async()=>{
+    confirmModal(()=>T("barrow.layer.delete.title"),()=>barrowLayerDeleteBody(b,true),
+      ()=>T("common.button.delete"),async()=>{
         if(!Native.available){
           o.backups=o.backups.filter(x=>x!==b);
-          toast("ᛪ "+TT("Layer deleted")+" · "+TT("preview only"));
+          toast("ᛪ "+T("barrow.layer.deleted.preview.toast"));
           setTimeout(()=>barrowModal(),0);
           return;
         }
         const r=await rpc("backups.delete",{world:o.world,folder:o.folder,sub:o.sub,file:b.file});
         if(r===FAIL) return;
-        toast("ᛪ "+TT("Layer deleted"));
+        toast("ᛪ "+T("barrow.layer.deleted.toast"));
         logLine("warn","[BakaLoader] deleted the ownerless backup layer "+b.file+" of '"+o.world+"'");
         barrowModal();
       });
@@ -4694,8 +4884,8 @@ function barrowLayerRowHtml(g,b,i,sel,extra){
   const cls=sel||{restore:"bUnearth",drop:"bDrop"};
   const at=extra||"";
   return `<div class="drow blayer"><span class="dk mono" style="min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(b.file)}</span>`+
-  `<span class="dv" style="flex:0 0 auto">${esc(TT(BARROW_KIND[b.kind]||"BACKUP"))}</span>`+
-  `<span class="dv mono" style="flex:0 0 auto">${fmtBytes(b.sizeBytes)}${b.isDirectory?" · "+esc(TT("folder")):""}${b.day!=null?" · day "+b.day:""}`+
+  `<span class="dv" style="flex:0 0 auto">${esc(barrowKind(b.kind))}</span>`+
+  `<span class="dv mono" style="flex:0 0 auto">${fmtBytes(b.sizeBytes)}${b.isDirectory?" · "+esc(T("barrow.layer.folder")):""}${b.day!=null?" · "+esc(T("barrow.day",{day:b.day})):""}`+
   /* A leftover reads as a leftover in the row, not only in the greyed control's title. */
   `${b.damaged===true?" · <span style=\"color:var(--warn,#e0a35c)\">"+esc(T("barrow.layer.damaged"))+"</span>":""}</span>`+
   `<span class="dv" style="flex:0 0 auto">${agoAt(b.modifiedUtc)}</span>`+
@@ -4711,19 +4901,19 @@ function barrowWorldModal(g){
   const m=modalOpen(
     `<div class="mtitle">${esc(T("barrow.title"))} · ${esc(g.world)}<span class="cnorse">${esc(T("common.norse.barrow"))}</span></div>`+
     `<div class="mbody">`+
-    `<div class="dsec">Live</div>`+
+    `<div class="dsec">${esc(T("barrow.sec.live"))}</div>`+
     `<div class="drow"><span class="dk mono">${esc(g.world)}${g.format==="chunked"?"/":".fwl + .db"}</span>`+
-    `<span class="dv mono">${worldFormatLabel(g)?esc(worldFormatLabel(g))+" · ":""}${fmtBytes(g.sizeBytes)}${g.day!=null?" · day "+g.day:""}</span>`+
+    `<span class="dv mono">${worldFormatLabel(g)?esc(worldFormatLabel(g))+" · ":""}${fmtBytes(g.sizeBytes)}${g.day!=null?" · "+esc(T("barrow.day",{day:g.day})):""}</span>`+
     `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span></div>`+
     (g.running?`<div class="subval" style="padding:2px 2px 6px;color:var(--warn,#e0a35c)">${esc(T("barrow.world.running.note"))}</div>`:"")+
-    `<div class="dsec">${esc(T("barrow.sec.layers"))} <span class="subval" style="text-transform:none;letter-spacing:0">· ${bks.length} on disk · ${fmtBytes(g.backupBytes||0)}</span></div>`+
+    `<div class="dsec">${esc(T("barrow.sec.layers"))} <span class="subval" style="text-transform:none;letter-spacing:0">· ${esc(T("hearth.saves.modal.backups.count",{count:bks.length}))} · ${fmtBytes(g.backupBytes||0)}</span></div>`+
     (bks.length?bks.map(layerRow).join(""):emptyState({compact:true,mark:"\u16DD",title:T("barrow.layers.empty.title"),
       reason:T("barrow.layers.empty.reason")}))+
     `<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(g.folder)}/${esc(g.sub)}</div>`+
     `</div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBack">Back</button>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBack">${esc(T("common.button.back"))}</button>`+
     `<button class="btn btn-blood btn-sm" id="mDelWorld"${delBlock?` disabled title="${esc(delBlock)}"`:` title="${esc(T("world.delete.button.title"))}"`}>${esc(T("world.delete.button"))}</button>`+
-    `<button class="btn btn-ghost btn-sm" id="mCancel">Close</button></div>`);
+    `<button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.close"))}</button></div>`,()=>barrowWorldModal(g));
   m.classList.add("mwide");
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelector("#mBack").addEventListener("click",()=>barrowModal());
@@ -4748,38 +4938,37 @@ function barrowWorldModal(g){
     const b=bks[+c.dataset.i];
     const block=barrowLayerBlock(g,b);
     if(block){toast("ᚦ "+block);return;}
-    confirmModal(T("barrow.layer.restore.confirm.title"),
-      `<div class="subval">${esc(TT("The live realm is copied to a fresh safety layer first, then"))} <span class="mono">${esc(b.file)}</span> ${esc(TT("replaces the live files. Every unearthing is reversible from the Barrow."))}${barrowUnearthNote(g,b)}</div>`,
-      T("common.button.restore"),async()=>{
+    confirmModal(()=>T("barrow.layer.restore.confirm.title"),
+      ()=>`<div class="subval">${monoFill(T("barrow.layer.restore.body",{file:monoSlot("file")}),{file:b.file})}${barrowUnearthNote(g,b)}</div>`,
+      ()=>T("common.button.restore"),async()=>{
         if(!Native.available){
           const ts=new Date();
           const stamp=g.world+"_backup_restore-"+ts.getFullYear()+pad(ts.getMonth()+1)+pad(ts.getDate())+"-"+pad(ts.getHours())+pad(ts.getMinutes())+"00";
           g.backups.unshift({file:g.format==="chunked"?stamp:stamp+".fwl",kind:"restore",isDirectory:g.format==="chunked",committed:true,sizeBytes:g.sizeBytes,day:g.day,hasDb:true,modifiedUtc:ts.toISOString()});
-          toast("ᛝ "+TT("Layer unearthed")+" · preview only");
+          toast("ᛝ "+T("barrow.layer.unearthed.preview.toast"));
           setTimeout(()=>barrowWorldModal(g),0); // confirmModal closes itself right after onOk
           return;
         }
         const r=await rpc("backups.restore",{world:g.world,folder:g.folder,sub:g.sub,file:b.file});
         if(r===FAIL) return;
-        toast("ᛝ "+TT("Layer unearthed")+" · "+TT("safety copy laid down"));
+        toast("ᛝ "+T("barrow.layer.unearthed.toast"));
         logLine("ok","[BakaLoader] restored '"+g.world+"' from "+b.file+(r.snapshot?" · safety copy "+r.snapshot:""));
         reopen();
       });
   }));
   m.querySelectorAll(".bDrop").forEach(c=>c.addEventListener("click",()=>{
     const b=bks[+c.dataset.i];
-    confirmModal(T("barrow.layer.delete.title"),
-      `<div class="subval"><span class="mono">${esc(b.file)}</span>${b.isDirectory?" "+esc(TT("and everything inside it")):(b.hasDb&&b.damaged!==true?" "+esc(TT("and its paired .db")):"")} ${esc(TT("will be deleted from disk. This cannot be undone."))}</div>`,
-      "Delete",async()=>{
+    confirmModal(()=>T("barrow.layer.delete.title"),()=>barrowLayerDeleteBody(b,false),
+      ()=>T("common.button.delete"),async()=>{
         if(!Native.available){
           g.backups=g.backups.filter(x=>x!==b);
-          toast("ᛪ "+TT("Layer deleted")+" · preview only");
+          toast("ᛪ "+T("barrow.layer.deleted.preview.toast"));
           setTimeout(()=>barrowWorldModal(g),0);
           return;
         }
         const r=await rpc("backups.delete",{world:g.world,folder:g.folder,sub:g.sub,file:b.file});
         if(r===FAIL) return;
-        toast("ᛪ "+TT("Layer deleted"));
+        toast("ᛪ "+T("barrow.layer.deleted.toast"));
         logLine("warn","[BakaLoader] deleted backup layer "+b.file+" of '"+g.world+"'");
         reopen();
       });
@@ -4832,8 +5021,15 @@ function skDur(sec){
   return sec+"s";
 }
 const SKALD_ICON={join:"→",leave:"←",death:"†",start:"ᚠ",stop:"ᛪ",crash:"ᚦ"};
-const SKALD_VERB={join:"came ashore",leave:"sailed off",death:"fell in battle",
-  start:"hearth kindled",stop:"hearth doused",crash:"the hearth collapsed"};
+/* One whole sentence per happening, not a verb glued behind a name: the three that
+   name a viking carry a {name} slot, so a language that puts the name last can. The
+   property names end in Id because that is how the catalog gate sees a table that
+   holds ids rather than English. */
+const SKALD_VERB={joinId:"skald.feed.join",leaveId:"skald.feed.leave",deathId:"skald.feed.death",
+  startId:"skald.feed.start",stopId:"skald.feed.stop",crashId:"skald.feed.crash"};
+/* The name inside one of those sentences keeps its own weight. Same trick as bold():
+   the markup rides the slot, so the entry stays a plain sentence. */
+const skaldName=s=>`<span class="skw">${esc(s)}</span>`;
 let SKALD=null;
 async function skaldFetch(){
   if(!Native.available) return SKALD_MOCK;
@@ -4853,21 +5049,24 @@ function renderSkald(){
   const u=d.uptime||{},t=d.totals||{};
   $("#skUptime").textContent=skDur(u.totalSec);
   const now=$("#skNowPill");
-  if(d.running&&(u.currentSec||0)>0){now.style.display="";now.textContent=TT("alight")+" "+skDur(u.currentSec);}
+  if(d.running&&(u.currentSec||0)>0){now.style.display="";now.textContent=T("skald.uptime.now",{span:skDur(u.currentSec)});}
   else now.style.display="none";
   $("#skStarts").textContent=u.starts??0;
   const cp=$("#skCrashPill");
-  if((u.crashes||0)>0){cp.style.display="";cp.textContent=u.crashes+(u.crashes===1?" crash":" crashes");}
+  if((u.crashes||0)>0){cp.style.display="";cp.textContent=T("skald.starts.crashes.pill",{count:u.crashes});}
   else cp.style.display="none";
   $("#skVikings").textContent=(d.players||[]).length;
-  const vsub=TT("unique souls")+" · "+(t.sessions??0)+" "+TT("visits");
+  const vsub=T("skald.vikings.sub",{count:t.sessions??0});
   $("#skVikingsSub").textContent=vsub; $("#skVikingsSub").title=vsub;
   $("#skDeaths").textContent=t.deaths??0;
   $("#skModUps").textContent=t.modUpdates??0;
-  const msub="updates · "+(t.modInstalls??0)+" installs";
+  const msub=T("skald.mods.sub",{count:t.modInstalls??0});
   $("#skModUpsSub").textContent=msub; $("#skModUpsSub").title=msub;
-  $("#skaldSub").textContent=(d.since?TT("chronicled since ")+new Date(d.since).toLocaleDateString(LOC())+" · ":"")
-    +TT("counted on this machine only, nothing leaves it");
+  /* A journal with no first date is a different sentence, not this one with a gap in
+     the middle of it: a lone separator before "counted on this machine" reads as a typo. */
+  $("#skaldSub").textContent=d.since
+    ?T("skald.sub.since",{date:new Date(d.since).toLocaleDateString(LOC())})
+    :T("skald.sub.local");
   /* playtime per viking */
   const rows=(d.players||[]).map(p=>{
     const nm=p.name||p.character||p.key||"";
@@ -4886,9 +5085,11 @@ function renderSkald(){
   /* happenings feed */
   const feed=(d.feed||[]).map(e=>{
     const who=e.name||e.character;
-    const what=(e.kind==="join"||e.kind==="leave"||e.kind==="death")
-      ?`<span class="skw">${esc(who||"?")}</span> ${esc(TT(SKALD_VERB[e.kind]))}`
-      :esc(TT(SKALD_VERB[e.kind]||e.kind));
+    const id=SKALD_VERB[e.kind+"Id"];
+    const what=!id?esc(e.kind)
+      :(e.kind==="join"||e.kind==="leave"||e.kind==="death")
+        ?T(id,{name:skaldName(who||"?")})
+        :esc(T(id));
     return `<div class="skrow"><span class="skk ${e.kind}">${SKALD_ICON[e.kind]||"·"}</span><span>${what}</span><span class="skt">${agoAt(e.t)}</span></div>`;
   }).join("");
   $("#skFeed").innerHTML=feed
@@ -4899,7 +5100,13 @@ function renderSkald(){
   const mods=(d.mods||[]).map(e=>{
     const ver=e.kind==="modin"?(e.to?"v"+e.to:""):((e.from?e.from+" → ":"")+(e.to||""));
     return `<div class="skrow"><span class="skk" style="color:var(--amber)">${e.kind==="modin"?"ᚨ":"ᚱ"}</span>`+
-      `<span><span class="skw">${esc(e.mod||"?")}</span> ${e.kind==="modin"?"installed":"updated"}${ver?" "+esc(ver):""}</span>`+
+      `<span>${ver
+        ?(e.kind==="modin"
+           ?T("skald.mods.installed.version",{mod:skaldName(e.mod||"?"),version:esc(ver)})
+           :T("skald.mods.updated.version",{mod:skaldName(e.mod||"?"),version:esc(ver)}))
+        :(e.kind==="modin"
+           ?T("skald.mods.installed",{mod:skaldName(e.mod||"?")})
+           :T("skald.mods.updated",{mod:skaldName(e.mod||"?")}))}</span>`+
       `<span class="skt">${agoAt(e.t)}</span></div>`;
   }).join("");
   $("#skModFeed").innerHTML=mods
@@ -4911,14 +5118,16 @@ function renderSkald(){
    them at once, which the prompt has to say out loud. The old journal is set aside as a
    single backup copy rather than thrown away outright. */
 $("#skResetBtn")?.addEventListener("click",()=>{
-  confirmModal(T("skald.reset.confirm.title"),
-    `<div class="subval">${esc(T("skald.reset.confirm.body"))}</div>`+
+  confirmModal(()=>T("skald.reset.confirm.title"),
+    ()=>`<div class="subval">${esc(T("skald.reset.confirm.body"))}</div>`+
     `<div class="subval" style="margin-top:6px">${esc(T("skald.reset.confirm.note"))}</div>`,
-    T("common.button.reset"),async()=>{
-      if(!Native.available){toast("ᛪ "+TT("Statistics reset")+" · "+TT("preview only"));return;}
+    ()=>T("common.button.reset"),async()=>{
+      if(!Native.available){toast("ᛪ "+T("skald.reset.preview.toast"));return;}
       const r=await rpc("analytics.reset",{});
       if(r===FAIL) return;
-      toast("ᛪ "+TT("Statistics reset")+(r.kept?" · "+TT("old journal kept as")+" "+r.kept:""));
+      /* Kept and not kept are two sentences: a reset with nothing set aside must not
+         trail a separator with nothing behind it. */
+      toast("ᛪ "+(r.kept?T("skald.reset.kept.toast",{file:r.kept}):T("skald.reset.done.toast")));
       logLine("warn","[BakaLoader] statistics journal reset"+(r.kept?" (kept as "+r.kept+")":""));
       SKALD=null;
       skaldRefresh();
@@ -4977,6 +5186,23 @@ function playerSessionSec(p){
    local analytics journal (the same numbers the Statistics hall shows). */
 function playerJournal(p){return (p&&S.journal&&S.journal[p.key])||null;}
 
+/* The word in the Status pill. The roster carries the status as the token the C# side
+   writes (Game/Statuses.cs), and that token is what the sort order and the pill's colour
+   read; only the word on screen comes out of the catalog. A token this table has never
+   heard of is shown exactly as it arrived rather than as a dotted id, so a status added
+   on the C# side reads as itself until somebody keys it. */
+const VIK_STATUS_WORDS={
+  Online:{wordId:"vikings.status.online"},
+  Offline:{wordId:"vikings.status.offline"},
+  Joining:{wordId:"vikings.status.joining"},
+  Leaving:{wordId:"vikings.status.leaving"},
+};
+function playerStatusWord(status){
+  const key=String(status==null?"":status);
+  return Object.prototype.hasOwnProperty.call(VIK_STATUS_WORDS,key)
+    ?T(VIK_STATUS_WORDS[key].wordId):key;
+}
+
 const VIK_DESC_FIRST=new Set(["session","playtime","deaths"]);
 const VIK_RANK={Online:0,Joining:1,Leaving:1};
 function sortedPlayers(list){
@@ -4999,16 +5225,21 @@ function sortedPlayers(list){
 /* Which columns the window is currently too narrow to carry. Read from the live
    layout rather than re-deriving the breakpoints, so the note can never drift
    from the CSS. */
+/* Two whole sentences rather than one glued around a joined list. The list used to be
+   built with gone.join(" and ") and handed to a sentence that always said "need", so one
+   hidden column read "position need a wider window"; and a language that does not join a
+   pair of nouns with a word in the middle had nowhere to put its own. One key per count
+   keeps the verb right and lets the pair be worded however the language pairs things. */
 function renderVikCols(){
   const note=$("#vikColsNote"); if(!note) return;
   const gone=[];
   const pos=document.querySelector("#page-vikings th.vik-pos");
   const dea=document.querySelector("#page-vikings th.vik-deaths");
-  if(pos&&getComputedStyle(pos).display==="none") gone.push(TT("position"));
-  if(dea&&getComputedStyle(dea).display==="none") gone.push(TT("deaths"));
-  note.textContent=gone.length
-    ?"· "+gone.join(TT(" and "))+TT(" need a wider window · the right-click menu still carries every action")
-    :"";
+  if(pos&&getComputedStyle(pos).display==="none") gone.push(T("vikings.cols.name.position"));
+  if(dea&&getComputedStyle(dea).display==="none") gone.push(T("vikings.cols.name.deaths"));
+  note.textContent=gone.length>1
+    ?T("vikings.cols.hidden.two",{first:gone[0],second:gone[1]})
+    :(gone.length?T("vikings.cols.hidden.one",{column:gone[0]}):"");
 }
 /* Recomputed by the shared resize dispatcher, but only while the roster is on screen:
    reading the header cells' computed display on every tick of a drag paid for a note
@@ -5019,13 +5250,14 @@ function renderPlayers(){
   const base=[...S.players].sort((a,b)=>rank(a.status)-rank(b.status)||cmpExact(a.displayName||"",b.displayName||""));
   const list=sortedPlayers(base);
   const online=base.filter(p=>p.status==="Online").length;
-  $("#vikSub").textContent=online+" of "+base.length+TT(" online · right-click a player for actions");
-  $("#homeVikPill").textContent=online+TT(" online");
+  $("#vikSub").textContent=T("vikings.sub.online",{online:online,total:base.length});
+  $("#homeVikPill").textContent=T("hearth.vikings.pill",{count:online});
   renderSortMarks("#page-vikings th.sortable",S.vikSort,VIK_DESC_FIRST);
   renderVikCols();
   $("#homeVik").innerHTML=base.slice(0,4).map(p=>{
     const on=p.status==="Online";
-    return `<div class="vrow"${on?"":' style="opacity:.4"'}><span class="vdot ${on?"on":"off"}"></span><span class="vname">${esc(p.displayName)}</span><span class="vsub">${on?"joined":"seen"} ${fmtT(p.lastStatusChange)}</span></div>`;
+    const when=fmtT(p.lastStatusChange);
+    return `<div class="vrow"${on?"":' style="opacity:.4"'}><span class="vdot ${on?"on":"off"}"></span><span class="vname">${esc(p.displayName)}</span><span class="vsub">${esc(on?T("hearth.vikings.row.joined",{when}):T("hearth.vikings.row.seen",{when}))}</span></div>`;
   }).join("")||emptyState({compact:true,mark:"ᛗ",title:T("hearth.vikings.empty.title"),
       reason:T("hearth.vikings.empty.reason")});
   esWire($("#homeVik"));
@@ -5040,14 +5272,14 @@ function renderPlayers(){
     const who=p.displayName||p.PlayerId||"player";
     return `<tr data-i="${i}"${p.status==="Offline"?' class="dim"':""}>`+
       `<td title="${esc(who)}"><span class="vdot ${p.status==="Online"?"on":"off"}" style="display:inline-block;margin-right:9px"></span><strong>${esc(who)}</strong></td>`+
-      `<td><span class="pill ${pill}">${esc(p.status)}</span></td>`+
+      `<td><span class="pill ${pill}">${esc(playerStatusWord(p.status))}</span></td>`+
       `<td class="mono">${esc(playerPlatform(p))||"-"}</td>`+
       `<td class="mono num">${sess?esc(skDur(sess)):`<span class="vdash" title="${esc(T("vikings.row.not_online.title"))}">-</span>`}</td>`+
       `<td class="mono num">${j&&j.playSec?esc(skDur(j.playSec)):`<span class="vdash" title="${esc(T("vikings.row.nothing_recorded.title"))}">-</span>`}</td>`+
       `<td class="mono" title="${esc(agoAt(p.lastStatusChange))}">${p.status==="Online"?esc(T("vikings.row.online_now")):esc(agoAt(p.lastStatusChange))}</td>`+
       `<td class="mono num vik-deaths">${j&&j.deaths!=null?j.deaths:`<span class="vdash" title="${esc(T("vikings.row.nothing_recorded.title"))}">-</span>`}</td>`+
       `<td class="mono num vik-pos">${p.position?esc(p.position):`<span class="vdash" title="${esc(noPos)}">-</span>`}</td>`+
-      `<td class="rowmenu-cell"><button class="rowmenu" data-i="${i}" title="${esc(T("vikings.row.actions.title"))}" aria-label="${esc(TT("Actions for ")+who)}">⋯</button></td></tr>`;
+      `<td class="rowmenu-cell"><button class="rowmenu" data-i="${i}" title="${esc(T("vikings.row.actions.title"))}" aria-label="${esc(T("vikings.row.actions.aria",{name:who}))}">⋯</button></td></tr>`;
   }).join("")||`<tr><td colspan="${VIK_COLS}">${emptyState({mark:"ᛗ",title:T("vikings.empty.title"),
       reason:T("vikings.empty.reason"),
       action:{name:"copyJoin",label:T("vikings.empty.action")}})}</td></tr>`;
@@ -5110,7 +5342,7 @@ async function openPlayerMenu(x,y,p){
     rpc("players.isListed",{list:"Banned",id}),
   ]);
   const rcon=!!S.caps.rcon, dev=!!S.caps.devcommands;
-  const noR="requires the RCON mod", noD="requires the devcommands mods";
+  const noR=T("vikings.menu.tip.no_rcon"), noD=T("vikings.menu.tip.no_devcommands");
   /* Half of this menu reaches for the character standing in the world, so it has
      nothing to act on while that player is away: heal, smite, teleport, a spawn at
      their feet and a kick all need them connected. Online is exactly what the
@@ -5124,46 +5356,69 @@ async function openPlayerMenu(x,y,p){
   const noLive=T("vikings.menu.tip.online_only");
   const noConn=T("vikings.menu.tip.connected_only");
   const items=[
-    {r:"ᛏ",label:"Heal",disabled:!rcon||!live,tip:rcon?noLive:noR,fn:()=>doPlayerAct("players.heal",{target:tgt},"Healed "+tgt)},
-    {r:"ᚦ",label:"Smite",danger:true,confirm:true,disabled:!rcon||!live,tip:rcon?noLive:noR,fn:()=>doPlayerAct("players.smite",{target:tgt},"Smote "+tgt)},
-    {r:"ᛒ",label:"Teleport…",disabled:!rcon||!live,tip:rcon?noLive:noR,
-      fn:()=>promptModal("Teleport "+tgt,"destination: player name, or x,z,y coords (spaces fine)",
-        v=>doPlayerAct("players.teleport",{target:tgt,destination:v},"Teleported "+tgt+" → "+v))},
-    {r:"ᛟ",label:"Spawn item at…",disabled:!dev||!live,tip:dev?noLive:noD,fn:()=>openSpawnModal(p)},
+    {r:"ᛏ",label:T("vikings.menu.heal"),disabled:!rcon||!live,tip:rcon?noLive:noR,
+      fn:()=>doPlayerAct("players.heal",{target:tgt},T("vikings.heal.done.toast",{name:tgt}))},
+    {r:"ᚦ",label:T("vikings.menu.smite"),danger:true,confirm:true,disabled:!rcon||!live,tip:rcon?noLive:noR,
+      fn:()=>doPlayerAct("players.smite",{target:tgt},T("vikings.smite.done.toast",{name:tgt}))},
+    {r:"ᛒ",label:T("vikings.menu.teleport"),disabled:!rcon||!live,tip:rcon?noLive:noR,
+      fn:()=>promptModal(()=>T("vikings.teleport.prompt.title",{name:tgt}),()=>T("vikings.teleport.prompt.placeholder"),
+        v=>doPlayerAct("players.teleport",{target:tgt,destination:v},
+          T("vikings.teleport.done.toast",{name:tgt,destination:v})))},
+    {r:"ᛟ",label:T("vikings.menu.spawn"),disabled:!dev||!live,tip:dev?noLive:noD,fn:()=>openSpawnModal(p)},
     "hr",
-    {r:"ᚨ",label:isAdmin===true?"Demote from admin":"Promote to admin",fn:()=>setPlayerList(p,"Admin",isAdmin!==true)},
-    {r:"ᚹ",label:isPerm===true?"Remove from whitelist":"Permit (whitelist)",fn:()=>setPlayerList(p,"Permitted",isPerm!==true)},
+    {r:"ᚨ",label:isAdmin===true?T("vikings.menu.demote_admin"):T("vikings.menu.promote_admin"),
+      fn:()=>setPlayerList(p,"Admin",isAdmin!==true)},
+    {r:"ᚹ",label:isPerm===true?T("vikings.menu.unpermit"):T("vikings.menu.permit"),
+      fn:()=>setPlayerList(p,"Permitted",isPerm!==true)},
     "hr",
-    {r:"ᚲ",label:"Kick",danger:true,confirm:true,disabled:!rcon||!connected,tip:rcon?noConn:noR,fn:()=>doPlayerAct("players.kick",{target:tgt},"Kicked "+tgt)},
-    {r:"ᛉ",label:isBan===true?"Unban":"Ban",danger:isBan!==true,confirm:isBan!==true,fn:()=>doBan(p,isBan===true,tgt)},
+    {r:"ᚲ",label:T("vikings.menu.kick"),danger:true,confirm:true,disabled:!rcon||!connected,tip:rcon?noConn:noR,
+      fn:()=>doPlayerAct("players.kick",{target:tgt},T("vikings.kick.done.toast",{name:tgt}))},
+    {r:"ᛉ",label:isBan===true?T("vikings.menu.unban"):T("vikings.menu.ban"),
+      danger:isBan!==true,confirm:isBan!==true,fn:()=>doBan(p,isBan===true,tgt)},
     "hr",
-    {r:"ᛁ",label:"Copy ID",fn:()=>{navigator.clipboard?.writeText(id||"").catch(()=>{});toast("ᛁ ID copied · "+id);}},
+    {r:"ᛁ",label:T("vikings.menu.copy_id"),
+      fn:()=>{navigator.clipboard?.writeText(id||"").catch(()=>{});toast("ᛁ "+T("vikings.copy_id.done.toast",{id:id}));}},
   ];
   if(p.status==="Offline"){
-    items.push({r:"ᛪ",label:"Remove offline player",danger:true,confirm:true,
-      fn:async()=>{const r=await rpc("players.remove",{key:p.key}); if(r===FAIL)return; toast("ᛪ Removed "+(p.displayName||id)); refreshPlayers();}});
+    items.push({r:"ᛪ",label:T("vikings.menu.remove_offline"),danger:true,confirm:true,
+      fn:async()=>{const r=await rpc("players.remove",{key:p.key}); if(r===FAIL)return;
+        toast("ᛪ "+T("vikings.remove.done.toast",{name:p.displayName||id})); refreshPlayers();}});
   }
-  ctxOpen(x,y,p.displayName||id||"Viking",items);
+  const again=()=>openPlayerMenu(x,y,p);
+  ctxOpen(x,y,p.displayName||id||T("vikings.menu.head.fallback"),items,again);
 }
+/* okMsg arrives already worded: every caller above asks the catalog for the whole
+   sentence, name and all, rather than handing a verb here to be glued to a player. */
 async function doPlayerAct(method,params,okMsg){
   const r=await rpc(method,params);
   if(r===FAIL) return;
-  if(r===false){toast("ᚦ command not delivered · server running & RCON bound?");return;}
+  if(r===false){toast("ᚦ "+T("vikings.act.undelivered.toast"));return;}
   toast("ᛒ "+okMsg);
   logLine("cmd","> "+method.replace("players.","")+" "+(params.target||params.playerName||""));
 }
+/* The two lists this menu writes, and the three whole sentences each of them says. The
+   toast used to be built as "Added to "+list.toLowerCase()+" list · "+who, which hands a
+   translator a list name to bend into the middle of a sentence it never sees, and puts
+   the English word "admin" inside every language. One key per list per outcome instead. */
+const VIK_LISTS={
+  Admin:{addedId:"vikings.list.admin.added.toast",removedId:"vikings.list.admin.removed.toast",
+         failedId:"vikings.list.admin.failed.toast"},
+  Permitted:{addedId:"vikings.list.permitted.added.toast",removedId:"vikings.list.permitted.removed.toast",
+             failedId:"vikings.list.permitted.failed.toast"},
+};
 async function setPlayerList(p,list,on){
   const who=p.displayName||p.PlayerId;
+  const words=VIK_LISTS[list];
   const r=await rpc("players.setList",{list,id:p.PlayerId,on});
   /* a write that failed must never read as done - the list on disk is unchanged */
-  if(r===FAIL){toast("ᚦ "+list.toLowerCase()+" list not written · "+who+" is unchanged");return;}
-  toast("ᚨ "+(on?"Added to":"Removed from")+" "+list.toLowerCase()+" list · "+who);
+  if(r===FAIL){toast("ᚦ "+T(words.failedId,{name:who}));return;}
+  toast("ᚨ "+T(on?words.addedId:words.removedId,{name:who}));
   logLine("info","[BakaLoader] "+list.toLowerCase()+" list "+(on?"+ ":"- ")+who);
 }
 async function doBan(p,unban,tgt){
   const r=await rpc("players.setList",{list:"Banned",id:p.PlayerId,on:!unban});
-  if(r===FAIL){toast("ᚦ banned list not written · "+tgt+" is unchanged");return;}
-  toast(unban?("ᛉ Unbanned "+tgt):("ᛉ Banned "+tgt));
+  if(r===FAIL){toast("ᚦ "+T("vikings.list.banned.failed.toast",{name:tgt}));return;}
+  toast(unban?("ᛉ "+T("vikings.unban.done.toast",{name:tgt})):("ᛉ "+T("vikings.ban.done.toast",{name:tgt})));
   logLine(unban?"info":"warn","[BakaLoader] "+(unban?"unbanned ":"banned ")+(p.displayName||p.PlayerId));
   if(!unban&&S.caps.rcon&&p.status==="Online"){
     const k=await rpc("players.kick",{target:tgt});
@@ -5174,12 +5429,12 @@ async function doBan(p,unban,tgt){
 function openSpawnModal(p){
   const tgt=playerTarget(p);
   const m=modalOpen(
-    `<div class="mtitle">Spawn item at ${esc(tgt)}</div>`+
-    `<input type="text" id="spQ" placeholder="search items &amp; creatures…" spellcheck="false" autocomplete="off">`+
+    `<div class="mtitle">${esc(T("vikings.spawn.title",{name:tgt}))}</div>`+
+    `<input type="text" id="spQ" placeholder="${esc(T("vikings.spawn.search.placeholder"))}" spellcheck="false" autocomplete="off">`+
     `<div class="pick-list" id="spList"></div>`+
-    `<div class="mrow"><label>Amount</label><input type="number" id="spAmt" value="1" min="1" max="9999">`+
-    `<label id="spLqLbl">Level</label><input type="number" id="spLq" value="0" min="0" max="5" disabled></div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">Cancel</button><button class="btn btn-ember btn-sm" id="mOk" disabled>Spawn</button></div>`);
+    `<div class="mrow"><label>${esc(T("vikings.spawn.amount.label"))}</label><input type="number" id="spAmt" value="1" min="1" max="9999">`+
+    `<label id="spLqLbl">${esc(T("vikings.spawn.level.label"))}</label><input type="number" id="spLq" value="0" min="0" max="5" disabled></div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk" disabled>${esc(T("vikings.spawn.ok"))}</button></div>`,()=>openSpawnModal(p));
   const list=m.querySelector("#spList"), q=m.querySelector("#spQ"),
         amt=m.querySelector("#spAmt"), lq=m.querySelector("#spLq"),
         lqLbl=m.querySelector("#spLqLbl"), okB=m.querySelector("#mOk");
@@ -5191,7 +5446,7 @@ function openSpawnModal(p){
     const res=r.results||[];
     list.innerHTML=res.map((it,i)=>
       `<div class="pick-item" data-i="${i}"><span>${esc(it.Label)}</span><span class="pk">${esc(it.category||"")}</span><span class="pm">${esc(it.PrefabName)}</span></div>`
-    ).join("")||`<div class="pick-item" style="opacity:.5;cursor:default">no matches</div>`;
+    ).join("")||`<div class="pick-item" style="opacity:.5;cursor:default">${esc(T("vikings.spawn.no_match"))}</div>`;
     list._res=res;
     sel=null; okB.disabled=true;
   }
@@ -5204,7 +5459,7 @@ function openSpawnModal(p){
     okB.disabled=false;
     const hasLq=!!(sel.HasLevel||sel.HasQuality);
     lq.disabled=!hasLq;
-    lqLbl.textContent=sel.HasLevel?"Level":"Quality";
+    lqLbl.textContent=sel.HasLevel?T("vikings.spawn.level.label"):T("vikings.spawn.quality.label");
     lq.max=sel.HasLevel?"2":"5";
     if(!hasLq) lq.value=0;
     else if(+lq.value>+lq.max) lq.value=lq.max;
@@ -5222,18 +5477,24 @@ function openSpawnModal(p){
        answer and still means the same thing. */
     const said=(r&&typeof r==="object"&&r.message)?String(r.message):"";
     if(r===false||(r&&typeof r==="object"&&r.ok===false)){
-      toast("ᚦ "+TT("spawn failed")+" · "+(said||TT("server running & player online?")));
-      logLine("err","[BakaLoader] spawn failed · "+(said||TT("no reply from the server")));
+      toast("ᚦ "+(said?T("vikings.spawn.failed.toast",{detail:said}):T("vikings.spawn.failed.nodetail.toast")));
+      logLine("err","[BakaLoader] spawn failed · "+(said||"no reply from the server"));
       return;
     }
-    /* The same box means star level on a creature and quality on an item, so say which. */
-    const grade=levelOrQuality>0
-      ?" · "+(item.HasLevel?TT("level"):TT("quality"))+" "+levelOrQuality
-      :"";
+    /* The same box means star level on a creature and quality on an item, so the sentence
+       says which one rather than gluing a bare word to a number. A spawn with no grade at
+       all is its own key, so nothing has to word an empty tail. */
+    const done=levelOrQuality>0
+      ?(item.HasLevel
+        ?T("vikings.spawn.done.level.toast",{count:amount,item:item.Label,name:tgt,grade:levelOrQuality})
+        :T("vikings.spawn.done.quality.toast",{count:amount,item:item.Label,name:tgt,grade:levelOrQuality}))
+      :T("vikings.spawn.done.toast",{count:amount,item:item.Label,name:tgt});
     /* The server's own line already names the stack count and the quality it settled on,
        which is more than the picker knows, so it wins when there is one. */
-    toast("ᛟ "+(said||("Spawned "+amount+"× "+item.Label+" at "+tgt+grade)));
-    logLine("cmd","> spawn "+item.PrefabName+" ×"+amount+grade+" @ "+tgt+(said?" · "+said:""));
+    toast("ᛟ "+(said||done));
+    /* The saga stays English, so it keeps its own plain tail rather than the worded one. */
+    const gradeLog=levelOrQuality>0?" · "+(item.HasLevel?"level":"quality")+" "+levelOrQuality:"";
+    logLine("cmd","> spawn "+item.PrefabName+" ×"+amount+gradeLog+" @ "+tgt+(said?" · "+said:""));
   });
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   setTimeout(()=>q.focus(),30);
@@ -5261,18 +5522,38 @@ function syncAdvGates(){
   gate("fRconPw",swOn("tRcon"));
   updAdvLabels();
 }
+/* The three labels in Advanced that carry a number. Each is rebuilt from the field
+   beside it on every keystroke, so it is a run-time sentence with a named slot rather
+   than a static node the walker could fill: index.html leaves them id-less on purpose.
+   Two of them count something, so their entries carry the plural categories and the
+   category is chosen from the value rather than spelled out here. */
 function updAdvLabels(){
-  $("#tEmptyLbl").textContent="Restart when empty for "+($("#fEmptyDelay").value.trim()||"5")+" min";
-  $("#tSchedLbl").textContent="Every "+($("#fSchedHours").value.trim()||"6")+" h with in-game countdown";
-  $("#tRconLbl").textContent=swOn("tRcon")?("Bound on port "+($("#fRconPort").value.trim()||"25575")):"Not bound";
+  const minutes=$("#fEmptyDelay").value.trim()||"5";
+  const hours=$("#fSchedHours").value.trim()||"6";
+  const port=$("#fRconPort").value.trim()||"25575";
+  $("#tEmptyLbl").textContent=T("world.empty.label",{minutes});
+  $("#tSchedLbl").textContent=T("world.sched.label",{hours});
+  $("#tRconLbl").textContent=swOn("tRcon")?T("world.rcon.label",{port}):T("world.rcon.off.label");
 }
 ["fEmptyDelay","fSchedHours","fRconPort"].forEach(id=>$("#"+id).addEventListener("input",updAdvLabels));
-/* show/hide password chips */
+/* show/hide password chips. The word on the chip says which way the next click goes, so
+   it changes under the host's finger and cannot be a static node the walker fills once:
+   the id would be written back over HIDE the next time anything walked the page. The
+   chip carries its English in index.html for the frame before the catalog lands, and
+   this painter owns it from then on - repaintBootCopy runs it when the words arrive. */
+const EYE_CHIPS=[["eyePw","fPassword"],["eyeRcon","fRconPw"]];
+function renderEyeChips(){
+  for(const [chipId,inputId] of EYE_CHIPS){
+    const chip=$("#"+chipId), box=$("#"+inputId);
+    if(!chip||!box) continue;
+    chip.textContent=box.type==="password"?T("common.chip.show"):T("common.chip.hide");
+  }
+}
 function wireEye(chipId,inputId){
   $("#"+chipId).addEventListener("click",()=>{
-    const i=$("#"+inputId), show=i.type==="password";
-    i.type=show?"text":"password";
-    $("#"+chipId).textContent=show?"HIDE":"SHOW";
+    const i=$("#"+inputId);
+    i.type=i.type==="password"?"text":"password";
+    renderEyeChips();
   });
 }
 wireEye("eyePw","fPassword"); wireEye("eyeRcon","fRconPw");
@@ -5280,7 +5561,7 @@ wireEye("eyePw","fPassword"); wireEye("eyeRcon","fRconPw");
    than waiting for Save Config - which writes the realm's own settings and would carry
    this one nowhere. initUpkeep reads it back out of the same document. */
 $("#tPwCheck")?.addEventListener("click",async()=>{
-  if(!Native.available){toast("ᛃ "+TT("Password rule")+" · "+TT("preview only"));return;}
+  if(!Native.available){toast("ᛃ "+T("world.pwcheck.preview.toast"));return;}
   const r=await rpc("userprefs.save",{prefs:{EnablePasswordValidation:swOn("tPwCheck")}});
   if(r===FAIL) return;
   toast(swOn("tPwCheck")
@@ -5290,11 +5571,11 @@ $("#tPwCheck")?.addEventListener("click",async()=>{
 /* directory Open buttons (shell.open - native only) */
 $("#btnOpenSrv").addEventListener("click",()=>{
   if(Native.available) rpc("shell.open",{target:"serverDir"});
-  else toast("ᛃ Server folder · preview only");
+  else toast("ᛃ "+T("world.server_exe.open.preview.toast"));
 });
 $("#btnOpenSave").addEventListener("click",()=>{
   if(Native.available) rpc("shell.open",{target:"saveData"});
-  else toast("ᛃ Save data folder · preview only");
+  else toast("ᛃ "+T("world.save_dir.open.preview.toast"));
 });
 syncAdvGates(); // initial gate state from the static markup (both modes)
 function renderWorldForm(){
@@ -5338,7 +5619,7 @@ async function renderWorldSelect(){
    itself sets for that option, kept as fine print so a host can match a BakaLoader
    world against the game's own world-modifier menu. */
 const WORLDGEN_HELP={
-  combat:{sel:"fModCombat",label:"Combat",labelId:"world.wg.combat.label",
+  combat:{sel:"fModCombat",label:"Combat",labelId:"world.wg.combat.label",ariaId:"world.mod.combat.help.aria",
     introId:"world.wg.combat.intro",
     opts:[
       {v:"veryeasy",labelId:"world.wg.combat.veryeasy.label",
@@ -5357,7 +5638,7 @@ const WORLDGEN_HELP={
         explainId:"world.wg.combat.veryhard.explain",
         effects:"playerdamage 70, enemydamage 200, enemyspeedsize 120, enemyleveluprate 140"},
     ]},
-  deathpenalty:{sel:"fModDeath",label:"Death penalty",labelId:"world.wg.deathpenalty.label",
+  deathpenalty:{sel:"fModDeath",label:"Death penalty",labelId:"world.wg.deathpenalty.label",ariaId:"world.mod.death.help.aria",
     introId:"world.wg.deathpenalty.intro",
     opts:[
       {v:"casual",labelId:"world.wg.deathpenalty.casual.label",
@@ -5379,7 +5660,7 @@ const WORLDGEN_HELP={
         explainId:"world.wg.deathpenalty.hardcore.explain",
         effects:"deathdeleteitems, deathskillsreset"},
     ]},
-  resources:{sel:"fModResources",label:"Resources",labelId:"world.wg.resources.label",
+  resources:{sel:"fModResources",label:"Resources",labelId:"world.wg.resources.label",ariaId:"world.mod.resources.help.aria",
     introId:"world.wg.resources.intro",
     opts:[
       {v:"muchless",labelId:"world.wg.resources.muchless.label",
@@ -5401,7 +5682,7 @@ const WORLDGEN_HELP={
         explainId:"world.wg.resources.most.explain",
         effects:"resourcerate 300"},
     ]},
-  raids:{sel:"fModRaids",label:"Raids",labelId:"world.wg.raids.label",
+  raids:{sel:"fModRaids",label:"Raids",labelId:"world.wg.raids.label",ariaId:"world.mod.raids.help.aria",
     introId:"world.wg.raids.intro",
     opts:[
       {v:"none",labelId:"world.wg.raids.none.label",
@@ -5423,7 +5704,7 @@ const WORLDGEN_HELP={
         explainId:"world.wg.raids.muchmore.explain",
         effects:"eventrate 30"},
     ]},
-  portals:{sel:"fModPortals",label:"Portals",labelId:"world.wg.portals.label",
+  portals:{sel:"fModPortals",label:"Portals",labelId:"world.wg.portals.label",ariaId:"world.mod.portals.help.aria",
     introId:"world.wg.portals.intro",
     opts:[
       {v:"casual",labelId:"world.wg.portals.casual.label",
@@ -5443,10 +5724,12 @@ const WORLDGEN_HELP={
 /* The shape the dial code already speaks (id, label, [value, label id] tuples), derived
    from the one table above so there is no second list to keep in step by hand. The
    option half carries the catalog id rather than the English now: the only reader is
-   wgOptions, which paints it, and the dial half keeps its English because two composed
-   sentences still read that (the forge dialog help button, the first-run summary). */
+   wgOptions, which paints it. ariaId is the sentence the dial's ? button speaks, and it
+   is the SAME entry the settings page names in index.html, so the forge dialog and the
+   hall cannot word that one two ways. The dial half still keeps its English because one
+   composed sentence reads it: the first-run wizard's summary line. */
 const WORLDGEN=Object.fromEntries(Object.entries(WORLDGEN_HELP).map(([key,h])=>
-  [key,{sel:h.sel,label:h.label,labelId:h.labelId,opts:h.opts.map(o=>[o.v,o.labelId])}]));
+  [key,{sel:h.sel,label:h.label,labelId:h.labelId,ariaId:h.ariaId,opts:h.opts.map(o=>[o.v,o.labelId])}]));
 /* What BakaLoader promises about these dials is world.wg.own_note in the
    catalog, written once and shown on both surfaces. */
 const wgOptions=(key,val)=>WORLDGEN[key].opts.map(([v,id])=>
@@ -5465,7 +5748,7 @@ function worldModPanelHtml(key,val){
     h.opts.map(o=>`<div class="wgt-row${o.v===cur?" sel":""}">`+
       `<div class="wgt-lbl">${esc(T(o.labelId))}</div>`+
       `<div class="wgt-ex">${esc(T(o.explainId))}</div>`+
-      `<div class="wgt-eff">${esc(TT(o.effects))}</div></div>`).join("")+
+      `<div class="wgt-eff">${esc(o.effects)}</div></div>`).join("")+
     `<div class="wgt-foot">${esc(T("world.wg.own_note"))}</div>`;
 }
 /* One shared hover panel serves every dial on both surfaces. It is fixed to the window
@@ -5692,7 +5975,7 @@ $("#copySeed").addEventListener("click",()=>{
   const v=$("#fSeed")?.dataset.copy||"";
   if(!v){toast(T("world.seed.none.toast"));return;}
   navigator.clipboard?.writeText(v).catch(()=>{});
-  toast(TT("ᛟ seed copied · ")+v);
+  toast("ᛟ "+T("world.seed.copied.toast",{seed:v}));
 });
 $("#fWorld").addEventListener("change",()=>{renderWorldMods();renderWorldSeed();});
 /* A dial the host turns updates the intended state for the selected world at once, so the
@@ -5706,7 +5989,19 @@ for(const [key,def] of Object.entries(WORLDGEN)){
      own: fModCombat -> fModCombatNote for the line, iModCombat for the marker. */
   wireWorldDialHelp(key,$("#"+def.sel),$("#"+def.sel+"Note"),$("#i"+def.sel.slice(1)));
 }
-{const own=$("#wgOwnNote"); if(own) own.textContent=T("world.wg.own_note");}
+/* The dials' words, painted again once the catalog lands. Every one of them comes out of
+   the catalog - the five dropdowns' option labels, the live sentence under each dial, and
+   the note that sits under all five - and all of them are painted while app.js is still
+   being evaluated, so without this the Settings hall stood there reading
+   "world.wg.combat.normal.explain" until the host happened to turn a dial. Repainting
+   from the intended state rather than calling renderWorldMods() again keeps it a wording
+   pass: no second lookup for a world the page already holds, and an unsaved dial the host
+   set before the words arrived survives it. */
+function repaintWorldDialCopy(){
+  applyWorldModDials(S.worldMods?S.worldMods.mods:{});
+  const own=$("#wgOwnNote"); if(own) own.textContent=T("world.wg.own_note");
+}
+repaintWorldDialCopy();
 renderWorldMods(); // seed the dials with Normal defaults (both modes)
 renderWorldSeed();
 /* Max players: server-wide, not per-world. 10 = vanilla cap (no plugin); above 10 the
@@ -5735,7 +6030,7 @@ function renderCfgRunningNote(){
 }
 renderCfgRunningNote();
 $("#saveCfgBtn").addEventListener("click",async()=>{
-  if(!Native.available){toast("ᛉ Config saved · runes etched");return;}
+  if(!Native.available){toast("ᛉ "+T("world.saved.preview.toast"));return;}
   const name=S.profileName||S.prefs?.ProfileName||"Default";
   // fetch fresh, mutate only form-controlled fields, send the WHOLE object back
   const cur=await rpc("profiles.get",{name});
@@ -5803,21 +6098,32 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   /* A save while the world is up is real and on disk, and it is still not what the players are
      playing. Say that instead of a plain confirmation the host would read as "in force now". */
   if(cfgServerIsUp()) toast("ᛉ "+T("world.saved.running.toast"));
-  else toast("ᛉ Config saved · profile "+r.ProfileName);
+  else toast("ᛉ "+T("world.saved.toast",{profile:r.ProfileName}));
   logLine("ok","[BakaLoader] profile '"+r.ProfileName+"' saved");
 });
 function renderAllFromPrefs(){
   if(!S.prefs) return;
-  $("#hearthSub").textContent=(S.prefs.WorldName||"-")+" · dedicated server ops";
+  $("#hearthSub").textContent=T("hearth.head.sub",{world:S.prefs.WorldName||"-"});
   if(S.prefs.Name) $("#tbSrv").textContent=S.prefs.Name.toUpperCase();
   $("#sbWorld").textContent=S.prefs.WorldName||"-";
-  $("#sbRcon").textContent=S.prefs.RconEnabled?String(S.prefs.RconPort??25575):"off";
+  $("#sbRcon").textContent=S.prefs.RconEnabled?String(S.prefs.RconPort??25575):T("status.rcon.off");
   $("#sbRconSeg").classList.toggle("dim",!S.prefs.RconEnabled);
   renderWorldForm();
   renderNet();
   renderHearthNative();
   try{renderCfgRunningNote();}catch(_){}
   try{renderEditBar();}catch(_){}
+}
+/* The status bar's RCON word in the browser preview, which has no prefs behind it.
+   renderAllFromPrefs owns that element in the app and never runs here, so the word
+   would otherwise be the one left in the page: English whatever the language is, and
+   the one segment of the bar a switch never reaches. The label beside it is markup
+   and the walker fills that, so the two halves have one owner each.
+   Called from repaintBootCopy and from nowhere else, so the English in the page is
+   what the first frame reads and the catalog takes over the moment it lands. */
+function renderStatusRconPreview(){
+  if(Native.available) return;
+  const seg=$("#sbRcon"); if(seg) seg.textContent=T("status.rcon.bound");
 }
 
 /* ---------- EDIT BAR (World hall) ----------
@@ -5847,7 +6153,7 @@ async function renderEditBar(){
   // The bar belongs to the World hall - that's where the identity fields live.
   if(currentPage!=="world"||!S.prefs){bar.style.display="none";return;}
   const v=editBarValues();
-  const rconTxt=v.rconEnabled?("RCON "+(v.rconPort||"?")):"RCON off";
+  const rconTxt=v.rconEnabled?T("world.editbar.rcon",{port:v.rconPort||"?"}):T("world.editbar.rcon.off");
   bar.innerHTML=
     `<span class="ebedit">${esc(T("world.editbar.editing"))}</span>`+
     `<span class="ebname">${esc(v.name||v.profile||T("world.editbar.unnamed"))}</span>`+
@@ -5862,7 +6168,7 @@ async function renderEditBar(){
   if(seq!==_editBarSeq) return; // a newer keystroke already superseded this check
   const w=$("#ebWarn"); if(!w) return;
   if(Array.isArray(warnings)&&warnings.length){
-    w.textContent="⚠ "+warnings.length+" "+TT(warnings.length===1?"conflict":"conflicts");
+    w.textContent="⚠ "+T("world.editbar.conflicts",{count:warnings.length});
     w.title=warnings.map(x=>x.message).join("  •  ");
     w.style.display="";
   }else{
@@ -5904,7 +6210,7 @@ async function wizValidate(kind,path){
 
 async function wizFinish(skip){
   modalClose();
-  if(!Native.available){toast(skip?"ᛉ preview · setup skipped":"ᛉ preview · setup complete");return;}
+  if(!Native.available){toast("ᛉ "+(skip?T("setup.wiz.skipped.preview.toast"):T("setup.wiz.done.preview.toast")));return;}
   const r=await rpc("setup.complete",skip?{}:{serverExePath:WIZ.exe.trim(),saveDataFolderPath:WIZ.save.trim()});
   if(r===FAIL) return;
   // world rules picked in the wizard apply to the active profile's world
@@ -5919,79 +6225,83 @@ async function wizFinish(skip){
       renderWorldSeed();
     }
   }
-  toast(skip?"ᛉ Setup skipped · set paths any time in the WORLD hall"
-            :"ᛉ Setup complete · may the voyage be bold");
+  toast("ᛉ "+(skip?T("setup.wiz.skipped.toast"):T("setup.wiz.done.toast")));
   logLine("ok","[BakaLoader] first-time setup "+(skip?"skipped":"completed"));
 }
 
 function wizardRender(){
-  const names=["WELCOME","SERVER","SAVES","WORLD","DONE"];
+  const names=[T("setup.wiz.step.welcome"),T("setup.wiz.step.server"),T("setup.wiz.step.saves"),
+               T("setup.wiz.step.world"),T("setup.wiz.step.done")];
   const steps=`<div class="wiz-steps">`+names.map((n,i)=>
-    `<span class="ws${i===WIZ.step?" on":i<WIZ.step?" done":""}"><b>${i+1}</b>${n}</span>`).join("")+`</div>`;
+    `<span class="ws${i===WIZ.step?" on":i<WIZ.step?" done":""}"><b>${i+1}</b>${esc(n)}</span>`).join("")+`</div>`;
   const dflt=WIZ.status.defaultSavePath||"%USERPROFILE%\\AppData\\LocalLow\\IronGate\\Valheim";
   let body="",nav="";
 
   if(WIZ.step===0){
     body=
-      `<div class="mtitle">Welcome to BakaLoader</div>`+
-      `<div class="wiz-help">Before the first voyage, BakaLoader needs to know where two things live on this machine. This takes under a minute.</div>`+
+      `<div class="mtitle">${esc(T("setup.wiz.intro.title"))}</div>`+
+      `<div class="wiz-help">${esc(T("setup.wiz.intro.body"))}</div>`+
       `<div class="wiz-paths">`+
-      `<div><span class="r">ᛞ</span><strong>Server executable</strong> · <code>valheim_server.exe</code>, installed by the free <em>Valheim Dedicated Server</em> tool in your Steam library.</div>`+
-      `<div><span class="r">ᛃ</span><strong>Save data folder</strong> · where worlds are kept. Most people keep Valheim's default.</div>`+
+      `<div><span class="r">ᛞ</span><strong>${esc(T("setup.wiz.intro.exe"))}</strong> · ${T("setup.wiz.intro.exe.body")}</div>`+
+      `<div><span class="r">ᛃ</span><strong>${esc(T("setup.wiz.intro.save"))}</strong> · ${esc(T("setup.wiz.intro.save.body"))}</div>`+
       `</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="wSkip">Skip for now</button><span class="grow"></span>`+
-        `<button class="btn btn-ember btn-sm" id="wNext">Begin</button>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wSkip">${esc(T("common.button.skip"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wNext">${esc(T("common.button.begin"))}</button>`;
   }else if(WIZ.step===1){
     body=
-      `<div class="mtitle">Find the server executable</div>`+
-      `<div class="wiz-help">Usually inside a Steam library at<br><code>...\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe</code><br>Paste the full path below, or let BakaLoader search your drives.</div>`+
-      `<div class="field"><label>Path to valheim_server.exe</label><input type="text" id="wizExe" spellcheck="false" autocomplete="off" placeholder="D:\\SteamLibrary\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe"></div>`+
-      `<div class="wiz-stat dim" id="wizExeStat">paste a path, or press Detect</div>`+
+      `<div class="mtitle">${esc(T("setup.wiz.exe.title"))}</div>`+
+      `<div class="wiz-help">${T("setup.wiz.exe.body")}</div>`+
+      `<div class="field"><label>${esc(T("setup.wiz.exe.label"))}</label><input type="text" id="wizExe" spellcheck="false" autocomplete="off" placeholder="D:\\SteamLibrary\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe"></div>`+
+      `<div class="wiz-stat dim" id="wizExeStat">${esc(T("setup.wiz.exe.stat.idle"))}</div>`+
       `<div id="wizFound"></div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button>`+
-        `<button class="btn btn-ghost btn-sm" id="wDetect">ᚱ Detect</button><span class="grow"></span>`+
-        `<button class="btn btn-ghost btn-sm" id="wSkip">Skip for now</button>`+
-        `<button class="btn btn-ember btn-sm" id="wNext" disabled>Next</button>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wBack">${esc(T("common.button.back"))}</button>`+
+        `<button class="btn btn-ghost btn-sm" id="wDetect">ᚱ ${esc(T("setup.wiz.detect.label"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ghost btn-sm" id="wSkip">${esc(T("common.button.skip"))}</button>`+
+        `<button class="btn btn-ember btn-sm" id="wNext" disabled>${esc(T("common.button.next"))}</button>`;
   }else if(WIZ.step===2){
     body=
-      `<div class="mtitle">Save data folder</div>`+
-      `<div class="wiz-help">Where Valheim keeps worlds and player data. <strong>Leave blank to use Valheim's default</strong> (recommended):<br><code>${esc(dflt)}</code></div>`+
-      `<div class="field"><label>Save data folder</label><input type="text" id="wizSave" spellcheck="false" autocomplete="off" placeholder="blank = Valheim default"></div>`+
-      `<div class="wiz-stat ok" id="wizSaveStat">using the Valheim default</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
-        `<button class="btn btn-ember btn-sm" id="wNext">Next</button>`;
+      `<div class="mtitle">${esc(T("setup.wiz.save.title"))}</div>`+
+      `<div class="wiz-help">${T("setup.wiz.save.body")}<br><code>${esc(dflt)}</code></div>`+
+      `<div class="field"><label>${esc(T("setup.wiz.save.label"))}</label><input type="text" id="wizSave" spellcheck="false" autocomplete="off" placeholder="${esc(T("setup.wiz.save.placeholder"))}"></div>`+
+      `<div class="wiz-stat ok" id="wizSaveStat">${esc(T("setup.wiz.save.stat.default"))}</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wNext">${esc(T("common.button.next"))}</button>`;
   }else if(WIZ.step===3){
     body=
-      `<div class="mtitle">World rules</div>`+
-      `<div class="wiz-help">Valheim's world modifiers. All <strong>Normal</strong> is the classic experience. Change any of them later in the <strong>WORLD</strong> hall under <strong>WORLD MODIFIERS</strong>.</div>`+
+      `<div class="mtitle">${esc(T("setup.wiz.rules.title"))}</div>`+
+      `<div class="wiz-help">${T("setup.wiz.rules.body")}</div>`+
       `<div class="formgrid">`+
       Object.entries(WORLDGEN).map(([key,def])=>
         `<div class="field"><label>${esc(T(def.labelId))}</label><select id="wizMod_${key}" data-wgkey="${key}">${wgOptions(key,WIZ.mods[key]||"")}</select></div>`).join("")+
       `</div>`+
       (WIZ.seedEligible?
-        `<div class="field" style="margin-top:8px"><label>World seed</label>`+
-        `<input type="text" id="wizSeed" placeholder="random (leave blank)" spellcheck="false" autocomplete="off">`+
-        `<div class="wiz-help">Seed for the new world <strong>${esc(WIZ.seedWorld)}</strong>, which hasn't been created yet. Blank = random. A world's seed is <strong>fixed forever</strong> once created.</div></div>`:"")+
-      `<div class="wiz-help">Max players defaults to <strong>10</strong>, Valheim's built-in cap. Raise it later in the <strong>WORLD</strong> hall under <strong>WORLD MODIFIERS</strong> (installs a small bundled server plugin).</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
-        `<button class="btn btn-ember btn-sm" id="wNext">Next</button>`;
+        `<div class="field" style="margin-top:8px"><label>${esc(T("setup.wiz.seed.label"))}</label>`+
+        `<input type="text" id="wizSeed" placeholder="${esc(T("setup.wiz.seed.placeholder"))}" spellcheck="false" autocomplete="off">`+
+        `<div class="wiz-help">${T("setup.wiz.seed.note",{world:bold(WIZ.seedWorld)})}</div></div>`:"")+
+      `<div class="wiz-help">${T("setup.wiz.maxplayers.note")}</div>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wNext">${esc(T("common.button.next"))}</button>`;
   }else{
     const exe=WIZ.exe.trim(),save=WIZ.save.trim();
+    /* Each picked dial reads as the dial's own name and the choice's own name, both out
+       of the catalog: the old line lower-cased the English label and printed the raw value
+       behind it, which was neither translatable nor the wording the dial itself shows. */
     const modsPicked=Object.entries(WIZ.mods).filter(([,v])=>v)
-      .map(([k,v])=>`${WORLDGEN[k].label.toLowerCase()} ${v}`).join(" · ");
+      .map(([k,v])=>{const o=wgOpt(k,v);return o?T("setup.wiz.done.rule",{dial:T(WORLDGEN[k].labelId),choice:T(o.labelId)}):"";})
+      .filter(Boolean).join(" · ");
     body=
-      `<div class="mtitle">All set</div>`+
+      `<div class="mtitle">${esc(T("setup.wiz.done.title"))}</div>`+
       `<div class="wiz-sum">`+
-      `<div class="row"><span class="k">Server executable</span><span class="v">${esc(exe||"(not set · configure later in the WORLD hall)")}</span></div>`+
-      `<div class="row"><span class="k">Save data folder</span><span class="v">${esc(save||"Valheim default")}</span></div>`+
-      `<div class="row"><span class="k">World rules</span><span class="v">${esc(modsPicked||"all Normal · the classic experience")}</span></div>`+
+      `<div class="row"><span class="k">${esc(T("setup.wiz.done.exe"))}</span><span class="v">${esc(exe||T("setup.wiz.done.exe.none"))}</span></div>`+
+      `<div class="row"><span class="k">${esc(T("setup.wiz.done.save"))}</span><span class="v">${esc(save||T("setup.wiz.done.save.default"))}</span></div>`+
+      `<div class="row"><span class="k">${esc(T("setup.wiz.done.rules"))}</span><span class="v">${esc(modsPicked||T("setup.wiz.done.rules.normal"))}</span></div>`+
       `</div>`+
       `<div class="wiz-help">`+T("setup.wiz.done.note")+`</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="wBack">Back</button><span class="grow"></span>`+
-        `<button class="btn btn-ember btn-sm" id="wNext">Finish</button>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wNext">${esc(T("common.button.finish"))}</button>`;
   }
 
-  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`);
+  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`,wizardRender);
   m.classList.add("wiz");
 
   const on=(sel,fn)=>{const el=m.querySelector(sel);if(el)el.addEventListener("click",fn);};
@@ -6003,7 +6313,7 @@ function wizardRender(){
       const ok=await wizValidate("dir",WIZ.save);
       if(!ok){
         const s=m.querySelector("#wizSaveStat");
-        s.className="wiz-stat bad";s.textContent="ᚦ folder not found · clear the field to use the default";
+        s.className="wiz-stat bad";s.textContent="ᚦ "+T("setup.wiz.save.stat.missing");
         return;
       }
     }
@@ -6019,23 +6329,23 @@ function wizardRender(){
       clearTimeout(t);
       if(!inp.value.trim()){
         WIZ.exeValid=false;next.disabled=true;
-        stat.className="wiz-stat dim";stat.textContent="paste a path, or press Detect";
+        stat.className="wiz-stat dim";stat.textContent=T("setup.wiz.exe.stat.idle");
         return;
       }
-      stat.className="wiz-stat dim";stat.textContent="checking…";
+      stat.className="wiz-stat dim";stat.textContent=T("common.stat.checking");
       t=setTimeout(async()=>{
         const ok=await wizValidate("exe",inp.value);
         WIZ.exeValid=ok;next.disabled=!ok;
         stat.className="wiz-stat "+(ok?"ok":"bad");
-        stat.textContent=ok?"ᛉ found · that's the one"
-                           :"ᚦ not found · the path must point at an existing valheim_server.exe";
+        stat.textContent=ok?"ᛉ "+T("setup.wiz.exe.stat.found")
+                           :"ᚦ "+T("setup.wiz.exe.stat.missing");
       },250);
     };
     inp.addEventListener("input",check);
     if(WIZ.exe) check();
     setTimeout(()=>inp.focus(),30);
     on("#wDetect",async()=>{
-      stat.className="wiz-stat dim";stat.textContent="searching your drives…";
+      stat.className="wiz-stat dim";stat.textContent=T("setup.wiz.detect.searching");
       const r=Native.available?await rpc("setup.detect")
         :["C:\\Program Files (x86)\\Steam\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe",
           "D:\\SteamLibrary\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe"];
@@ -6043,11 +6353,11 @@ function wizardRender(){
       const box=m.querySelector("#wizFound");
       if(!list.length){
         stat.className="wiz-stat bad";
-        stat.textContent="ᚦ no install found · install the Valheim Dedicated Server tool on Steam, or paste the path by hand";
+        stat.textContent="ᚦ "+T("setup.wiz.detect.none");
         box.innerHTML="";return;
       }
       stat.className="wiz-stat ok";
-      stat.textContent="ᛉ found "+list.length+(list.length===1?" install · click to use it":" installs · click one to use it");
+      stat.textContent="ᛉ "+T("setup.wiz.detect.found",{count:list.length});
       box.innerHTML=`<div class="wiz-found">`+list.map(pth=>`<button class="wf" data-p="${esc(pth)}">${esc(pth)}</button>`).join("")+`</div>`;
       box.querySelectorAll(".wf").forEach(b=>b.addEventListener("click",()=>{inp.value=b.dataset.p;check();}));
     });
@@ -6059,12 +6369,12 @@ function wizardRender(){
     inp.addEventListener("input",()=>{
       WIZ.save=inp.value;
       clearTimeout(t);
-      if(!inp.value.trim()){stat.className="wiz-stat ok";stat.textContent="using the Valheim default";return;}
-      stat.className="wiz-stat dim";stat.textContent="checking…";
+      if(!inp.value.trim()){stat.className="wiz-stat ok";stat.textContent=T("setup.wiz.save.stat.default");return;}
+      stat.className="wiz-stat dim";stat.textContent=T("common.stat.checking");
       t=setTimeout(async()=>{
         const ok=await wizValidate("dir",inp.value);
         stat.className="wiz-stat "+(ok?"ok":"bad");
-        stat.textContent=ok?"ᛉ folder found":"ᚦ folder not found · clear the field to use the default";
+        stat.textContent=ok?"ᛉ "+T("setup.wiz.save.stat.found"):"ᚦ "+T("setup.wiz.save.stat.missing");
       },250);
     });
     setTimeout(()=>inp.focus(),30);
@@ -6079,19 +6389,19 @@ function wizardRender(){
 
 /* World hall: red "run first-time setup again" button (double confirm) */
 $("#btnSetupReset").addEventListener("click",()=>{
-  confirmModal("Run first-time setup again?",
-    `<p>This clears the saved setup answers (server executable and save folder) and reopens the guided setup.</p>`+
-    `<p><strong>No server files or worlds on disk are touched.</strong></p>`,
-    "Continue",()=>{
+  confirmModal(()=>T("setup.reset.confirm.title"),
+    ()=>`<p>${esc(T("setup.reset.confirm.body"))}</p>`+
+    `<p><strong>${esc(T("setup.reset.confirm.safe"))}</strong></p>`,
+    ()=>T("common.button.continue"),()=>{
     /* confirmModal closes itself after onOk - defer the second confirm past that close */
     setTimeout(()=>{
-      confirmModal("Are you certain?",
-        `<p>Setup answers reset to their defaults, including any per-profile directory overrides. Your server install and worlds stay exactly where they are.</p>`,
-        "Reset setup",async()=>{
-        if(!Native.available){toast("ᛉ preview · setup reset");setTimeout(()=>wizardOpen({}),60);return;}
+      confirmModal(()=>T("setup.reset.again.title"),
+        ()=>`<p>${esc(T("setup.reset.again.body"))}</p>`,
+        ()=>T("setup.reset.ok"),async()=>{
+        if(!Native.available){toast("ᛉ "+T("setup.reset.preview.toast"));setTimeout(()=>wizardOpen({}),60);return;}
         const st=await rpc("setup.reset");
         if(st===FAIL) return;
-        toast("ᛉ Setup reset · paths restored to defaults");
+        toast("ᛉ "+T("setup.reset.done.toast"));
         logLine("warn","[BakaLoader] first-time setup was reset");
         const cur=await rpc("profiles.get",{name:S.profileName||S.prefs?.ProfileName||"Default"});
         if(cur!==FAIL&&cur){S.prefs=cur;renderAllFromPrefs();}
@@ -6125,24 +6435,29 @@ async function heraldWizFinish(){
   await heraldSave();
   if(!Native.available){
     HERALD_HAS_POST=true;heraldRenderPost();
-    toast("ᚺ preview · the Herald is set up");return;
+    toast("ᚺ "+T("herald.wiz.preview.toast"));return;
   }
   const r=await rpc("discord.publish");
   if(r===FAIL) return;
   if(r.ok){
     HERALD_HAS_POST=true;heraldRenderPost();
     $("#heraldUrlStat").className="wiz-stat ok";
-    $("#heraldUrlStat").textContent="ᛉ webhook answers"+(HWIZ.name?" · \""+HWIZ.name+"\"":"");
-    toast("ᚺ The Herald speaks · status post placed in Discord");
+    /* Two sentences rather than one with a gap in it: a webhook that answered without
+       naming itself must not leave a trailing separator on screen. */
+    $("#heraldUrlStat").textContent="ᛉ "+(HWIZ.name
+      ?T("herald.hook.stat.answers",{name:HWIZ.name})
+      :T("herald.hook.stat.answers.unnamed"));
+    toast("ᚺ "+T("herald.publish.done.toast"));
     logLine("ok","[Herald] Discord sharing configured · status post published");
   }else{
-    toast("ᚦ "+(r.error||"publish failed")+" · check the webhook in the HERALD hall");
+    toast("ᚦ "+T("herald.wiz.publish.failed.toast",{reason:r.error||T("herald.publish.failed.toast")}));
   }
 }
 function heraldWizRender(){
-  const names=["WELCOME","WEBHOOK","TIDINGS","PUBLISH"];
+  const names=[T("herald.wiz.step.welcome"),T("herald.wiz.step.webhook"),
+               T("herald.wiz.step.tidings"),T("herald.wiz.step.publish")];
   const steps=`<div class="wiz-steps">`+names.map((n,i)=>
-    `<span class="ws${i===HWIZ.step?" on":i<HWIZ.step?" done":""}"><b>${i+1}</b>${n}</span>`).join("")+`</div>`;
+    `<span class="ws${i===HWIZ.step?" on":i<HWIZ.step?" done":""}"><b>${i+1}</b>${esc(n)}</span>`).join("")+`</div>`;
   let body="",nav="";
 
   if(HWIZ.step===0){
@@ -6150,12 +6465,12 @@ function heraldWizRender(){
       `<div class="mtitle">${T("herald.wiz.intro.title")}</div>`+
       `<div class="wiz-help">${T("herald.wiz.intro.body")}</div>`+
       `<div class="wiz-paths">`+
-      `<div><span class="r">ᛒ</span><strong>${T("herald.wiz.intro.carries")}</strong> · server name, status, players online, world, mod count, last mod update, next restart.</div>`+
+      `<div><span class="r">ᛒ</span><strong>${T("herald.wiz.intro.carries")}</strong> · ${T("herald.wiz.intro.carries.body")}</div>`+
       `<div><span class="r">ᛜ</span><strong>${T("herald.wiz.intro.choose")}</strong> · ${T("herald.wiz.intro.choose.body")}</div>`+
       `<div><span class="r">ᛟ</span><strong>${T("common.wiz.need")}</strong> · ${T("herald.wiz.intro.need.body")}</div>`+
       `</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="hwCancel">Cancel</button><span class="grow"></span>`+
-        `<button class="btn btn-ember btn-sm" id="hwNext">Begin</button>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="hwCancel">${esc(T("common.button.cancel"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="hwNext">${esc(T("common.button.begin"))}</button>`;
   }else if(HWIZ.step===1){
     body=
       `<div class="mtitle">${T("herald.wiz.hook.title")}</div>`+
@@ -6164,12 +6479,12 @@ function heraldWizRender(){
       `2 · ${T("herald.wiz.hook.step2")}<br>`+
       `3 · ${T("herald.wiz.hook.step3")}<br>`+
       `4 · ${T("herald.wiz.hook.step4")}</div>`+
-      `<div class="field"><label>Webhook URL</label><input type="text" id="hwUrl" spellcheck="false" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></div>`+
+      `<div class="field"><label>${esc(T("herald.wiz.hook.url.label"))}</label><input type="text" id="hwUrl" spellcheck="false" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></div>`+
       `<div class="wiz-stat dim" id="hwUrlStat">${T("herald.wiz.hook.stat.idle")}</div>`+
       `<div class="field" style="margin-top:8px"><label>${T("herald.wiz.hook.thread.label")}</label><input type="text" id="hwThread" spellcheck="false" autocomplete="off" placeholder="${T("herald.wiz.hook.thread.placeholder")}"></div>`+
       `<div class="wiz-help" style="margin-top:4px">${T("herald.wiz.hook.thread.note")}</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">Back</button><span class="grow"></span>`+
-        `<button class="btn btn-ember btn-sm" id="hwNext" disabled>Next</button>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="hwNext" disabled>${esc(T("common.button.next"))}</button>`;
   }else if(HWIZ.step===2){
     body=
       `<div class="mtitle">${T("herald.wiz.share.title")}</div>`+
@@ -6179,24 +6494,24 @@ function heraldWizRender(){
       `<div class="wiz-stat dim" id="hwPassWarn" style="color:var(--amber)">${HWIZ.pass?"ᚦ "+T("herald.wiz.share.password.warn"):""}</div>`+
       `<div class="togglerow"><span class="tl">${T("herald.share.events")}</span><span class="toggle${HWIZ.events?" on":""}" id="hwEvents" title="${esc(T("herald.wiz.share.events.title"))}"></span></div>`+
       `<div class="wiz-help" style="margin-top:2px">${T("herald.wiz.share.events.note")}</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">Back</button><span class="grow"></span>`+
-        `<button class="btn btn-ember btn-sm" id="hwNext">Next</button>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="hwNext">${esc(T("common.button.next"))}</button>`;
   }else{
     body=
       `<div class="mtitle">${T("herald.wiz.sum.title")}</div>`+
       `<div class="wiz-sum">`+
-      `<div class="row"><span class="k">Webhook</span><span class="v">${esc(HWIZ.name?("\""+HWIZ.name+"\" · answers"):"validated")}</span></div>`+
+      `<div class="row"><span class="k">${esc(T("herald.wiz.sum.webhook"))}</span><span class="v">${esc(HWIZ.name?T("herald.wiz.sum.webhook.named",{name:HWIZ.name}):T("herald.wiz.sum.webhook.validated"))}</span></div>`+
       `<div class="row"><span class="k">${T("herald.wiz.sum.thread")}</span><span class="v">${esc(HWIZ.thread.trim()||T("herald.wiz.sum.thread.none"))}</span></div>`+
-      `<div class="row"><span class="k">${T("herald.wiz.sum.address")}</span><span class="v">${HWIZ.addr?"shared":"hidden"}</span></div>`+
-      `<div class="row"><span class="k">${T("herald.wiz.sum.password")}</span><span class="v">${HWIZ.pass?T("herald.wiz.sum.password.shared"):"hidden"}</span></div>`+
-      `<div class="row"><span class="k">${T("herald.share.events")}</span><span class="v">${HWIZ.events?"on":"off"}</span></div>`+
+      `<div class="row"><span class="k">${T("herald.wiz.sum.address")}</span><span class="v">${esc(HWIZ.addr?T("common.state.shared"):T("common.state.hidden"))}</span></div>`+
+      `<div class="row"><span class="k">${T("herald.wiz.sum.password")}</span><span class="v">${esc(HWIZ.pass?T("herald.wiz.sum.password.shared"):T("common.state.hidden"))}</span></div>`+
+      `<div class="row"><span class="k">${T("herald.share.events")}</span><span class="v">${esc(HWIZ.events?T("common.state.on"):T("common.state.off"))}</span></div>`+
       `</div>`+
       `<div class="wiz-help">${T("herald.wiz.sum.note")}</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">Back</button><span class="grow"></span>`+
+    nav=`<button class="btn btn-ghost btn-sm" id="hwBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="hwNext">${T("herald.wiz.publish")}</button>`;
   }
 
-  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`);
+  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`,heraldWizRender);
   m.classList.add("wiz");
   const on=(sel,fn)=>{const el=m.querySelector(sel);if(el)el.addEventListener("click",fn);};
   on("#hwCancel",modalClose);
@@ -6221,15 +6536,17 @@ function heraldWizRender(){
         stat.className="wiz-stat dim";stat.textContent=T("herald.wiz.hook.stat.idle");
         return;
       }
-      stat.className="wiz-stat dim";stat.textContent="checking…";
+      stat.className="wiz-stat dim";stat.textContent=T("common.stat.checking");
       t=setTimeout(async()=>{
         const r=Native.available?await rpc("discord.validate",{url:v})
-          :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:"that doesn't look like a Discord webhook URL"};
+          :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:T("herald.hook.stat.malformed")};
         const ok=r!==FAIL&&!!r.ok;
         HWIZ.valid=ok;HWIZ.name=ok?(r.name||""):"";next.disabled=!ok;
         stat.className="wiz-stat "+(ok?"ok":"bad");
-        stat.textContent=ok?("ᛉ "+TT("the webhook answers")+(HWIZ.name?" · \""+HWIZ.name+"\"":""))
-                           :("ᚦ "+((r&&r.error)||T("herald.wiz.hook.stat.bad")));
+        stat.textContent=ok
+          ?("ᛉ "+(HWIZ.name?T("herald.wiz.hook.stat.answers",{name:HWIZ.name})
+                           :T("herald.wiz.hook.stat.answers.unnamed")))
+          :("ᚦ "+((r&&r.error)||T("herald.wiz.hook.stat.bad")));
       },350);
     };
     inp.addEventListener("input",check);
@@ -6275,7 +6592,7 @@ function waystoneWizard(){
 async function waystoneWizFinish(){
   modalClose();
   if(await waystoneSave(WWIZ.domain)){
-    toast("ᛦ "+TT("The Waystone stands")+" · "+WWIZ.domain);
+    toast("ᛦ "+T("waystone.raised.toast",{domain:WWIZ.domain}));
     logLine("ok","[Waystone] custom join domain set · "+WWIZ.domain);
   }
 }
@@ -6293,52 +6610,52 @@ function waystoneWizRender(){
       `<div class="wiz-help">${T("waystone.wiz.intro.body")}</div>`+
       `<div class="wiz-paths">`+
       `<div><span class="r">ᛟ</span><strong>${T("common.wiz.need")}</strong> · ${T("waystone.wiz.intro.need.body")}</div>`+
-      `<div><span class="r">ᚦ</span><strong>${T("waystone.wiz.intro.limit")}</strong> · ${TT("Valheim resolves the name but has <strong>no SRV support</strong>, so the port always travels with it: friends join with")} <span class="mono">${esc("name:"+port)}</span>.</div>`+
+      `<div><span class="r">ᚦ</span><strong>${T("waystone.wiz.intro.limit")}</strong> · ${T("waystone.wiz.intro.limit.body",{join:mono(T("waystone.wiz.intro.limit.name")+":"+port)})}</div>`+
       `<div><span class="r">ᛜ</span><strong>${T("waystone.wiz.intro.shows")}</strong> · ${T("waystone.wiz.intro.shows.body")}</div>`+
       `</div>`+
       (S.domain?`<div class="wiz-stat dim" style="margin-top:8px">${T("waystone.wiz.intro.current")} · <span class="mono">${esc(S.domain)}</span></div>`:"");
-    nav=`<button class="btn btn-ghost btn-sm" id="wwCancel">Cancel</button>`+
+    nav=`<button class="btn btn-ghost btn-sm" id="wwCancel">${esc(T("common.button.cancel"))}</button>`+
         (S.domain?`<button class="btn btn-ghost btn-sm" id="wwRemove" title="${esc(T("waystone.wiz.remove.title"))}">${T("common.button.remove")}</button>`:"")+
-        `<span class="grow"></span><button class="btn btn-ember btn-sm" id="wwNext">Begin</button>`;
+        `<span class="grow"></span><button class="btn btn-ember btn-sm" id="wwNext">${esc(T("common.button.begin"))}</button>`;
   }else if(WWIZ.step===1){
     body=
       `<div class="mtitle">${T("waystone.wiz.name.title")}</div>`+
       `<div class="wiz-help">${T("waystone.wiz.name.body")}</div>`+
       `<div class="field"><label>${T("waystone.wiz.name.label")}</label><input type="text" id="wwDomain" spellcheck="false" autocomplete="off" placeholder="valheim.example.com" title="${esc(T("waystone.wiz.name.input.title"))}"></div>`+
       `<div class="wiz-stat dim" id="wwDomStat">${T("waystone.wiz.name.stat.idle")}</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">Back</button><span class="grow"></span>`+
-        `<button class="btn btn-ember btn-sm" id="wwNext" disabled>Next</button>`;
+    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
+        `<button class="btn btn-ember btn-sm" id="wwNext" disabled>${esc(T("common.button.next"))}</button>`;
   }else if(WWIZ.step===2){
     body=
       `<div class="mtitle">${T("waystone.wiz.dns.title")}</div>`+
-      `<div class="wiz-help">${TT("Teach DNS that")} <span class="mono">${esc(WWIZ.domain)}</span> ${TT("lives at this server's public IP:")} <span class="mono">${esc(myIp)}</span></div>`+
+      `<div class="wiz-help">${T("waystone.wiz.dns.body",{domain:mono(WWIZ.domain),ip:mono(myIp)})}</div>`+
       `<div class="wiz-paths">`+
       `<div><span class="r">ᚨ</span><strong>${T("waystone.wiz.dns.own")}</strong><br>`+
       `1 · ${T("waystone.wiz.dns.own.step1")}<br>`+
-      `2 · ${TT("add a record: <strong>Type</strong> A · <strong>Name/Host</strong> the subdomain part (for <span class=\"mono\">valheim.example.com</span> enter <span class=\"mono\">valheim</span>) · <strong>Value</strong>")} <span class="mono">${esc(myIp)}</span><br>`+
+      `2 · ${T("waystone.wiz.dns.own.step2",{ip:mono(myIp)})}<br>`+
       `3 · ${T("waystone.wiz.dns.own.step3")}</div>`+
       `<div><span class="r">ᛉ</span><strong>${T("waystone.wiz.dns.ddns")}</strong><br>`+
       `· ${T("waystone.wiz.dns.ddns.duckdns")}<br>`+
       `· ${T("waystone.wiz.dns.ddns.noip")}<br>`+
       `· ${T("waystone.wiz.dns.ddns.cname")}</div>`+
-      `<div><span class="r">ᚦ</span><strong>${T("waystone.wiz.dns.remember")}</strong> · ${TT("the name only replaces the IP, so friends still need the port")} (<span class="mono">${esc(String(port))}</span>)${TT(", and port-forwarding stays exactly as it is today.")}</div>`+
+      `<div><span class="r">ᚦ</span><strong>${T("waystone.wiz.dns.remember")}</strong> · ${T("waystone.wiz.dns.remember.body",{port:mono(String(port))})}</div>`+
       `</div>`+
       `<div class="wiz-help" style="margin-top:6px">${T("waystone.wiz.dns.note")}</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">Back</button><span class="grow"></span>`+
+    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="wwNext">${T("waystone.wiz.dns.next")}</button>`;
   }else{
     body=
       `<div class="mtitle">${T("waystone.wiz.check.title")}</div>`+
-      `<div class="wiz-help">${TT("BakaLoader asks DNS for")} <span class="mono">${esc(WWIZ.domain)}</span> ${TT("and compares the answer with this server's public IP.")}</div>`+
+      `<div class="wiz-help">${T("waystone.wiz.check.body",{domain:mono(WWIZ.domain)})}</div>`+
       `<div class="wiz-stat dim" id="wwCheckStat">${T("waystone.wiz.check.asking")}</div>`+
       `<div class="wiz-sum" id="wwCheckSum" style="display:none"></div>`+
       `<div class="wiz-help" style="margin-top:6px">${T("waystone.wiz.check.note")}</div>`;
-    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">Back</button>`+
+    nav=`<button class="btn btn-ghost btn-sm" id="wwBack">${esc(T("common.button.back"))}</button>`+
         `<button class="btn btn-ghost btn-sm" id="wwAgain">${T("waystone.wiz.check.again")}</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="wwNext">${T("waystone.wiz.check.ok")}</button>`;
   }
 
-  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`);
+  const m=modalOpen(steps+body+`<div class="wiz-nav">${nav}</div>`,waystoneWizRender);
   m.classList.add("wiz");
   const on=(sel,fn)=>{const el=m.querySelector(sel);if(el)el.addEventListener("click",fn);};
   on("#wwCancel",modalClose);
@@ -6346,7 +6663,7 @@ function waystoneWizRender(){
   on("#wwRemove",async()=>{
     modalClose();
     if(await waystoneSave("")){
-      toast("ᛦ "+TT("The Waystone falls")+" · "+TT("back to the raw IP"));
+      toast("ᛦ "+T("waystone.removed.toast"));
       logLine("warn","[Waystone] custom join domain removed");
     }
   });
@@ -6372,7 +6689,7 @@ function waystoneWizRender(){
         const ok=WAYSTONE_HOST_RE.test(v);
         WWIZ.syntaxOk=ok;next.disabled=!ok;
         stat.className="wiz-stat "+(ok?"ok":"bad");
-        stat.textContent=ok?("ᛉ "+TT("a well-formed name")+" · "+v)
+        stat.textContent=ok?("ᛉ "+T("waystone.wiz.name.stat.ok",{name:v}))
                            :("ᚦ "+T("waystone.wiz.name.stat.bad"));
       },350);
     };
@@ -6397,7 +6714,11 @@ function waystoneWizRender(){
         stat.textContent="ᚦ "+T("waystone.wiz.check.stat.mismatch");
       }else{
         stat.className="wiz-stat bad";
-        stat.textContent="ᚦ "+((r.error&&TT(r.error))||TT("the name does not resolve yet"))+" · "+TT("give DNS a few minutes, then Check again");
+        /* What DNS said and the fact that it said nothing are two sentences, each ending
+           with the same advice: a reason-shaped gap in the middle of one reads as a typo. */
+        stat.textContent="ᚦ "+(r.error
+          ?T("waystone.wiz.check.stat.error",{detail:r.error})
+          :T("waystone.wiz.check.stat.unresolved"));
       }
       sum.style.display="";
       sum.innerHTML=
@@ -6456,7 +6777,7 @@ function cfgFilesForList(){
   return CFG.files.filter(f=>searchHit(cfgSearchText(f),tokens));
 }
 function renderCfgList(){
-  $("#runesSub").textContent=TT(CFG.files.length+" rune-scroll"+(CFG.files.length===1?"":"s")+" in the config vault");
+  $("#runesSub").textContent=T("runes.sub.count",{count:CFG.files.length});
   const shown=cfgFilesForList();
   $("#cfgList").innerHTML=shown.map(f=>
     `<div class="cfg-item${f===CFG.file?" sel":""}" data-f="${esc(f)}"><span class="cfgname">${esc(f)}</span>${(f===CFG.file&&CFG.dirty)?'<span class="dot"></span>':""}</div>`
@@ -6468,7 +6789,7 @@ function renderCfgList(){
 /* "showing N of M" beside the box, and only while something is typed. */
 function renderRuneShowing(shown,total){
   const el=$("#runeShowing"); if(!el) return;
-  el.textContent=searchTokens(S.runeFilter).length?TT("showing")+" "+shown+" "+TT("of")+" "+total:"";
+  el.textContent=searchTokens(S.runeFilter).length?T("common.showing",{shown:shown,total:total}):"";
 }
 function setRuneFilter(value){
   S.runeFilter=String(value||"");
@@ -6568,7 +6889,7 @@ function cfgFindGo(step){
   CFG_FIND_AT=((CFG_FIND_AT+step)%hits.length+hits.length)%hits.length;
   CFG_FIND_MARK={at:hits[CFG_FIND_AT],len:needle.length};
   cfgFindPaint(true);
-  if(count) count.textContent=(CFG_FIND_AT+1)+" "+TT("of")+" "+hits.length;
+  if(count) count.textContent=T("runes.find.count",{index:CFG_FIND_AT+1,total:hits.length});
 }
 $("#cfgFind")?.addEventListener("input",()=>{CFG_FIND_AT=-1;cfgFindGo(1);});
 $("#cfgFind")?.addEventListener("keydown",e=>{
@@ -6600,9 +6921,12 @@ function setCfgDirty(d){
 async function loadCfg(f,force){
   if(!f||(f===CFG.file&&!force)) return;
   if(CFG.dirty&&!force){
-    confirmModal("Discard changes?",
-      `<b>${esc(CFG.file)}</b> ${esc(T("runes.dirty.sentence"))} Abandon it and open <b>${esc(f)}</b>?`,
-      "Discard",()=>loadCfg(f,true));
+    /* One whole sentence with both file names in named slots. The two names arrive
+       already escaped and already wrapped, so the entry itself carries no markup and
+       a language that puts the new scroll first can put it first. */
+    confirmModal(()=>T("runes.dirty.title"),
+      ()=>T("runes.dirty.open.body",{file:bold(CFG.file),next:bold(f)}),
+      ()=>T("runes.dirty.discard"),()=>loadCfg(f,true));
     return;
   }
   const text=await cfgRead(f);
@@ -6634,7 +6958,7 @@ function resetCfgSaveBtn(){
   clearTimeout(cfgConfirmT); cfgConfirmT=null;
   const b=$("#cfgSaveBtn");
   b.classList.remove("confirming");
-  b.innerHTML="ᛉ&nbsp; Save";
+  b.textContent=T("runes.save.label");
 }
 $("#cfgList").addEventListener("click",e=>{
   const it=e.target.closest(".cfg-item[data-f]");
@@ -6647,12 +6971,12 @@ $("#cfgReloadBtn").addEventListener("click",()=>{
     await refreshCfgList(true);
     if(CFG.file){const t=await cfgRead(CFG.file);if(t!==null){$("#cfgEditor").value=t;cfgFindStale();}}
     $("#cfgSaveBtn").disabled=true; resetCfgSaveBtn(); renderCfgList();
-    toast("ᛋ Scrolls reloaded");
+    toast("ᛋ "+T("runes.reloaded.toast"));
   };
   if(CFG.dirty){
-    confirmModal("Discard changes?",
-      `<b>${esc(CFG.file)}</b> ${esc(T("runes.dirty.sentence"))} Reload from disk anyway?`,
-      "Discard & reload",go);
+    confirmModal(()=>T("runes.dirty.title"),
+      ()=>T("runes.dirty.reload.body",{file:bold(CFG.file)}),
+      ()=>T("runes.dirty.discard_reload"),go);
   }else go();
 });
 $("#cfgSaveBtn").addEventListener("click",async()=>{
@@ -6660,7 +6984,7 @@ $("#cfgSaveBtn").addEventListener("click",async()=>{
   const b=$("#cfgSaveBtn");
   if(!b.classList.contains("confirming")){
     b.classList.add("confirming");
-    b.innerHTML="ᛉ&nbsp; Confirm save?";
+    b.textContent=T("runes.save.confirm.label");
     cfgConfirmT=setTimeout(resetCfgSaveBtn,3000);
     return;
   }
@@ -6669,11 +6993,11 @@ $("#cfgSaveBtn").addEventListener("click",async()=>{
   if(!ok) return;
   setCfgDirty(false);
   $("#cfgSaveBtn").disabled=true;
-  toast("ᛉ Rune etched · "+CFG.file+" saved");
+  toast("ᛉ "+T("runes.saved.toast",{file:CFG.file}));
   logLine("ok","[BakaLoader] config '"+CFG.file+"' written");
 });
 $("#cfgOpenBtn").addEventListener("click",()=>{
-  if(!Native.available){toast("ᛃ Preview · config folder opens in the app");return;}
+  if(!Native.available){toast("ᛃ "+T("runes.open.preview.toast"));return;}
   rpc("shell.open",{target:"config"});
 });
 
@@ -6696,17 +7020,37 @@ const ATLAS={
   drag:null,
 };
 function atlasWorldName(){return (S.prefs&&S.prefs.WorldName)||null;}
-function atlasMsg(text){
+/* The sentences the map's own line can carry. Ids rather than English, and in a table
+   rather than at each call site, so atlasMsg can be handed an id: the hall is entered
+   while app.js is still being evaluated, and a T() answered before the catalog lands
+   answers with the id itself. The property names end in Id because that is how the
+   catalog gate sees a table that holds ids. */
+const ATLAS_MSG={loadingId:"atlas.msg.loading",noWorldId:"atlas.msg.no_world",
+  chartingId:"atlas.msg.charting",chartingPctId:"atlas.msg.charting.progress",
+  undrawnId:"atlas.msg.undrawn",imageFailedId:"atlas.msg.image_failed"};
+let ATLAS_MSG_NOW=null;
+/**
+ * The line across the map, by catalog id. Kept as the id it was given, so the boot
+ * repaint can word it again the moment the catalog arrives.
+ * @param {string|null} id a catalog id, or null to take the line down
+ * @param {object} [params] named slot values
+ */
+function atlasMsg(id,params){
   const el=$("#atlasMsg"); if(!el) return;
-  if(text==null){el.classList.add("hidden");return;}
-  el.textContent=text; el.classList.remove("hidden");
+  ATLAS_MSG_NOW=id==null?null:{id,params:params||null};
+  if(id==null){el.classList.add("hidden");return;}
+  el.textContent=T(id,params); el.classList.remove("hidden");
+}
+/* Whatever the map is saying right now, said again in the words that just landed. */
+function renderAtlasMsg(){
+  if(ATLAS_MSG_NOW) atlasMsg(ATLAS_MSG_NOW.id,ATLAS_MSG_NOW.params);
 }
 function atlasReset(){
   ATLAS.world=null; ATLAS.mapImg=null; ATLAS.mapReady=false;
   ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.fogMask=null; ATLAS.info=null;
   ATLAS.infoError=null;
   ATLAS.cam.ppm=0; ATLAS.seq++;
-  atlasMsg("Loading the known world…");
+  atlasMsg(ATLAS_MSG.loadingId);
   if(currentPage==="atlas") atlasEnter();
 }
 async function atlasEnter(){
@@ -6714,7 +7058,7 @@ async function atlasEnter(){
   if(!Native.available){atlasMock();return;}
   const world=atlasWorldName();
   $("#atlasWorldName").textContent=world||"-";
-  if(!world){atlasMsg("No world chosen yet. Pick one in the World hall.");return;}
+  if(!world){atlasMsg(ATLAS_MSG.noWorldId);return;}
   if(ATLAS.world!==world){
     ATLAS.world=world; ATLAS.mapImg=null; ATLAS.mapReady=false;
     ATLAS.fogImg=null; ATLAS.fogReady=false; ATLAS.fogTex=null; ATLAS.fogMask=null; ATLAS.info=null; ATLAS.cam.ppm=0;
@@ -6725,19 +7069,19 @@ async function atlasEnter(){
 async function atlasRenderMap(force){
   const world=ATLAS.world; if(!world||ATLAS.rendering) return;
   ATLAS.rendering=true; const seq=++ATLAS.seq;
-  atlasMsg("Charting the realm from its seed…");
+  atlasMsg(ATLAS_MSG.chartingId);
   const r=await rpc("atlas.render",{world,size:2048,force:!!force});
   ATLAS.rendering=false;
   if(seq!==ATLAS.seq) return;
   if(r===FAIL||!r||!r.url){
-    atlasMsg("The map could not be drawn. Set a seed or start the server once first.");
+    atlasMsg(ATLAS_MSG.undrawnId);
     return;
   }
   ATLAS.mapExtent=Number(r.edge)||10500;
   const warn=$("#atlasModWarn");
   if(warn){
     if(r.warnings&&r.warnings.length){
-      warn.style.display=""; warn.textContent="⚠ worldgen mods"; warn.title=r.warnings.join("\n");
+      warn.style.display=""; warn.textContent="⚠ "+T("atlas.warn.worldgen_mods"); warn.title=r.warnings.join("\n");
     }else warn.style.display="none";
   }
   const img=new Image();
@@ -6747,7 +7091,7 @@ async function atlasRenderMap(force){
     if(!ATLAS.cam.ppm) atlasFit();
     atlasDraw();
   };
-  img.onerror=()=>{if(seq===ATLAS.seq)atlasMsg("Map image failed to load.");};
+  img.onerror=()=>{if(seq===ATLAS.seq)atlasMsg(ATLAS_MSG.imageFailedId);};
   img.src=r.url+"?t="+Date.now(); // bust the WebView2 cache after re-renders
 }
 async function atlasRefreshInfo(){
@@ -6781,7 +7125,7 @@ async function atlasRefreshInfo(){
    that already exists. */
 function atlasNoDbText(info){
   const said=String((info&&(info.reason||info.diagnostic))||ATLAS.infoError||"").trim();
-  if(said) return TT("The save could not be read: ")+said;
+  if(said) return T("atlas.save.failed.detail",{detail:said});
   /* infoError is null until a read actually fails, and "" for a failure that carried
      no message, so an empty string still means failed. */
   if(ATLAS.infoError!=null)
@@ -6802,15 +7146,15 @@ function renderAtlasSide(){
     $("#atlasSaved").textContent="-"; $("#atlasExplored").textContent="-"; $("#atlasEvent").textContent="-";
   }else{
     $("#atlasClock").title="";
-    $("#atlasDay").textContent="Day "+info.day;
+    $("#atlasDay").textContent=T("atlas.fact.day",{day:info.day});
     const frac=((Number(info.netTime)%1800)+1800)%1800/1800;
     const mins=Math.floor(frac*24*60);
-    $("#atlasClock").textContent="in-game "+String(Math.floor(mins/60)).padStart(2,"0")+":"+String(mins%60).padStart(2,"0")+" at last save";
+    $("#atlasClock").textContent=T("atlas.fact.clock",{clock:String(Math.floor(mins/60)).padStart(2,"0")+":"+String(mins%60).padStart(2,"0")});
     $("#atlasSaved").textContent=atlasAge(info.savedAgeSeconds);
     $("#atlasExplored").textContent=info.hasSharedMap
-      ? info.exploredPercent.toFixed(1)+"% ("+info.mapTables+(info.mapTables===1?" table)":" tables)")
-      : "no shared map yet";
-    $("#atlasEvent").textContent=info.eventName?info.eventName:"quiet skies";
+      ? T("atlas.fact.explored.value",{percent:info.exploredPercent.toFixed(1),count:info.mapTables})
+      : T("atlas.fact.explored.none");
+    $("#atlasEvent").textContent=info.eventName?info.eventName:T("atlas.fact.event.none");
   }
   /* A world read with chunks missing has fewer portals, builds and pins than the world
      really has, so say so rather than let an empty list read as "there are none". */
@@ -6818,8 +7162,7 @@ function renderAtlasSide(){
   if(cn){
     const skipped=info&&info.hasDb?(info.chunksSkipped||0):0;
     cn.style.display=skipped>0?"":"none";
-    if(skipped>0) cn.textContent=TT(skipped+" of "+(info.chunksTotal||skipped)
-      +" chunks could not be read, so portals and build sites may be missing");
+    if(skipped>0) cn.textContent=T("atlas.chunks.skipped",{count:skipped,total:info.chunksTotal||skipped});
   }
   /* The Ashlands caveat that used to sit here is gone: the atlas now draws that coast
      from the game's own height function, so the shape on screen is the shape in game.
@@ -6842,8 +7185,8 @@ function renderAtlasSide(){
     const rows=[];
     if(info&&info.hasDb){
       (info.pois||[]).forEach(l=>rows.push({r:"ᛒ",n:l.label,x:l.x,z:l.z}));
-      (info.portals||[]).forEach(p=>rows.push({r:"ᛈ",n:p.tag||"(untagged)",x:p.x,z:p.z}));
-      (info.pins||[]).forEach(p=>rows.push({r:"ᛘ",n:p.name||"(pin)",x:p.x,z:p.z}));
+      (info.portals||[]).forEach(p=>rows.push({r:"ᛈ",n:p.tag||T("atlas.waypoint.portal.untagged"),x:p.x,z:p.z}));
+      (info.pins||[]).forEach(p=>rows.push({r:"ᛘ",n:p.name||T("atlas.waypoint.pin.unnamed"),x:p.x,z:p.z}));
     }
     wp.innerHTML=rows.map((w,i)=>
       `<div class="wp" data-i="${i}"><span class="wr">${w.r}</span><span class="wn">${esc(w.n)}</span><span class="wc">${Math.round(w.x)}, ${Math.round(w.z)}</span></div>`
@@ -6856,19 +7199,49 @@ function renderAtlasSide(){
   renderWeather();
   refreshScrollCues();
 }
-/* How old the rendered map is. The tiers are this panel's own, coarser the
-   further back it goes; the words around the number come from the lookup, which
-   is why an English host now reads "5m ago" here rather than "5 min ago": the
-   two relative times in the product used to disagree with each other and now
-   they do not. */
+/* How old the rendered map is, in the four tiers this panel has always used: seconds
+   up to a minute and a half, whole minutes up to an hour and a half, hours to one
+   decimal up to two days, then whole days.
+   The English is pinned to the shapes 1.1.x showed - "40s ago", "4 min ago",
+   "1.5 h ago", "3 days ago" - because Intl.RelativeTimeFormat has no style that
+   writes all four of them: narrow says "4m ago" and "1.5h ago", short says "4 min.
+   ago" with a full stop, and long says "4 minutes ago". Rather than let the panel's
+   wording drift to whichever style is closest, the four sentences are catalog entries
+   with the number in a named slot. The NUMBER still goes through the lookup, so a
+   host who writes 1,5 reads 1,5; the words around it are a translator's.
+   The hand-rolled arm below is the floor for a window whose i18n.js never arrived or
+   whose catalog fetch failed, and it writes the same English the entries do. */
+/* One entry per tier. The property names end in Id because that is how the catalog gate
+   recognises a table that holds ids rather than English: the world dials do the same,
+   and without it these four would read as orphan keys nothing asks for. */
+/* ATLAS-AGE-BEGIN (pure - no DOM; run as a table by scripts/i18n/atlas_age_selftest.js,
+   which is what keeps the English here pinned to the four shapes 1.1.x showed) */
+const ATLAS_AGE={secondId:"atlas.age.seconds",minuteId:"atlas.age.minutes",
+                 hourId:"atlas.age.hours",dayId:"atlas.age.days"};
+/* One tier's sentence. The slot carries the number written out for the host, and the
+   raw number rides alongside it in pluralValue so the day tier's category is chosen
+   from the NUMBER rather than from the words for it. Reading it back off the slot is
+   what this used to do, and it only ever worked in ASCII: ar-EG writes ١ for 1, and
+   Number("١") is NaN, so every Arabic day would have read "1 days ago". */
+function atlasAgeSay(unit,count,fallback){
+  const L=intl();
+  const id=ATLAS_AGE[unit+"Id"];
+  if(!L||!L.has(id)) return fallback;
+  return T(id,{count:L.fmtNumber(count,unit==="hour"
+    ?{minimumFractionDigits:1,maximumFractionDigits:1,useGrouping:false}
+    :{maximumFractionDigits:0,useGrouping:false}),pluralValue:count});
+}
 function atlasAge(sec){
   sec=Number(sec)||0;
-  const L=intl();
-  if(sec<90) return L?L.fmtRelative(Math.round(sec),"second"):Math.round(sec)+"s ago";
-  if(sec<5400) return L?L.fmtRelative(Math.round(sec/60),"minute"):Math.round(sec/60)+" min ago";
-  if(sec<172800) return L?L.fmtRelative(Number((sec/3600).toFixed(1)),"hour"):(sec/3600).toFixed(1)+" h ago";
-  return L?L.fmtRelative(Math.round(sec/86400),"day"):Math.round(sec/86400)+" days ago";
+  if(sec<90) return atlasAgeSay("second",Math.round(sec),Math.round(sec)+"s ago");
+  if(sec<5400) return atlasAgeSay("minute",Math.round(sec/60),Math.round(sec/60)+" min ago");
+  if(sec<172800){
+    const h=Number((sec/3600).toFixed(1));
+    return atlasAgeSay("hour",h,(sec/3600).toFixed(1)+" h ago");
+  }
+  return atlasAgeSay("day",Math.round(sec/86400),Math.round(sec/86400)+" days ago");
 }
+/* ATLAS-AGE-END */
 /* --- deterministic skies: Valheim's weather is a pure function of net time ---
    Weather rerolls every 666 s from Unity's xorshift128 PRNG seeded with the
    period index; wind is 4 re-seeded octaves. No mod, no game hook - the same
@@ -6930,12 +7303,21 @@ function wxCompass(deg){
   return n[Math.round(deg/22.5)%16];
 }
 /* WX-ENGINE-END */
-const WX_LABEL={Clear:"Clear skies",Rain:"Rain",Misty:"Mist",ThunderStorm:"Thunderstorm",
-  LightRain:"Light rain",DeepForest_Mist:"Forest mist",SwampRain:"Swamp drizzle",Snow:"Snowfall",
-  SnowStorm:"Blizzard",Heath_clear:"Clear heath winds",Twilight_Clear:"Cold and clear",
-  Twilight_Snow:"Driving snow",Twilight_SnowStorm:"Polar storm",Mistlands_clear:"Still mists",
-  Mistlands_rain:"Misty rain",Mistlands_thunder:"Mistland thunder",Ashlands_ashrain:"Ash rain",
-  Ashlands_misty:"Ash haze",Ashlands_CinderRain:"Cinder rain",Ashlands_storm:"Firestorm"};
+/* The env keys are Valheim's own and never move; what a host reads is the catalog's.
+   The property names end in Id because that is how the catalog gate recognises a table
+   that holds ids rather than English. */
+const WX_LABEL={ClearId:"atlas.wx.env.clear",RainId:"atlas.wx.env.rain",MistyId:"atlas.wx.env.mist",
+  ThunderStormId:"atlas.wx.env.thunderstorm",LightRainId:"atlas.wx.env.light_rain",
+  DeepForest_MistId:"atlas.wx.env.forest_mist",SwampRainId:"atlas.wx.env.swamp_drizzle",
+  SnowId:"atlas.wx.env.snowfall",SnowStormId:"atlas.wx.env.blizzard",
+  Heath_clearId:"atlas.wx.env.heath_clear",Twilight_ClearId:"atlas.wx.env.cold_clear",
+  Twilight_SnowId:"atlas.wx.env.driving_snow",Twilight_SnowStormId:"atlas.wx.env.polar_storm",
+  Mistlands_clearId:"atlas.wx.env.still_mists",Mistlands_rainId:"atlas.wx.env.misty_rain",
+  Mistlands_thunderId:"atlas.wx.env.mistland_thunder",Ashlands_ashrainId:"atlas.wx.env.ash_rain",
+  Ashlands_mistyId:"atlas.wx.env.ash_haze",Ashlands_CinderRainId:"atlas.wx.env.cinder_rain",
+  Ashlands_stormId:"atlas.wx.env.firestorm"};
+/* The words for an env, or the env's own key when the tables have drifted apart. */
+const wxWords=env=>{const id=WX_LABEL[env+"Id"];return id?T(id):String(env);};
 const WX_RUNE={Clear:"ᛋ",Heath_clear:"ᛋ",Twilight_Clear:"ᛋ",Mistlands_clear:"ᛋ",
   Rain:"ᛚ",LightRain:"ᛚ",SwampRain:"ᛚ",Mistlands_rain:"ᛚ",Ashlands_ashrain:"ᛚ",Ashlands_CinderRain:"ᛚ",
   Misty:"ᚾ",DeepForest_Mist:"ᚾ",Ashlands_misty:"ᚾ",
@@ -6967,7 +7349,7 @@ function renderWeather(){
   const biome=ATLAS.wxBiome||"Meadows";
   const env=wxEnvAt(nt.t,biome);
   const wind=wxWindAt(nt.t,env);
-  $("#wxNow").innerHTML=`<span class="wxfr">${WX_RUNE[env]||"ᛋ"}</span>${esc(TT(WX_LABEL[env]||env))}`;
+  $("#wxNow").innerHTML=`<span class="wxfr">${WX_RUNE[env]||"ᛋ"}</span>${esc(wxWords(env))}`;
   $("#wxArrow").style.transform="rotate("+Math.round(wind.deg)+"deg)";
   $("#wxWind").textContent=wxCompass(wind.deg)+" · "+Math.round(wind.intensity*100)+"%";
   const period=Math.floor(nt.t/666),today=Math.floor(nt.t/1800),rows=[];
@@ -6976,7 +7358,7 @@ function renderWeather(){
     const e=wxEnvAt(pt,biome);
     const w=wxWindAt(pt,e);
     rows.push(`<div class="wxf"><span class="wxft">${wxClockLabel(pt,today)}</span>`+
-      `<span class="wxfr">${WX_RUNE[e]||""}</span><span class="wxfe">${esc(TT(WX_LABEL[e]||e))}</span>`+
+      `<span class="wxfr">${WX_RUNE[e]||""}</span><span class="wxfe">${esc(wxWords(e))}</span>`+
       `<span class="wxfw">${Math.round(w.intensity*100)}%</span></div>`);
   }
   $("#wxForecast").innerHTML=rows.join("");
@@ -6984,13 +7366,25 @@ function renderWeather(){
     ?T("atlas.wx.anchor.paused")
     :T("atlas.wx.anchor.live");
 }
-/* biome picker pills */
+/* biome picker pills. The game's own biome keys never move; the words on the pills are
+   the catalog's. */
+const WX_BIOMES=[{key:"Meadows",labelId:"atlas.wx.biome.meadows"},{key:"BlackForest",labelId:"atlas.wx.biome.black_forest"},
+  {key:"Swamp",labelId:"atlas.wx.biome.swamp"},{key:"Mountain",labelId:"atlas.wx.biome.mountain"},
+  {key:"Plains",labelId:"atlas.wx.biome.plains"},{key:"Mistlands",labelId:"atlas.wx.biome.mistlands"},
+  {key:"Ashlands",labelId:"atlas.wx.biome.ashlands"},{key:"DeepNorth",labelId:"atlas.wx.biome.deep_north"},
+  {key:"Ocean",labelId:"atlas.wx.biome.ocean"}];
+/* A painter rather than a line inside the wiring below: the bar is built while app.js is
+   still being evaluated, which is long before the catalog lands, so the boot repaint has
+   to be able to draw it again. Written once it showed nine dotted ids on the Map hall.
+   The click handler sits on the strip itself, so rebuilding the pills keeps it. */
+function renderWxBiomes(){
+  const bs=$("#wxBiomes"); if(!bs) return;
+  const now=ATLAS.wxBiome||"Meadows";
+  bs.innerHTML=WX_BIOMES.map(b=>`<span class="wxb${b.key===now?" on":""}" data-b="${b.key}">${esc(T(b.labelId))}</span>`).join("");
+}
 (function(){
   const bs=$("#wxBiomes"); if(!bs) return;
-  const BIOMES=[["Meadows","Meadows"],["BlackForest","Black Forest"],["Swamp","Swamp"],
-    ["Mountain","Mountain"],["Plains","Plains"],["Mistlands","Mistlands"],
-    ["Ashlands","Ashlands"],["DeepNorth","Deep North"],["Ocean","Ocean"]];
-  bs.innerHTML=BIOMES.map(b=>`<span class="wxb${b[0]==="Meadows"?" on":""}" data-b="${b[0]}">${b[1]}</span>`).join("");
+  renderWxBiomes();
   bs.addEventListener("click",e=>{
     const el=e.target.closest(".wxb"); if(!el) return;
     ATLAS.wxBiome=el.dataset.b;
@@ -7177,7 +7571,7 @@ function atlasDraw(){
       }
       if(!wipe){
         g.font="11px 'IBM Plex Mono',monospace"; g.textAlign="center"; g.textBaseline="middle";
-        g.fillText("ᚾ unexplored: no cartography table has shared the realm yet",s.w/2,s.h/2);
+        g.fillText("ᚾ "+T("atlas.fog.unexplored"),s.w/2,s.h/2);
         g.textAlign="start";
       }
     }
@@ -7233,7 +7627,7 @@ function atlasDraw(){
     }
   }
   const z=$("#atlasZoomLbl");
-  if(z) z.textContent=Math.round(1/c.ppm)+" m/px";
+  if(z) z.textContent=T("atlas.zoom.scale",{metres:Math.round(1/c.ppm)});
 }
 /* pan / zoom / coord readout */
 (function(){
@@ -7294,7 +7688,7 @@ $$(".lchip").forEach(ch=>ch.addEventListener("click",()=>{
 }));
 $("#atlasRecenter").addEventListener("click",()=>{atlasFit();atlasDraw();});
 $("#atlasRedraw").addEventListener("click",()=>{
-  if(!Native.available){toast("ᛞ Preview · the real map renders in the app");return;}
+  if(!Native.available){toast("ᛞ "+T("atlas.redraw.preview.toast"));return;}
   atlasRenderMap(true);
 });
 $("#atlasWaypoints").addEventListener("click",e=>{
@@ -7344,13 +7738,12 @@ if(Native.available){
   Native.on("server.worldSaved",d=>{
     if(!isActiveProfile(d?.profile)) return;
     const ms=Math.round(Number(d?.seconds)||0); // bridge param is named 'seconds' but carries milliseconds
-    toast("ᛉ World saved · "+ms+"ms");
+    toast("ᛉ "+T("hearth.saves.saved.toast",{ms}));
     clearCondition("saveFailed");   // a good write answers the failed one
-    $("#lastSave").textContent=clock()+" · "+ms+"ms";
+    $("#lastSave").textContent=T("hearth.saves.last.value",{clock:clock(),ms});
     S.lastSaveAt=new Date();
     S.saveDur.push(ms); if(S.saveDur.length>12)S.saveDur.shift();
-    const avg=S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length;
-    $("#saveAvg").textContent="avg "+Math.round(avg)+"ms";
+    renderSaveAvg();
     renderSaveBars();
     S.saveSec=S.saveInterval;
     if(currentPage==="atlas") atlasRefreshInfo(); // fresh .db on disk = fresh atlas facts/fog
@@ -7361,7 +7754,7 @@ if(Native.available){
     if(!isActiveProfile(d?.profile)) return;
     const ms=Math.round(Number(d?.durationMs)||0);
     conditionSaveFailed(ms);
-    toast("ᚦ World save FAILED after "+ms+"ms · check the Saga log");
+    toast("ᚦ "+T("hearth.saves.failed.toast",{ms}));
     logLine("err","[BakaLoader] the server reported a FAILED world save after "+ms+
       "ms. Everything since the last good save is only in memory. Check free disk space and "+
       "whether anything else has the world files open.");
@@ -7389,7 +7782,7 @@ if(Native.available){
     setLaunchHold(d);
     /* The same sentence the condition bar and the modal put, built from the facts in
        the event rather than from the host's prose. One builder, one wording. */
-    toast("ᛊ "+TT("Start held · ")+guardBody(d||{}));
+    toast("ᛊ "+T("guard.held.toast",{reason:guardBody(d||{})}));
     logLine("warn","[BakaLoader] start held: "+(d?.message||"the launch guard did not clear it"));
   });
   Native.on("server.launchHoldCleared",d=>{
@@ -7399,7 +7792,7 @@ if(Native.available){
      folder, a check that could not run. The state event that follows re-enables Kindle. */
   Native.on("server.launchFailed",d=>{
     if(!isActiveProfile(d?.profile)) return;
-    toast("ᚦ "+TT("Could not start the server · ")+(d?.message||TT("see the log for what stopped it")));
+    toast("ᚦ "+T("hearth.launch.failed.toast",{reason:d?.message||T("hearth.launch.failed.nodetail")}));
     logLine("err","[BakaLoader] the server was not started: "+(d?.message||"unknown error"));
   });
   /* The pre-update world snapshot finished (or could not be made, which stops the start). */
@@ -7407,7 +7800,7 @@ if(Native.available){
     if(!isActiveProfile(d?.profile)) return;
     if(d?.ok){
       clearCondition("backupFailed");
-      toast("ᛝ "+d.count+" "+TT(d.count===1?"world":"worlds")+" copied aside · "+fmtBytes(d.bytes));
+      toast("ᛝ "+T("srvupd.worlds_copy.done.toast",{count:d.count,size:fmtBytes(d.bytes)}));
       logLine("ok","[BakaLoader] copied "+d.count+" world(s) aside before starting ("+fmtBytes(d.bytes)+")");
       (d.skipped||[]).forEach(s=>logLine("warn","[BakaLoader] not copied aside: "+s));
     }else{
@@ -7418,18 +7811,21 @@ if(Native.available){
   });
   Native.on("atlas.renderProgress",d=>{
     if(currentPage==="atlas"&&d&&d.world===ATLAS.world&&ATLAS.rendering)
-      atlasMsg("Charting the realm from its seed… "+d.pct+"%");
+      atlasMsg(ATLAS_MSG.chartingPctId,{percent:d.pct});
   });
   Native.on("server.inviteCode",d=>{
     if(!d?.code||!isActiveProfile(d?.profile)) return;
     S.invite=d.code; renderNet();
-    toast("ᛟ Crossplay invite · "+d.code);
+    toast("ᛟ "+T("hearth.net.invite.toast",{code:d.code}));
     logLine("info","[BakaLoader] crossplay invite code: "+d.code);
   });
   Native.on("server.crashed",d=>{
     // Crashes always toast, even for background servers - name the culprit.
-    const who=d?.profile&&!isActiveProfile(d.profile)?" · "+d.profile:"";
-    toast(TT("ᚦ Server crashed · consult the saga")+who);
+    /* Whose server crashed is a whole second sentence rather than a tail on the first:
+       a background realm names itself, the one on screen does not. */
+    toast("ᚦ "+(d?.profile&&!isActiveProfile(d.profile)
+      ?T("hearth.crashed.named.toast",{profile:d.profile})
+      :T("hearth.crashed.toast")));
     if(isActiveProfile(d?.profile)){
       S.crashed=true;
       conditionCrashed();
@@ -7486,12 +7882,12 @@ if(Native.available){
     $("#lastSave").textContent="-";
     $("#saveCountdown").textContent="-:-";
     $("#tickVal").textContent="-";
-    $("#sbMods").textContent="- mods";
+    $("#sbMods").textContent=T("side.mods.count",{count:"-"});
     /* the mock save chart from index.html is design filler, not a measurement */
     $("#saveBars").innerHTML="";
-    $("#saveAvg").textContent="avg -";
+    renderSaveAvg();
     renderSaveBars();
-    tIn.placeholder="console command… (Enter to send)";
+    tIn.placeholder=T("saga.term.native.placeholder");
     /* Forge Load: real CPU/RAM sampled from the tracked server process every 3s.
        Quiet Native.call (no rpc() wrapper) so a hiccup never toast-spams the poll. */
     for(let i=0;i<N;i++){cpu.push(0);ram.push(0);}
@@ -7517,8 +7913,8 @@ if(Native.available){
     /* process priority is not pref-backed: always AboveNormal in C# */
     const prio=$("#prioSel");
     prio.value="AboveNormal"; prio.disabled=true;
-    prio.title="BakaLoader always boosts the server process to AboveNormal";
-    prio.insertAdjacentHTML("afterend",`<div class="fieldnote">always AboveNormal, boosted by BakaLoader</div>`);
+    prio.title=T("world.priority.fixed.title");
+    prio.insertAdjacentHTML("afterend",`<div class="fieldnote">${esc(T("world.priority.fixed.note"))}</div>`);
 
     const info=await rpc("app.info");
     if(info!==FAIL&&info){
@@ -7721,7 +8117,9 @@ if(!Native.available){
     const tr=e.target.closest("tr[data-key]"); if(!tr) return;
     e.preventDefault();
     const mod=modByKey(tr.dataset.key); if(!mod) return;
-    ctxOpen(e.clientX,e.clientY,mod.FullName,modRowItems(mod));
+    const x=e.clientX,y=e.clientY;
+    const again=()=>ctxOpen(x,y,mod.FullName,modRowItems(mod),again);
+    again();
   });
   $("#fWorld").innerHTML=`<option>Final Sunset</option>`;
 
@@ -7765,7 +8163,7 @@ maxPacketSize = 4096`,
 
   /* world-save write times: a dozen plausible runs so the bars carry real tooltips */
   S.saveDur=[198,214,205,232,209,241,218,236,252,224,268,214];
-  $("#saveAvg").textContent="avg "+Math.round(S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length)+"ms";
+  renderSaveAvg();
   renderSaveBars();
 
   /* uptime tick */
@@ -7780,9 +8178,9 @@ maxPacketSize = 4096`,
       saveSec=600;
       const ms=190+Math.floor(Math.random()*90);
       S.saveDur.push(ms); if(S.saveDur.length>12)S.saveDur.shift();
-      $("#saveAvg").textContent="avg "+Math.round(S.saveDur.reduce((a,b)=>a+b,0)/S.saveDur.length)+"ms";
+      renderSaveAvg();
       renderSaveBars();
-      toast("ᛉ World saved · "+clock());
+      toast("ᛉ "+T("hearth.saves.saved.preview.toast",{clock:clock()}));
       logLine("ok","World saved ( Final_Sunset.db )  8.42 MB  in "+ms+" ms");
     }
     $("#saveCountdown").textContent=

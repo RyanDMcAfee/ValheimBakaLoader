@@ -42,6 +42,21 @@ namespace ValheimBakaLoader.Tests.Forms
                 ? lore.GetString()
                 : null;
 
+        /// <summary>One CLDR category of an entry's lore, or null when it is not a plural.</summary>
+        private static string Plural(Dictionary<string, JsonElement> catalog, string id, string category) =>
+            catalog.TryGetValue(id, out var entry) && entry.TryGetProperty("lore", out var lore)
+             && lore.ValueKind == JsonValueKind.Object
+             && lore.TryGetProperty(category, out var picked) && picked.ValueKind == JsonValueKind.String
+                ? picked.GetString()
+                : null;
+
+        /// <summary>The parameter a plural entry chooses its category from.</summary>
+        private static string PluralParam(Dictionary<string, JsonElement> catalog, string id) =>
+            catalog.TryGetValue(id, out var entry) && entry.TryGetProperty("plural", out var name)
+             && name.ValueKind == JsonValueKind.String
+                ? name.GetString()
+                : null;
+
         private static readonly Regex AnyId = new(
             @"data-i18n(?:-title|-placeholder|-aria)?=""([^""]+)""", RegexOptions.Compiled);
 
@@ -120,7 +135,10 @@ namespace ValheimBakaLoader.Tests.Forms
                 Assert.True(header.Value.Contains("data-i18n-title=\""),
                     "the " + header.Groups[1].Value + " column has no id for its tooltip");
             }
-            Assert.Contains("#page-vikings th", AppJs());   // still swapped by applyTerms too
+            // The selector list that swapped these headers underneath the walker is
+            // gone. The walker is the only thing that writes them now, and the register
+            // it writes is picked inside the lookup out of the entry's own two halves.
+            Assert.DoesNotContain("const TERM_STATIC_SEL", AppJs());
         }
 
         // --------------------------------------------------------------------- B. Mods
@@ -134,6 +152,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.col.name", "common.sort.by_name", "mods.col.installed",
                 "mods.col.installed.title", "mods.col.latest", "mods.col.latest.title",
                 "mods.col.status", "mods.col.status.title", "mods.col.possibly_outdated",
+                "mods.search.placeholder",
             });
         }
 
@@ -159,7 +178,8 @@ namespace ValheimBakaLoader.Tests.Forms
             column = column.Substring(0, column.IndexOf("</th>", StringComparison.Ordinal));
             Assert.Contains("data-i18n=\"mods.col.possibly_outdated\"", column);
             Assert.DoesNotContain("data-i18n-title", column);
-            Assert.Contains("th.title=(scanned&&mods.length&&!anyGameDate)?MOD_PO_TIP_UNKNOWN:MOD_PO_TIP;", js);
+            Assert.Contains("th.title=(scanned&&mods.length&&!anyGameDate)", js);
+            Assert.Contains("?T(\"mods.col.possibly_outdated.tip.unknown\"):T(\"mods.col.possibly_outdated.tip\");", js);
 
             // The two header buttons say which sites a scan reads, so their words follow
             // the Upkeep switch and renderModSourceLabels owns them.
@@ -182,55 +202,76 @@ namespace ValheimBakaLoader.Tests.Forms
                 "runes.head.title", "common.norse.runes", "runes.open.label",
                 "runes.reload.label", "runes.list.label", "common.norse.scrolls",
                 "runes.search.aria", "runes.find.aria", "runes.find.next",
+                "runes.search.placeholder", "runes.find.placeholder", "runes.editor.placeholder",
                 "runes.find.next.title",
             });
         }
 
         /// <summary>
-        /// The Save button on the Configs hall is keyless, and this says why rather
-        /// than leaving it looking forgotten: resetCfgSaveBtn() writes the same words
-        /// back after the confirm state, so the button has two owners until that
-        /// literal moves into the catalog with it, in one change rather than two.
+        /// The Save button on the Configs hall stays keyless, and this says why rather
+        /// than leaving it looking forgotten: resetCfgSaveBtn() writes its words back
+        /// every time the confirm state falls away, so an id in the page AND a render in
+        /// app.js would be two owners of one button and the loser would be whichever ran
+        /// second. The literal moved into the catalog with the render instead, in one
+        /// change rather than two, and repaintBootCopy runs that render the moment the
+        /// words land, so the button reads out of the catalog from the first frame.
         /// </summary>
         [Fact]
-        public void The_config_save_button_waits_for_the_render_that_rewrites_it()
+        public void The_config_save_button_reads_its_words_through_the_render_that_rewrites_it()
         {
             var hall = Hall("runes", "<!-- ============ PAGE: WORLD");
             var button = hall.Substring(hall.IndexOf("id=\"cfgSaveBtn\"", StringComparison.Ordinal) - 40, 140);
+            var js = AppJs();
 
             Assert.DoesNotContain("data-i18n", button);
-            Assert.Contains("function resetCfgSaveBtn(){", AppJs());
-            Assert.Contains("b.innerHTML=\"ᛉ&nbsp; Save\";", AppJs());
+            Assert.Contains("function resetCfgSaveBtn(){", js);
+            Assert.Contains("b.textContent=T(\"runes.save.label\");", js);
+            Assert.Contains("b.textContent=T(\"runes.save.confirm.label\");", js);
+            // Nothing spells the button's words out any more, on either side of the confirm.
+            Assert.DoesNotContain("innerHTML=\"ᛉ&nbsp; Save\"", js);
+            Assert.DoesNotContain("innerHTML=\"ᛉ&nbsp; Confirm save?\"", js);
+            // And the render that owns them runs when the catalog arrives, not only when a
+            // scroll is opened, so a host who never opens one still reads the catalog's word.
+            Assert.Contains("try{resetCfgSaveBtn();}catch(_){}", js);
         }
 
         /// <summary>
-        /// The three search boxes on these halls key the sentence a screen reader
-        /// reads and NOT the one the box shows, because applyTerms() still caches and
-        /// restores those five placeholders. Moving a placeholder into the catalog
-        /// while the cache still owns it would restore the English over the catalog's
-        /// word on the first terminology toggle. Both halves move when the cache goes.
+        /// The three search boxes key BOTH halves now: the sentence a screen reader
+        /// announces and the one the box shows. The placeholder was held back while
+        /// applyTerms cached and restored those five, because the cache could run before
+        /// the catalog fetch resolved and would have put the English seed back over a
+        /// pack's word on the first terminology toggle. The cache went with the swap it
+        /// served, so both halves move here, in one change, as the note that held them
+        /// back said they would have to.
         /// </summary>
         [Fact]
-        public void The_search_boxes_key_the_spoken_label_and_leave_the_placeholder_to_the_cache()
+        public void The_search_boxes_key_the_spoken_label_and_the_placeholder_too()
         {
             var html = Html();
             var js = AppJs();
 
-            foreach (var (id, aria) in new[]
+            foreach (var (id, aria, placeholder) in new[]
                      {
-                         ("modSearch", "mods.search.aria"),
-                         ("runeSearch", "runes.search.aria"),
-                         ("cfgFind", "runes.find.aria"),
+                         ("modSearch", "mods.search.aria", "mods.search.placeholder"),
+                         ("runeSearch", "runes.search.aria", "runes.search.placeholder"),
+                         ("cfgFind", "runes.find.aria", "runes.find.placeholder"),
                      })
             {
                 var open = html.IndexOf("id=\"" + id + "\"", StringComparison.Ordinal);
                 Assert.True(open > 0, "index.html no longer has #" + id);
                 var tag = html.Substring(html.LastIndexOf('<', open), html.IndexOf('>', open) - html.LastIndexOf('<', open) + 1);
                 Assert.Contains("data-i18n-aria=\"" + aria + "\"", tag);
-                Assert.DoesNotContain("data-i18n-placeholder", tag);
+                Assert.Contains("data-i18n-placeholder=\"" + placeholder + "\"", tag);
             }
 
-            Assert.Contains("[$(\"#palInput\"),$(\"#cfgEditor\"),$(\"#modSearch\"),$(\"#runeSearch\"),$(\"#cfgFind\")]", js);
+            // And the config editor's own placeholder, which is the fifth of the five and
+            // the one whose two registers really differ.
+            var editor = html.Substring(html.IndexOf("id=\"cfgEditor\"", StringComparison.Ordinal) - 40, 220);
+            Assert.Contains("data-i18n-placeholder=\"runes.editor.placeholder\"", editor);
+
+            // The cache itself is gone, so there is no second owner left to fight.
+            Assert.DoesNotContain("$(\"#palInput\"),$(\"#cfgEditor\")", js);
+            Assert.DoesNotContain("const TERM_ORIG", js);
         }
 
         // ----------------------------------------------------------------- D. Settings
@@ -316,17 +357,20 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The three labels on the Settings hall that carry a number carry no id. Each
-        /// one is rebuilt from a field beside it every time that field is typed in, so
-        /// they are composed sentences rather than static ones and belong to the slice
-        /// that keys run-time messages. Read backwards this is also the gate above: key
-        /// one of these and the walker starts fighting updAdvLabels().
+        /// The three labels on the Settings hall that carry a number carry no id in the
+        /// markup, and ask for one at run time. Each is rebuilt from the field beside it
+        /// every time that field is typed in, so it is a composed sentence with a named
+        /// slot rather than a static node: key the element and the walker starts fighting
+        /// updAdvLabels(). Two of the three count something, so the entry carries its
+        /// plural categories and updAdvLabels hands the number in rather than choosing a
+        /// category itself.
         /// </summary>
         [Fact]
-        public void The_advanced_labels_that_carry_a_number_wait_for_the_message_slice()
+        public void The_advanced_labels_that_carry_a_number_ask_for_their_words_at_run_time()
         {
             var html = Html();
             var js = AppJs();
+            var catalog = Catalog();
 
             foreach (var id in new[] { "tEmptyLbl", "tSchedLbl", "tRconLbl" })
             {
@@ -337,26 +381,53 @@ namespace ValheimBakaLoader.Tests.Forms
                 Assert.Contains("$(\"#" + id + "\").textContent=", js);
             }
 
+            Assert.Contains("$(\"#tEmptyLbl\").textContent=T(\"world.empty.label\",{minutes});", js);
+            Assert.Contains("$(\"#tSchedLbl\").textContent=T(\"world.sched.label\",{hours});", js);
+            Assert.Contains("T(\"world.rcon.label\",{port}):T(\"world.rcon.off.label\")", js);
+
+            Assert.Equal("Restart when empty for {minutes} min", Plural(catalog, "world.empty.label", "other"));
+            Assert.Equal("minutes", PluralParam(catalog, "world.empty.label"));
+            Assert.Equal("Every {hours} h with in-game countdown", Plural(catalog, "world.sched.label", "other"));
+            Assert.Equal("hours", PluralParam(catalog, "world.sched.label"));
+            Assert.Equal("Bound on port {port}", Lore(catalog, "world.rcon.label"));
+            Assert.Equal("Not bound", Lore(catalog, "world.rcon.off.label"));
+
+            // and the label painted before the catalog lands is painted again after it
+            Assert.Contains("try{updAdvLabels();}catch(_){}", js);
+
             // and the one label in that row which is NOT rebuilt, so it is keyed
             Assert.Contains("id=\"tCrashLbl\" data-i18n=\"world.crash.label\"", html);
             Assert.DoesNotContain("$(\"#tCrashLbl\")", js);
         }
 
         /// <summary>
-        /// The two password chips key their tooltip and not their word, because
-        /// wireEye() swaps that word between SHOW and HIDE as the host clicks. The
-        /// tooltip says the same thing in both states and is never written from app.js,
-        /// so it is safe to move now and the word is not.
+        /// The two password chips key their tooltip in the markup and their word in the
+        /// painter, and the split is the whole point. The tooltip says the same thing in
+        /// both states, so the walker can own it. The word says which way the next click
+        /// goes and changes under the host's finger, so a data-i18n on the chip would
+        /// write SHOW back over a HIDE the next time anything walked the page:
+        /// renderEyeChips() owns it instead, painting from the type of the box beside it,
+        /// and the boot repaint runs it again when the catalog lands. The English in the
+        /// markup is the floor for the frame before that.
         /// </summary>
         [Fact]
-        public void The_password_chips_key_the_tooltip_the_two_states_share()
+        public void The_password_chips_key_the_tooltip_and_paint_their_own_word()
         {
             var html = Html();
+            var js = AppJs();
 
             Assert.Contains("id=\"eyePw\" title=\"Show / hide password\" data-i18n-title=\"common.chip.show.title\"", html);
             Assert.Contains("id=\"eyeRcon\" title=\"Show / hide password\" data-i18n-title=\"common.chip.show.title\"", html);
-            Assert.DoesNotContain("id=\"eyePw\" title=\"Show / hide password\" data-i18n=", html);
-            Assert.Contains("$(\"#\"+chipId).textContent=show?\"HIDE\":\"SHOW\";", AppJs());
+            Assert.DoesNotContain("id=\"eyePw\" title=\"Show / hide password\" data-i18n=\"", html);
+            Assert.DoesNotContain("id=\"eyeRcon\" title=\"Show / hide password\" data-i18n=\"", html);
+
+            Assert.Contains("chip.textContent=box.type===\"password\"?T(\"common.chip.show\"):T(\"common.chip.hide\");", js);
+            Assert.DoesNotContain("\"HIDE\"", js);
+            Assert.Contains("try{renderEyeChips();}catch(_){}", js);
+
+            var catalog = Catalog();
+            Assert.Equal("SHOW", Lore(catalog, "common.chip.show"));
+            Assert.Equal("HIDE", Lore(catalog, "common.chip.hide"));
         }
 
         /// <summary>
@@ -470,6 +541,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 "atlas.layer.pois",
                 "atlas.layer.builds",
                 "atlas.layer.pins",
+                "atlas.wx.label",
                 "atlas.fact.saved",
                 "atlas.fact.explored",
                 "atlas.fact.event",
@@ -522,10 +594,26 @@ namespace ValheimBakaLoader.Tests.Forms
             var html = Html();
             var js = AppJs();
 
+            // Both shapes: the element handed straight to emberize, and the one a painter
+            // takes an alias to first so it can write the words before lighting them. The
+            // second shape is how every label that comes out of the catalog has to do it,
+            // so a rule that only knew the first would stop covering them one by one. The
+            // alias is read BACKWARDS from the emberize call to the nearest place that name
+            // was taken, which is the only direction that cannot run past the function it
+            // belongs to and pick up somebody else's el.
             var emberised = Regex.Matches(js, @"emberize\(\$\(""#([A-Za-z0-9_-]+)""\)\)")
                                  .Select(m => m.Groups[1].Value)
-                                 .Distinct()
                                  .ToList();
+
+            foreach (Match call in Regex.Matches(js, @"emberize\(([A-Za-z_$][A-Za-z0-9_$]*)\)"))
+            {
+                var name = call.Groups[1].Value;
+                var taken = Regex.Matches(js.Substring(0, call.Index),
+                    @"\b" + Regex.Escape(name) + @"\s*=\s*\$\(""#([A-Za-z0-9_-]+)""\)").LastOrDefault();
+                if (taken != null) emberised.Add(taken.Groups[1].Value);
+            }
+
+            emberised = emberised.Distinct().ToList();
 
             Assert.Contains("lchipFog", emberised);
             Assert.Contains("meadLink", emberised);
@@ -591,7 +679,10 @@ namespace ValheimBakaLoader.Tests.Forms
             var termIn = hall.Substring(hall.IndexOf("id=\"termIn\"", StringComparison.Ordinal) - 40, 220);
             Assert.DoesNotContain("data-i18n-placeholder", termIn);
             Assert.Contains("tIn.placeholder=gated", js);
-            Assert.Contains("tIn.placeholder=\"console command… (Enter to send)\";", js);
+            // all three of the ways app.js writes it are catalog sentences now
+            Assert.Contains("tIn.placeholder=T(\"saga.term.native.placeholder\");", js);
+            Assert.Contains("T(\"saga.term.placeholder\")", js);
+            Assert.Contains("T(\"saga.term.gated.placeholder\")", js);
         }
 
         // ------------------------------------------------------------------ G. Discord
@@ -633,11 +724,12 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The two sentences this hall does not key, and why each one is not an oversight.
-        /// The card's opening paragraph has a bold word in the middle of it, so the walker
-        /// would translate the words before the bold and leave the rest in English. The
-        /// post's status line is written by heraldRenderPost through TT() every time the
-        /// post appears or goes. Both belong to the slice that keys run-time messages.
+        /// The one sentence this hall does not key, and why it is not an oversight. The
+        /// card's opening paragraph has a bold word in the middle of it, so the walker
+        /// would translate the words before the bold and leave the rest in English.
+        /// The post's status line is app.js's, not the walker's: heraldRenderPost writes
+        /// one of two whole catalog sentences into it every time the post appears or goes,
+        /// so the element carries no id of its own and the two owners cannot fight.
         /// The webhook box keeps its example address, which is an address rather than a
         /// sentence and is not translated in any language.
         /// </summary>
@@ -652,7 +744,7 @@ namespace ValheimBakaLoader.Tests.Forms
 
             var status = hall.Substring(hall.IndexOf("id=\"heraldPostStat\"", StringComparison.Ordinal) - 40, 120);
             Assert.DoesNotContain("data-i18n", status);
-            Assert.Contains("el.textContent=TT(HERALD_HAS_POST", js);
+            Assert.Contains("el.textContent=HERALD_HAS_POST?T(\"herald.post.placed\"):T(\"herald.post.none\");", js);
 
             var url = hall.Substring(hall.IndexOf("id=\"heraldUrl\"", StringComparison.Ordinal), 200);
             Assert.Contains("placeholder=\"https://discord.com/api/webhooks/…\"", url);
@@ -714,7 +806,9 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal(2, Regex.Matches(Html(), @"data-i18n=""vikings\.col\.deaths""").Count);
             Assert.Equal(2, Regex.Matches(Html(), @"data-i18n=""vikings\.col\.seen""").Count);
 
-            Assert.Contains("#page-skald th", AppJs());   // still swapped by applyTerms too
+            // Same here: one owner, and the register is the entry's rather than a
+            // regex table's.
+            Assert.DoesNotContain("const TERM_STATIC_SEL", AppJs());
         }
 
         /// <summary>
@@ -732,8 +826,10 @@ namespace ValheimBakaLoader.Tests.Forms
 
             Assert.Equal("valkyries dispatched", Lore(catalog, "skald.deaths.sub"));
             Assert.Equal("player deaths", catalog["skald.deaths.sub"].GetProperty("plain").GetString());
-            Assert.Contains("#skDeathsSub", AppJs());     // named by TERM_STATIC_SEL
-            Assert.Contains("[\"valkyries dispatched\",\"player deaths\"]", AppJs());
+            // The caption used to be reworded by a pair in the swap table AND named by the
+            // selector list, which is two mechanisms for one word. Both are gone: the entry
+            // carries both registers and the lookup picks between them.
+            Assert.DoesNotContain("[\"valkyries dispatched\",\"player deaths\"]", AppJs());
 
             var sub = hall.Substring(hall.IndexOf("id=\"skaldSub\"", StringComparison.Ordinal) - 40, 120);
             Assert.DoesNotContain("data-i18n", sub);

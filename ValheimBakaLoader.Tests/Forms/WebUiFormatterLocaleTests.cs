@@ -39,6 +39,28 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("const LOC=()=>{const L=intl();return L?L.locale():undefined;};", js);
         }
 
+        /// <summary>
+        /// The map's age line, tier by tier, run as a table against the REAL code: the
+        /// block between the ATLAS-AGE markers in app.js, evaluated with the real lookup
+        /// and the real catalog, and then again with no lookup at all. Both arms have to
+        /// write the four shapes 1.1.x wrote, which is what keeps the fallback honest
+        /// rather than merely present.
+        /// <para>
+        /// It runs in the copy gate too. It is here as well because the English in those
+        /// four entries is copy, and a copy edit that moves it should fail the suite a
+        /// developer runs rather than only the gate a commit runs.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_maps_age_line_reads_the_way_it_always_did()
+        {
+            var said = RepoScript.Run(RepoScript.Node(),
+                RepoScript.At("scripts", "i18n", "atlas_age_selftest.js"));
+
+            Assert.True(said.Ok, "the map's age line changed its English:" + Environment.NewLine + said);
+            Assert.Contains("ATLAS AGE PASS", said.Output);
+        }
+
         [Fact]
         public void Every_formatter_asks_the_lookup_first()
         {
@@ -48,7 +70,12 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains(":L?L.fmtRelative(s)", js);                                     // agoAt
             Assert.Contains("const L=intl(); if(L) return L.fmtBytes(n);", js);              // fmtBytes
             Assert.Contains("const L=intl(); if(L) return L.fmtDuration(sec);", js);         // skDur
-            Assert.Contains("L?L.fmtRelative(Math.round(sec/60),\"minute\")", js);           // atlasAge
+            // atlasAge is the one formatter that does NOT go through fmtRelative any more:
+            // no Intl style writes all four of its tiers the way this panel has always
+            // written them, so the words are catalog entries and only the NUMBER is the
+            // lookup's. It still asks the lookup first, which is what this file is about.
+            Assert.Contains("const id=ATLAS_AGE[unit+\"Id\"];", js);                    // atlasAge
+            Assert.Contains("if(!L||!L.has(id)) return fallback;", js);                  // atlasAge
             Assert.Contains("const L=intl();return L?L.fmtTime(d):pad(d.getHours())", js);   // clock
         }
 

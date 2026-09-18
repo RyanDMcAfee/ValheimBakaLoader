@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using ValheimBakaLoader.Tests.Tools;
 using Xunit;
@@ -282,15 +283,18 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void A_long_dash_is_refused_in_English_and_allowed_in_Russian()
         {
+            // Both registers on the fixture, so this is testing the dash rule and only
+            // that: Hearth is in the Norse register and a sentence that speaks in it
+            // owes a plain wording, which is a different rule with its own tests.
             Refuses("long dash in English", "{\n" +
                 "  \"_meta\": { \"language\": \"en\" },\n" +
-                "  \"keys\": { \"hall.note\": { \"lore\": \"Hearth — status\" } }\n" +
+                "  \"keys\": { \"hall.note\": { \"lore\": \"Hearth — status\", \"plain\": \"Server — status\" } }\n" +
                 "}", "U+2014, which en does not allow");
 
             // Russian needs it: it stands in for the omitted copula, which is how the
             // language writes "X is Y". The rule is a function of the language.
             var folder = Scratch();
-            Write(folder, "en.json", "{\n  \"_meta\": { \"language\": \"en\" },\n  \"keys\": { \"hall.note\": { \"lore\": \"Hearth status\" } }\n}");
+            Write(folder, "en.json", "{\n  \"_meta\": { \"language\": \"en\" },\n  \"keys\": { \"hall.note\": { \"lore\": \"Hearth status\", \"plain\": \"Server status\" } }\n}");
             Write(folder, "ru.json", "{\n  \"_meta\": { \"language\": \"ru\" },\n  \"keys\": { \"hall.note\": { \"translation\": \"Очаг — состояние\" } }\n}");
             var said = CheckFolder(folder);
             Assert.True(said.Ok, "Russian was refused the dash its grammar requires:\n" + said);
@@ -347,12 +351,14 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// A key still reached through the TT() bridge counts as used. Without this the
-        /// gate would force every sentence to move in one commit, which is the one thing
-        /// the bridge exists to avoid.
+        /// The orphan rule is strict, and it is the bridge going that made it so. While
+        /// TT() was up, a key was also "used" when its English sentence was still spelled
+        /// out at a call site, because that is how a migrated call site and one that had
+        /// not moved yet stayed in step. There is no such call site left, so being asked
+        /// for by id is the only way a key earns its place.
         /// </summary>
         [Fact]
-        public void A_key_still_reached_through_the_bridge_is_not_an_orphan()
+        public void A_sentence_spelled_out_in_the_source_no_longer_excuses_an_orphan()
         {
             var folder = Scratch();
             Write(folder, "en.json", CleanEnglish);
@@ -365,394 +371,299 @@ namespace ValheimBakaLoader.Tests.Forms
                 "--app", Path.Combine(folder, "fake-app.js"),
                 "--html", Path.Combine(folder, "fake.html"));
 
-            Assert.True(said.Ok, "a key the bridge still reaches was called an orphan:\n" + said);
+            Assert.False(said.Ok, "an orphan was excused by a sentence in the source:\n" + said);
+            Assert.Contains("orphan key: nothing asks for hall.title", said.Output);
         }
 
-        /// <summary>The swap table and one sentence it rewords, for the two tests below.</summary>
-        private const string BridgedApp =
-            "const TERM_PAIRS=[\n" +
-            "  [\"embers doused\",\"server stopped\"],\n" +
-            "  [\"Hearth\",\"Dashboard\"],\n" +
-            "];\n" +
-            "function paint(){ return TT(\"STOPPED and embers doused\"); }\n";
+        // -------------------------- C2. the Norse register, which is what is left to guard
 
         /// <summary>
-        /// The regression an English screenshot cannot show. A key whose lore is a
-        /// sentence TT() still carries takes that call site over the moment it lands,
-        /// because the bridge asks the catalog first. If the swap WOULD have reworded
-        /// that sentence and the entry names no plain register, a host reading plain
-        /// wording silently starts getting the Norse one instead.
+        /// The register list the rule reads, small enough to write out here. A fixture of
+        /// its own rather than the shipped one, so these prove the RULE and the test below
+        /// proves the LIST.
         /// </summary>
-        [Fact]
-        public void A_key_that_takes_a_bridged_sentence_and_drops_its_plain_wording_is_refused()
+        private const string NorseTerms = @"{
+  ""terms"": [""hearth"", ""saga"", ""realm"", ""realms""],
+  ""caption_suffix"": ""norse"",
+  ""caption_prefix"": ""common.norse."",
+  ""exempt"": { ""hall.quotes"": ""It names the word rather than speaking in it."" }
+}";
+
+        /// <summary>
+        /// The catalog in one folder and the register list in another, because the gate
+        /// reads every .json in the folder it is pointed at AS A CATALOG. A list dropped
+        /// in beside the fixture comes back as three findings about a file that was never
+        /// a catalog, which is a confusing way to fail a test about something else.
+        /// </summary>
+        private RepoScript.Result CheckRegister(string catalog)
         {
             var folder = Scratch();
-            Write(folder, "en.json", @"{
-  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""hall.state"": { ""lore"": ""STOPPED and embers doused"" } }
-}");
-            Write(folder, "fake-app.js", BridgedApp);
-            Write(folder, "fake.html", "<div>nothing here carries an id</div>\n");
-
-            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-
-            Assert.False(said.Ok, "a silently dropped plain register passed:\n" + said);
-            Assert.Contains("hall.state", said.Output);
-            Assert.Contains("plain register", said.Output);
+            var beside = Scratch();
+            Write(folder, "en.json", catalog);
+            Write(beside, "norse.json", NorseTerms);
+            return RepoScript.Run(RepoScript.Python(), CheckCatalog,
+                "--dir", folder, "--norse", Path.Combine(beside, "norse.json"));
         }
 
         /// <summary>
-        /// And the same catalog with the plain wording written down passes, so the rule
-        /// above is refusing the missing register rather than the sentence.
+        /// The regression no English screenshot can show, and the one rule left watching
+        /// for it. A sentence that speaks in the Norse register and names only one wording
+        /// is read AS IT STANDS by a host who turned the Norse names off, so that host gets
+        /// one hall saying world and the next saying realm.
+        /// <para>
+        /// Three rules used to watch this, one per road a sentence could take into the old
+        /// swap table: through TT(), through a T() call site, and through the walker. The
+        /// table is gone and all three roads lead to the same entry now, so the question is
+        /// asked of the entry directly.
+        /// </para>
         /// </summary>
         [Fact]
-        public void The_same_key_passes_once_it_names_its_plain_wording()
+        public void A_sentence_in_the_norse_register_with_no_plain_wording_is_refused()
         {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
+            var said = CheckRegister(@"{
   ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""hall.state"": { ""lore"": ""STOPPED and embers doused"",
-                               ""plain"": ""STOPPED and server stopped"" } }
+  ""keys"": { ""hall.state"": { ""lore"": ""The hearth is cold"" } }
 }");
-            Write(folder, "fake-app.js", BridgedApp);
-            Write(folder, "fake.html", "<div>nothing here carries an id</div>\n");
 
-            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-
-            Assert.True(said.Ok, "a key that names both registers was refused:\n" + said);
-        }
-
-        // ------------------------------- C2. the same regression on the static half
-
-        /// <summary>
-        /// The swap table and the selector list, for the static register tests below.
-        /// One pair that rewords a word on screen, and a selector list in the two
-        /// shapes the real one uses: a bare class, and a descendant pair.
-        /// </summary>
-        private const string StaticSwapApp =
-            "const TERM_PAIRS=[\n" +
-            "  [\"Layers\",\"Backups\"],\n" +
-            "];\n" +
-            "const TERM_STATIC_SEL=\"h1,.microlabel,.pitem .k\";\n";
-
-        /// <summary>
-        /// The walker's half of the same regression. applyTerms rewrites the text of
-        /// every element under TERM_STATIC_SEL through the swap, so the moment the
-        /// walker starts writing that element out of the catalog the entry has to say
-        /// what the swap said. An entry that does not is a host with plain wording on
-        /// reading a different word after the catalog lands than before it, which no
-        /// English screenshot and no gate before this one can show.
-        /// </summary>
-        [Fact]
-        public void A_static_label_the_swap_rewords_and_the_entry_does_not_is_refused()
-        {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
-  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""map.layers.label"": { ""lore"": ""Layers"" } }
-}");
-            Write(folder, "fake-app.js", StaticSwapApp);
-            Write(folder, "fake.html", "<div class=\"microlabel\" data-i18n=\"map.layers.label\">Layers</div>\n");
-
-            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-
-            Assert.False(said.Ok, "a static label that quietly stopped swapping passed:\n" + said);
-            Assert.Contains("map.layers.label", said.Output);
-            Assert.Contains("written into an element", said.Output);
-            Assert.Contains("Backups", said.Output);
+            Assert.False(said.Ok, "a sentence with one register passed:\n" + said);
+            Assert.Contains("hall.state speaks in the Norse register (hearth)", said.Output);
+            Assert.Contains("names no plain wording", said.Output);
         }
 
         /// <summary>
-        /// The same catalog with the plain wording written down passes, and it has to be
-        /// the wording the swap produced rather than any plain-sounding word: a register
-        /// that says something else is the same regression in a nicer hat.
+        /// And the same catalog with the plain wording beside it passes, so the rule is
+        /// refusing the missing register rather than the word.
         /// </summary>
         [Fact]
-        public void The_static_label_passes_when_its_plain_register_is_the_swap_s_own_word()
+        public void The_same_sentence_passes_once_it_names_its_plain_wording()
         {
-            var folder = Scratch();
-            Write(folder, "fake-app.js", StaticSwapApp);
-            Write(folder, "fake.html", "<div class=\"microlabel\" data-i18n=\"map.layers.label\">Layers</div>\n");
-
-            Write(folder, "en.json", @"{
+            var said = CheckRegister(@"{
   ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""map.layers.label"": { ""lore"": ""Layers"", ""plain"": ""Backups"" } }
+  ""keys"": { ""hall.state"": { ""lore"": ""The hearth is cold"",
+                               ""plain"": ""The server is stopped"" } }
 }");
-            var agreed = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-            Assert.True(agreed.Ok, "a static label that names the swap's own word was refused:\n" + agreed);
 
-            Write(folder, "en.json", @"{
-  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""map.layers.label"": { ""lore"": ""Layers"", ""plain"": ""Saves"" } }
-}");
-            var invented = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-            Assert.False(invented.Ok, "a plain register that disagrees with the swap passed:\n" + invented);
-            Assert.Contains("where the swap on the same element says", invented.Output);
+            Assert.True(said.Ok, "a sentence that names both registers was refused:\n" + said);
         }
 
         /// <summary>
-        /// And the other direction, which is the easier mistake to make while moving
-        /// sentences: naming a plain register on a label nothing rewords today. The
-        /// walker would start swapping a word that has never swapped, so English moves
-        /// on the very screen this phase promised not to move.
+        /// The word matches whole and ignores case, which is half of what the old table
+        /// got wrong: it held the realm pair in lower case only, so a sentence opening
+        /// on "Realm" was never reworded and nine of them shipped that way. The other
+        /// half was the plural: the table put a word boundary after realm, so realms
+        /// never matched either. Whole-word matching means a plural is its own entry in
+        /// the register, which is why the list below names both.
         /// </summary>
-        [Fact]
-        public void A_plain_register_on_a_label_nothing_rewords_is_refused()
+        [Theory]
+        [InlineData("Realm archived")]
+        [InlineData("Archived realms")]
+        [InlineData("one realm only")]
+        public void The_register_is_matched_whole_and_without_case(string lore)
         {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
+            var said = CheckRegister(@"{
   ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""map.note"": { ""lore"": ""Waypoints"", ""plain"": ""Markers"" } }
+  ""keys"": { ""hall.state"": { ""lore"": """ + lore + @""" } }
 }");
-            Write(folder, "fake-app.js", StaticSwapApp);
-            Write(folder, "fake.html", "<div class=\"subval\" data-i18n=\"map.note\">Waypoints</div>\n");
 
-            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-
-            Assert.False(said.Ok, "a plain register nothing asked for passed:\n" + said);
-            Assert.Contains("where it never moved", said.Output);
+            Assert.False(said.Ok, "the register missed " + lore + ":\n" + said);
+            Assert.Contains("hall.state speaks in the Norse register", said.Output);
         }
 
         /// <summary>
-        /// The rule answers a selector list, so a selector shape it cannot read has to
-        /// be a finding rather than a quiet false. A gate that silently stops covering
-        /// half the page is worse than one that was never written.
+        /// A Norse CAPTION is the Norse word: the small line beside a plain label in the
+        /// sidebar and the card headers. CSS hides every one of them when the switch is
+        /// off, so a plain wording there is a sentence nobody can ever read. Exempt by the
+        /// shape of the id, because a list of them would go stale the day one is added.
         /// </summary>
         [Fact]
-        public void A_selector_shape_the_rule_cannot_read_is_a_finding_rather_than_a_pass()
+        public void A_norse_caption_needs_no_plain_wording_because_the_page_hides_it()
         {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
+            var said = CheckRegister(@"{
   ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""map.layers.label"": { ""lore"": ""Layers"", ""plain"": ""Backups"" } }
+  ""keys"": {
+    ""common.norse.hearth"": { ""lore"": ""Hearth"" },
+    ""skald.uptime.norse"": { ""lore"": ""Hearth burned"" }
+  }
 }");
-            Write(folder, "fake-app.js",
-                "const TERM_PAIRS=[\n  [\"Layers\",\"Backups\"],\n];\n"
-                + "const TERM_STATIC_SEL=\".microlabel,.a > .b\";\n");
-            Write(folder, "fake.html", "<div class=\"microlabel\" data-i18n=\"map.layers.label\">Layers</div>\n");
 
-            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-
-            Assert.False(said.Ok, "an unreadable selector passed:\n" + said);
-            Assert.Contains("cannot read", said.Output);
-            Assert.Single(Regex.Matches(said.Output, "cannot read"));   // once, not once per element
+            Assert.True(said.Ok, "a Norse caption was asked for a wording nobody reads:\n" + said);
         }
 
         /// <summary>
-        /// And the rule stands down the day TERM_PAIRS goes. After that the catalog is
-        /// the only thing there is and a plain register may say whatever a writer wants,
-        /// so a rule still insisting on the old regex table would block the commit that
-        /// finishes the job.
+        /// A sentence that QUOTES a Norse word rather than speaking in it is exempt by
+        /// name, with the reason written beside it in the list.
         /// </summary>
         [Fact]
-        public void The_static_register_rule_stands_down_once_the_swap_table_is_gone()
+        public void A_named_exemption_passes_and_an_unnamed_one_does_not()
         {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
+            var exempt = CheckRegister(@"{
   ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""map.layers.label"": { ""lore"": ""Layers"" } }
+  ""keys"": { ""hall.quotes"": { ""lore"": ""Keeps Hearth beside the plain name."" } }
 }");
-            Write(folder, "fake-app.js", "const TERM_STATIC_SEL=\"h1,.microlabel\";\n");
-            Write(folder, "fake.html", "<div class=\"microlabel\" data-i18n=\"map.layers.label\">Layers</div>\n");
+            Assert.True(exempt.Ok, "a named exemption was refused:\n" + exempt);
 
-            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-
-            Assert.True(said.Ok, "the rule outlived the swap it was written for:\n" + said);
+            var other = CheckRegister(@"{
+  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
+  ""keys"": { ""hall.other"": { ""lore"": ""Keeps Hearth beside the plain name."" } }
+}");
+            Assert.False(other.Ok, "an unnamed sentence was let through:\n" + other);
         }
 
         /// <summary>
-        /// The one place the shipped catalog stops the swap on purpose, written down
-        /// here so the exemption is a decision rather than a hole. The Map hall's layer
-        /// bar was being renamed "Backups" by the Barrow's pair whenever plain wording
-        /// was on; the Barrow's own heading still swaps, through an entry that shares
-        /// the text so the bridge refuses it.
+        /// And the exemption cannot rot. An id that is exempted but no longer says
+        /// anything in the register is reported, so the list stays a set of live decisions
+        /// rather than a drawer nobody empties.
         /// </summary>
         [Fact]
-        public void The_shipped_exemption_is_the_map_layer_bar_and_the_barrow_still_swaps()
+        public void An_exemption_the_rule_no_longer_flags_is_reported()
         {
-            var gate = File.ReadAllText(CheckCatalog);
+            var said = CheckRegister(@"{
+  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
+  ""keys"": { ""hall.quotes"": { ""lore"": ""Nothing in here is a Norse word."" } }
+}");
 
-            var open = gate.IndexOf("SWAP_COLLISIONS = {", StringComparison.Ordinal);
-            Assert.True(open > 0, "the gate no longer names its exemptions");
-            var block = gate.Substring(open, gate.IndexOf("\n}", open, StringComparison.Ordinal) - open);
+            Assert.False(said.Ok, "a stale exemption passed unnoticed:\n" + said);
+            Assert.Contains("drop the exemption", said.Output);
+        }
 
-            Assert.Contains("\"atlas.layers.label\": \"Backups\",", block);
-            // one exemption, so the list cannot quietly become a place to put anything
-            // the swap disagrees with.
-            Assert.Single(Regex.Matches(block, "\"[a-z][a-z0-9_.]*\": \""));
+        /// <summary>
+        /// The list itself: short, and every live exemption carries its reason. This is
+        /// the test that reads the SHIPPED file rather than a fixture.
+        /// </summary>
+        [Fact]
+        public void The_shipped_register_list_is_short_and_says_why_it_exempts_what_it_does()
+        {
+            var path = Path.Combine(AppSourceTree.RepoRoot(), "scripts", "i18n", "norse_terms.json");
+            using var file = JsonDocument.Parse(File.ReadAllText(path));
+            var root = file.RootElement;
 
-            var catalog = AppSourceTree.Web("i18n/en.json");
+            var terms = root.GetProperty("terms").EnumerateArray().Select(t => t.GetString()).ToList();
+            Assert.InRange(terms.Count, 10, 60);       // a register, not a swap table
+            foreach (var word in new[] { "hearth", "saga", "barrow", "waystone", "skald", "realm" })
+                Assert.Contains(word, terms);
+            // Whole-word matching, so a plural that is read on screen is its own entry.
+            foreach (var word in new[] { "realms", "vikings" })
+                Assert.Contains(word, terms);
+            // The verb the old table mistook for a noun, and the reason it is not here.
+            Assert.DoesNotContain("forge", terms);
+
+            var exempt = root.GetProperty("exempt").EnumerateObject()
+                .Where(p => !p.Name.StartsWith("_", StringComparison.Ordinal)).ToList();
+            Assert.Equal(2, exempt.Count);
+            foreach (var entry in exempt)
+                Assert.True(entry.Value.GetString()?.Length > 80,
+                    entry.Name + " is exempted without a reason worth reading");
+
+            // The one decision that is recorded rather than enforced: the Map hall's
+            // layer bar. The old table rewrote it to Backups whenever the Norse names
+            // were off, naming a bar on one hall after a feature on another. Layer is
+            // not a Norse word and is not in the register, so nothing flags it; it is
+            // written down here and there so the reasoning cannot be lost.
+            var decided = root.GetProperty("_decisions");
+            Assert.True(decided.TryGetProperty("atlas.layers.label", out var why),
+                "the Map hall's layer bar lost the note that explains it");
+            Assert.Contains("map layers", why.GetString());
+
+            var catalog = File.ReadAllText(Path.Combine(AppSourceTree.RepoRoot(),
+                "ValheimBakaLoader", "WebUI", "i18n", "en.json"));
             Assert.Contains("\"atlas.layers.label\": { \"lore\": \"Layers\" }", catalog);
             Assert.Contains("\"barrow.sec.layers\": { \"lore\": \"Layers\", \"plain\": \"Backups\" }", catalog);
-            // The Barrow's heading no longer leans on the bridge refusing a word it sees
-            // twice: it asks for its own id, and the plain register on that entry is what
-            // keeps the swap it always ran. The Map's bar asks for the other id in markup,
-            // and the exemption is what stops the swap reaching it there.
-            Assert.Contains("${esc(T(\"barrow.sec.layers\"))}", AppSourceTree.Web("app.js"));
-            Assert.DoesNotContain("TT(\"Layers\")", AppSourceTree.Web("app.js"));
-            Assert.Contains("data-i18n=\"atlas.layers.label\"", AppSourceTree.Web("index.html"));
         }
 
-        // ------------------------- C3. and the same regression on the run-time half
+        // ------------------------- C3. the swap table itself, and everything that fed it
 
         /// <summary>
-        /// A fake app.js with the swap table and a call site that asks for its words by
-        /// id, which is what every migrated call site looks like. No TT() anywhere, so
-        /// the bridge rule above cannot see this one at all.
-        /// </summary>
-        private const string KeyedApp =
-            "const TERM_PAIRS=[\n" +
-            "  [\"embers doused\",\"server stopped\"],\n" +
-            "  [\"Hearth\",\"Dashboard\"],\n" +
-            "];\n" +
-            "const TERM_STATIC_SEL=\"h1,.microlabel\";\n" +
-            "function paint(){ return T(\"hall.state\"); }\n";
-
-        private static RepoScript.Result CheckKeyed(string folder)
-        {
-            Write(folder, "fake-app.js", KeyedApp);
-            Write(folder, "fake.html", "<div>nothing here carries an id</div>\n");
-            return RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
-        }
-
-        /// <summary>
-        /// The migration's own version of the regression, and the one the other two rules
-        /// structurally cannot catch. Once a call site says T("id") the English sentence
-        /// is gone from app.js, so the bridge rule has nothing to match on and the static
-        /// rule is looking at index.html. But TERM_PAIRS is still here, which means that
-        /// sentence WAS being reworded for a host reading plain wording right up until the
-        /// call site changed. An entry that answers it and names no plain register moves
-        /// those words, and only with the switch the other way, where no screenshot is.
+        /// The bridge and the table under it are gone, and nothing may put either back.
+        /// TT() asked the catalog first and ran 129 ordered regular expressions over
+        /// already-rendered English when the catalog could not answer; that second arm is
+        /// a mechanism no second language survives, because a JavaScript word boundary is
+        /// defined against ASCII and the table was a bare substring replace in Cyrillic
+        /// and in Han.
         /// </summary>
         [Fact]
-        public void A_keyed_call_site_whose_entry_drops_its_plain_wording_is_refused()
+        public void The_bridge_the_swap_table_and_the_caches_are_all_gone()
         {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
-  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""hall.state"": { ""lore"": ""STOPPED and embers doused"" } }
-}");
-            var said = CheckKeyed(folder);
+            var js = AppSourceTree.Web("app.js");
 
-            Assert.False(said.Ok, "a keyed call site with a silently dropped register passed:\n" + said);
-            Assert.Contains("hall.state", said.Output);
-            Assert.Contains("STOPPED and server stopped", said.Output);
+            foreach (var gone in new[]
+            {
+                "function TT(", "function plainify(", "const TERM_PAIRS=", "const TERM_RES=",
+                "const TERM_STATIC_SEL", "const TERM_ORIG", "const TERM_TITLE_ORIG",
+            })
+                Assert.False(js.Contains(gone, StringComparison.Ordinal), gone + " is still here");
+
+            // And the reverse map the bridge needed goes with it: English text back to an
+            // id was only ever there so a half-migrated call site could agree with a
+            // migrated one, and a second way to name a sentence is a second thing to keep
+            // in step.
+            var lookup = AppSourceTree.Web("i18n.js");
+            Assert.DoesNotContain("function idFor(", lookup);
+            Assert.DoesNotContain("buildReverse", lookup);
         }
 
         /// <summary>
-        /// The same catalog with the swap's own wording written down passes, so the rule
-        /// above refuses the missing register rather than the sentence.
+        /// One re-render path, and no reload anywhere in it. A reload would take the Saga
+        /// scrollback, both search boxes and whatever is unsaved in the config editor, and
+        /// that last one is the reason this was built rather than bought.
         /// </summary>
         [Fact]
-        public void The_keyed_call_site_passes_when_its_plain_register_is_the_swap_s_own_word()
+        public void The_language_switch_is_one_path_that_redraws_in_place()
         {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
-  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""hall.state"": { ""lore"": ""STOPPED and embers doused"",
-                               ""plain"": ""STOPPED and server stopped"" } }
-}");
-            Assert.True(CheckKeyed(folder).Ok, "an entry that names both registers was refused");
+            var js = AppSourceTree.Web("app.js");
 
-            // And a plain register that is not what the swap said is refused too: the
-            // English has to be what ships today, not what reads best to whoever moved it.
-            var invented = Scratch();
-            Write(invented, "en.json", @"{
-  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""hall.state"": { ""lore"": ""STOPPED and embers doused"",
-                               ""plain"": ""STOPPED, the server is down"" } }
-}");
-            var said = CheckKeyed(invented);
-            Assert.False(said.Ok, "a plain register that disagrees with the swap passed:\n" + said);
-            Assert.Contains("names the plain register", said.Output);
+            Assert.Contains("function applyLanguage(code){", js);
+            Assert.Contains("function applyTerms(){return applyLanguage();}", js);
+            // the attributes, the static walk, the painters, and the two surfaces a walk
+            // cannot reach
+            Assert.Contains("const tag=setLanguageAttributes(code", js);
+            Assert.Contains("window.I18N.applyStatic(document);}catch(_){}", js);
+            Assert.Contains("try{repaintBootCopy();}catch(_){}", js);
+            Assert.Contains("try{redrawOpenModal();}catch(_){}", js);
+            Assert.Contains("try{redrawContextMenu();}catch(_){}", js);
+
+            // and nothing anywhere reaches for a reload
+            foreach (var gone in new[] { "location.reload", "location.href=", "window.location=" })
+                Assert.False(js.Contains(gone, StringComparison.Ordinal),
+                    "the language switch grew a reload: " + gone);
         }
 
         /// <summary>
-        /// And the mirror image: a plain register on a sentence the swap never touched
-        /// moves English where nothing moves it today, which is the same defect pointing
-        /// the other way. Caught here because a migration is exactly when somebody is
-        /// tempted to improve the wording on the way past.
+        /// The seam the preview and the layout probe drive, and the pseudo-locale catalog
+        /// they drive it with. A switch that quietly misses a surface cannot be seen in
+        /// English, because English after the switch looks exactly like English before it.
         /// </summary>
         [Fact]
-        public void A_plain_register_on_a_keyed_sentence_nothing_rewords_is_refused()
+        public void The_preview_can_load_a_catalog_and_the_pseudo_locale_is_beside_the_page()
         {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
-  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""hall.state"": { ""lore"": ""Update finished."",
-                               ""plain"": ""The update finished."" } }
-}");
-            var said = CheckKeyed(folder);
+            var js = AppSourceTree.Web("app.js");
 
-            Assert.False(said.Ok, "a plain register nothing asked for passed:\n" + said);
-            Assert.Contains("nothing rewords that sentence today", said.Output);
-        }
+            Assert.Contains("setLanguage:(code,catalog)=>{", js);
+            Assert.Contains("if(catalog&&window.I18N) window.I18N.load(catalog,code);", js);
+            Assert.Contains("return applyLanguage(code);", js);
+            Assert.Contains("loadLanguage:async code=>{", js);
 
-        /// <summary>
-        /// And this rule stands down with the other two the day TERM_PAIRS goes.
-        /// </summary>
-        [Fact]
-        public void The_keyed_register_rule_stands_down_once_the_swap_table_is_gone()
-        {
-            var folder = Scratch();
-            Write(folder, "en.json", @"{
-  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
-  ""keys"": { ""hall.state"": { ""lore"": ""STOPPED and embers doused"",
-                               ""plain"": ""STOPPED, the server is down"" } }
-}");
-            Write(folder, "fake-app.js",
-                "const TERM_STATIC_SEL=\"h1\";\nfunction paint(){ return T(\"hall.state\"); }\n");
-            Write(folder, "fake.html", "<div>nothing here carries an id</div>\n");
+            var folder = Path.Combine(AppSourceTree.RepoRoot(), "ValheimBakaLoader", "WebUI", "i18n");
+            Assert.True(File.Exists(Path.Combine(folder, "xx.json")),
+                "the pseudo locale is not beside the page");
 
-            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
-                "--dir", folder,
-                "--app", Path.Combine(folder, "fake-app.js"),
-                "--html", Path.Combine(folder, "fake.html"));
+            using var made = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "xx.json")));
+            using var english = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "en.json")));
 
-            Assert.True(said.Ok, "the rule outlived the swap it was written for:\n" + said);
-        }
+            Assert.Equal("xx", made.RootElement.GetProperty("_meta").GetProperty("language").GetString());
 
-        /// <summary>
-        /// The exemption list for the run-time rule is empty, and it has to stay a
-        /// decision rather than a drawer. Every id a T() call site asks for today came
-        /// out of a TT() call site, so the swap did reach all of them.
-        /// </summary>
-        [Fact]
-        public void The_keyed_register_rule_exempts_nothing_yet()
-        {
-            var gate = File.ReadAllText(CheckCatalog);
+            var theirs = made.RootElement.GetProperty("keys");
+            var ours = english.RootElement.GetProperty("keys");
+            Assert.Equal(ours.EnumerateObject().Count(), theirs.EnumerateObject().Count());
 
-            var open = gate.IndexOf("DYNAMIC_SWAP_EXEMPT = {", StringComparison.Ordinal);
-            Assert.True(open > 0, "the gate no longer names its run-time exemptions");
-            var block = gate.Substring(open, gate.IndexOf("\n\n", open, StringComparison.Ordinal) - open);
-            Assert.DoesNotContain("\": \"", block);
+            foreach (var id in new[] { "common.button.cancel", "side.nav.hearth.label" })
+            {
+                var value = theirs.GetProperty(id).GetProperty("translation").GetString();
+                var source = ours.GetProperty(id).GetProperty("lore").GetString();
+                Assert.StartsWith("[\u1E8A", value);
+                Assert.Contains(source, value);            // the English survives inside it
+                Assert.True(value.Length > source.Length * 1.3,
+                    id + " was not padded, so an overflow would not show under xx");
+            }
         }
 
         // --------------------------------------------------- D. the lookup is in the room
@@ -792,23 +703,6 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// TT() is the bridge: a sentence the catalog knows is answered by the catalog,
-        /// and everything else still goes through the old swap. Both arms have to be
-        /// there, or half the product silently stops following the register.
-        /// </summary>
-        [Fact]
-        public void The_bridge_asks_the_catalog_first_and_keeps_the_old_swap_underneath()
-        {
-            var js = AppSourceTree.Web("app.js");
-            var bridge = Between(js, "function TT(s){", "\n}\n");
-
-            Assert.Contains("window.I18N.idFor(s)", bridge);
-            Assert.Contains("window.I18N.T(id)", bridge);
-            Assert.Contains("return plainify(s);", bridge);
-            Assert.Contains("L2b deletes the second arm", js);
-        }
-
-        /// <summary>
         /// The one letter name belongs to the lookup now. The switch reader that used to
         /// own it was renamed rather than left to shadow it, because a const at the top
         /// level of a classic script wins over anything on window.
@@ -839,7 +733,6 @@ namespace ValheimBakaLoader.Tests.Forms
 }";
 
         private const string TableApp =
-            "const TERM_PAIRS=[\n  [\"Hearth\",\"Server\"],\n];\n" +
             "const WG={combat:{label:\"Combat\",labelId:\"wg.combat.label\",introId:\"wg.combat.intro\"}};\n";
 
         private RepoScript.Result OverTable(string app, string catalog = TableEnglish)
@@ -926,15 +819,6 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("labelId:\"world.wg.combat.label\"", js);
             Assert.Contains("explainId:\"world.wg.portals.veryhard.explain\"", js);
             Assert.Contains("label:\"Combat\",labelId:\"world.wg.combat.label\"", js);
-        }
-
-        private static string Between(string text, string start, string end)
-        {
-            var from = text.IndexOf(start, StringComparison.Ordinal);
-            Assert.True(from >= 0, "could not find " + start);
-            var to = text.IndexOf(end, from + start.Length, StringComparison.Ordinal);
-            Assert.True(to > from, "could not find " + end + " after " + start);
-            return text.Substring(from, to - from);
         }
     }
 }

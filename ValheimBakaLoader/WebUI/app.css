@@ -329,8 +329,10 @@ body{
 /* ---------- PLAIN TERMINOLOGY ----------
    "Show Norse names" off: every Norse caption disappears and the plain label is all
    that is left. The label itself never moves, so nothing shifts about but the caption.
-   TERM_PAIRS still runs underneath for the Norse wording that is not a caption
-   (toasts, log dividers, the launch-guard copy). */
+   Everything that is NOT a caption - a toast, a log divider, the launch guard - is a
+   catalog entry that holds both wordings, and the lookup picks between them. So this
+   block is the whole of what CSS has to do about the switch: hide the captions, and
+   let applyLanguage() draw the rest again. */
 .plain-terms .navitem .norse,
 .plain-terms .hnorse,
 .plain-terms .cnorse{display:none}

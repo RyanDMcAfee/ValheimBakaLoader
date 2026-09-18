@@ -182,6 +182,26 @@ test("a parameter that is not a number lands on other", () => {
   assert.strictEqual(I.T("mods.scanned"), "{count} mods scanned");
 });
 
+/* A number the caller has already written out cannot be read back: a locale with its
+   own digits writes ١ for 1 and Number("١") is NaN, which is "not a number" by the
+   rule above and lands every such sentence on other. The raw number rides alongside
+   the words in pluralValue, and the category comes off that. */
+test("a number the caller formatted picks its category off the number", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load(RUSSIAN, "ru");
+  I.setLocale("ru-RU-u-nu-arab");            // Russian categories, Arabic digits
+  const one = I.fmtNumber(1);
+  assert.strictEqual(one, "١", "this runtime has no Arabic digits to test with");
+
+  // the words alone: unreadable as a number, so the sentence lands on other
+  assert.strictEqual(I.T("mods.scanned", { count: one }), "١ мода проверено");
+  // and with the number beside them, the singular Russian has for one
+  assert.strictEqual(I.T("mods.scanned", { count: one, pluralValue: 1 }), "١ мод проверен");
+  // and nothing prints the number twice: pluralValue is not a slot in the wording
+  assert.ok(I.T("mods.scanned", { count: one, pluralValue: 1 }).indexOf("pluralValue") < 0);
+});
+
 test("a key the pack does not have falls back to English and is recorded", () => {
   const I = fresh();
   I.load(ENGLISH, "en");
@@ -219,12 +239,41 @@ test("has and mark answer off the entry", () => {
   assert.strictEqual(I.mark("hall.title"), "");
 });
 
-test("the bridge finds the id for an English sentence, and refuses an ambiguous one", () => {
+/* The bridge from English text back to an id is gone with the call sites that needed it.
+   What replaced it is the pair below: silence before a catalog is in, because the page
+   paints while the fetch is still in flight, and a warning after it, because then a
+   missing id really is one. */
+test("nothing is warned about before a catalog is loaded", () => {
   const I = fresh();
-  I.load(ENGLISH, "en");
-  assert.strictEqual(I.idFor("Hearth Status"), "hall.title");
-  assert.strictEqual(I.idFor("Same words"), null, "two entries share it, so it names neither");
-  assert.strictEqual(I.idFor("never written anywhere"), null);
+  const said = [];
+  const warn = console.warn;
+  console.warn = (...args) => said.push(args.join(" "));
+  try {
+    assert.strictEqual(I.T("hall.title"), "hall.title");
+    assert.strictEqual(I.T("no.such.key"), "no.such.key");
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepStrictEqual(said, [], "warned before there was anything to be missing from");
+});
+
+test("an id asked for before the catalog landed resolves after it, and still warns if it"
+   + " is genuinely missing", () => {
+  const I = fresh();
+  const said = [];
+  const warn = console.warn;
+  console.warn = (...args) => said.push(args.join(" "));
+  try {
+    assert.strictEqual(I.T("hall.title"), "hall.title");   // the fetch has not resolved
+    assert.strictEqual(I.T("no.such.key"), "no.such.key");
+    I.load(ENGLISH, "en");
+    assert.strictEqual(I.T("hall.title"), "Hearth Status"); // re-resolved, no reload
+    assert.strictEqual(I.T("no.such.key"), "no.such.key");
+  } finally {
+    console.warn = warn;
+  }
+  assert.strictEqual(said.length, 1, "said " + said.length + " times: " + said.join(" | "));
+  assert.ok(said[0].indexOf("no.such.key") >= 0, said[0]);
 });
 
 test("the walker fills text, title, placeholder and the screen reader label", () => {
@@ -342,11 +391,20 @@ test("with no catalog at all the lookup still answers", () => {
     assert.strictEqual(I.T("some.key"), "some.key");
     assert.strictEqual(I.T(null), "");
     assert.strictEqual(I.has("some.key"), false);
-    assert.strictEqual(I.idFor("anything"), null);
   } finally {
     console.warn = warn;
   }
   assert.strictEqual(I.fmtBytes(2048), "2.0 KB");
+});
+
+test("a second catalog starts the missing list again", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load(RUSSIAN, "ru");
+  I.T("only.in.english");
+  assert.deepStrictEqual(I.missing, ["only.in.english"]);
+  I.load(ENGLISH, "en");
+  assert.deepStrictEqual(I.missing, [], "the pack before it left its misses behind");
 });
 
 test("loading a catalog reports the language it installed", () => {

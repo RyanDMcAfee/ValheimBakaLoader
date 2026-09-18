@@ -77,6 +77,19 @@ namespace ValheimBakaLoader.Tests.Forms
             return catalog[id].GetProperty("lore").GetString();
         }
 
+        /// <summary>One CLDR category of a plural entry, by name.</summary>
+        private static string PluralLore(string id, string category)
+        {
+            var catalog = Catalog();
+            Assert.True(catalog.ContainsKey(id), "the English catalog has no " + id);
+            Assert.True(catalog[id].TryGetProperty("lore", out var lore)
+                        && lore.ValueKind == JsonValueKind.Object,
+                id + " is not a plural entry");
+            Assert.True(lore.TryGetProperty(category, out var picked),
+                id + " has no " + category + " category");
+            return picked.GetString();
+        }
+
         /// <summary>Every catalog id a block of app.js asks for by name.</summary>
         private static List<string> IdsAskedIn(string block) =>
             System.Text.RegularExpressions.Regex.Matches(block, @"(?<![A-Za-z0-9_$])T\(""([a-z][a-z0-9_.]*)""\)")
@@ -140,7 +153,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 "const mods=sortedMods(S.mods||[]);",           // the sort never sees the search
                 "const upd=mods.filter(m=>m.UpdateAvailable);", // the Update all count
                 "$(\"#modCount\").textContent=scanned?mods.length",
-                "$(\"#sbMods\").textContent=(scanned?mods.length",
+                "$(\"#sbMods\").textContent=T(\"side.mods.count\",{count:scanned?mods.length",
                 "conditionModUpdates(upd.length);",             // the standing condition
                 "renderModIndexLine(mods.length);",
             })
@@ -193,8 +206,11 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal("updates every mod with an update, not only the ones shown",
                 Lore("mods.showing.update_all.title"));
             Assert.Contains("btn.title=on?", showing);
-            // "showing N of M" only while something is typed.
-            Assert.Contains("el.textContent=on?TT(\"showing\")+\" \"+shown+\" \"+TT(\"of\")+\" \"+total:\"\";", showing);
+            // "showing N of M" only while something is typed, and it is one whole
+            // sentence with both numbers in named slots rather than two words welded
+            // between them, so a language that orders them the other way can.
+            Assert.Contains("el.textContent=on?T(\"common.showing\",{shown:shown,total:total}):\"\";", showing);
+            Assert.Equal("showing {shown} of {total}", Lore("common.showing"));
         }
 
         /// <summary>
@@ -243,11 +259,13 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("title:T(\"mods.empty.none.title\")", render);
             Assert.Equal("No mods installed", Lore("mods.empty.none.title"));
 
-            // The one reason that counts what it is hiding is still composed, and still on
-            // the bridge, because a translator handed "Clear the box to see all " cannot
-            // word it. It says TT() out loud at the call site so it is visibly the odd one.
-            Assert.Contains("reason:TT(\"Nothing in this server's mod list carries every word that was typed. "
-                            + "Clear the box to see all \"+mods.length+\" again.\")", render);
+            // The one reason that counts what it is hiding is a whole sentence now, with
+            // the count in a named slot and a plural category either side of it, so a
+            // language that inflects around the number has both halves to work with.
+            Assert.Contains("reason:T(\"mods.empty.no_match.reason\",{count:mods.length})", render);
+            Assert.Equal("Nothing in this server's mod list carries every word that was typed. "
+                         + "Clear the box to see all {count} again.",
+                         PluralLore("mods.empty.no_match.reason", "other"));
 
             Assert.Contains("clearModSearch:()=>setModFilter(\"\")", AppJs());
         }
@@ -299,8 +317,21 @@ namespace ValheimBakaLoader.Tests.Forms
             // The Latest cell's own note is drawn on the row and is deliberately NOT in the
             // haystack: it is the tooltip that explains the quiet pill, not a word the pill
             // says, and a search is over what a row says rather than what it explains.
-            var rowTips = new[] { "mods.status.not_listed.tip" };
-            var drawn = IdsAskedIn(RenderMods()).Where(id => !rowTips.Contains(id)).ToArray();
+            var rowTips = new[]
+            {
+                "mods.col.possibly_outdated.tip", "mods.col.possibly_outdated.tip.unknown",
+                "mods.status.held.tip", "mods.status.not_listed.tip", "mods.tag.hexium.tip",
+            };
+            // Words the render draws AROUND the table rather than on a row: the pill above
+            // it and the two lines under the heading. Subtracted by name for the same
+            // reason the empty states are, so a row word that lands among them fails here
+            // instead of quietly leaving the haystack.
+            var aroundTheTable = new[]
+            {
+                "mods.index.line.not_scanned", "mods.index.line.scanning", "mods.up_to_date",
+            };
+            var drawn = IdsAskedIn(RenderMods())
+                .Where(id => !rowTips.Contains(id) && !aroundTheTable.Contains(id)).ToArray();
             Assert.Equal(emptyStates, drawn.Where(id => id.StartsWith("mods.empty.", StringComparison.Ordinal)).ToArray());
             Assert.Equal(expected, drawn.Where(id => !id.StartsWith("mods.empty.", StringComparison.Ordinal)).ToArray());
 
@@ -359,8 +390,11 @@ namespace ValheimBakaLoader.Tests.Forms
             var render = Between(js, "function renderCfgList(){", "/* \"showing N of M\" beside the box");
             Assert.Contains("const shown=cfgFilesForList();", render);
             Assert.Contains("$(\"#cfgList\").innerHTML=shown.map(", render);
-            // The count line still counts every scroll in the vault.
-            Assert.Contains("$(\"#runesSub\").textContent=TT(CFG.files.length+\" rune-scroll\"", render);
+            // The count line still counts every scroll in the vault, and says so as one
+            // keyed sentence with the number in a slot rather than a plural built inside
+            // the lookup's own argument.
+            Assert.Contains("$(\"#runesSub\").textContent=T(\"runes.sub.count\",{count:CFG.files.length});", render);
+            Assert.DoesNotContain("cfgFilesForList().length", render);
         }
 
         /// <summary>
@@ -595,13 +629,22 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var js = AppJs();
 
-            // "showing N of M" is still built out of two words and two numbers, so its two
-            // halves are still bridged by their English. Rewriting that as one keyed
-            // sentence with slots belongs with the rest of the composed messages.
-            foreach (var phrase in new[] { "TT(\"showing\")", "TT(\"of\")" })
+            // "showing N of M" was two bridged words with two numbers glued between them,
+            // which is a sentence no language can reorder. It is one keyed sentence with
+            // both numbers in named slots now, and the Configs box asks for the SAME id the
+            // Mods box does, because it is the same sentence and a copy edit has to reach
+            // both. The find bar's counter is its own key: "3 of 12" has no word in front.
+            Assert.Equal(2, Count(js, "T(\"common.showing\",{shown:shown,total:total})"));
+            Assert.Equal("showing {shown} of {total}", Lore("common.showing"));
+            Assert.Contains("T(\"runes.find.count\",{index:CFG_FIND_AT+1,total:hits.length})", js);
+            Assert.Equal("{index} of {total}", Lore("runes.find.count"));
+            // The bridge those two used to go through does not exist any more, so the
+            // check is the stronger one: no call site anywhere spells a sentence out for
+            // a regex table to rewrite.
+            foreach (var gone in new[] { "TT(", "plainify(" })
             {
-                Assert.True(js.Contains(phrase, StringComparison.Ordinal),
-                    "a search-box string no longer goes through TT(): " + phrase);
+                Assert.False(js.Contains(gone, StringComparison.Ordinal),
+                    "a call site went back to the bridge: " + gone);
             }
 
             // The three that stand on their own now name catalog ids, and the ids still
@@ -624,8 +667,17 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("${esc(T(\"runes.list.no_match\"))}", list);
             Assert.Contains("${esc(T(\"runes.list.empty\"))}", list);
 
-            // The placeholders swap with the rest of the wording too.
-            Assert.Contains("[$(\"#palInput\"),$(\"#cfgEditor\"),$(\"#modSearch\"),$(\"#runeSearch\"),$(\"#cfgFind\")]", js);
+            // The placeholders follow the wording too, and by their own ids now rather
+            // than through a cache of the English that was in the page at boot.
+            var html = Html();
+            foreach (var id in new[]
+                     {
+                         "mods.search.placeholder", "runes.search.placeholder",
+                         "runes.find.placeholder", "runes.editor.placeholder",
+                         "pal.input.placeholder",
+                     })
+                Assert.Contains("data-i18n-placeholder=\"" + id + "\"", html);
+            Assert.DoesNotContain("$(\"#palInput\"),$(\"#cfgEditor\")", js);
         }
 
         // ---------------------------------------------------------------- D. the sidebar order
@@ -691,11 +743,10 @@ namespace ValheimBakaLoader.Tests.Forms
             var js = AppJs();
 
             Assert.Contains("const held=modIsHeld(m);", render);
-            // Both halves of the pill still go through the wording pass, one through each
-            // road: the word on it asks the catalog by id, and the sentence behind it is a
-            // const app.js still spells out, so it takes the TT() bridge. Neither can be
-            // left in the old wording while the other moves.
-            Assert.Contains("held?`<span class=\"pill amber\" title=\"${esc(TT(MOD_HELD_TIP))}\">${esc(T(\"mods.status.held\"))}</span>`", render);
+            // Both halves of the pill ask the catalog by id now: the word on it, and the
+            // sentence behind it that used to stand as a const app.js spelled out. Neither
+            // can be left in the old wording while the other moves.
+            Assert.Contains("held?`<span class=\"pill amber\" title=\"${esc(T(\"mods.status.held.tip\"))}\">${esc(T(\"mods.status.held\"))}</span>`", render);
             Assert.Equal("held", Lore("mods.status.held"));
             Assert.Equal("Current", Lore("mods.status.current"));
 
@@ -714,9 +765,9 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.True(heldPill > 0 && current > heldPill,
                 "the held pill must be decided before the row can fall through to Current");
 
-            Assert.Contains(
-                "const MOD_HELD_TIP=\"installed from Hexium; BakaLoader will not replace it on its own\";",
-                AppJs());
+            Assert.Equal("installed from Hexium; BakaLoader will not replace it on its own",
+                         Lore("mods.status.held.tip"));
+            Assert.DoesNotContain("MOD_HELD_TIP", AppJs());
         }
 
         /// <summary>

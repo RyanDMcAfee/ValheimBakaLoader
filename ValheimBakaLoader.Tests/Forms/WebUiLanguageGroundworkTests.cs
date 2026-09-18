@@ -309,17 +309,34 @@ namespace ValheimBakaLoader.Tests.Forms
         /// arm is live rather than scanning an empty skeleton. What is IN it, and whether
         /// the interface and the catalog agree both ways, is WebUiCatalogTests; this only
         /// insists the arm above has something to read.
+        /// <para>
+        /// And that _meta names a catalog REVISION. It is the number that decides whether
+        /// a patch release costs a host four pack downloads or none: a release whose
+        /// catalog revision has not moved can copy the pack it already has to the new
+        /// version folder and touch the network zero times. Two large CJK packs ride on
+        /// that one integer, so it is asserted here rather than left to be noticed.
+        /// </para>
         /// </summary>
         [Fact]
         public void The_catalog_folder_holds_a_real_english_catalog()
         {
-            var en = File.ReadAllText(Path.Combine(
-                AppSourceTree.RepoRoot(), "ValheimBakaLoader", "WebUI", "i18n", "en.json"));
+            var folder = Path.Combine(
+                AppSourceTree.RepoRoot(), "ValheimBakaLoader", "WebUI", "i18n");
+            var en = File.ReadAllText(Path.Combine(folder, "en.json"));
 
             Assert.Contains("\"language\": \"en\"", en);
             Assert.Contains("\"keys\"", en);
             Assert.DoesNotContain("\"keys\": {}", en);
             Assert.Contains("\"lore\"", en);
+
+            using var parsed = System.Text.Json.JsonDocument.Parse(en);
+            var meta = parsed.RootElement.GetProperty("_meta");
+            Assert.True(meta.TryGetProperty("catalog", out var revision),
+                "_meta names no catalog revision, so a pack cannot be reused across a release");
+            Assert.True(revision.TryGetInt32(out var number) && number >= 1,
+                "the catalog revision is not a whole number from 1 up");
+            Assert.Equal(ShippedVersion(),
+                meta.GetProperty("appVersion").GetString());
         }
 
         // ------------------------------------------------------------------ helpers

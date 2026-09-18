@@ -152,9 +152,9 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var js = AppJs();
 
-            Assert.Contains("toast(\"ᛒ \"+palLabel(sel)+\" · invoked\");", js);
+            Assert.Contains("toast(\"ᛒ \"+T(\"pal.invoked.preview.toast\",{label:palLabel(sel)}));", js);
             Assert.Contains("logLine(\"cmd\",\"> \"+palLabel(sel).toLowerCase()", js);
-            Assert.DoesNotContain("toast(\"ᛒ \"+sel.dataset.cmd", js);
+            Assert.DoesNotContain("{label:sel.dataset.cmd", js);
         }
 
         /// <summary>

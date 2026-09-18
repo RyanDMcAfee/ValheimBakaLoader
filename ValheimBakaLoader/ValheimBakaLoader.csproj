@@ -90,6 +90,14 @@
 		<Content Include="WebUI\**\*">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>
+		<!--
+		  The pseudo locale is a test fixture, not a language: every sentence wrapped in
+		  brackets and padded a third longer, so a language switch that misses a surface
+		  shows up on sight. It is driven from the mock preview and read by the suite out
+		  of the source tree, and no host has any use for it, so it stays out of what
+		  ships. The file itself stays in the repository.
+		-->
+		<Content Remove="WebUI\i18n\xx.json" />
 	</ItemGroup>
 
 </Project>
