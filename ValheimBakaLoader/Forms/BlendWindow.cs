@@ -342,6 +342,37 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// The page has no way to ask Windows how the window is sitting, so the window tells
+        /// it. Every size change comes through here, including the one a maximize or a restore
+        /// makes, and the state is said again only when it actually changed: a live edge drag
+        /// raises this many times a second and none of those are news.
+        /// </summary>
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            // A minimized window is not a state the page can do anything with, and it comes
+            // back to whichever of the other two it left, which raises this again.
+            if (WindowState == FormWindowState.Minimized) return;
+            PostWindowState();
+        }
+
+        /// <summary>Whether the page has already been told the window is maximized.</summary>
+        private bool? PostedMaximized;
+
+        /// <summary>
+        /// Pushes win.state to the page. <paramref name="force"/> is for the one push that has
+        /// to happen whether or not anything changed: the page that just finished loading has
+        /// never been told anything, and every size change it missed happened before it existed.
+        /// </summary>
+        private void PostWindowState(bool force = false)
+        {
+            var maximized = WindowState == FormWindowState.Maximized;
+            if (!force && PostedMaximized == maximized) return;
+            PostedMaximized = maximized;
+            PostEvent("win.state", new { maximized });
+        }
+
+        /// <summary>
         /// The window moved to a display with a different scale. WinForms has already
         /// rescaled the form itself, so this only re-derives the minimum for the new
         /// scale and clamps the current size into the new work area. (Nothing raises this
@@ -517,6 +548,11 @@ namespace ValheimBakaLoader.Forms
 
             core.WebMessageReceived += OnWebMessageReceived;
 
+            // The page's copy of the window state, handed over the moment there is a page to
+            // hand it to. Registered before Navigate, because the load this is waiting for is
+            // the one the line at the bottom of this method starts.
+            core.NavigationCompleted += (s, e) => PostWindowState(force: true);
+
             // Both halves of "the interface you see is the interface you installed". The
             // version reaches the page before any script of its own runs, so index.html can
             // stamp app.css and app.js with it and a new release becomes a new address. And
@@ -687,6 +723,12 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
+        /// <summary>When the last title bar press arrived, or 0 when a sequence just ended.</summary>
+        private long LastTitlebarPressTicks;
+
+        /// <summary>Where on screen that press was, which is the other half of the rule.</summary>
+        private Point LastTitlebarPressPosition;
+
         private void HandleWindowMessage(string method, JObject parameters)
         {
             switch (method)
@@ -705,13 +747,79 @@ namespace ValheimBakaLoader.Forms
                     Close();
                     break;
 
+                // Every press on the title bar arrives here, which is why the double click is
+                // counted here too. The page cannot count it: the line below hands the window to
+                // Windows' own caption move loop, which owns the mouse until the button comes
+                // back up, and a browser only raises dblclick after two whole down/up/click
+                // cycles. Second press of a pair: toggle, and do not enter the loop, so the
+                // window is not being dragged and resized at the same moment.
                 case "win.dragStart":
+                {
+                    var pressedAt = Environment.TickCount64;
+                    var pressedWhere = Cursor.Position;
+                    var second = TitlebarClicks.IsDoubleClick(
+                        LastTitlebarPressTicks,
+                        pressedAt,
+                        LastTitlebarPressPosition,
+                        pressedWhere,
+                        SystemInformation.DoubleClickTime,
+                        SystemInformation.DoubleClickSize);
+
+                    if (second)
+                    {
+                        // A third press starts a fresh sequence rather than toggling again.
+                        LastTitlebarPressTicks = 0;
+                        WindowState = WindowState == FormWindowState.Maximized
+                            ? FormWindowState.Normal
+                            : FormWindowState.Maximized;
+                        break;
+                    }
+
+                    LastTitlebarPressTicks = pressedAt;
+                    LastTitlebarPressPosition = pressedWhere;
+
                     if (WindowState == FormWindowState.Normal)
                     {
                         ReleaseCapture();
                         SendMessage(Handle, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
                     }
                     break;
+                }
+
+                // The page saw the pointer travel far enough across a maximized window's title
+                // bar to mean a drag rather than a click. Windows does this for a real caption:
+                // the window comes back down to size under the pointer and the move carries on
+                // without the button ever being let go. Same here, and the move itself is still
+                // Windows' own loop, so snapping to an edge works the way it always has.
+                case "win.dragRestore":
+                {
+                    if (WindowState != FormWindowState.Maximized) break;
+
+                    var cursor = Cursor.Position;
+                    // Read while the window is still maximized: how far down the title bar the
+                    // host took hold. The bar is the top of the window in either state, so the
+                    // same distance keeps the pointer on it.
+                    var grabOffsetY = cursor.Y - Top;
+                    var xRatio = parameters.Value<double?>("xRatio") ?? 0.5;
+
+                    // WinForms remembers the bounds it left Normal at, so this is the size the
+                    // host last chose rather than a size invented here.
+                    WindowState = FormWindowState.Normal;
+
+                    Location = TitlebarClicks.RestoredLocation(
+                        cursor,
+                        grabOffsetY,
+                        Size,
+                        Screen.FromPoint(cursor).WorkingArea,
+                        xRatio);
+
+                    // A restore is not half of a double click.
+                    LastTitlebarPressTicks = 0;
+
+                    ReleaseCapture();
+                    SendMessage(Handle, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                    break;
+                }
 
                 case "win.resizeStart":
                     var edge = parameters.Value<string>("edge");

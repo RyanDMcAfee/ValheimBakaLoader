@@ -205,6 +205,44 @@ $$(".winbtn[data-win]").forEach(b=>b.addEventListener("click",()=>{
   Native.post("win."+b.dataset.win);
 }));
 
+/* ---------- THE WINDOW'S OWN STATE ----------
+   The page cannot ask Windows how the window is sitting, so the host says so: once when
+   the page has loaded, and again every time it changes. Two things read it. The maximize
+   button, which drew one fixed square whatever the window was doing and now swaps to the
+   restore pair when there is something to restore. And the drag below, which only has
+   work to do while the window is maximized. */
+const TB_MAXBTN=$('.winbtn[data-win="maximize"]');
+/* The maximize glyph is index.html's own, read once rather than written out a second time
+   here, so editing the markup edits both states. The restore glyph is the pair of
+   overlapping squares Windows draws, in the stroke the other two winbtn glyphs use. */
+const TB_GLYPH_MAXIMIZE=TB_MAXBTN?TB_MAXBTN.innerHTML:"";
+const TB_GLYPH_RESTORE='<svg viewBox="0 0 11 11">'+
+  '<rect x="1.2" y="3.2" width="6.6" height="6.6" fill="none" stroke="currentColor" stroke-width="1.3"/>'+
+  '<rect x="3.4" y="1.2" width="6.6" height="6.6" fill="none" stroke="currentColor" stroke-width="1.3"/>'+
+  '</svg>';
+function renderWinState(){
+  if(!TB_MAXBTN) return;
+  const max=document.body.dataset.win==="max";
+  /* The id goes onto the element as well as the words, so the catalog walk and the
+     language switch reach this tooltip the way they reach every static one, and a
+     state that arrived before the catalog did is corrected by the same walk. Both ids
+     are spelled out at the call rather than held in a variable, because that is what
+     the catalog gate reads to know a sentence is still asked for. */
+  TB_MAXBTN.setAttribute("data-i18n-title",max?"titlebar.win.restore":"titlebar.win.maximize");
+  TB_MAXBTN.title=max?T("titlebar.win.restore"):T("titlebar.win.maximize");
+  TB_MAXBTN.innerHTML=max?TB_GLYPH_RESTORE:TB_GLYPH_MAXIMIZE;
+}
+Native.on("win.state",d=>{
+  document.body.dataset.win=d&&d.maximized?"max":"normal";
+  renderWinState();
+});
+
+/* How far the pointer has to travel before a press on a maximized window's title bar is
+   a drag rather than a click. Small on purpose: Windows' own threshold is this order, and
+   anything larger feels like the window is stuck for the first part of the movement. */
+const TB_DRAG_SLOP=4;
+let TB_DRAG=null;
+
 /* draggable region: titlebar, minus interactive elements.
    .tb-interactive is the convention for anything added to the titlebar later: put the
    class on it and it stops being a drag handle, without this selector having to learn
@@ -214,7 +252,28 @@ $("#titlebar").addEventListener("mousedown",e=>{
   if(e.button!==0||!Native.available) return;
   if(e.target.closest(TB_NO_DRAG)) return;
   Native.post("win.dragStart");
+  /* Only a maximized window has anything left to watch. A normal one is already inside
+     Windows' own move loop by the time this line runs, and the page stops seeing the
+     mouse at all, so there is nothing here to track and nothing to restore. */
+  if(document.body.dataset.win!=="max") return;
+  const bar=$("#titlebar").getBoundingClientRect();
+  TB_DRAG={x:e.clientX,y:e.clientY,
+    xRatio:bar.width>0?Math.min(1,Math.max(0,(e.clientX-bar.left)/bar.width)):0.5};
 });
+
+/* ---------- DRAG A MAXIMIZED WINDOW BACK DOWN ----------
+   Windows brings a maximized window back down to size the moment its caption is dragged,
+   and carries the move on without the button ever being let go. There is no caption here
+   and win.dragStart does nothing while maximized, so the page watches the pointer instead:
+   past the slop the press was a drag, the host is told once and takes the move from there.
+   A plain click on a maximized title bar still does nothing at all. */
+window.addEventListener("mousemove",e=>{
+  if(!TB_DRAG) return;
+  if(Math.abs(e.clientX-TB_DRAG.x)<TB_DRAG_SLOP&&Math.abs(e.clientY-TB_DRAG.y)<TB_DRAG_SLOP) return;
+  const held=TB_DRAG; TB_DRAG=null;   /* once per press, never twice */
+  Native.post("win.dragRestore",{xRatio:held.xRatio});
+});
+window.addEventListener("mouseup",()=>{TB_DRAG=null;});
 
 /* ---------- LANGUAGE ATTRIBUTES ----------
    Two attributes, set together, always. `lang` is what Chromium reads to pick a Han
@@ -334,6 +393,7 @@ function repaintBootCopy(){
   try{renderHearth();}catch(_){}          /* Hearth card, app bar, waiting-update pill */
   try{syncUpkeepGates();}catch(_){}       /* the gated auto-update row's tooltip */
   try{renderSideVer();}catch(_){}         /* the sidebar version line */
+  try{renderWinState();}catch(_){}        /* the maximize button, in whichever state */
   try{renderAppUpdatePill();}catch(_){}   /* the BakaLoader-update pill */
   try{renderMods();}catch(_){}            /* the mod table's pills, tags and marks */
   try{renderPlayers();}catch(_){}         /* the roster's tooltips and its online cell */
@@ -4113,6 +4173,13 @@ window.BakaPreview={
     if(catalog&&window.I18N) window.I18N.load(catalog,code);
     else if(window.I18N&&code) window.I18N.setLocale(code);
     return applyLanguage(code);
+  },
+  /* The window-state seam. The host pushes win.state; nothing in a browser can, so a
+     walk drives this instead and the button swaps its glyph exactly as it does live. */
+  winState:maximized=>{
+    document.body.dataset.win=maximized?"max":"normal";
+    renderWinState();
+    return document.body.dataset.win;
   },
   /* Fetches that catalog from beside the page first. Answers false when there is none,
      because a walk that silently proved nothing is worse than one that says so. */

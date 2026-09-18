@@ -84,6 +84,7 @@
     "titlebar.cmdchip.label": { "lore": "Command" },
     "titlebar.win.minimize": { "lore": "Minimize" },
     "titlebar.win.maximize": { "lore": "Maximize" },
+    "titlebar.win.restore": { "lore": "Restore" },
     "titlebar.win.close": { "lore": "Close" },
     "side.nav.hearth.label": { "lore": "Dashboard" },
     "side.nav.vikings.label": { "lore": "Players" },

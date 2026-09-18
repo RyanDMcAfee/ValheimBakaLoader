@@ -242,6 +242,9 @@
     "titlebar.win.maximize": {
       "translation": "[Ẋ Maximize Ẋ] ẊẊẊ"
     },
+    "titlebar.win.restore": {
+      "translation": "[Ẋ Restore Ẋ] ẊẊẊ"
+    },
     "titlebar.win.close": {
       "translation": "[Ẋ Close Ẋ] ẊẊ"
     },
