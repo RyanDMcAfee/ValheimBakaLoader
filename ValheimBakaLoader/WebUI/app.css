@@ -1198,6 +1198,39 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   border:1px solid rgba(255,122,26,.3)}
 .modprog .hbmsg{flex:1 1 200px;min-width:0;font-size:12px;color:var(--bone-dim)}
 
+/* The loader's own row, above the mods table and outside it. It is deliberately not
+   a table row: BepInEx has no folder, no package and no place in any of the counts the
+   table carries, and a row that looked like the others would be read as one. */
+.beprow-wrap{margin:0 0 12px}
+.beprow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:9px 12px;border-radius:8px;background:rgba(255,255,255,.03);
+  border:1px solid var(--bronze)}
+.beprow .bepmark{font-size:13px;flex:none}
+.beprow .bepname{font-family:var(--serif-small);font-size:12.5px;letter-spacing:.6px;
+  color:var(--bone);flex:none}
+.beprow .bepver{font-size:11px;color:var(--bone-dim);flex:none}
+.beprow .bepmsg{flex:1 1 220px;min-width:0;font-size:11.5px;color:var(--bone-dim)}
+.beprow .bepacts{display:flex;align-items:center;gap:7px;margin-left:auto;flex:none}
+.beprow-wrap .bepnotes{margin:6px 2px 0;font-size:11px;line-height:1.55;color:var(--bone-faint)}
+.beprow-wrap .bepwrong{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;
+  padding:8px 12px;border-radius:8px;border:1px solid rgba(232,169,60,.4);
+  background:rgba(232,169,60,.08)}
+.beprow-wrap .bepwrong .bepmsg{flex:1 1 220px;min-width:0;font-size:11.5px;color:var(--amber)}
+.beprow-wrap .bepwrong .bepver{word-break:break-all}
+
+/* One row lit for a moment, so "the setting is over here" can be shown rather than
+   said. Used by the loader notice's action, which walks to the Upkeep card. */
+.togglerow.rowflash{animation:rowflash 1.6s var(--ease)}
+@keyframes rowflash{
+  0%{background:transparent}
+  12%{background:var(--ember-dim);box-shadow:inset 0 0 0 1px rgba(255,122,26,.45)}
+  70%{background:var(--ember-dim);box-shadow:inset 0 0 0 1px rgba(255,122,26,.45)}
+  100%{background:transparent}
+}
+@media (prefers-reduced-motion:reduce){
+  .togglerow.rowflash{animation:none;background:var(--ember-dim)}
+}
+
 /* ---------- ATLAS (webmap + skies) ---------- */
 #page-atlas{display:none;flex-direction:column;height:100%}
 #page-atlas.active{display:flex}

@@ -164,7 +164,9 @@ namespace ValheimBakaLoader.Tests.Forms
             var source = AppJs();
             var calls = Regex.Matches(source, @"emptyState\(\{(?:[^{}]|\{[^{}]*\})*\}\)");
 
-            Assert.Equal(17, calls.Count);
+            // 18 with the loader's own empty state, which is the hall saying a different
+            // nothing: no BepInEx rather than no mods.
+            Assert.Equal(18, calls.Count);
             var composed = 0;
             foreach (Match call in calls)
             {
@@ -474,8 +476,9 @@ namespace ValheimBakaLoader.Tests.Forms
             }
 
             // Written down so a scanner that quietly stops finding calls fails too. A new
-            // dialog moves this number and reads the rule above on its way past.
-            Assert.Equal(17, sites);
+            // dialog moves this number and reads the rule above on its way past. 19 with
+            // the two BepInEx dialogs: the install offer and the misplaced-folder removal.
+            Assert.Equal(19, sites);
             Assert.True(frozen.Count == 0,
                 "a dialog would keep its wording through a language switch:\n  "
                 + string.Join("\n  ", frozen));

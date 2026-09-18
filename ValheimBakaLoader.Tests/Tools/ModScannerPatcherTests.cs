@@ -144,5 +144,67 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.False(ModScanner.IsProtectedPatcher("Smoothbrain-StartupAccelerator"));
             Assert.False(ModScanner.IsProtectedPatcher(null));
         }
+
+        /// <summary>
+        /// HookGenPatcher is an ordinary Thunderstore listing and one of the most commonly named
+        /// Valheim dependencies. Adding it through the app unpacks it into
+        /// plugins/ValheimModding-HookGenPatcher, and a folder a host installed there keeps its
+        /// row, its version and its Remove button. Only the patchers copy is held back, because
+        /// that folder is shared across every isolated instance by a junction.
+        /// </summary>
+        [Fact]
+        public void HookGenPatcher_installed_into_plugins_still_gets_a_row()
+        {
+            var plugins = NewBepInEx(out var patchers);
+            var bepRoot = Directory.GetParent(plugins).Parent.FullName;
+            try
+            {
+                WriteManifest(Path.Combine(plugins, "Azumatt-AzuAntiItemLag"), "AzuAntiItemLag", "1.0.0");
+                WriteManifest(Path.Combine(plugins, "ValheimModding-HookGenPatcher"), "HookGenPatcher", "0.0.5");
+
+                var mods = NewScanner().ScanPlugins(plugins);
+
+                var hookGen = Assert.Single(mods.Where(m => m.FullName == "ValheimModding-HookGenPatcher"));
+                Assert.Equal("0.0.5", hookGen.InstalledVersion);
+                Assert.Equal(Path.Combine(plugins, "ValheimModding-HookGenPatcher"), hookGen.PluginDirectory);
+                Assert.False(hookGen.IsPatcher);
+                Assert.Contains(mods, m => m.FullName == "Azumatt-AzuAntiItemLag");
+                Assert.Equal(2, mods.Count);
+            }
+            finally
+            {
+                Directory.Delete(bepRoot, recursive: true);
+            }
+        }
+
+        /// <summary>
+        /// The pack unpacked into plugins is the framework in the wrong place: the BepInEx row
+        /// above the table owns that, so the mod table stays quiet about it. It is the only name
+        /// the plugins scan holds back on framework grounds.
+        /// </summary>
+        [Fact]
+        public void The_BepInEx_pack_in_the_plugins_folder_is_the_only_framework_name_the_plugins_scan_skips()
+        {
+            var plugins = NewBepInEx(out var patchers);
+            var bepRoot = Directory.GetParent(plugins).Parent.FullName;
+            try
+            {
+                WriteManifest(Path.Combine(plugins, "denikson-BepInExPack_Valheim"), "BepInExPack_Valheim", "5.4.2350");
+                WriteManifest(Path.Combine(plugins, "ValheimModding-HookGenPatcher"), "HookGenPatcher", "0.0.5");
+
+                var mods = NewScanner().ScanPlugins(plugins);
+
+                Assert.DoesNotContain(mods, m => m.FullName == "denikson-BepInExPack_Valheim");
+                Assert.Contains(mods, m => m.FullName == "ValheimModding-HookGenPatcher");
+
+                Assert.True(ModScanner.IsPluginsFrameworkFolder("denikson-bepinexpack_valheim"));
+                Assert.False(ModScanner.IsPluginsFrameworkFolder("ValheimModding-HookGenPatcher"));
+                Assert.False(ModScanner.IsPluginsFrameworkFolder(null));
+            }
+            finally
+            {
+                Directory.Delete(bepRoot, recursive: true);
+            }
+        }
     }
 }

@@ -52,5 +52,22 @@ namespace ValheimBakaLoader.Tools.Models
         /// </summary>
         [JsonProperty("date_created")]
         public DateTime? DateCreated { get; set; }
+
+        /// <summary>
+        /// How many bytes the published archive weighs, when the listing carries it. Read by
+        /// the BepInEx installer, which checks what it fetched against what the site said
+        /// before it unpacks anything over a folder a server runs from. Null when the
+        /// response did not name a size, which is not a failure: the check is simply skipped.
+        /// </summary>
+        [JsonProperty("file_size")]
+        public long? FileSize { get; set; }
+
+        /// <summary>
+        /// The archive's hash, when the listing carries one. Thunderstore does not publish it
+        /// today, so this is normally null and the size is the only check there is; a listing
+        /// that starts carrying one is then checked with no further change.
+        /// </summary>
+        [JsonProperty("sha256")]
+        public string Sha256 { get; set; }
     }
 }

@@ -44,6 +44,7 @@ namespace ValheimBakaLoader.Forms
         private IAppUpdateService AppUpdateService;
         private IHeartbeatService Heartbeat;
         private IInstallIsolationService InstallIsolation;
+        private IBepInExService BepInEx;
         private IMaxPlayersInstaller MaxPlayersInstaller;
         private IDiscordStatusService DiscordStatus;
         private IDiscordWebhookService DiscordWebhooks;
@@ -116,6 +117,83 @@ namespace ValheimBakaLoader.Forms
         // good in the morning. This is what makes an install from the other site
         // something the host did rather than something the app did.
         private readonly Tools.HexiumConsentGate HexiumConsent = new();
+
+        // One BepInEx write at a time, for the same reason there is one mod update at a
+        // time: the files are shared by every install on this base, and two writers over one
+        // BepInEx/core is an install that starts neither version.
+        //
+        // It is a real slot rather than a flag because FOUR paths write BepInEx and only one
+        // of them is a host pressing a button: the row's Install and Update, the unattended
+        // restart window, the loader put in place before a start, and the removal of a pack
+        // unpacked into the wrong folder. Three of those run with nobody watching. A flag that
+        // only the button path ever set left the exact window this comment claims to close:
+        // an auto-start writing the loader while the host presses Update, over a core that is
+        // CLEARED before it is copied.
+        private readonly SemaphoreSlim _bepInExWriteSlot = new(1, 1);
+
+        /// <summary>
+        /// The longest a start waits for another BepInEx write to finish. Longer than the
+        /// download's own five minute timeout on purpose, so the wait ends because the other
+        /// write ended rather than because this one gave up in the middle of it.
+        /// </summary>
+        private static readonly TimeSpan BepInExWriteWait = TimeSpan.FromMinutes(6);
+
+        /// <summary>True while any of the four write paths holds the slot.</summary>
+        private bool BepInExWriteInProgress => _bepInExWriteSlot.CurrentCount == 0;
+
+        /// <summary>Takes the slot without waiting, or answers false because somebody has it.</summary>
+        private bool TryBeginBepInExWrite() => _bepInExWriteSlot.Wait(0);
+
+        /// <summary>
+        /// Takes the slot, waiting up to <paramref name="wait"/>. Only the start path waits:
+        /// it cannot be told "try again in a moment", and what it is waiting for is very often
+        /// the very loader it wants put there.
+        /// <para>
+        /// The wait is dropped to nothing when this is the UI thread. A start that finds no
+        /// launch guard wired runs inline on the thread that asked for it, and the writer it
+        /// would be waiting for finishes its own await ON that thread: the wait could never
+        /// end, so it is refused straight away instead of hanging the window for six minutes.
+        /// </para>
+        /// </summary>
+        private bool BeginBepInExWrite(TimeSpan wait) =>
+            _bepInExWriteSlot.Wait(OnUiThread ? TimeSpan.Zero : wait);
+
+        /// <summary>
+        /// True when this is the window's own thread, which is the one thread that must never
+        /// block on a slot an awaiting writer holds. Treated as true when it cannot be
+        /// answered, because not waiting is the safe way to be wrong.
+        /// </summary>
+        private bool OnUiThread
+        {
+            get { try { return !InvokeRequired; } catch { return true; } }
+        }
+
+        /// <summary>Hands the slot back. Safe to call once per successful take and no more.</summary>
+        private void EndBepInExWrite()
+        {
+            try { _bepInExWriteSlot.Release(); }
+            catch (SemaphoreFullException) { /* already handed back */ }
+        }
+
+        /// <summary>
+        /// The one refusal every writer that cannot get the slot throws. Written once because
+        /// an id is an identity: four call sites spelling the same sentence out four times is
+        /// four chances for one of them to drift into a second meaning for one catalog entry.
+        /// </summary>
+        private static HostFacingException BepInExBusy() =>
+            new HostFacingException("bepinex.busy",
+                "BepInEx is already being written. Try again in a moment.");
+
+        // When each live server process was started, so the load check has something to
+        // compare BepInEx/LogOutput.log against. Set the moment a start is taken, cleared
+        // when the server stops.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> ServerLaunchUtc =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // The pack version an unattended window found and could not apply because another
+        // server on this install was up. Null when nothing is waiting. It is per install
+        // rather than per profile, because so is BepInEx.
+        private string _bepInExUpdateWaiting;
         private bool _requiredModInstallInProgress;
         private bool _maxPlayersSaveInProgress;
         private bool _atlasRenderInProgress;
@@ -186,6 +264,7 @@ namespace ValheimBakaLoader.Forms
             HexiumClient = serviceProvider.GetRequiredService<IHexiumClient>();
             HexiumScan = new Tools.HexiumScanStep(HexiumClient, appLogger);
             InstallIsolation = serviceProvider.GetRequiredService<IInstallIsolationService>();
+            BepInEx = serviceProvider.GetRequiredService<IBepInExService>();
             MaxPlayersInstaller = serviceProvider.GetRequiredService<IMaxPlayersInstaller>();
             DiscordStatus = serviceProvider.GetRequiredService<IDiscordStatusService>();
             DiscordWebhooks = serviceProvider.GetRequiredService<IDiscordWebhookService>();
@@ -324,6 +403,12 @@ namespace ValheimBakaLoader.Forms
 
             server.StatusChanged += (s, status) =>
             {
+                // The clock the BepInEx load check reads. Taken at Starting, because that is
+                // the transition closest to the process being created, and cleared at Stopped
+                // so a stopped realm never carries a verdict about a start that is over.
+                if (status == ServerStatus.Starting) ServerLaunchUtc[profile] = DateTime.UtcNow;
+                else if (status == ServerStatus.Stopped) ServerLaunchUtc.TryRemove(profile, out _);
+
                 PostEvent("server.status", BuildServerState(session));
                 PostEvent("servers.changed", BuildServersList());
 
@@ -331,6 +416,12 @@ namespace ValheimBakaLoader.Forms
                 {
                     crashRecorded = false;
                     Analytics.Record(new AnalyticsEvent { Kind = "start", Server = profile });
+
+                    // Nothing else asks again once the grace has passed: the status event only
+                    // fires on a transition, and "the log never appeared" is not one. So the
+                    // question is asked once more, a little after the window closes, and the
+                    // answer travels on the status the page already listens to.
+                    ScheduleBepInExLoadCheck(session);
                 }
                 else if (status == ServerStatus.Stopped && !crashRecorded)
                 {
@@ -953,6 +1044,11 @@ namespace ValheimBakaLoader.Forms
         {
             var profile = session.ProfileName;
 
+            // Installed before the companion plugins, in the slot where the server is still
+            // down. Set here rather than in the constructor because it needs the profile name
+            // the session was created for.
+            session.Server.PrepareBepInEx = exePath => PrepareBepInExForStart(profile, exePath);
+
             session.Server.GetPendingModUpdateCount = async () =>
             {
                 if (!UserPrefsProvider.LoadPreferences().AutoUpdateMods) return 0;
@@ -963,6 +1059,12 @@ namespace ValheimBakaLoader.Forms
 
             session.Server.ApplyModUpdates = async () =>
             {
+                // BepInEx first, and on its own switch: the loader is what the mods load
+                // under, so moving it after them would leave one restart where new plugins
+                // meet an old core. It runs whether or not mod auto-update is on, because
+                // the two settings answer different questions.
+                await ApplyBepInExUpdateAsync(profile);
+
                 if (!UserPrefsProvider.LoadPreferences().AutoUpdateMods) return;
 
                 var mods = await ScanModsWithLatestAsync(profile);
@@ -1588,6 +1690,426 @@ namespace ValheimBakaLoader.Forms
             var outcome = LaunchGuard.Decide(
                 current, context.LastLaunchedBuild, context.LastLaunchedFingerprint, hasWorlds);
             return BuildLaunchGuardDto(profile, context, outcome);
+        }
+
+        #endregion
+
+        #region BepInEx
+
+        /// <summary>
+        /// Every profile BakaLoader knows about and the install it runs from, with whether
+        /// its server is up right now. This is what the sharing rule is asked about: two
+        /// profiles whose exe paths hoist to the same base write through one BepInEx, and one
+        /// of them being up is what makes writing it unsafe.
+        /// <para>
+        /// Run state comes off the process-wide session registry rather than this window's
+        /// own sessions, because BakaLoader opens one window per auto-start profile and the
+        /// world that would be harmed is very often the one in the window next door.
+        /// </para>
+        /// </summary>
+        private IReadOnlyList<Tools.BepInExProfileInstall> KnownInstalls()
+        {
+            var live = new Dictionary<string, ServerSession>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var session in SessionRegistry.All)
+                {
+                    if (session?.ProfileName == null) continue;
+                    if (!live.ContainsKey(session.ProfileName)) live[session.ProfileName] = session;
+                }
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not read the live session registry: {0}", e.Message);
+            }
+
+            var names = new List<string>();
+            try
+            {
+                names.AddRange(ServerPrefsProvider.LoadPreferences()
+                    .Select(pref => pref.ProfileName)
+                    .Where(name => !string.IsNullOrWhiteSpace(name)));
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not read the server profiles: {0}", e.Message);
+            }
+
+            foreach (var name in live.Keys) names.Add(name);
+
+            return names
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(name =>
+                {
+                    live.TryGetValue(name, out var session);
+                    var exe = session?.Server?.Options?.ServerExePath;
+                    if (string.IsNullOrWhiteSpace(exe)) exe = GetServerExePathFor(name);
+
+                    return new Tools.BepInExProfileInstall
+                    {
+                        ProfileName = name,
+                        ServerExePath = exe,
+                        Running = session != null && session.Server.Status != ServerStatus.Stopped,
+                    };
+                })
+                .Where(install => !string.IsNullOrWhiteSpace(install.ServerExePath))
+                .ToList();
+        }
+
+        /// <summary>
+        /// The same answer as <see cref="KnownInstalls"/>, built again every time the sequence
+        /// is walked.
+        /// <para>
+        /// The writer asks its refusal twice, once before the download and once with the
+        /// archive on disk and nothing written yet, and a list handed in would answer the
+        /// second ask with the first one's snapshot: a realm started during a fifty megabyte
+        /// fetch would never be seen. An iterator method re-runs its body on every enumeration,
+        /// which is exactly the re-reading this needs and costs nothing where nobody asks twice.
+        /// </para>
+        /// </summary>
+        private IEnumerable<Tools.BepInExProfileInstall> LiveInstalls()
+        {
+            foreach (var install in KnownInstalls()) yield return install;
+        }
+
+        /// <summary>
+        /// The row the Mods page draws above the table, and the payload of bepinex.changed.
+        /// One shape for both, so a page that read the event never has to ask again.
+        /// </summary>
+        private object BuildBepInExDto()
+        {
+            var prefs = UserPrefsProvider.LoadPreferences();
+            var baseExe = GetCanonicalBaseServerExe();
+            var status = BepInEx.Status(baseExe, GetPluginsDirectory(), KnownInstalls());
+
+            return new
+            {
+                installed = status.Installed,
+                baseFolder = status.BaseFolder,
+                // The pack version when BakaLoader wrote it, the assembly's own file version
+                // when somebody else did. They are not the same number and never have been:
+                // pack 5.4.2350 ships BepInEx 5.4.23.5.
+                maintainedByBakaLoader = status.MaintainedByBakaLoader,
+                packVersion = status.PackVersion,
+                coreFileVersion = status.CoreFileVersion,
+                package = status.Package,
+                source = status.Source,
+                installedUtc = status.InstalledUtc,
+                wrongLocationFolder = status.WrongLocationFolder,
+                sharingProfiles = status.SharingProfiles,
+                runningProfiles = status.RunningProfiles,
+                maintained = prefs.BepInExMaintained,
+                maintenanceAsked = prefs.BepInExMaintenanceAsked,
+                // Set by the unattended window when it found a newer pack and could not write
+                // it because another server on this install was up.
+                updateWaiting = _bepInExUpdateWaiting,
+                // True for ALL four writers, so the row never draws its buttons enabled while
+                // an unattended window or a start is writing the very files they would write.
+                busy = BepInExWriteInProgress,
+            };
+        }
+
+        /// <summary>
+        /// Asks the load check once more, a little after the grace has passed, and sends the
+        /// answer on the status event. Fire and forget: a window that closed in the meantime
+        /// drops the push inside PostEvent, and a session that stopped answers false.
+        /// </summary>
+        private void ScheduleBepInExLoadCheck(ServerSession session)
+        {
+            var when = TimeSpan.FromSeconds(Tools.BepInExLoadCheck.DefaultGraceSeconds + 5);
+            _ = Task.Delay(when).ContinueWith(_ =>
+            {
+                try
+                {
+                    if (IsDisposed) return;
+                    if (session.Server.Status != ServerStatus.Running) return;
+                    PostEvent("server.status", BuildServerState(session));
+                }
+                catch (Exception e)
+                {
+                    AppLogger.Debug("The BepInEx load check could not report: {0}", e.Message);
+                }
+            });
+        }
+
+        /// <summary>Tells every page the BepInEx answer has changed, and what it changed to.</summary>
+        private void PostBepInExChanged()
+        {
+            try { PostEvent("bepinex.changed", BuildBepInExDto()); }
+            catch (Exception e) { AppLogger.Debug("Could not post bepinex.changed: {0}", e.Message); }
+        }
+
+        /// <summary>
+        /// The one place a host-driven BepInEx write goes through: the busy guard, the
+        /// already-looked-after notice, the progress events and the changed event, so
+        /// bepinex.install and bepinex.update cannot drift apart.
+        /// </summary>
+        private async Task<object> WriteBepInExAsync(string url, bool update)
+        {
+            if (!TryBeginBepInExWrite()) throw BepInExBusy();
+
+            try
+            {
+                // While BakaLoader is looking after BepInEx, the source is BakaLoader's to
+                // choose. A host who hands it another one is told where the setting is rather
+                // than having their link quietly ignored or quietly obeyed.
+                if (!string.IsNullOrWhiteSpace(url) && UserPrefsProvider.LoadPreferences().BepInExMaintained)
+                    throw new HostFacingException("bepinex.alreadyMaintained",
+                        "BepInEx is already looked after by BakaLoader.");
+
+                var progress = new SynchronousProgress<Tools.BepInExProgress>(pr =>
+                    PostEvent("bepinex.progress",
+                        new { phase = pr.Phase, percent = pr.Percent, version = pr.Version }));
+
+                var baseExe = GetCanonicalBaseServerExe();
+                var installs = LiveInstalls();
+
+                var result = update
+                    ? await BepInEx.UpdateAsync(baseExe, installs, progress)
+                    : await BepInEx.InstallAsync(baseExe, url, installs, progress);
+
+                RecordBepInExInstall(ActiveProfileName, result);
+                _bepInExUpdateWaiting = null;
+                return BuildBepInExDto();
+            }
+            finally
+            {
+                EndBepInExWrite();
+                PostBepInExChanged();
+            }
+        }
+
+        /// <summary>Writes a BepInEx install into the journal beside the mod installs.</summary>
+        private void RecordBepInExInstall(string profile, Tools.BepInExInstallResult result)
+        {
+            if (result == null || !result.Installed) return;
+
+            try
+            {
+                Analytics.Record(new AnalyticsEvent
+                {
+                    Kind = result.Replaced ? "modup" : "modin",
+                    Server = profile,
+                    Mod = result.Package,
+                    FromVersion = result.PreviousVersion,
+                    ToVersion = result.Version,
+                });
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not record the BepInEx install: {0}", e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Whether a pasted Thunderstore package is the loader pack itself rather than a mod.
+        /// </summary>
+        private static bool IsBepInExPackReference(string owner, string name)
+            => string.Equals(owner, Tools.BepInExService.DefaultPackageOwner, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(name, Tools.BepInExService.DefaultPackageName, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The verdict of the load check for one live session, or false when the question does
+        /// not apply. Reads BepInEx/LogOutput.log beside the server the session actually runs,
+        /// which on an isolated install is that install's own copy.
+        /// </summary>
+        private bool BepInExDidNotLoad(ServerSession session)
+        {
+            try
+            {
+                if (session == null) return false;
+                if (session.Server.Status != ServerStatus.Running) return false;
+                if (!ServerLaunchUtc.TryGetValue(session.ProfileName, out var startedUtc)) return false;
+
+                var bepDir = session.Server.GetBepInExDirectory();
+                if (string.IsNullOrWhiteSpace(bepDir)) return false;
+
+                var installed = File.Exists(Path.Combine(bepDir, "core", Tools.BepInExService.CoreAssemblyName));
+                DateTime? written = null;
+                var log = Path.Combine(bepDir, Tools.BepInExLoadCheck.LogFileName);
+                if (File.Exists(log)) written = File.GetLastWriteTimeUtc(log);
+
+                return Tools.BepInExLoadCheck.DidNotLoad(installed, written, startedUtc, DateTime.UtcNow);
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not run the BepInEx load check: {0}", e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// What server.status carries about BepInEx: the two standing conditions, and enough
+        /// beside them for the page to word both without a second call.
+        /// </summary>
+        private object BuildBepInExState(ServerSession session)
+        {
+            try
+            {
+                var waiting = _bepInExUpdateWaiting;
+                return new
+                {
+                    maintained = UserPrefsProvider.LoadPreferences().BepInExMaintained,
+                    updateWaiting = waiting,
+                    waitingProfiles = waiting == null
+                        ? Array.Empty<string>()
+                        : Tools.BepInExService.ProfilesBlockingWrite(GetCanonicalBaseServerExe(), KnownInstalls())
+                            .ToArray(),
+                    notLoaded = BepInExDidNotLoad(session),
+                };
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not build the BepInEx state: {0}", e.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The unattended BepInEx step, run inside the window that already applies mod
+        /// updates: the server that is restarting is down, so the only question left is
+        /// whether any OTHER server on this install is up. One that is means the write waits,
+        /// and the condition bar says so rather than the update silently never happening.
+        /// </summary>
+        private async Task ApplyBepInExUpdateAsync(string profile)
+        {
+            try
+            {
+                var prefs = UserPrefsProvider.LoadPreferences();
+                var baseExe = GetCanonicalBaseServerExe();
+                // Left lazy on purpose: the writer asks its refusal again after the download,
+                // and this sequence answers with whoever is up at the moment it is asked.
+                var installs = LiveInstalls()
+                    .Where(i => !string.Equals(i.ProfileName, profile, StringComparison.OrdinalIgnoreCase));
+
+                var status = BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), installs);
+                var latest = await BepInEx.LatestVersionAsync(status.Package);
+
+                var others = Tools.BepInExService.ProfilesBlockingWrite(baseExe, installs).Count > 0;
+                var decision = Tools.BepInExUnattended.Decide(
+                    prefs.BepInExMaintained, status.Installed, status.PackVersion, latest, others);
+
+                if (decision == Tools.BepInExUnattendedAction.Skip)
+                {
+                    _bepInExUpdateWaiting = null;
+                    return;
+                }
+
+                if (decision == Tools.BepInExUnattendedAction.Defer)
+                {
+                    _bepInExUpdateWaiting = latest;
+                    Logger.Information(
+                        "A newer BepInEx pack ({0}) is waiting for every server on this install to stop.", latest);
+                    PostBepInExChanged();
+                    return;
+                }
+
+                // The one write slot. A host pressing Install or Update on the row right now
+                // is writing the same BepInEx/core, and an unattended window does not queue
+                // behind a person: it waits for the next restart and the row says so.
+                if (!TryBeginBepInExWrite())
+                {
+                    _bepInExUpdateWaiting = latest;
+                    Logger.Information(
+                        "A newer BepInEx pack ({0}) is waiting: another BepInEx write is running.", latest);
+                    PostBepInExChanged();
+                    return;
+                }
+
+                try
+                {
+                    // The slot is in hand and the write begins on the next line. Say so now:
+                    // the DTO's busy flag is what greys the row's buttons on an open page, and
+                    // a page told only when the write is over spends the whole of it offering
+                    // presses that would be refused. The refusal is correctly worded either
+                    // way, but a button that cannot work should not look like one that can.
+                    PostBepInExChanged();
+
+                    var result = await BepInEx.UpdateAsync(baseExe, installs);
+                    RecordBepInExInstall(profile, result);
+                    _bepInExUpdateWaiting = null;
+                    Logger.Information("BepInEx moved to {0} for profile {1} at the restart window.",
+                        result.Version, profile);
+                }
+                finally
+                {
+                    EndBepInExWrite();
+                }
+
+                PostBepInExChanged();
+            }
+            catch (Exception e)
+            {
+                // A restart must still happen. The world coming back up matters more than the
+                // loader being a version behind, and the row says what did not land.
+                AppLogger.Warning("The unattended BepInEx step did not run: {0}", e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Puts BepInEx in place before a server that needs it starts, when BakaLoader is
+        /// looking after it. Runs in the companion-plugin slot, which is the one moment in a
+        /// start where the process is not up yet and the files are free.
+        /// <para>
+        /// It fires for every profile, and there is no "does this one have anything to load"
+        /// question in front of it: the companion plugins ship inside BakaLoader and are
+        /// installed on the very next lines of this same start, so the answer is always yes.
+        /// There WAS such a check here, and it could only ever return true, which made it a
+        /// condition on paper and nothing at all in the code.
+        /// </para>
+        /// </summary>
+        private void PrepareBepInExForStart(string profile, string exePath)
+        {
+            if (!UserPrefsProvider.LoadPreferences().BepInExMaintained) return;
+
+            // The base this profile's loader really lives in, resolved from the profile's own
+            // preferences rather than from the path: an isolated install cannot say which of
+            // its instances root's siblings the base is.
+            var baseExe = GetCanonicalBaseServerExe(profile);
+            if (string.IsNullOrWhiteSpace(baseExe)) baseExe = exePath;
+
+            if (BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), LiveInstalls()).Installed) return;
+
+            // The one write slot, and the only path that WAITS for it. A host who pressed
+            // Install on the row a moment ago is writing the very files this start needs, and
+            // two writers over one BepInEx/core is an install that starts neither version.
+            // The wait outlasts the download's own timeout, so it ends because the other write
+            // ended rather than in the middle of it.
+            if (!BeginBepInExWrite(BepInExWriteWait)) throw BepInExBusy();
+
+            try
+            {
+                // Same reason as the restart-window write: the slot is held from here, so an
+                // open page hears it now rather than after the install, and the row's buttons
+                // grey out for as long as they would actually be refused.
+                PostBepInExChanged();
+
+                // Asked again with the slot in hand: the write this waited for may well have
+                // been the loader going in, and there is then nothing left to do.
+                var installs = LiveInstalls();
+                if (BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), installs).Installed) return;
+
+                var progress = new SynchronousProgress<Tools.BepInExProgress>(pr =>
+                    PostEvent("bepinex.progress",
+                        new { phase = pr.Phase, percent = pr.Percent, version = pr.Version }));
+
+                // This waits. Every start in the app goes through the launch guard, and a
+                // guarded launch runs StartCore on a task of its own precisely so a slow step
+                // here cannot freeze the window; the installers around this one are
+                // synchronous. The start itself is not held hostage: this runs through
+                // Install("BepInEx", ...) in PrepareCompanionPlugins, so a failure here is
+                // recorded against the BepInEx entry in CompanionPluginStatus and the launch
+                // carries on, the same as any other companion plugin that could not be placed.
+                var result = BepInEx.InstallAsync(baseExe, null, installs, progress)
+                    .GetAwaiter().GetResult();
+
+                RecordBepInExInstall(profile, result);
+            }
+            finally
+            {
+                EndBepInExWrite();
+                PostBepInExChanged();
+            }
         }
 
         #endregion
@@ -3038,6 +3560,8 @@ namespace ValheimBakaLoader.Forms
                     Apply("AutoUpdateMods", v => prefs.AutoUpdateMods = v.Value<bool>());
                     Apply("UseHexiumSource", v => prefs.UseHexiumSource = v.Value<bool>());
                     Apply("AutoUpdateBakaLoader", v => prefs.AutoUpdateBakaLoader = v.Value<bool>());
+                    Apply("BepInExMaintained", v => prefs.BepInExMaintained = v.Value<bool>());
+                    Apply("BepInExMaintenanceAsked", v => prefs.BepInExMaintenanceAsked = v.Value<bool>());
                     Apply("StartWithWindows", v => prefs.StartWithWindows = v.Value<bool>());
                     Apply("ShareAnonymousStats", v => prefs.ShareAnonymousStats = v.Value<bool>());
                     Apply("StartMinimized", v => prefs.StartMinimized = v.Value<bool>());
@@ -4727,7 +5251,13 @@ namespace ValheimBakaLoader.Forms
             // so the UI can show them without a generic RPC-failure toast.
             RegisterRpc("mods.addFromUrl", async p =>
             {
-                object FailDto(string error) => new
+                // The refusal carries a REASON beside the sentence now. A page could only ever
+                // tell "BepInEx is missing" from "Thunderstore is down" by matching English
+                // prose, which is not a thing any page should be asked to do and stops working
+                // the moment the sentence is translated. The sentence is unchanged, so a page
+                // that reads only Error is exactly as it was.
+                object FailDto(string error, string reason = null,
+                    IReadOnlyDictionary<string, object> errorParams = null) => new
                 {
                     Installed = false,
                     Replaced = false,
@@ -4735,11 +5265,16 @@ namespace ValheimBakaLoader.Forms
                     Name = (string)null,
                     Version = (string)null,
                     Error = error,
+                    Reason = reason,
+                    // The named values the reason's own sentence interpolates, so a refusal
+                    // that came back through this road can be worded out of the catalog
+                    // exactly as the same refusal is on the direct call.
+                    ErrorParams = errorParams,
                     source = (string)null,
                 };
 
                 if (_modUpdateInProgress)
-                    return FailDto("A mod update is already in progress. Try again in a moment.");
+                    return FailDto("A mod update is already in progress. Try again in a moment.", "busy");
 
                 // A hexium.gg link is a different site with a different answer: it never
                 // installs from a paste. It is resolved, and what it resolves to is handed
@@ -4749,11 +5284,88 @@ namespace ValheimBakaLoader.Forms
                     return await PrepareHexiumInstallAsync(pasted, null, null, null);
 
                 if (!ThunderstoreUrlParser.TryParse(pasted, out var reference, out var parseError))
-                    return FailDto(parseError);
+                    return FailDto(parseError, "badUrl");
 
                 var pluginsDir = GetPluginsDirectory();
-                if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
-                    return FailDto("BepInEx plugins folder not found. Set a valid server .exe path first.");
+                if (string.IsNullOrWhiteSpace(pluginsDir))
+                    return FailDto("BepInEx plugins folder not found. Set a valid server .exe path first.",
+                        "noServerPath");
+
+                var bepPrefs = UserPrefsProvider.LoadPreferences();
+                var bepBaseExe = GetCanonicalBaseServerExe();
+                var bepStatus = BepInEx.Status(bepBaseExe, pluginsDir, KnownInstalls());
+
+                // The loader pack is not a mod and cannot be installed as one: its files
+                // belong beside the server executable, not three levels down under plugins.
+                // While BakaLoader is looking after it there is nothing for the host to do,
+                // and the answer says where the switch is instead of failing silently.
+                if (IsBepInExPackReference(reference.Owner, reference.Name))
+                {
+                    if (bepPrefs.BepInExMaintained)
+                        return FailDto("BepInEx is already looked after by BakaLoader.", "alreadyMaintained");
+
+                    try
+                    {
+                        // A link that NAMES a version is honoured, because the offer dialog's
+                        // edited address already is and the two roads have to agree: pasting
+                        // .../BepInExPack_Valheim/5.4.2100/ used to fetch the latest pack and
+                        // say nothing about it. The address is BUILT from the package identity
+                        // rather than taken from the paste, so a pinned package still cannot be
+                        // talked into fetching from somewhere else. No version in the link and
+                        // the pinned pack is resolved fresh, exactly as the row's Install does.
+                        var pinned = string.IsNullOrWhiteSpace(reference.Version)
+                            ? null
+                            : Tools.BepInExService.ConstructedDownloadUrl(
+                                reference.Owner, reference.Name, reference.Version);
+
+                        await WriteBepInExAsync(pinned, update: bepStatus.Installed);
+                        return new
+                        {
+                            Installed = true,
+                            Replaced = bepStatus.Installed,
+                            Owner = reference.Owner,
+                            Name = reference.Name,
+                            Version = reference.Version,
+                            Error = (string)null,
+                            Reason = "bepinex",
+                            source = (string)null,
+                        };
+                    }
+                    catch (Exception bepError)
+                    {
+                        return FailDto(bepError.Message, HostFacingException.IdOf(bepError) ?? "bepinex",
+                            HostFacingException.ParamsOf(bepError));
+                    }
+                }
+
+                if (!bepStatus.Installed)
+                {
+                    // Maintained OFF means BakaLoader never writes BepInEx on its own. The
+                    // reason is what lets the page offer the install as a question.
+                    if (!bepPrefs.BepInExMaintained)
+                        return FailDto(
+                            "BepInEx is not installed on this server, so there is nothing for a mod to load under.",
+                            "noBepInEx");
+
+                    try
+                    {
+                        await WriteBepInExAsync(null, update: false);
+                    }
+                    catch (Exception bepError)
+                    {
+                        return FailDto(bepError.Message, HostFacingException.IdOf(bepError) ?? "noBepInEx",
+                            HostFacingException.ParamsOf(bepError));
+                    }
+                }
+
+                // BepInEx is here and the plugins folder is not: the pack does not ship one,
+                // so this is the ordinary state of a fresh install rather than a fault. It is
+                // created and the add carries on.
+                if (!Directory.Exists(pluginsDir))
+                {
+                    try { Directory.CreateDirectory(pluginsDir); }
+                    catch (Exception folderError) { return FailDto(folderError.Message, "noPlugins"); }
+                }
 
                 _modUpdateInProgress = true;
                 try
@@ -4779,6 +5391,9 @@ namespace ValheimBakaLoader.Forms
                         result.Name,
                         result.Version,
                         result.Error,
+                        // One shape for the answer whether it worked or not, so a page reading
+                        // Reason never has to check whether the key is there.
+                        Reason = (string)null,
                         // Which site the files came from, carried through so the page never
                         // has to guess what it just installed. Additive: a page that does not
                         // read it is unaffected, and a Thunderstore install says so plainly.
@@ -4906,7 +5521,12 @@ namespace ValheimBakaLoader.Forms
                 var pluginsDir = GetPluginsDirectory();
                 List<RequiredMod> missing;
 
-                if (string.IsNullOrWhiteSpace(pluginsDir))
+                // The folder has to be THERE, not merely named. A profile whose exe path is
+                // set but which never had BepInEx installed answered "nothing is missing"
+                // here, because the checker reads an absent folder as an empty one, and the
+                // page then left the console typing box enabled on a server that cannot run a
+                // single command. caps.install has always checked this; caps.get never did.
+                if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
                 {
                     missing = Tools.RequiredModChecker.RequiredMods.ToList();
                 }
@@ -4970,6 +5590,48 @@ namespace ValheimBakaLoader.Forms
                 {
                     _requiredModInstallInProgress = false;
                 }
+            });
+
+
+            // --- BepInEx (the framework every mod loads under) ---
+            // BepInEx is ONE thing per base install, never one per profile: an isolated
+            // install shares BepInEx/core and BepInEx/patchers with the base through
+            // directory junctions and hard-links the loader files beside the executable. So
+            // every answer here is about the base install the active profile runs from, and
+            // every write reaches every server on it. That is why the refusal below is a
+            // refusal and not a warning.
+            RegisterRpc("bepinex.status", p => Task.FromResult<object>(BuildBepInExDto()));
+
+            RegisterRpc("bepinex.install", async p =>
+            {
+                var url = p.Value<string>("url");
+                return await WriteBepInExAsync(url, update: false);
+            });
+
+            RegisterRpc("bepinex.update", async p => await WriteBepInExAsync(null, update: true));
+
+            // Only ever the mis-placed folder under plugins, never BepInEx itself: removing a
+            // loader out from under an install is not something a button should be able to do.
+            RegisterRpc("bepinex.remove", async p =>
+            {
+                // Through the same one slot as the other three writers: this deletes a folder
+                // under plugins while an install may be junctioning and hard-linking its way
+                // through the very same tree.
+                if (!TryBeginBepInExWrite()) throw BepInExBusy();
+
+                try
+                {
+                    var pluginsDir = GetPluginsDirectory();
+                    await BepInEx.RemoveWrongLocationAsync(
+                        pluginsDir, LiveInstalls(), GetCanonicalBaseServerExe());
+                }
+                finally
+                {
+                    EndBepInExWrite();
+                    PostBepInExChanged();
+                }
+
+                return BuildBepInExDto();
             });
 
             // --- Config editor ---
@@ -5063,6 +5725,9 @@ namespace ValheimBakaLoader.Forms
                     // The release the app update check itself reads, so the notes the host
                     // opens are always the notes for the version they were just offered.
                     "releases" => ReleasesUrl,
+                    // What BepInEx is, what BakaLoader writes, and what every server on
+                    // one install shares. Offered by the row that says it did not load.
+                    "bepinex-wiki" => BepInExWikiUrl,
                     _ => throw new ArgumentException($"Unknown shell.openUrl target: {target}"),
                 };
 
@@ -5231,6 +5896,9 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private const string ReleasesUrl = "https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest";
 
+        /// <summary>The page that explains BepInEx, the marker file and what is shared.</summary>
+        private const string BepInExWikiUrl = "https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx";
+
         /// <summary>
         /// The only addresses the notes button may open. GitHub hands back the release page for
         /// whatever it found, and that string is what this opens, so the check being pointed
@@ -5345,6 +6013,11 @@ namespace ValheimBakaLoader.Forms
                 // Scoped to this session's profile: with two realms up, the other realm's
                 // plugin trouble must never appear on this one's bar.
                 pluginFailures = BuildPluginFailureDtos(session.ProfileName),
+                // The two BepInEx facts that are STILL TRUE and still want an answer: a pack
+                // update that could not be written because a server on this install was up,
+                // and a start where the preloader never wrote its log. Null when the question
+                // could not be asked at all, which a page reads as "say nothing".
+                bepinex = BuildBepInExState(session),
             };
         }
 
@@ -6384,6 +7057,8 @@ namespace ValheimBakaLoader.Forms
                 prefs.AutoUpdateMods,
                 prefs.UseHexiumSource,
                 prefs.AutoUpdateBakaLoader,
+                prefs.BepInExMaintained,
+                prefs.BepInExMaintenanceAsked,
                 prefs.StartWithWindows,
                 prefs.ShareAnonymousStats,
                 prefs.StartMinimized,
@@ -6676,9 +7351,16 @@ namespace ValheimBakaLoader.Forms
         /// junctions at another instance's junctions - a chain that breaks the moment that
         /// intermediate realm is deleted.
         /// </summary>
-        private string GetCanonicalBaseServerExe()
+        private string GetCanonicalBaseServerExe() => GetCanonicalBaseServerExe(ActiveProfileName);
+
+        /// <summary>
+        /// The same question for a named profile rather than the one the window is showing.
+        /// A background realm relaunching or starting while the host looks at another one has
+        /// to resolve its OWN base install, and the window's active profile is not it.
+        /// </summary>
+        private string GetCanonicalBaseServerExe(string profileName)
         {
-            var exe = GetServerExePathFor(ActiveProfileName);
+            var exe = GetServerExePathFor(profileName);
             try
             {
                 if (string.IsNullOrWhiteSpace(exe)) return exe;

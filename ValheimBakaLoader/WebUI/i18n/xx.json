@@ -650,6 +650,20 @@
     "hearth.upkeep.mod_updates.note": {
       "translation": "[Ẋ Installs waiting Thunderstore updates during a scheduled restart, and once the server has sat empty for ten minutes. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "hearth.upkeep.bepinex": {
+      "translation": "[Ẋ BepInEx kept up to date by BakaLoader Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "hearth.upkeep.bepinex.note": {
+      "translation": "[Ẋ Installs BepInEx when it is missing and moves it to a newer pack during a scheduled restart. Every server on this install shares one BepInEx, so this covers all of them. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "hearth.upkeep.bepinex.on.toast": {
+      "translation": "[Ẋ BakaLoader is looking after BepInEx. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
+    "hearth.upkeep.bepinex.off.toast": {
+      "translation": "[Ẋ BakaLoader will leave BepInEx alone. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
     "hearth.upkeep.start_windows": {
       "translation": "[Ẋ Start BakaLoader with Windows Ẋ] ẊẊẊẊẊẊẊẊẊ"
     },
@@ -2389,6 +2403,237 @@
     "common.rpc.refused.toast": {
       "translation": "[Ẋ That was refused. Ẋ] ẊẊẊẊẊẊ"
     },
+    "bepinex.reason.servers_running": {
+      "translation": "[Ẋ BakaLoader counts these servers as loading this same BepInEx, so nothing is written while one of them is up. Still up: {names}. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "names": "text"
+      }
+    },
+    "bepinex.reason.not_a_loader": {
+      "translation": "[Ẋ That download is not a BepInEx pack, so nothing was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.integrity": {
+      "translation": "[Ẋ The BepInEx download did not match what the site listed, so nothing was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.too_large": {
+      "translation": "[Ẋ That download is larger than BakaLoader will fetch for a loader, so it was stopped. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.offline": {
+      "translation": "[Ẋ Thunderstore did not answer, so BepInEx could not be fetched. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.busy": {
+      "translation": "[Ẋ BepInEx is already being written. Try again in a moment. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.no_server_path": {
+      "translation": "[Ẋ Set a valid server .exe path before installing BepInEx. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.no_wrong_folder": {
+      "translation": "[Ẋ There is no misplaced BepInEx folder to remove. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.notice.already_maintained.title": {
+      "translation": "[Ẋ BepInEx is looked after Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.notice.already_maintained": {
+      "translation": "[Ẋ BakaLoader keeps BepInEx up to date for every server on this install, so there is nothing to put in by hand. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.notice.already_maintained.action": {
+      "translation": "[Ẋ Open the setting Ẋ] ẊẊẊẊẊ"
+    },
+    "bepinex.condition.waiting.title": {
+      "translation": "[Ẋ BepInEx update waiting Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.condition.waiting.body": {
+      "translation": "[Ẋ BepInEx {version} is ready and goes in once every server on this install has stopped, because they all load the same one. Still up: {names}. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text",
+        "names": "text"
+      }
+    },
+    "bepinex.condition.waiting.body.none": {
+      "translation": "[Ẋ BepInEx {version} is ready and goes in at the next restart window, once every server on this install has stopped, because they all load the same one. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "bepinex.condition.not_loaded.title": {
+      "translation": "[Ẋ BepInEx did not load Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.condition.not_loaded.body": {
+      "translation": "[Ẋ This server has been up a while and BepInEx never wrote its log, so no mod is loaded. The wiki page says what to check. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.condition.not_loaded.action": {
+      "translation": "[Ẋ Read the wiki page Ẋ] ẊẊẊẊẊẊ"
+    },
+    "bepinex.row.title": {
+      "translation": "[Ẋ BepInEx Ẋ] ẊẊẊ"
+    },
+    "bepinex.row.pill.missing": {
+      "translation": "[Ẋ Missing Ẋ] ẊẊẊ"
+    },
+    "bepinex.row.pill.maintained": {
+      "translation": "[Ẋ Looked after Ẋ] ẊẊẊẊ"
+    },
+    "bepinex.row.pill.manual": {
+      "translation": "[Ẋ Yours to update Ẋ] ẊẊẊẊẊ"
+    },
+    "bepinex.row.pill.outside": {
+      "translation": "[Ẋ Outside Ẋ] ẊẊẊ"
+    },
+    "bepinex.row.state.missing": {
+      "translation": "[Ẋ Not installed, so nothing in this list would load. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.state.maintained": {
+      "translation": "[Ẋ Kept up to date by BakaLoader. Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.state.manual": {
+      "translation": "[Ẋ BakaLoader put this pack in and is not looking after it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.state.outside": {
+      "translation": "[Ẋ Installed outside BakaLoader, so there is no telling whether a newer pack is out. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.version.pack.title": {
+      "translation": "[Ẋ The Thunderstore pack version, read from the note BakaLoader writes beside the install. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.version.file.title": {
+      "translation": "[Ẋ The loader's own file version. Nothing on disk records which pack it came in, so a pack bump cannot be seen from here. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.version.unknown": {
+      "translation": "[Ẋ version unknown Ẋ] ẊẊẊẊẊ"
+    },
+    "bepinex.row.note.next_check": {
+      "translation": "[Ẋ Checked again at every scheduled restart. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.note.waiting": {
+      "translation": "[Ẋ Version {version} is ready and goes in once every server on this install has stopped. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.note.shared": {
+      "translation": {
+        "one": "[Ẋ Counted as loading this same BepInEx as {count} other server. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ Counted as loading this same BepInEx as {count} other servers. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "bepinex.row.note.busy": {
+      "translation": "[Ẋ BepInEx is being written right now. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.note.wrong_folder": {
+      "translation": "[Ẋ A BepInEx pack was unpacked under the plugins folder, where it does nothing at all. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.action.install": {
+      "translation": "[Ẋ Install BepInEx Ẋ] ẊẊẊẊẊ"
+    },
+    "bepinex.row.action.update": {
+      "translation": "[Ẋ Update to the current pack Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.action.remove": {
+      "translation": "[Ẋ Remove the misplaced folder Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.blocked.title": {
+      "translation": "[Ẋ Stop the servers that are up first. BakaLoader counts them as loading this same BepInEx. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.installed.toast": {
+      "translation": "[Ẋ BepInEx {version} is in place. Ẋ] ẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
+    "bepinex.row.installed.noversion.toast": {
+      "translation": "[Ẋ BepInEx is in place. Ẋ] ẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
+    "bepinex.row.removed.toast": {
+      "translation": "[Ẋ The misplaced BepInEx folder was removed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
+    "bepinex.add.pack_installed.toast": {
+      "translation": "[Ẋ That link is the loader itself, so BepInEx was installed rather than added as a mod. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
+    "bepinex.dialog.first.title": {
+      "translation": "[Ẋ Let BakaLoader look after BepInEx? Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.body": {
+      "translation": "[Ẋ BepInEx is the loader every mod runs under. BakaLoader can put it in when it is missing and move it to a newer pack during a scheduled restart. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.note": {
+      "translation": "[Ẋ One BepInEx is shared by every server on this install, so this answer covers all of them. It can be changed any time in Upkeep. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.yes": {
+      "translation": "[Ẋ Yes, look after it Ẋ] ẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.no": {
+      "translation": "[Ẋ No, I will handle it Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.yes.toast": {
+      "translation": "[Ẋ BakaLoader will look after BepInEx from here on. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
+    "bepinex.dialog.first.no.toast": {
+      "translation": "[Ẋ BepInEx is yours to put in and keep current. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
+    "bepinex.dialog.install.title": {
+      "translation": "[Ẋ Install BepInEx first? Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.install.body": {
+      "translation": "[Ẋ Nothing loads a mod until BepInEx is in place. BakaLoader fetches the pack below and writes it beside the server executable, then finishes the add you started. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.install.source": {
+      "translation": "[Ẋ Pack address Ẋ] ẊẊẊẊ"
+    },
+    "bepinex.dialog.install.note": {
+      "translation": "[Ẋ Leave the address as it is unless you have a reason not to. Another link has to be a BepInEx pack of the same shape, or nothing is written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.install.running.warn": {
+      "translation": "[Ẋ Every server on this install loads the same BepInEx, so the write is refused while one is up. Still up: {names}. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.install.ok": {
+      "translation": "[Ẋ Install it Ẋ] ẊẊẊẊ"
+    },
+    "bepinex.dialog.install.no_link.toast": {
+      "translation": "[Ẋ No address to fetch from Ẋ] ẊẊẊẊẊẊẊẊ",
+      "mark": "ᚦ"
+    },
+    "bepinex.dialog.remove.title": {
+      "translation": "[Ẋ Remove the misplaced BepInEx folder? Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.remove.body": {
+      "translation": "[Ẋ This folder is a BepInEx pack unpacked where mods go. It loads nothing there, and removing it leaves the real install alone. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.remove.ok": {
+      "translation": "[Ẋ Remove it Ẋ] ẊẊẊ"
+    },
+    "bepinex.progress.title": {
+      "translation": "[Ẋ Installing BepInEx Ẋ] ẊẊẊẊẊẊ"
+    },
+    "bepinex.progress.aria": {
+      "translation": "[Ẋ BepInEx install progress Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.progress.phase.resolving": {
+      "translation": "[Ẋ Asking Thunderstore which pack is current. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.progress.phase.downloading": {
+      "translation": "[Ẋ Downloading the pack. Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.progress.phase.downloading.version": {
+      "translation": "[Ẋ Downloading pack {version}. Ẋ] ẊẊẊẊẊẊ"
+    },
+    "bepinex.progress.phase.checking": {
+      "translation": "[Ẋ Checking what came down against what the site listed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.progress.phase.extracting": {
+      "translation": "[Ẋ Unpacking. Ẋ] ẊẊẊẊ"
+    },
+    "bepinex.progress.phase.installing": {
+      "translation": "[Ẋ Writing the files beside the server. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.progress.phase.linking": {
+      "translation": "[Ẋ Sharing it with every server on this install. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.progress.phase.done": {
+      "translation": "[Ẋ Done. Ẋ] ẊẊ"
+    },
+    "bepinex.progress.phase.working": {
+      "translation": "[Ẋ Working. Ẋ] ẊẊẊ"
+    },
     "realm.rename.title": {
       "translation": "[Ẋ Rename realm Ẋ] ẊẊẊẊ"
     },
@@ -3850,6 +4095,15 @@
     },
     "mods.empty.none.action": {
       "translation": "[Ẋ Add from Thunderstore Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "mods.empty.no_bepinex.title": {
+      "translation": "[Ẋ No mod loader yet Ẋ] ẊẊẊẊẊẊ"
+    },
+    "mods.empty.no_bepinex.reason": {
+      "translation": "[Ẋ BepInEx is not installed on this server, so nothing here would load. Put it in first, then add mods. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.empty.no_bepinex.action": {
+      "translation": "[Ẋ Install BepInEx Ẋ] ẊẊẊẊẊ"
     },
     "mods.scan.preview.toast": {
       "translation": "[Ẋ Scan Thunderstore · preview only Ẋ] ẊẊẊẊẊẊẊẊẊẊ",

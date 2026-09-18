@@ -24,6 +24,8 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("autoUpdateMods")] public bool? AutoUpdateMods { get; set; }
         [JsonProperty("useHexiumSource")] public bool? UseHexiumSource { get; set; }
         [JsonProperty("autoUpdateBakaLoader")] public bool? AutoUpdateBakaLoader { get; set; }
+        [JsonProperty("bepInExMaintained")] public bool? BepInExMaintained { get; set; }
+        [JsonProperty("bepInExMaintenanceAsked")] public bool? BepInExMaintenanceAsked { get; set; }
         [JsonProperty("shareAnonymousStats")] public bool? ShareAnonymousStats { get; set; }
         [JsonProperty("saveProfileOnStart")] public bool? SaveProfileOnStart { get; set; }
         [JsonProperty("writeApplicationLogsToFile")] public bool? WriteApplicationLogsToFile { get; set; }

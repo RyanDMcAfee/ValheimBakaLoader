@@ -29,6 +29,16 @@ namespace ValheimBakaLoader.Game
 
         public bool AutoUpdateBakaLoader { get; set; } = true;
 
+        // BakaLoader puts BepInEx in place when it is missing and moves it forward at the
+        // restart windows that already apply mod updates. On by default, because a mod
+        // manager that leaves the framework its mods load under to the host is a manager
+        // that does not work on a fresh machine. It is one setting for the whole install:
+        // every server on it shares one BepInEx through junctions and hard links.
+        public bool BepInExMaintained { get; set; } = true;
+
+        // True once the first-start question has been asked, so it is asked exactly once.
+        public bool BepInExMaintenanceAsked { get; set; }
+
         public bool StartWithWindows { get; set; }
 
         // Anonymous usage heartbeat (install count / servers online); see HeartbeatService.
@@ -109,6 +119,8 @@ namespace ValheimBakaLoader.Game
                 AutoUpdateMods = file.AutoUpdateMods ?? defaults.AutoUpdateMods,
                 UseHexiumSource = file.UseHexiumSource ?? defaults.UseHexiumSource,
                 AutoUpdateBakaLoader = file.AutoUpdateBakaLoader ?? defaults.AutoUpdateBakaLoader,
+                BepInExMaintained = file.BepInExMaintained ?? defaults.BepInExMaintained,
+                BepInExMaintenanceAsked = file.BepInExMaintenanceAsked ?? defaults.BepInExMaintenanceAsked,
                 StartWithWindows = file.StartWithWindows ?? defaults.StartWithWindows,
                 ShareAnonymousStats = file.ShareAnonymousStats ?? defaults.ShareAnonymousStats,
                 StartMinimized = file.StartMinimized ?? defaults.StartMinimized,
@@ -156,6 +168,8 @@ namespace ValheimBakaLoader.Game
             AutoUpdateMods = AutoUpdateMods,
             UseHexiumSource = UseHexiumSource,
             AutoUpdateBakaLoader = AutoUpdateBakaLoader,
+            BepInExMaintained = BepInExMaintained,
+            BepInExMaintenanceAsked = BepInExMaintenanceAsked,
             StartWithWindows = StartWithWindows,
             ShareAnonymousStats = ShareAnonymousStats,
             StartMinimized = StartMinimized,

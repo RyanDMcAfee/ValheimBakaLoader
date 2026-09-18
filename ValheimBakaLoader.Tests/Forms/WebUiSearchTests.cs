@@ -308,6 +308,11 @@ namespace ValheimBakaLoader.Tests.Forms
             // word that lands under mods.empty. by mistake fails here instead of vanishing.
             var emptyStates = new[]
             {
+                // The loader's own nothing, which is a different nothing from "no mods":
+                // with BepInEx missing the hall is empty because nothing could load, and
+                // the button that fills it installs the loader rather than adding a mod.
+                "mods.empty.no_bepinex.action", "mods.empty.no_bepinex.reason",
+                "mods.empty.no_bepinex.title",
                 "mods.empty.no_match.action", "mods.empty.no_match.title",
                 "mods.empty.none.action", "mods.empty.none.reason", "mods.empty.none.title",
                 "mods.empty.scanning.reason", "mods.empty.scanning.title",

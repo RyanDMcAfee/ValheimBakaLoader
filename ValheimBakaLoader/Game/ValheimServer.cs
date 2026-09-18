@@ -297,6 +297,22 @@ namespace ValheimBakaLoader.Game
         public Func<Task> ApplyModUpdates { get; set; }
 
         /// <summary>
+        /// Optional hook (set by the UI) that puts BepInEx in place before the companion
+        /// plugins are prepared, when BakaLoader is looking after it and this install has
+        /// none. The argument is the server .exe this start is about, because an isolated
+        /// profile's loader lives in the base install its junctions point at rather than
+        /// beside its own executable.
+        /// <para>
+        /// It runs inside <c>PrepareCompanionPlugins</c>, which is the one moment in a start
+        /// where the process is not up yet and the files are free. A throw is recorded against
+        /// this profile like any other companion-plugin failure, so a loader that could not be
+        /// fetched says so on the condition bar and in the server log rather than leaving a
+        /// modded profile quietly running vanilla.
+        /// </para>
+        /// </summary>
+        public Action<string> PrepareBepInEx { get; set; }
+
+        /// <summary>
         /// Optional hook (set by the UI) that hands back the options built from what is SAVED ON
         /// DISK for this server's profile right now, or null when they cannot be read.
         /// <para>
@@ -1462,6 +1478,11 @@ namespace ValheimBakaLoader.Game
                     Tools.CompanionPluginStatus.ReportFailure(label, ex.Message);
                 }
             }
+
+            // First, because every plugin below it loads under BepInEx: installing the
+            // companions into a folder no loader will ever read is work that looks like it
+            // worked. A failure is recorded under this profile and the start carries on.
+            Install("BepInEx", () => PrepareBepInEx?.Invoke(exePath));
 
             Install("item indexer", () => ItemIndexerInstaller?.EnsureInstalled(pluginsDir));
             Install("spawn helper", () => SpawnHelperInstaller?.EnsureInstalled(pluginsDir));

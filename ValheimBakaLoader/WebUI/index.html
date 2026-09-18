@@ -204,6 +204,8 @@
                 <div class="subval" id="upkeepMsg" style="margin:2px 0 4px" data-i18n="hearth.upkeep.auto_update.note">Fetches new releases at launch and on restarts.</div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.mod_updates">Update mods at scheduled restarts</span><span class="toggle" id="tAutoUpdMods" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.mod_updates.note">Installs waiting Thunderstore updates during a scheduled restart, and once the server has sat empty for ten minutes.</div>
+                <div class="togglerow" id="rowBepMaint"><span class="tl" data-i18n="hearth.upkeep.bepinex">BepInEx kept up to date by BakaLoader</span><span class="toggle" id="tBepMaint" data-t></span></div>
+                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.bepinex.note">Installs BepInEx when it is missing and moves it to a newer pack during a scheduled restart. Every server on this install shares one BepInEx, so this covers all of them.</div>
                 <div class="togglerow"><span class="tl" id="hexiumSwitchLabel">Also check Hexium</span><span class="toggle" id="tUseHexium" data-t></span></div>
                 <div class="subval" id="hexiumHelp" style="margin:2px 0 4px">Hexium is a second mod site. Whoever runs it is not named on the site, and its accounts are Discord sign-ins, so BakaLoader cannot tell you that an author there is the same person as the author of the same name on Thunderstore. With this on, your machine contacts hexium.gg about four times an hour while BakaLoader is open, and that site says it keeps request logs for up to ninety days. Nothing is installed from Hexium unless you ask for it and accept what it is.</div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_windows">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
@@ -274,6 +276,7 @@
             <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
           </div>
           <div class="modprog" id="modUpdProg" role="status" aria-live="polite"></div>
+          <div id="bepinexRow" class="beprow-wrap" style="display:none"></div>
           <div class="subval" id="modsPluginNote" style="display:none;margin:0 0 12px;font-family:inherit;font-size:11.5px;line-height:1.55;letter-spacing:.3px;color:var(--warn,#e0a35c)"></div>
           <div class="card" style="padding:0"><div style="height:6px"></div>
             <table>

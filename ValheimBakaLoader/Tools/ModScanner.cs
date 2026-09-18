@@ -58,6 +58,13 @@ namespace ValheimBakaLoader.Tools
         /// - ValheimModding-HookGenPatcher: generates the MMHOOK assemblies each launch.
         /// The "patchers" folder is shared across every isolated instance via a junction, so
         /// removing one of these would break the framework for all servers at once.
+        /// <para>
+        /// This set is for the patchers folder only. It is deliberately NOT used by the plugins
+        /// scan: HookGenPatcher is an ordinary Thunderstore listing a host can add through the
+        /// app, which unpacks it into plugins/ValheimModding-HookGenPatcher, and a folder a host
+        /// installed here has to keep its row, its version and its Remove button like any other
+        /// mod. <see cref="PluginsFrameworkFolderNames"/> is the plugins-side list.
+        /// </para>
         /// </summary>
         private static readonly HashSet<string> PatcherProtectedNames = new(System.StringComparer.OrdinalIgnoreCase)
         {
@@ -68,6 +75,30 @@ namespace ValheimBakaLoader.Tools
         /// <summary>True when a patchers-dir folder name is a framework or auto-generated patcher.</summary>
         public static bool IsProtectedPatcher(string folderName) =>
             !string.IsNullOrWhiteSpace(folderName) && PatcherProtectedNames.Contains(folderName);
+
+        /// <summary>
+        /// The one folder the plugins scan skips on top of the companion plugins: the BepInEx
+        /// pack unpacked into the plugins folder. That is the framework in the wrong place, which
+        /// the BepInEx row above the table already names and offers to move out of the way;
+        /// listing it a second time as an ordinary mod row beside that offer is two answers to
+        /// one question, and the row that says "update" would be offering to update a folder that
+        /// loads nothing.
+        /// <para>
+        /// Nothing else belongs in here. Every other folder under plugins is a mod a host put
+        /// there, patcher-shipping mods included, and each one keeps its row.
+        /// </para>
+        /// </summary>
+        private static readonly HashSet<string> PluginsFrameworkFolderNames = new(System.StringComparer.OrdinalIgnoreCase)
+        {
+            "denikson-BepInExPack_Valheim",
+        };
+
+        /// <summary>
+        /// True when a plugins-dir folder name is the BepInEx framework itself sitting in the
+        /// plugins folder, which the BepInEx row owns rather than the mod table.
+        /// </summary>
+        public static bool IsPluginsFrameworkFolder(string folderName) =>
+            !string.IsNullOrWhiteSpace(folderName) && PluginsFrameworkFolderNames.Contains(folderName);
 
         private readonly IApplicationLogger Logger;
 
@@ -95,9 +126,9 @@ namespace ValheimBakaLoader.Tools
             foreach (var modDirectory in Directory.EnumerateDirectories(pluginsDirectory))
             {
                 var folderName = new DirectoryInfo(modDirectory).Name;
-                if (CompanionFolderNames.Contains(folderName))
+                if (CompanionFolderNames.Contains(folderName) || PluginsFrameworkFolderNames.Contains(folderName))
                 {
-                    Logger.Debug("Skipping app-managed companion plugin folder: {0}", folderName);
+                    Logger.Debug("Skipping app-managed or framework folder: {0}", folderName);
                     continue;
                 }
 

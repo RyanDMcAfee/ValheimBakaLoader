@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using Newtonsoft.Json;
 using ValheimBakaLoader.Tools.Logging;
 
 namespace ValheimBakaLoader.Tools
@@ -57,6 +59,32 @@ namespace ValheimBakaLoader.Tools
         /// managed install.
         /// </summary>
         void DeleteInstall(string installDir);
+
+        /// <summary>
+        /// Every isolated install BakaLoader has provisioned from this base, whether or not it
+        /// is still attached to a profile. Empty when there is no instances root, which is the
+        /// ordinary single-install case.
+        /// </summary>
+        IReadOnlyList<string> ManagedInstallDirectories(string baseExePath);
+
+        /// <summary>
+        /// Gives one already-provisioned isolated install the BepInEx sharing it does not have
+        /// yet, and answers whether anything was created.
+        /// <para>
+        /// <see cref="ProvisionInstall"/> only ever walks the folders the base install already
+        /// carries, so a profile provisioned before BepInEx existed has no BepInEx folder at
+        /// all: no core junction, no patchers junction, no loader files beside the exe. It
+        /// would run vanilla forever with nothing saying so. This is the step that closes
+        /// that, run after BepInEx lands in the base.
+        /// </para>
+        /// <para>
+        /// It only ever CREATES what is missing. A folder that is already there, junction or
+        /// real, is left exactly as it is: an install that diverged on purpose is not
+        /// something to silently undo, and a real core folder holds files this has no business
+        /// deleting.
+        /// </para>
+        /// </summary>
+        bool EnsureSharedBepInEx(string baseExePath, string installDir);
     }
 
     /// <summary>
@@ -70,6 +98,102 @@ namespace ValheimBakaLoader.Tools
     {
         /// <summary>Folder that holds all BakaLoader-provisioned isolated installs.</summary>
         public const string InstancesRootName = ".bakaloader-instances";
+
+        /// <summary>
+        /// The note an isolated install carries naming the base it was made from.
+        /// <para>
+        /// It exists because <see cref="FallbackInstancesRoot"/> is ONE folder shared by every
+        /// base whose own parent could not be written to, and a path there says nothing about
+        /// which base an instance under it came from. The executable's file name is no help
+        /// either: every Valheim dedicated server on the machine is called valheim_server.exe.
+        /// </para>
+        /// </summary>
+        public const string InstanceMarkerName = ".bakaloader-instance.json";
+
+        /// <summary>
+        /// The instances root used when the folder beside the base install cannot be written,
+        /// which a server under Program Files without administrator rights cannot be. ONE
+        /// definition, because <see cref="GetInstancesRoot"/>, CandidateInstancesRoots and the
+        /// BepInEx sharing rule all have to name the same folder; two copies of this path
+        /// drifting apart is exactly how an install escapes a refusal that names it.
+        /// </summary>
+        public static string FallbackInstancesRoot => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "BakaLoader", InstancesRootName);
+
+        /// <summary>
+        /// BakaLoader's own bookkeeping beside a server executable. These are never shared into
+        /// an isolated install: the BepInEx note describes the BASE install's loader, and an
+        /// instance carrying a hard link to it would answer questions about an install it is
+        /// not, while its own stamp names the base it came from and is per install by
+        /// definition.
+        /// </summary>
+        private static readonly string[] BookkeepingFileNames =
+        {
+            BepInExMarkerFile.FileName,
+            InstanceMarkerName,
+        };
+
+        private static bool IsBookkeepingFile(string path) =>
+            BookkeepingFileNames.Contains(Path.GetFileName(path), StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The note one isolated install carries about where it came from.</summary>
+        private sealed class InstanceMarker
+        {
+            [JsonProperty("schema")]
+            public int Schema { get; set; }
+
+            /// <summary>The base server executable this install was provisioned from.</summary>
+            [JsonProperty("baseExe")]
+            public string BaseExe { get; set; }
+
+            [JsonProperty("stampedUtc")]
+            public DateTime StampedUtc { get; set; }
+        }
+
+        /// <summary>Writes the note naming the base an isolated install was made from.</summary>
+        private void StampInstance(string installDir, string baseExePath)
+        {
+            try
+            {
+                File.WriteAllText(Path.Combine(installDir, InstanceMarkerName),
+                    JsonConvert.SerializeObject(new InstanceMarker
+                    {
+                        Schema = 1,
+                        BaseExe = Path.GetFullPath(baseExePath),
+                        StampedUtc = DateTime.UtcNow,
+                    }, Formatting.Indented));
+            }
+            catch (Exception e)
+            {
+                // A stamp that could not be written costs precision in the shared fallback
+                // root and nothing else, so it never fails a provision.
+                Logger.Debug("Could not stamp the isolated install {0}: {1}", installDir, e.Message);
+            }
+        }
+
+        /// <summary>
+        /// The base an isolated install says it was made from, or null when it carries no note.
+        /// Null is not "no base": an install provisioned before the note existed has none, and
+        /// is treated exactly as it was before.
+        /// </summary>
+        public static string RecordedBaseExe(string installDir)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(installDir)) return null;
+
+                var path = Path.Combine(installDir, InstanceMarkerName);
+                if (!File.Exists(path)) return null;
+
+                var marker = JsonConvert.DeserializeObject<InstanceMarker>(File.ReadAllText(path));
+                return string.IsNullOrWhiteSpace(marker?.BaseExe) ? null : marker.BaseExe;
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         // BepInEx subfolders that are read-only at runtime and safe to share via junction.
         private static readonly string[] JunctionableBepInExDirs = { "core", "patchers" };
@@ -139,12 +263,18 @@ namespace ValheimBakaLoader.Tools
                     }
                 }
 
-                // Every loose root file, no filter: the exe, its config, the doorstop files, and
-                // anything a game update drops beside them.
+                // Every loose root file: the exe, its config, the doorstop files, and anything a
+                // game update drops beside them. The one exception is BakaLoader's own
+                // bookkeeping, which describes the install it sits in and belongs to no other.
                 foreach (var file in Directory.EnumerateFiles(baseDir))
                 {
+                    if (IsBookkeepingFile(file)) continue;
                     LinkOrCopyFile(file, Path.Combine(installDir, Path.GetFileName(file)), sameVolume);
                 }
+
+                // Which base this came from, written down while the answer is certain. Nothing
+                // in the path records it, and in the shared fallback root nothing else can.
+                StampInstance(installDir, baseExePath);
 
                 var newExe = Path.Combine(installDir, exeName);
                 if (!File.Exists(newExe))
@@ -213,6 +343,159 @@ namespace ValheimBakaLoader.Tools
                 // Loose BepInEx files (doorstop logs, stray cfgs): copy so per-server edits don't bleed.
                 File.Copy(file, Path.Combine(dstBep, Path.GetFileName(file)), overwrite: true);
             }
+        }
+
+        public IReadOnlyList<string> ManagedInstallDirectories(string baseExePath)
+        {
+            var found = new List<string>();
+            if (string.IsNullOrWhiteSpace(baseExePath)) return found;
+
+            try
+            {
+                var baseDir = Path.GetDirectoryName(Path.GetFullPath(baseExePath));
+                if (string.IsNullOrWhiteSpace(baseDir)) return found;
+
+                var baseFull = Path.GetFullPath(baseExePath);
+
+                foreach (var root in CandidateInstancesRoots(baseDir))
+                {
+                    if (!Directory.Exists(root)) continue;
+
+                    // The fallback root is shared by every base whose own parent was not
+                    // writable, so an install under it has to SAY which base it came from.
+                    var shared = IsFallbackRoot(root);
+
+                    foreach (var dir in Directory.EnumerateDirectories(root))
+                    {
+                        // Only an install that carries the same executable came from this base.
+                        var exe = Path.Combine(dir, Path.GetFileName(baseExePath));
+                        if (!File.Exists(exe)) continue;
+
+                        // In the shared root the file name proves nothing: every Valheim
+                        // dedicated server is called valheim_server.exe. A stamped install
+                        // that names ANOTHER base is that base's to link, never this one's.
+                        // An unstamped one predates the stamp and keeps the older answer,
+                        // because dropping it would leave it running vanilla with nothing
+                        // saying so.
+                        if (shared)
+                        {
+                            var stamped = RecordedBaseExe(dir);
+                            if (!string.IsNullOrWhiteSpace(stamped)
+                                && !string.Equals(stamped, baseFull, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                        }
+
+                        found.Add(dir);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Debug("Could not list isolated installs for {0}: {1}", baseExePath, e.Message);
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// Where an instances root may live: beside the base install, and the fallback under
+        /// LocalApplicationData that <see cref="GetInstancesRoot"/> falls back to when the
+        /// first is not writable. Both are looked at, because either may hold real installs.
+        /// </summary>
+        private static IEnumerable<string> CandidateInstancesRoots(string baseDir)
+        {
+            var parent = Directory.GetParent(baseDir)?.FullName;
+            if (!string.IsNullOrWhiteSpace(parent))
+            {
+                yield return Path.Combine(parent, InstancesRootName);
+            }
+
+            yield return FallbackInstancesRoot;
+        }
+
+        /// <summary>True when a path names the shared LocalApplicationData instances root.</summary>
+        public static bool IsFallbackRoot(string root)
+        {
+            if (string.IsNullOrWhiteSpace(root)) return false;
+
+            try
+            {
+                return string.Equals(
+                    Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar),
+                    Path.GetFullPath(FallbackInstancesRoot).TrimEnd(Path.DirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public bool EnsureSharedBepInEx(string baseExePath, string installDir)
+        {
+            if (string.IsNullOrWhiteSpace(baseExePath) || string.IsNullOrWhiteSpace(installDir)) return false;
+            if (!Directory.Exists(installDir)) return false;
+
+            var baseDir = Path.GetDirectoryName(Path.GetFullPath(baseExePath));
+            if (string.IsNullOrWhiteSpace(baseDir)) return false;
+
+            var srcBep = Path.Combine(baseDir, "BepInEx");
+            if (!Directory.Exists(srcBep)) return false;
+
+            var dstBep = Path.Combine(installDir, "BepInEx");
+            var sameVolume = SameVolume(baseDir, installDir);
+            var changed = false;
+
+            Directory.CreateDirectory(dstBep);
+
+            foreach (var name in JunctionableBepInExDirs)
+            {
+                var source = Path.Combine(srcBep, name);
+                var destination = Path.Combine(dstBep, name);
+                if (!Directory.Exists(source)) continue;
+                if (Directory.Exists(destination)) continue;   // junction or real: never replaced
+
+                CreateJunctionOrThrow(destination, source);
+                changed = true;
+            }
+
+            foreach (var name in new[] { "plugins", "config", "cache" })
+            {
+                var destination = Path.Combine(dstBep, name);
+                if (Directory.Exists(destination)) continue;
+
+                // config seeds from the base so the loader's own cfg is there; plugins and the
+                // assembly cache are per server and start empty.
+                var source = Path.Combine(srcBep, name);
+                if (string.Equals(name, "config", StringComparison.OrdinalIgnoreCase) && Directory.Exists(source))
+                    CopyDirectory(source, destination);
+                else
+                    Directory.CreateDirectory(destination);
+
+                changed = true;
+            }
+
+            // The loose loader files beside the executable: winhttp.dll is the whole mechanism
+            // on Windows, and an install without it starts vanilla no matter what BepInEx folder
+            // it can see.
+            foreach (var file in Directory.EnumerateFiles(baseDir))
+            {
+                // BakaLoader's own bookkeeping stays where it was written. The BepInEx note
+                // describes the BASE install, and an instance hard-linked to it would answer
+                // "is this install looked after" on behalf of a folder it is not.
+                if (IsBookkeepingFile(file)) continue;
+
+                var destination = Path.Combine(installDir, Path.GetFileName(file));
+                if (File.Exists(destination)) continue;
+
+                LinkOrCopyFile(file, destination, sameVolume);
+                changed = true;
+            }
+
+            if (changed)
+                Logger.Information("Shared the base install's BepInEx into {0}.", installDir);
+
+            return changed;
         }
 
         public bool IsManagedInstall(string installDir)
@@ -318,9 +601,7 @@ namespace ValheimBakaLoader.Tools
                 if (TryEnsureWritableDirectory(candidate)) return candidate;
             }
 
-            var fallback = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "BakaLoader", InstancesRootName);
+            var fallback = FallbackInstancesRoot;
             Directory.CreateDirectory(fallback);
             Logger.Information("Using fallback instances root (base parent not writable): {0}", fallback);
             return fallback;

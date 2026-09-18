@@ -100,16 +100,42 @@ const FAIL=Symbol("rpc-failed");
    back to the English sentence the bridge is still sending beside it. */
 window.BAKA_ERR_ID=null;
 window.BAKA_ERR_PARAMS=null;
+/* The refusals the native side names with an id this catalog also holds a sentence for.
+   The two spellings are not the same and cannot be: a throw's id is dotted lower camel
+   (bepinex.serversRunning) and a catalog id is dotted lower case (bepinex.reason.servers_running),
+   so the pairing is written down here rather than derived. A refusal on this list is read
+   out of the catalog in the host's own language; anything not on it keeps the sentence the
+   bridge sent, exactly as before. */
+const HOST_SENTENCES=[
+  {named:"bepinex.serversRunning", textId:"bepinex.reason.servers_running"},
+  {named:"bepinex.notALoader",     textId:"bepinex.reason.not_a_loader"},
+  {named:"bepinex.integrity",      textId:"bepinex.reason.integrity"},
+  {named:"bepinex.tooLarge",       textId:"bepinex.reason.too_large"},
+  {named:"bepinex.offline",        textId:"bepinex.reason.offline"},
+  {named:"bepinex.busy",           textId:"bepinex.reason.busy"},
+  {named:"bepinex.noServerPath",   textId:"bepinex.reason.no_server_path"},
+  {named:"bepinex.noWrongFolder",  textId:"bepinex.reason.no_wrong_folder"},
+];
+/* The catalog sentence for a refusal the host named, or null when it named none this
+   page owns the words for. */
+function hostSentence(id,params){
+  if(!id) return null;
+  const row=HOST_SENTENCES.find(r=>r.named===id);
+  if(!row) return null;
+  try{return T(row.textId,params||{});}catch(_){return null;}
+}
 function rpc(method,params){
   return Native.call(method,params).catch(err=>{
     window.BAKA_ERR_ID=err?.errorId||null;
     window.BAKA_ERR_PARAMS=err?.errorParams||null;
-    /* The bridge's own id and values are held above for the day the native side
-       words its refusals by id. Until then the sentence the host reads is this one,
-       and the method name and the reason travel as named slots so a language that
-       puts the reason first can. */
-    toast("ᚦ "+T("common.rpc.failed.toast",
-      {method,detail:err?.message||T("common.error.unknown")}));
+    /* A refusal that named itself and that this page has a sentence for is said in the
+       reader's own language. Everything else falls back to the wording that always was:
+       the method name and the reason travel as named slots so a language that puts the
+       reason first can. */
+    if(err?.errorId==="bepinex.alreadyMaintained"){ noticeBepInExMaintained(); return FAIL; }
+    const own=hostSentence(err?.errorId,err?.errorParams);
+    toast("ᚦ "+(own||T("common.rpc.failed.toast",
+      {method,detail:err?.message||T("common.error.unknown")})));
     return FAIL;
   });
 }
@@ -121,6 +147,11 @@ const S={
   saveSec:null, saveInterval:600,
   players:[], caps:{rcon:false,devcommands:false},
   mods:null, modsScanned:false, modsScanning:false, modsUpdating:false, lastScan:null,
+  /* BepInEx, as bepinex.status answers it and bepinex.changed pushes it. One fact for
+     the whole install rather than for this profile: every server provisioned from one
+     install loads the same loader through junctions and hard links. null means nothing
+     has answered yet, which is NOT the same as "no loader" and is never drawn as one. */
+  bepinex:null,
   /* When the package list the rows were answered from was read, and which of the two
      addresses answered. Not the same thing as when Scan was pressed: a press that finds
      a list read moments ago keeps the earlier time, because that is the truthful one. */
@@ -1595,6 +1626,9 @@ function applyState(st){
      different command line from the one saved on disk. Absent on an older host, which simply
      means the row is never raised. */
   if("restartPending" in st) conditionRestartPending(st.restartPending,st.restartPendingSig);
+  /* BepInEx: a pack update waiting for every server on this install to stop, and a start
+     where the loader never wrote its log. Absent on an older host. */
+  if("bepinex" in st) conditionBepInEx(st.bepinex,st.status);
   /* The same fact, said again where the host is doing the saving. */
   try{renderCfgRunningNote();}catch(_){}
   /* Whether an update can run at all depends on the run state, so the cached answer is
@@ -1712,6 +1746,8 @@ function renderSaveBars(){
 Object.assign(ES_ACTIONS,{
   scanMods:()=>{ if(Native.available) scanMods(); else toast("ᛋ "+T("mods.scan.preview.toast")); },
   addMod:()=>addModFlow(),
+  installBepInEx:()=>{ if(Native.available) bepInExInstallFlow(null);
+    else toast("ᛋ "+T("mods.add.preview.toast")); },
   openBackups:()=>barrowModal(),
   redrawMap:()=>{ const b=$("#atlasRedraw"); if(b) b.click(); },
   openLog:()=>goPage("saga"),
@@ -2363,6 +2399,9 @@ function renderMods(){
   $("#scanBtn").disabled=busy;
   $("#addModBtn").disabled=busy;
   renderModSourceLabels();
+  /* Above the table, and outside it: the loader is not a mod and never joins the list
+     the counts, Update all and the waiting pill are taken from. */
+  renderBepInExRow();
   const scanned=S.mods!==null;
   const mods=sortedMods(S.mods||[]);
   const upd=mods.filter(m=>m.UpdateAvailable);
@@ -2443,9 +2482,18 @@ function renderMods(){
            has both halves to work with. */
         reason:T("mods.empty.no_match.reason",{count:mods.length}),
         action:{name:"clearModSearch",label:T("mods.empty.no_match.action")}})
-    :emptyState({mark:"ᚱ",title:T("mods.empty.none.title"),
-        reason:T("mods.empty.none.reason"),
-        action:{name:"addMod",label:T("mods.empty.none.action")}})}</td></tr>`;
+    /* Two different nothings. With no loader installed the hall is not empty because
+       nobody added a mod, it is empty because nothing could load one, and the button
+       that fills it is a different button. Unknown stays on the old wording: the row
+       above says what is known, and a hall must not claim a loader is missing on an
+       install nothing has looked at. */
+    :(bepInExMissing()
+      ?emptyState({mark:"ᛒ",title:T("mods.empty.no_bepinex.title"),
+          reason:T("mods.empty.no_bepinex.reason"),
+          action:{name:"installBepInEx",label:T("mods.empty.no_bepinex.action")}})
+      :emptyState({mark:"ᚱ",title:T("mods.empty.none.title"),
+          reason:T("mods.empty.none.reason"),
+          action:{name:"addMod",label:T("mods.empty.none.action")}}))}</td></tr>`;
   esWire($("#modTable"));
   $("#modTable")._list=mods;
   /* A real plural rather than an English "s", and both pills escaped on the way in. */
@@ -2467,6 +2515,297 @@ function renderModShowing(shown,total){
      what is on screen, so it says so on hover. */
   const btn=$("#updAllBtn");
   if(btn) btn.title=on?T("mods.showing.update_all.title"):"";
+}
+/* ---------- BEPINEX, THE LOADER EVERY MOD RUNS UNDER ----------
+   One row above the mods table, and it is not a mod row. BepInEx has no folder under
+   plugins, no package on the list a scan reads and no PluginDirectory to replace, so it
+   is keyed "bepinex", built from its own DTO and drawn OUTSIDE #modTable. Nothing here
+   ever reaches sortedMods(), Update all or the waiting-updates pill: all three count
+   S.mods and only S.mods, and the loader is not in it.
+   It is not per profile either. Every server provisioned from one install loads the same
+   BepInEx through directory junctions and hard links, so this row says one thing for the
+   whole install and every profile's Mods hall shows the same answer. That is also why a
+   write is refused while any server on the install is up, and why the row names them. */
+const BEPINEX_DEFAULT_URL="https://thunderstore.io/c/valheim/p/denikson/BepInExPack_Valheim/";
+let BEP_WRITING=false;         // a write this window started
+let BEP_PROGRESS=null;         // the last bepinex.progress of that write
+let BEP_PROG_OPEN=false;       // and whether the dialog showing it is ours to close
+let BEP_ADD_IN_FLIGHT=false;   // an add the host may install the loader inside of
+let BEP_ASKED_THIS_RUN=false;  // the first-start question, put once and not again
+/* What is typed into the loader dialog's address box, kept out of the element on purpose:
+   a language switch rebuilds the dialog from its thunk and a value left in the input
+   would be rebuilt away. Delegated on the background, which is the one node a rebuild
+   does not replace. */
+let BEP_URL_TYPED=null;
+$("#modalBg").addEventListener("input",e=>{
+  if(e.target&&e.target.id==="mBepUrl") BEP_URL_TYPED=e.target.value;
+});
+/* Which of the three states the row is in. "outside" is an install BakaLoader did not
+   write: there is no note beside it, so what is on show is the loader's own file version
+   and a pack bump cannot be seen from here at all. */
+function bepInExState(b){
+  if(!b) return null;
+  if(!b.installed) return "missing";
+  return b.maintainedByBakaLoader?"maintained":"outside";
+}
+/* True only once the host has actually answered and said no loader is there. Unknown is
+   not missing: the empty state and the add flow both read this and neither may claim a
+   thing about an install nothing has looked at yet. */
+function bepInExMissing(){return !!S.bepinex&&!S.bepinex.installed;}
+/* The servers that share this install and are up right now. A write would be refused. */
+function bepInExRunning(){
+  const b=S.bepinex;
+  return (b&&Array.isArray(b.runningProfiles))?b.runningProfiles.filter(Boolean):[];
+}
+function renderBepInExRow(){
+  const el=$("#bepinexRow"); if(!el) return;
+  const b=S.bepinex;
+  const state=bepInExState(b);
+  /* Nothing has been read yet, or this host predates the answer. A strip that says
+     nothing is worse than no strip at all. */
+  if(!state){el.style.display="none";el.innerHTML="";return;}
+  const busy=!!b.busy||BEP_WRITING;
+  const up=bepInExRunning();
+  /* Every button here writes the loader, and the host refuses every one of them while a
+     server on this install is up. Refusing it here as well, out loud, is the difference
+     between a button that explains itself and a button that fails. */
+  const stop=busy||up.length>0;
+  const why=busy?T("bepinex.row.note.busy"):T("bepinex.row.blocked.title");
+  const gate=stop?` disabled title="${esc(why)}"`:"";
+  const version=state==="maintained"?b.packVersion:b.coreFileVersion;
+  const verHtml=state==="missing"?""
+    :`<span class="bepver mono" title="${esc(state==="maintained"
+        ?T("bepinex.row.version.pack.title"):T("bepinex.row.version.file.title"))}">`+
+      `${esc(version||T("bepinex.row.version.unknown"))}</span>`;
+  let cls,pill,msg,acts="";
+  if(state==="missing"){
+    cls="grey"; pill=T("bepinex.row.pill.missing"); msg=T("bepinex.row.state.missing");
+    acts=`<button class="btn btn-ember btn-sm" id="bepInstall"${gate}>${esc(T("bepinex.row.action.install"))}</button>`;
+  }else if(state==="maintained"){
+    /* "maintained" is only the marker on disk: it says BakaLoader wrote this pack, not that
+       it is still watching it. Whether it watches is the Upkeep switch, and the pill has to
+       answer the same question as the sentence beside it. A green "Looked after" over
+       "BakaLoader put this pack in and is not looking after it" is the row arguing with
+       itself, so the switch-off case gets a wording of its own.
+       Looked after also means the next restart window moves it, so there is nothing to
+       press; with the switch off the same install keeps the button, and that is the whole
+       of what the switch changes about this hall. */
+    if(b.maintained){
+      cls="green"; pill=T("bepinex.row.pill.maintained"); msg=T("bepinex.row.state.maintained");
+    }else{
+      cls="blue"; pill=T("bepinex.row.pill.manual"); msg=T("bepinex.row.state.manual");
+      acts=`<button class="btn btn-ghost btn-sm" id="bepUpdate"${gate}>${esc(T("bepinex.row.action.update"))}</button>`;
+    }
+  }else{
+    cls="amber"; pill=T("bepinex.row.pill.outside"); msg=T("bepinex.row.state.outside");
+    acts=`<button class="btn btn-ghost btn-sm" id="bepUpdate"${gate}>${esc(T("bepinex.row.action.update"))}</button>`;
+  }
+  /* The notes under the row, each a whole sentence of its own. A deferred update is one
+     of them rather than a state: it is true of an install that is otherwise perfectly
+     current, and the condition bar says the same thing where a host is not on this hall. */
+  const notes=[];
+  if(state==="maintained"&&b.maintained) notes.push(T("bepinex.row.note.next_check"));
+  if(b.updateWaiting) notes.push(T("bepinex.row.note.waiting",{version:b.updateWaiting}));
+  const shared=(Array.isArray(b.sharingProfiles)?b.sharingProfiles.filter(Boolean):[]).length;
+  if(shared>1) notes.push(T("bepinex.row.note.shared",{count:shared-1}));
+  if(busy) notes.push(T("bepinex.row.note.busy"));
+  /* A pack unpacked under plugins is a wrong install rather than a state of the right
+     one, so it gets its own line and its own offer. */
+  const wrong=b.wrongLocationFolder
+    ?`<div class="bepwrong"><span class="bepmsg">${esc(T("bepinex.row.note.wrong_folder"))}</span>`+
+     `<span class="mono bepver" title="${esc(b.wrongLocationFolder)}">${esc(b.wrongLocationFolder)}</span>`+
+     `<button class="btn btn-ghost btn-sm" id="bepRemove"${gate}>${esc(T("bepinex.row.action.remove"))}</button></div>`
+    :"";
+  el.style.display="block";
+  el.innerHTML=
+    `<div class="beprow" data-key="bepinex" data-state="${esc(state)}">`+
+    `<span class="r bepmark" aria-hidden="true">ᛒ</span>`+
+    `<span class="bepname">${esc(T("bepinex.row.title"))}</span>`+
+    verHtml+
+    `<span class="pill ${cls}">${esc(pill)}</span>`+
+    `<span class="bepmsg">${esc(msg)}</span>`+
+    `<span class="bepacts">${acts}</span>`+
+    `</div>`+
+    (notes.length?`<div class="bepnotes">${notes.map(n=>`<div>${esc(n)}</div>`).join("")}</div>`:"")+
+    wrong;
+  el.querySelector("#bepInstall")?.addEventListener("click",()=>bepInExInstallFlow(null));
+  el.querySelector("#bepUpdate")?.addEventListener("click",()=>bepInExUpdateFlow());
+  el.querySelector("#bepRemove")?.addEventListener("click",()=>bepInExRemoveFlow());
+}
+/* The row's own Install. With BakaLoader looking after the loader there is nothing to
+   choose and the pinned pack goes straight in; with the switch off the host is asked
+   which address to fetch from, because that is exactly what the switch hands back. */
+function bepInExInstallFlow(after){
+  if(S.bepinex&&S.bepinex.maintained){bepInExWrite("bepinex.install",{},after);return;}
+  bepInExOfferModal(after);
+}
+function bepInExUpdateFlow(){bepInExWrite("bepinex.update",{},null);}
+function bepInExRemoveFlow(){
+  confirmModal(()=>T("bepinex.dialog.remove.title"),
+    ()=>`<div class="mbody-note">${esc(T("bepinex.dialog.remove.body"))}</div>`+
+      `<div class="subval mono" style="margin-top:8px;word-break:break-all">`+
+      `${esc((S.bepinex&&S.bepinex.wrongLocationFolder)||"")}</div>`,
+    ()=>T("bepinex.dialog.remove.ok"),
+    ()=>bepInExWrite("bepinex.remove",{},null));
+}
+/* The question the add flow asks with the switch off, and the one the row's own Install
+   asks for the same reason. The address is shown and editable: the pinned pack is the
+   default because it is the one shape BakaLoader knows, and anything else is checked for
+   that shape on the host side before a byte is written. An untouched box sends no address
+   at all, so the pinned pack is resolved fresh rather than pinned to a version here. */
+function bepInExOfferModal(after){
+  BEP_URL_TYPED=null;
+  const up=()=>bepInExRunning();
+  confirmModal(()=>T("bepinex.dialog.install.title"),
+    ()=>`<div class="mbody-note">${esc(T("bepinex.dialog.install.body"))}</div>`+
+      `<div class="mbody-note" style="margin-top:10px">${esc(T("bepinex.dialog.install.source"))}</div>`+
+      `<input type="text" id="mBepUrl" value="${esc(BEP_URL_TYPED==null?BEPINEX_DEFAULT_URL:BEP_URL_TYPED)}" spellcheck="false" autocomplete="off" style="margin-top:6px">`+
+      `<div class="mbody-note" style="margin-top:8px">${esc(T("bepinex.dialog.install.note"))}</div>`+
+      (up().length?`<div class="mwarn">⚠ ${esc(T("bepinex.dialog.install.running.warn",{names:up().join(", ")}))}</div>`:""),
+    ()=>T("bepinex.dialog.install.ok"),m=>{
+      const link=(m.querySelector("#mBepUrl")?.value||"").trim();
+      if(!link){toast("ᚦ "+T("bepinex.dialog.install.no_link.toast"));return;}
+      bepInExWrite("bepinex.install",link===BEPINEX_DEFAULT_URL?{}:{url:link},after);
+    });
+  const inp=document.querySelector("#mBepUrl");
+  if(inp) setTimeout(()=>{inp.focus();inp.select();},40);
+}
+/* The one path every host-driven write goes through, so the row's buttons, the add
+   flow's question and the empty state cannot drift apart. The answer IS the new status,
+   so nothing asks again afterwards, and `after` is the add that was waiting on it. */
+async function bepInExWrite(method,params,after){
+  if(BEP_WRITING) return;
+  BEP_WRITING=true;
+  BEP_PROGRESS={phase:"resolving",percent:0,version:null};
+  renderBepInExProgress();
+  renderBepInExRow();
+  const r=await rpc(method,params||{});
+  BEP_WRITING=false;
+  bepInExProgressDone();
+  if(r===FAIL){renderBepInExRow();return;}
+  S.bepinex=r;
+  renderMods();
+  if(method==="bepinex.remove"){
+    toast("ᛒ "+T("bepinex.row.removed.toast"));
+    logLine("ok","[BepInEx] the misplaced pack folder under plugins was removed");
+  }else{
+    const v=r.packVersion||r.coreFileVersion;
+    toast("ᛒ "+(v?T("bepinex.row.installed.toast",{version:v})
+                      :T("bepinex.row.installed.noversion.toast")));
+    logLine("ok","[BepInEx] "+(method==="bepinex.update"?"updated":"installed")+
+      (r.packVersion?" · pack "+r.packVersion:""));
+  }
+  if(typeof after==="function") after();
+}
+/* The write's own progress, in the dialog layer where the question was asked. The bar is
+   the one the server update and the bulk mod update already draw, so a host who has seen
+   one has seen all three. It only ever opens for a write this window is part of: the
+   unattended path posts the same event, and a dialog opening by itself while nobody is
+   at the keyboard would be a fright rather than a report. */
+function renderBepInExProgress(){
+  if(!BEP_PROGRESS||!(BEP_WRITING||BEP_ADD_IN_FLIGHT)) return;
+  const p=BEP_PROGRESS;
+  const n=Number(p.percent);
+  const det=isFinite(n)&&n>=0;
+  const pct=det?Math.max(0,Math.min(100,Math.round(n))):0;
+  BEP_PROG_OPEN=true;
+  modalOpen(
+    `<div class="mtitle">${esc(T("bepinex.progress.title"))}</div>`+
+    `<div class="mbody"><div class="modprog" style="display:flex;margin:0">`+
+    `<span class="hbmsg">${esc(bepInExPhaseText(p))}</span>`+
+    `<span class="hbprog${det?"":" indet"}" role="progressbar" aria-label="${esc(T("bepinex.progress.aria"))}" aria-valuemin="0" aria-valuemax="100"`+
+    (det?` aria-valuenow="${pct}" title="${pct}%"`:` title="${esc(T("bepinex.progress.phase.working"))}"`)+
+    `><i${det?` style="width:${pct}%"`:""}></i></span>`+
+    (det?`<span class="hbpct">${pct}%</span>`:"")+
+    `</div></div>`,
+    renderBepInExProgress);
+}
+/* One whole sentence per phase rather than a stem and an ending: a language that puts the
+   thing before what is being done to it has nowhere to put "downloading". */
+function bepInExPhaseText(p){
+  const k=String((p&&p.phase)||"");
+  if(k==="resolving") return T("bepinex.progress.phase.resolving");
+  if(k==="downloading") return p.version
+    ?T("bepinex.progress.phase.downloading.version",{version:p.version})
+    :T("bepinex.progress.phase.downloading");
+  if(k==="checking") return T("bepinex.progress.phase.checking");
+  if(k==="extracting") return T("bepinex.progress.phase.extracting");
+  if(k==="installing") return T("bepinex.progress.phase.installing");
+  if(k==="linking") return T("bepinex.progress.phase.linking");
+  if(k==="done") return T("bepinex.progress.phase.done");
+  return T("bepinex.progress.phase.working");
+}
+/* One inbound bepinex.progress event, as a named handler so a walk drives exactly what
+   the native host drives. */
+function onBepInExProgress(d){
+  if(!d) return;
+  BEP_PROGRESS=d;
+  renderBepInExProgress();
+}
+/* The write is over. The dialog goes only if it was this one that put it up. */
+function bepInExProgressDone(){
+  BEP_PROGRESS=null;
+  if(!BEP_PROG_OPEN) return;
+  BEP_PROG_OPEN=false;
+  modalClose();
+}
+/* The row's fact, asked once at boot and pushed by the host after that. */
+async function refreshBepInEx(){
+  if(!Native.available) return null;
+  const r=await rpc("bepinex.status");
+  if(r===FAIL||!r) return null;
+  S.bepinex=r;
+  renderMods();
+  return r;
+}
+/* ---- the question asked once, on the first Start ----
+   D11.6: a start is what loads BepInEx, so it is the first moment the answer changes
+   anything. Both buttons write both preferences in one save, so a window closed on the
+   way past cannot leave the question answered with nothing chosen. Dismissed rather than
+   answered, nothing is written and nothing starts, exactly as the launch guard behaves;
+   it is not put again in this run, so the next press of Start simply starts. */
+function bepInExFirstStartModal(onDone){
+  const answer=yes=>{
+    modalClose();
+    rpc("userprefs.save",{prefs:{BepInExMaintained:yes,BepInExMaintenanceAsked:true}}).then(r=>{
+      if(r===FAIL) return;
+      try{setT("tBepMaint",yes);}catch(_){}
+      if(S.bepinex){S.bepinex.maintained=yes;S.bepinex.maintenanceAsked=true;renderMods();}
+      toast("ᛒ "+(yes?T("bepinex.dialog.first.yes.toast"):T("bepinex.dialog.first.no.toast")));
+      logLine("info","[BepInEx] maintenance "+(yes?"on":"off")+", asked at the first start");
+    });
+    if(typeof onDone==="function") onDone();
+  };
+  const m=modalOpen(
+    `<div class="mtitle">${esc(T("bepinex.dialog.first.title"))}</div>`+
+    `<div class="mbody"><div style="margin-bottom:8px">${esc(T("bepinex.dialog.first.body"))}</div>`+
+    `<div class="subval">${esc(T("bepinex.dialog.first.note"))}</div></div>`+
+    `<div class="mbtns">`+
+    `<button class="btn btn-ember btn-sm" id="mBepYes">${esc(T("bepinex.dialog.first.yes"))}</button>`+
+    `<button class="btn btn-ghost btn-sm" id="mBepNo">${esc(T("bepinex.dialog.first.no"))}</button>`+
+    `</div>`,()=>bepInExFirstStartModal(onDone));
+  m.querySelector("#mBepYes").addEventListener("click",()=>answer(true));
+  m.querySelector("#mBepNo").addEventListener("click",()=>answer(false));
+  /* "Yes, look after it" is the default, so it is the one the keyboard lands on. */
+  setTimeout(()=>{try{m.querySelector("#mBepYes").focus();}catch(_){}},40);
+  return m;
+}
+/* The gate in front of a start. A host that predates the setting, or a status that has
+   not come back yet, is never put a question there is no truthful wording for. */
+function bepInExAskOnce(next){
+  const b=S.bepinex;
+  if(!b||b.maintenanceAsked||BEP_ASKED_THIS_RUN){next();return;}
+  BEP_ASKED_THIS_RUN=true;
+  /* The host pressed Start. This is a question in front of that press, not a gate on it,
+     so waving it away with Escape or a click on the backdrop leaves the setting exactly
+     as it was and the start carries on. Dropping the start there reads as "Start did
+     nothing", which is the one answer a button must never give. Answered or dismissed,
+     the start happens once: the modal's own answer runs this first, and the dismissal
+     watcher finds it already spent. */
+  let went=false;
+  const go=()=>{if(went)return;went=true;next();};
+  bepInExFirstStartModal(go);
+  onModalDismissed(go);
 }
 /* A scan always asks the sites again rather than reading whatever BakaLoader was holding.
    It used to hold a package list for fifteen minutes, so a scan a minute after a release
@@ -2908,7 +3247,13 @@ async function doAddMod(url){
   S.modsUpdating=true; renderMods();
   toast("ᚨ "+T("mods.add.fetching.toast"));
   logLine("info","[Thunderstore] resolving pasted link: "+url);
+  /* Anything the host installs on the way through this one call reports progress on
+     its own event, and the bar that shows it is opened by the first event that
+     arrives rather than guessed at from here. */
+  BEP_ADD_IN_FLIGHT=true;
   const r=await rpc("mods.addFromUrl",{url});
+  BEP_ADD_IN_FLIGHT=false;
+  bepInExProgressDone();
   S.modsUpdating=false;
   if(r===FAIL){renderMods();return;}
   /* A hexium.gg address stops here on purpose: the host side resolved it and handed
@@ -2916,6 +3261,29 @@ async function doAddMod(url){
   if(r.NeedsConsent){
     renderMods();
     hexiumConsentModal(r,()=>doInstallFromHexium(r));
+    return;
+  }
+  /* The loader is not a mod, and the three answers that say so are read before
+     anything about the plugins folder, because two of them never touched it.
+     alreadyMaintained is a notice rather than a failure: the pasted link was the
+     pack's own while BakaLoader is looking after it, so the row says where the switch
+     is. "bepinex" means that link WAS the pack and it went in, which only happens
+     with the switch off. noBepInEx only ever comes back with the switch off as well:
+     with it on the host side installs first and finishes this same add itself, which
+     is why neither road has a try-that-again step. */
+  if(r.Reason==="alreadyMaintained"){renderMods();noticeBepInExMaintained();return;}
+  if(r.Reason==="bepinex"){
+    toast("ᛒ "+T("bepinex.add.pack_installed.toast"));
+    logLine("ok","[BepInEx] the pasted link was the loader pack, and it was installed");
+    await refreshBepInEx();
+    await scanMods();
+    return;
+  }
+  if(r.Reason==="noBepInEx"){
+    renderMods();
+    /* The pasted address is held right here and the same add is finished with it the
+       moment the loader is in, so the host never types it twice. */
+    bepInExOfferModal(()=>doAddMod(url));
     return;
   }
   /* Which site an answer came from. The two Hexium calls spell it Source and the
@@ -2940,7 +3308,12 @@ async function doAddMod(url){
     if(S.state?.status==="Running") logLine("warn","[Thunderstore] server is running, so "+full+" loads on the next restart");
     await scanMods();
   }else{
-    toast("ᚦ "+T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")}));
+    /* A refusal that named itself is said in the reader's own language here too. The add
+       carries the id in Reason and the sentence's named values in ErrorParams, so a
+       BepInEx refusal that came back through the add reads exactly as the same refusal
+       does on the direct call rather than as the raw English the host side wrote. */
+    const own=hostSentence(r.Reason,r.ErrorParams);
+    toast("ᚦ "+(own||T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")})));
     logLine("warn","[Thunderstore] install failed: "+(r.Error||"unknown"));
     renderMods();
   }
@@ -3461,10 +3834,17 @@ renderHexiumCopy();
 });
 async function initUpkeep(){
   const up=await rpc("userprefs.get");
+  /* Every switch on this card rides in on one save, so a click on any one of them writes
+     the state of all of them. That is only honest once the card has been painted from an
+     answer that arrived: with the read failed the switches are whatever the document
+     shipped with, and persisting that would turn settings the host never touched, the one
+     that writes files unattended among them. So the save waits for a read that worked. */
+  let loaded=false;
   if(up!==FAIL&&up){
     setT("tCheckUpd",up.CheckForUpdates);
     setT("tAutoUpdApp",up.AutoUpdateBakaLoader);
     setT("tAutoUpdMods",up.AutoUpdateMods);
+    setT("tBepMaint",up.BepInExMaintained);
     setT("tUseHexium",up.UseHexiumSource);
     /* The Mods header names the sites a scan reads, so it has to be told on load and not
        only when the switch moves under a host's finger. */
@@ -3486,9 +3866,10 @@ async function initUpkeep(){
     heraldApply(up); /* Herald hall shares the same DTO */
     S.domain=(up.CustomJoinDomain||"").trim()||null;
     renderWaystone();
+    loaded=true;
   }
   /* the generic [data-t] handler already flipped .on before these fire, so just persist */
-  const save=()=>rpc("userprefs.save",{prefs:{CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),UseHexiumSource:swOn("tUseHexium"),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")}});
+  const save=()=>loaded&&rpc("userprefs.save",{prefs:{CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),BepInExMaintained:swOn("tBepMaint"),UseHexiumSource:swOn("tUseHexium"),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")}});
   $("#tCheckUpd").addEventListener("click",()=>{
     save();
     /* the standing update row says whether it installs itself, and with checking off it
@@ -3505,6 +3886,14 @@ async function initUpkeep(){
     refreshAppUpdateInfo();
   });
   $("#tAutoUpdMods").addEventListener("click",save);
+  /* The loader's own switch. The row above the mods table reads it, so it is redrawn
+     here rather than left to say the opposite of the switch until the next status. */
+  $("#tBepMaint")?.addEventListener("click",()=>{
+    save();
+    const on=swOn("tBepMaint");
+    if(S.bepinex){S.bepinex.maintained=on;S.bepinex.maintenanceAsked=true;renderMods();}
+    toast("ᛒ "+(on?T("hearth.upkeep.bepinex.on.toast"):T("hearth.upkeep.bepinex.off.toast")));
+  });
   /* The second site goes on or off here and nowhere else. Off, BakaLoader opens no
      connection to hexium.gg at all, so the rows lose their Hexium marks on the next
      scan rather than the moment the switch moves. */
@@ -3749,6 +4138,23 @@ function modalOpen(html,again){
   updateToastLift();
   return modalBg.firstElementChild;
 }
+/**
+ * Runs `fn` once the dialog that is open right now has gone, however it goes: a button,
+ * Escape, or a click on the backdrop. Nothing else can see a dismissal, because a
+ * dismissal is the absence of a click on anything.
+ * Used where a QUESTION sits in front of something the host actually asked for: waving
+ * the question away is an answer to the question, never a cancellation of the press.
+ * @param {function} fn what to run when the dialog closes
+ */
+function onModalDismissed(fn){
+  if(!modalIsOpen()){fn();return;}
+  const ob=new MutationObserver(()=>{
+    if(modalIsOpen()) return;
+    ob.disconnect();
+    fn();
+  });
+  ob.observe(modalBg,{attributes:true,attributeFilter:["class"]});
+}
 /* A sentence, or a function that words one. Every call site that wants its dialog to
    follow a language switch hands in the function, an arrow that asks the catalog for the
    asks it again when the words change. A plain string still works and reads the same;
@@ -3891,6 +4297,14 @@ async function launchGuardModal(g,onPick){
    answer is null for a normal start, or the token the native side stages for this launch. */
 function withLaunchGuard(go){
   if(!Native.available){go(null);return;}
+  /* One question in front of the guard, asked once ever. A start is what loads
+     BepInEx, so a start is the first moment the answer matters, and both starts in
+     the app come through here rather than each growing a copy of the question. */
+  bepInExAskOnce(()=>launchCheckThenGo(go));
+}
+/* The guard itself, unchanged: ask the host side what a start would mean on this
+   build, and either start or put the question up. */
+function launchCheckThenGo(go){
   rpc("server.launchCheck",S.prefs?{prefs:S.prefs}:{}).then(g=>{
     if(g===FAIL||!g||g.outcome==="proceed"){go(null);return;}
     /* The modal is async now (it asks what kind of install this is first), and nothing
@@ -4174,6 +4588,19 @@ window.BakaPreview={
     else if(window.I18N&&code) window.I18N.setLocale(code);
     return applyLanguage(code);
   },
+  /* The BepInEx seam. Both rows ride on server.status, which nothing in a browser can
+     push, so a walk hands the same block straight to the raiser the status handler calls.
+     bepinexNotice is the refusal's row, raised live from the rpc catch. */
+  bepinex:(bep,status)=>{conditionBepInEx(bep||null,status||"Running");return CONDITIONS.size;},
+  bepinexNotice:()=>{noticeBepInExMaintained();return CONDITIONS.size;},
+  /* The row and its two dialogs. The row rides on bepinex.status, which nothing in a
+     browser can answer, so a walk hands the DTO straight in; the bar rides on the
+     event the host posts while it writes, and the dialogs are opened by name. */
+  bepinexStatus:dto=>{S.bepinex=dto||null;renderMods();return S.bepinex;},
+  bepinexProgress:d=>{BEP_WRITING=true;onBepInExProgress(d);return BEP_PROGRESS;},
+  bepinexProgressEnd:()=>{BEP_WRITING=false;bepInExProgressDone();return BEP_PROG_OPEN;},
+  bepinexFirstDialog:()=>{BEP_ASKED_THIS_RUN=false;bepInExAskOnce(()=>{});return modalIsOpen();},
+  bepinexOffer:()=>{bepInExOfferModal(null);return modalIsOpen();},
   /* The window-state seam. The host pushes win.state; nothing in a browser can, so a
      walk drives this instead and the button swaps its glyph exactly as it does live. */
   winState:maximized=>{
@@ -4220,10 +4647,23 @@ function renderUpdatePill(){
    host just did. The element keeps the id launchHold: the held start is one of the
    conditions it carries, and the native side still addresses it by that name. */
 /* Worst first, and the order says so: the held start, then the three failures, then the
-   two warnings, then the two notices. A save that failed outranks a plugin that would not
-   install, and both outrank a download running to plan. */
+   two warnings, then the notices. A save that failed outranks a plugin that would not
+   install, and both outrank a download running to plan.
+   bepinexNotice sits ABOVE appUpdate for one reason: it is the only row here raised by a
+   press the host just made, and every other notice is standing. A standing
+   BakaLoader-update row is the ordinary case, and with the notice below it a host who
+   pasted the pack link got no answer at all. The row is only half of that fix; the press
+   also toasts, because one row is all this bar ever draws.
+   bepinexWaiting stays BELOW appUpdate on purpose, and it is worth saying why, because a
+   standing BakaLoader update does hide it most of the time. A deferred loader update is
+   the one condition here that answers itself: it goes in at the next restart window with
+   nobody pressing anything, and until then the BepInEx row above the mods table carries
+   the same sentence in the hall the host would be looking at anyway. An app update needs
+   a press. Putting the self-resolving row over the one that wants an answer would be
+   swapping which of the two is hidden, for the worse. */
 const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
-                       "serverUpdate","pluginFailure","appUpdate","modUpdates","restartPending"];
+                       "bepinexNotLoaded","serverUpdate","pluginFailure","bepinexNotice",
+                       "appUpdate","bepinexWaiting","modUpdates","restartPending"];
 const CONDITIONS=new Map();
 function setCondition(kind,cond){
   if(!cond) CONDITIONS.delete(kind); else CONDITIONS.set(kind,cond);
@@ -4439,12 +4879,94 @@ function conditionRestartPending(on,sig){
     onDismiss:()=>{RESTART_PENDING_HIDDEN=key;},
   });
 }
+/* ---- BepInEx, the framework every mod loads under ----
+   Two standing conditions, both of them things that are STILL TRUE and still want an
+   answer. They ride on server.status beside the plugin failures, because BepInEx is a
+   fact about the install a server runs from and the status event is where this page
+   already learns facts about that install. Both are absent on an older host, which
+   simply means neither row is ever raised. */
+function conditionBepInEx(bep,status){
+  if(!bep){clearCondition("bepinexWaiting");clearCondition("bepinexNotLoaded");return;}
+  conditionBepInExWaiting(bep.updateWaiting,bep.waitingProfiles);
+  conditionBepInExNotLoaded(!!bep.notLoaded&&(status==="Running"));
+}
+/* A newer pack that cannot go in yet. Every server on one install loads one BepInEx
+   through the same junctions and hard links, so the write waits for all of them rather
+   than replacing a loader out from under a world that is up. */
+function conditionBepInExWaiting(version,names){
+  if(!version){clearCondition("bepinexWaiting");return;}
+  const up=Array.isArray(names)?names.filter(Boolean):[];
+  // The host keeps the row up after a defer but recounts who is blocking on every push, so
+  // the list can be empty before the next restart window applies it: say so, never "Still up: .".
+  setCondition("bepinexWaiting",{sev:"info",title:T("bepinex.condition.waiting.title"),
+    msg:up.length?T("bepinex.condition.waiting.body",{version,names:up.join(", ")})
+                 :T("bepinex.condition.waiting.body.none",{version}),
+    again:()=>conditionBepInExWaiting(version,names),
+  });
+}
+/* The server came up, the grace passed, and BepInEx never wrote its log. Nothing else in
+   the app can see this: on Windows the whole loader mechanism is a DLL beside the
+   executable, so there is no flag to get wrong and no answer coming back either. */
+function conditionBepInExNotLoaded(on){
+  if(!on){clearCondition("bepinexNotLoaded");return;}
+  setCondition("bepinexNotLoaded",{sev:"warn",title:T("bepinex.condition.not_loaded.title"),
+    msg:T("bepinex.condition.not_loaded.body"),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbBepWiki">${esc(T("bepinex.condition.not_loaded.action"))}</button>`,
+    again:()=>conditionBepInExNotLoaded(on),
+    wire:bar=>bar.querySelector("#cbBepWiki").addEventListener("click",()=>{
+      if(Native.available) Native.call("shell.openUrl",{target:"bepinex-wiki"});
+    }),
+  });
+}
+/* The whole answer to that press: the toast AND the row.
+   The bar draws exactly ONE condition, so a row alone can be stored and never drawn, and
+   the host who pressed Add reads that as nothing having happened. The toast is what
+   guarantees the press is answered; the row is what carries the offer to open the setting
+   and stays until it is taken. Deliberately NOT part of the row's own `again` replay: a
+   language switch redraws the row and must not toast again. */
+function noticeBepInExMaintained(){
+  toast("ᛒ "+T("bepinex.notice.already_maintained"));
+  conditionBepInExMaintained();
+}
+/* The host tried to put BepInEx in by hand while BakaLoader is looking after it. Not a
+   failure, so it is not a red toast: it is a row that says where the switch is. */
+function conditionBepInExMaintained(){
+  setCondition("bepinexNotice",{sev:"info",title:T("bepinex.notice.already_maintained.title"),
+    msg:T("bepinex.notice.already_maintained"),
+    actionsHtml:`<button class="btn btn-ember btn-sm" id="cbBepSetting">${esc(T("bepinex.notice.already_maintained.action"))}</button>`,
+    again:()=>conditionBepInExMaintained(),
+    wire:bar=>bar.querySelector("#cbBepSetting").addEventListener("click",()=>{
+      clearCondition("bepinexNotice");
+      openUpkeepBepInEx();
+    }),
+  });
+}
 /* Opens the Upkeep card, where the auto-update switch lives. */
 function openUpkeepCard(){
   goPage("hearth");
   const card=$("#upkeepCard");
   if(card&&!card.classList.contains("open")) $("#upkeepHead").click();
   requestAnimationFrame(()=>{try{card.scrollIntoView({block:"nearest"});}catch(_){}});
+}
+/* The same card, and then the one switch the notice was about. A card with eight
+   switches in it is not an answer to "where is the setting", so the row is moved to
+   and lit for a moment rather than left to be found. */
+function openUpkeepBepInEx(){
+  openUpkeepCard();
+  const row=$("#rowBepMaint"); if(!row) return;
+  requestAnimationFrame(()=>{
+    try{row.scrollIntoView({block:"nearest"});}catch(_){}
+    flashRow(row);
+  });
+}
+/* A short ember pulse on one row. The class is removed and put back with a reflow
+   between, so a second press lights it again rather than finding the animation over. */
+function flashRow(el){
+  if(!el) return;
+  el.classList.remove("rowflash");
+  void el.offsetWidth;
+  el.classList.add("rowflash");
+  setTimeout(()=>el.classList.remove("rowflash"),1800);
 }
 let APP_UPDATE_V=null;   // the version the standing BakaLoader-update row is about
 function conditionAppUpdate(v){
@@ -4479,7 +5001,7 @@ function conditionAppUpdate(v){
          to the browser skipped the part where they find out what updating would cost them,
          so the button says what it actually does. */
       bar.querySelector("#cbChanges").addEventListener("click",()=>{appUpdateModal();});
-      bar.querySelector("#cbUpkeep").addEventListener("click",openUpkeepCard);
+      bar.querySelector("#cbUpkeep").addEventListener("click",()=>{openUpkeepCard();});
     },
   });
 }
@@ -7914,6 +8436,11 @@ if(Native.available){
   /* The bulk mod update streams per-mod progress the same way. The bar and the row states
      follow it; the run's own completion (the RPC returning) clears them. */
   Native.on("mods.updateProgress",onModUpdateProgress);
+  /* BepInEx: the row's fact, pushed after every write the host makes, and the progress
+     of that write. Neither is filtered by profile, because the loader belongs to the
+     install rather than to any one server on it. */
+  Native.on("bepinex.changed",d=>{S.bepinex=d||null;renderMods();});
+  Native.on("bepinex.progress",onBepInExProgress);
   Native.on("server.countdown",d=>{if(d?.message&&isActiveProfile(d?.profile))toast("ᚨ "+d.message);});
   Native.on("player.updated",p=>{
     if(!p) return;
@@ -8028,6 +8555,8 @@ if(Native.available){
     renderMods();
     renderHearthNative();
     await initUpkeep();
+    /* Asked once here; every change after this arrives on bepinex.changed. */
+    await refreshBepInEx();
 
     /* first-launch guided setup: only when never completed AND the exe isn't already valid */
     const setup=await rpc("setup.status");
@@ -8059,6 +8588,17 @@ if(!Native.available){
      through the same one function, so the preview shows the labels the app shows */
   $("#tUseHexium")?.addEventListener("click",()=>setHexiumSource(swOn("tUseHexium")));
   setT("tHeraldAddr",true); // herald preview mirrors the C# default (address shared, rest off)
+
+  /* The loader row, preview side. An install BakaLoader looks after is the state a
+     host sees most, so it is the one the browser preview opens on; the walk drives
+     the other three through BakaPreview.bepinexStatus. */
+  S.bepinex={installed:true,baseFolder:"D:\\steamlibrary\\Valheim dedicated server",
+    maintainedByBakaLoader:true,packVersion:"5.4.2350",coreFileVersion:"5.4.23.5",
+    package:"denikson-BepInExPack_Valheim",source:"thunderstore",
+    installedUtc:null,wrongLocationFolder:null,
+    sharingProfiles:["Final Sunset","Midgard Test"],runningProfiles:[],
+    maintained:true,maintenanceAsked:true,updateWaiting:null,busy:false};
+  renderBepInExRow();
 
   /* multi-server chip strip preview */
   S.servers=[

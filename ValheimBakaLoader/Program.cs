@@ -93,6 +93,7 @@ namespace ValheimBakaLoader
             services.AddSingleton<IModUpdateService, ModUpdateService>();
             services.AddSingleton<IModRemovalService, ModRemovalService>();
             services.AddSingleton<IInstallIsolationService, InstallIsolationService>();
+            services.AddSingleton<IBepInExService, BepInExService>();
             services.AddSingleton<IAppUpdateService, AppUpdateService>();
             services.AddSingleton<IServerBuildProbe, ServerBuildProbe>();
             services.AddSingleton<ISteamHandoff, SteamHandoff>();
