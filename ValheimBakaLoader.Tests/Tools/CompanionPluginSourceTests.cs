@@ -356,8 +356,11 @@ namespace ValheimBakaLoader.Tests.Tools
                 Assert.False(Regex.IsMatch(code, forbidden),
                     plugin + " still decides the cheated mark itself (" + forbidden + ")");
 
-            // The rule is asked BEFORE either write, not reconciled after one.
-            var rule = code.IndexOf("SpawnMark.ShouldMark(", StringComparison.Ordinal);
+            // The rule is asked BEFORE either write, not reconciled after one. The reading of
+            // it lives in ShouldMarkSpawn so that a throw while reading cannot take the two
+            // writes with it, so the call to that is what has to come first.
+            Assert.Contains("SpawnMark.ShouldMark(", code);
+            var rule = code.IndexOf("var mark = ShouldMarkSpawn();", StringComparison.Ordinal);
             var zdo = code.IndexOf("Set(ZDOVars.s_cheated, mark)", StringComparison.Ordinal);
             var create = code.IndexOf("ItemDrop.OnCreateNew(obj, mark)", StringComparison.Ordinal);
             Assert.True(rule >= 0 && zdo > rule && create > rule,
@@ -378,15 +381,43 @@ namespace ValheimBakaLoader.Tests.Tools
             var code = WithoutComments(SourceNamed(plugin));
 
             // Unconditional: no if, no ternary, no early return between the rule and the call.
-            Assert.Contains("var mark = SpawnMark.ShouldMark(", code);
+            Assert.Contains("var mark = ShouldMarkSpawn();", code);
             Assert.Contains("ItemDrop.OnCreateNew(obj, mark);", code);
 
-            var rule = code.IndexOf("var mark = SpawnMark.ShouldMark(", StringComparison.Ordinal);
+            var rule = code.IndexOf("var mark = ShouldMarkSpawn();", StringComparison.Ordinal);
             var create = code.IndexOf("ItemDrop.OnCreateNew(obj, mark);", StringComparison.Ordinal);
             var between = code.Substring(rule, create - rule);
             Assert.DoesNotContain("return", between);
             Assert.False(Regex.IsMatch(between, @"if\s*\(\s*mark"),
                 plugin + " only runs OnCreateNew when the mark is on, so unmarked spawns lose their world level");
+        }
+
+        /// <summary>
+        /// The same call, guarded on its own. The world level OnCreateNew stamps is the half of
+        /// its job that is never optional, so the ZDO write must not be able to skip it: sharing
+        /// one try means a throw on the ZDO key is swallowed by the catch and the spawn quietly
+        /// keeps whatever level sat on the prefab. Reading the setting is a third guard for the
+        /// same reason, and the default answers when it throws.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void SpawnCommands_GuardTheWorldLevelApartFromTheZdoWrite(string plugin)
+        {
+            var code = WithoutComments(SourceNamed(plugin));
+
+            var zdo = code.IndexOf("Set(ZDOVars.s_cheated, mark)", StringComparison.Ordinal);
+            var create = code.IndexOf("ItemDrop.OnCreateNew(obj, mark)", StringComparison.Ordinal);
+            Assert.True(zdo >= 0 && create > zdo, plugin + " no longer writes the ZDO key before OnCreateNew");
+
+            var between = code.Substring(zdo, create - zdo);
+            Assert.True(Regex.IsMatch(between, @"catch\s*\("),
+                plugin + " writes the ZDO key and the world level inside one try, so a throw on the "
+                    + "ZDO write also skips the world level that OnCreateNew is kept unconditional for");
+
+            // The setting is read behind its own guard, and an unreadable setting never marks.
+            Assert.Contains("private static bool ShouldMarkSpawn()", code);
+            Assert.Contains("SpawnMark.ShouldMark(SpawnMark.ConfigDefault, false)", code);
         }
 
         /// <summary>

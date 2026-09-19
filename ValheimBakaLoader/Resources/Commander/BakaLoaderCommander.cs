@@ -54,9 +54,22 @@
 // The entry is read off disk once, while the server is starting. BepInEx 5.4 keeps no
 // watcher on the .cfg, so changing the setting while the server runs does nothing until
 // the next start.
+// KNOWN GAP: for as long as this plugin is the one serving RCON, which is the normal case
+// and the only arrangement BakaLoader sets up by itself, a host cannot turn this mark ON
+// for a spawn issued through the app. Such a spawn arrives at CmdSpawn below, which reads
+// this plugin's entry, and this plugin's entry can never be anything but the default.
 // BakaLoader rewrites com.baka.commander.cfg from the server profile on every start and
-// keeps only BindAddress, so a host who wants the mark ON has to set it in the Spawn
-// Helper's own config, or set it here again after each start.
+// keeps only BindAddress, so a [Spawning] section written here by hand is destroyed before
+// BepInEx parses the file. Writing it again after a start does not help either: by then the
+// file has already been read, and the next start wipes it again. Curing this means teaching
+// Tools\CommanderInstaller.cs to carry a [Spawning] section across that rewrite the way it
+// already carries BindAddress.
+// com.baka.spawnhelper.cfg is NOT rewritten by BakaLoader and does hold its value, but it
+// governs only the spawns the Spawn Helper's own console command serves, never CmdSpawn's.
+// That command is reached from the game console and from a third-party RCON plugin that
+// forwards to it, so in the COEXISTENCE case below, where AviiNL-RCON won the port and this
+// plugin is dormant, the Spawn Helper's entry is the one in force and the gap does not
+// apply. It applies whenever Commander is the plugin answering.
 //
 // All game work is dispatched to the Unity main thread via a queue drained in
 // Update() - Object.Instantiate()/game API calls from the socket thread crash
@@ -895,38 +908,66 @@ namespace BakaLoaderCommander
         /// </summary>
         private static void MarkAsSpawnedIn(GameObject obj)
         {
+            var mark = ShouldMarkSpawn();
+
+            // Three guards rather than one, because the two records are independent and the
+            // second one is not optional. OnCreateNew is also what stamps the item's world
+            // level, so a ZDO write that throws must not be allowed to carry that call down
+            // with it and leave the item on whatever level sat on the prefab. Never lose the
+            // spawn over either piece of bookkeeping.
             try
             {
-                // Read through the entry rather than a copied bool so the value lives in one
-                // place. A .cfg edited while the server runs is not picked up here; BepInEx
-                // reads that file only at startup, so such a change needs a restart. Null only
-                // while Awake has not run, which a queued spawn cannot outrun, and the default
-                // answers for it if it ever did.
-                var wanted = CfgMarkSpawnedAsCheated != null
-                    ? CfgMarkSpawnedAsCheated.Value
-                    : SpawnMark.ConfigDefault;
-                var mark = SpawnMark.ShouldMark(wanted, CheatChecksBypassed());
-
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
                     view.GetZDO().Set(ZDOVars.s_cheated, mark);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning("Could not record the cheated flag on the spawned object: " + ex.Message);
+            }
 
+            try
+            {
                 ItemDrop.OnCreateNew(obj, mark);
             }
             catch (Exception ex)
             {
-                // Never lose the spawn over the bookkeeping.
-                Log.LogWarning("Could not mark the spawned object: " + ex.Message);
+                Log.LogWarning("Could not stamp the spawned item's world level: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// The host's answer, run through <see cref="SpawnMark.ShouldMark"/>. Read through the
+        /// entry rather than a copied bool so the value lives in one place. A .cfg edited while
+        /// the server runs is not picked up here; BepInEx reads that file only at startup, so
+        /// such a change needs a restart. Null only while Awake has not run, which a queued
+        /// spawn cannot outrun, and the default answers for it if it ever did. A throw lands on
+        /// the default too: an unreadable setting must not decide to mark.
+        /// </summary>
+        private static bool ShouldMarkSpawn()
+        {
+            try
+            {
+                var wanted = CfgMarkSpawnedAsCheated != null
+                    ? CfgMarkSpawnedAsCheated.Value
+                    : SpawnMark.ConfigDefault;
+                return SpawnMark.ShouldMark(wanted, CheatChecksBypassed());
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning("Could not read the spawn mark setting, using the default: " + ex.Message);
+                return SpawnMark.ShouldMark(SpawnMark.ConfigDefault, false);
             }
         }
 
         // PlayerProfile.s_bypassCheatChecks was a plain static FIELD until Valheim 1.0.12
         // (build 25253791) turned it into a static PROPERTY. A compiled field read is an
         // ldsfld against a member that no longer exists, and Mono raises that
-        // MissingFieldException when it JITs the method holding the read - which is the
-        // CALLER, outside the try/catch below, so the whole spawn loop died after the first
-        // object with no level, no quality and one lonely item on the ground. Asking the live
-        // assembly what the member is today survives both shapes and any future third one.
+        // MissingFieldException when it JITs the method holding the read - and it raises it at
+        // that method's CALL SITE, so a try/catch written inside the method holding the read
+        // never runs at all. The whole spawn loop died after the first object with no level,
+        // no quality and one lonely item on the ground. Asking the live assembly what the
+        // member is today survives both shapes and any future third one.
         private static bool _bypassProbed;
         private static PropertyInfo _bypassProperty;
         private static FieldInfo _bypassField;
