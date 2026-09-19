@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.3.1 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.4.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -37,8 +37,11 @@
 //                                      BakaLoaderSpawnHelper). The 4th argument is a
 //                                      creature's star level (0 based) or an item's
 //                                      quality (1 based, 0 leaves it alone).
-//   baka_killall                     - kill all non-player characters (absorbed from
-//                                      BakaKillAll)
+//   baka_killall [<prefab> | near <player> <radius>] - kill hostiles, sparing players,
+//                                      pets and allies. The sweep itself lives in
+//                                      Resources\KillAll\BakaKillAllSweep.cs and is
+//                                      compiled into this DLL and into BakaKillAll.dll,
+//                                      so either plugin serves the command alone.
 //   anything else                    - forwarded to the in-game console if present
 //
 // All game work is dispatched to the Unity main thread via a queue drained in
@@ -51,13 +54,13 @@
 
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using BakaLoaderKillAll;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -70,7 +73,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.3.1";
+        private const string PluginVersion = "1.4.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -418,7 +421,7 @@ namespace BakaLoaderCommander
                 case "tp": return CmdTeleport(tokens);
                 case "kick": return CmdKick(text);
                 case "baka_spawn": return CmdSpawn(tokens);
-                case "baka_killall": return CmdKillAll();
+                case "baka_killall": return CmdKillAll(tokens);
                 default: return CmdFallback(text);
             }
         }
@@ -887,97 +890,28 @@ namespace BakaLoaderCommander
             return false;
         }
 
-        // ---- baka_killall -----------------------------------------------------
-        // Absorbed from BakaKillAll (3 enumeration fallbacks). HOSTILES ONLY:
-        // players, tamed pets, and friendly factions (AnimalsVeg passive wildlife,
-        // Dverger allies, PlayerSpawned summons, TrainingDummy training posts) are
-        // spared - modded servers add tons of friendly NPCs/pets, and training posts
-        // are player-built structures, so this must never wipe any of them.
+        // ---- baka_killall [<prefab> | near <player> <radius>] -----------------
+        //
+        // HOSTILES ONLY: players, tamed pets, and the friendly factions (AnimalsVeg
+        // passive wildlife, Dverger allies, PlayerSpawned summons, TrainingDummy
+        // training posts) are spared. Modded servers add plenty of friendly NPCs and
+        // pets, and a training post is a player-built structure, so a sweep must never
+        // wipe any of them.
+        //
+        // The work is in KillAllSweep (Resources\KillAll\BakaKillAllSweep.cs), compiled
+        // into this DLL and into BakaKillAll.dll so both companion plugins answer the
+        // command the same way and either one works installed alone. Commander gets here
+        // on the Unity main thread already: Update() drains the RCON queue.
+        //
+        // What it used to do was call Character.GetAllCharacters() and kill what came
+        // back. That is every creature in the world on a listen server and very nearly
+        // none of them on a dedicated one, because creatures around players are
+        // instantiated and owned by those players' clients. The sweep walks the world's
+        // own object records now and sends the damage to each creature's owner.
 
-        private static string CmdKillAll()
+        private static string CmdKillAll(string[] tokens)
         {
-            var killed = 0;
-            var spared = 0;
-
-            var staticList = Character.GetAllCharacters();
-            if (staticList != null && staticList.Count > 0)
-            {
-                for (var i = staticList.Count - 1; i >= 0; i--)
-                {
-                    var c = staticList[i];
-                    if (c == null) continue;
-                    if (ShouldSpare(c)) { spared++; continue; }
-                    if (TryKill(c)) killed++;
-                }
-            }
-            else
-            {
-                var sceneChars = Resources.FindObjectsOfTypeAll<Character>();
-                if (sceneChars != null && sceneChars.Length > 0)
-                {
-                    foreach (var c in sceneChars)
-                    {
-                        if (c == null) continue;
-                        if (ShouldSpare(c)) { spared++; continue; }
-                        if (TryKill(c)) killed++;
-                    }
-                }
-                else
-                {
-                    foreach (var m in UnityEngine.Object.FindObjectsOfType<MonoBehaviour>())
-                    {
-                        var c = m as Character;
-                        if (c == null) continue;
-                        if (ShouldSpare(c)) { spared++; continue; }
-                        if (TryKill(c)) killed++;
-                    }
-                }
-            }
-
-            return "KillAll complete: " + killed + " hostiles slain, " + spared + " spared (players, pets & allies)";
-        }
-
-        private static bool ShouldSpare(Character c)
-        {
-            try
-            {
-                if (c.IsPlayer()) return true;
-                if (c.IsTamed()) return true; // pets - wolves, lox, modded companions
-
-                // Friendly / non-hostile factions. Everything else (ForestMonsters,
-                // Undead, Demon, MountainMonsters, SeaMonsters, PlainsMonsters,
-                // MistlandsMonsters, DeepNorth, Boss) is a hostile mob and stays killable.
-                switch (c.m_faction)
-                {
-                    case Character.Faction.Players:       // player-faction NPCs (many modded friendlies)
-                    case Character.Faction.AnimalsVeg:    // passive wildlife (deer, gulls, hares)
-                    case Character.Faction.Dverger:       // dvergr allies
-                    case Character.Faction.PlayerSpawned: // player-summoned allies
-                    case Character.Faction.TrainingDummy: // player-built training posts
-                        return true;
-                }
-
-                return false;
-            }
-            catch { return true; } // if in doubt, don't kill
-        }
-
-        private static bool TryKill(Character c)
-        {
-            try
-            {
-                var hit = new HitData();
-                hit.m_damage.m_damage = 1e10f;
-                hit.m_point = c.transform.position;
-                hit.m_dodgeable = false;
-                hit.m_blockable = false;
-                c.Damage(hit);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
+            return KillAllSweep.Run(tokens, delegate(string message) { Log.LogWarning(message); });
         }
 
         // ---- fallback: forward unknown commands to the in-game console --------

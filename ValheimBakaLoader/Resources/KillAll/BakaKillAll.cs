@@ -1,20 +1,42 @@
-// BakaLoader KillAll v1.5.0 - compiled against SERVER assembly_valheim
-// Multiple fallback approaches for finding creatures on dedicated servers.
+// BakaLoader KillAll v1.6.0 - compiled against SERVER assembly_valheim
+//
+// Registers "baka_killall" as an in-game console command, so a host standing at the
+// server's own console window can clear hostiles without going anywhere near RCON.
+// Commander answers the same command name over its own RCON socket. Both of them run the
+// SAME sweep: KillAllSweep in BakaKillAllSweep.cs is compiled into both DLLs, so either
+// plugin works installed on its own and neither can drift from the other.
+//
+// Until 1.6.0 this plugin walked Character.GetAllCharacters() and killed what came back.
+// On a dedicated server that list holds only what the server itself instantiated near its
+// own reference position, and every creature standing around a player is instantiated and
+// owned by that player's client, so the command reported a tidy "0 slain" while the world
+// was full of monsters. The sweep now walks the world's own object records instead and
+// sends the damage to whoever owns each creature. See BakaKillAllSweep.cs for the whole of
+// it.
 using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using BepInEx;
 using BepInEx.Logging;
-using UnityEngine;
 
 namespace BakaLoaderKillAll
 {
     [BepInPlugin("com.baka.killall", "BakaLoader KillAll", PluginVersion)]
     public class KillAllPlugin : BaseUnityPlugin
     {
-        private const string PluginVersion = "1.5.0";
+        private const string PluginVersion = "1.6.0";
 
         private static ManualLogSource Log;
-        private static volatile bool KillPending;
+
+        private sealed class PendingSweep
+        {
+            public string[] Tokens;
+            public Terminal Context;
+        }
+
+        // A dedicated server reads its console on a thread of its own, and every call into
+        // the game has to happen on the Unity main thread or a headless server dies with
+        // "Graphics device is null". So the line is parked here and drained in Update().
+        private static readonly ConcurrentQueue<PendingSweep> Pending = new ConcurrentQueue<PendingSweep>();
 
         private void Awake()
         {
@@ -22,11 +44,20 @@ namespace BakaLoaderKillAll
 
             new Terminal.ConsoleCommand(
                 "baka_killall",
-                "baka_killall - Kill all non-player creatures in loaded zones (main-thread dispatch)",
+                "baka_killall [<PrefabName> | near <player> <radius>]: kill hostiles. " +
+                "Players, pets and allies are always spared.",
                 delegate(Terminal.ConsoleEventArgs args)
                 {
-                    KillPending = true;
-                    args.Context.AddString("Queued kill-all creatures...");
+                    Pending.Enqueue(new PendingSweep
+                    {
+                        Tokens = Tokenize(args.FullLine),
+                        Context = args.Context
+                    });
+
+                    // Never let the acknowledgement be what loses the command: the sweep is
+                    // already queued by the time anything is printed.
+                    if (args.Context != null)
+                        args.Context.AddString("KillAll queued. The count lands here when it is done.");
                 },
                 // isCheat MUST stay false. From Valheim 1.0 the game refuses to run any
                 // cheat-flagged console command unless the world is already flagged as
@@ -42,137 +73,48 @@ namespace BakaLoaderKillAll
                 hideBehindDevCommands: false
             );
 
-            Log.LogInfo("BakaLoader KillAll v" + PluginVersion + " loaded - 'baka_killall' command registered.");
+            Log.LogInfo("BakaLoader KillAll v" + PluginVersion + " loaded. 'baka_killall' command registered.");
         }
 
         private void Update()
         {
-            if (!KillPending) return;
-            KillPending = false;
-
-            try
+            PendingSweep sweep;
+            while (Pending.TryDequeue(out sweep))
             {
-                ExecuteKillAll();
-            }
-            catch (Exception ex)
-            {
-                Log.LogError("KillAll failed: " + ex.Message + "\n" + ex.StackTrace);
-            }
-        }
-
-        private void ExecuteKillAll()
-        {
-            // Approach 1: static list
-            List<Character> staticList = Character.GetAllCharacters();
-            Log.LogInfo("KillAll diag: GetAllCharacters() = " + staticList.Count);
-
-            // Approach 2: scene scan
-            Character[] sceneChars = Resources.FindObjectsOfTypeAll<Character>();
-            Log.LogInfo("KillAll diag: FindObjectsOfTypeAll<Character> = " + sceneChars.Length);
-
-            // Approach 3: broader MonoBehaviour scan to verify Unity scene scan works at all
-            MonoBehaviour[] allMono = UnityEngine.Object.FindObjectsOfType<MonoBehaviour>();
-            Log.LogInfo("KillAll diag: FindObjectsOfType<MonoBehaviour> = " + allMono.Length);
-
-            // Use whichever found more characters
-            int killed = 0;
-            int players = 0;
-
-            // If static list has entries, prefer it (fastest)
-            if (staticList.Count > 0)
-            {
-                Log.LogInfo("KillAll: using GetAllCharacters path");
-                for (int i = staticList.Count - 1; i >= 0; i--)
+                string reply;
+                try
                 {
-                    Character c = staticList[i];
-                    if (c == null) continue;
-                    if (ShouldSpare(c)) { players++; continue; }
-                    if (TryKill(c)) killed++;
+                    reply = KillAllSweep.Run(sweep.Tokens, delegate(string message) { Log.LogWarning(message); });
+                }
+                catch (Exception ex)
+                {
+                    reply = "KillAll failed: " + ex.Message;
+                    Log.LogError("KillAll failed: " + ex.Message + "\n" + ex.StackTrace);
+                }
+
+                Log.LogInfo(reply);
+
+                // The console the host typed at, when it is still there to answer to. The
+                // sweep already happened either way, so this can never be what fails it.
+                try
+                {
+                    if (sweep.Context != null) sweep.Context.AddString(reply);
+                }
+                catch (Exception ex)
+                {
+                    Log.LogDebug("Could not print the KillAll reply to the console: " + ex.Message);
                 }
             }
-            // Else try scene scan
-            else if (sceneChars.Length > 0)
-            {
-                Log.LogInfo("KillAll: using FindObjectsOfTypeAll path");
-                for (int i = 0; i < sceneChars.Length; i++)
-                {
-                    Character c = sceneChars[i];
-                    if (c == null) continue;
-                    if (ShouldSpare(c)) { players++; continue; }
-                    if (TryKill(c)) killed++;
-                }
-            }
-            // Else brute force: scan all MonoBehaviours for Character
-            else if (allMono.Length > 0)
-            {
-                Log.LogInfo("KillAll: using MonoBehaviour brute force path");
-                for (int i = 0; i < allMono.Length; i++)
-                {
-                    Character c = allMono[i] as Character;
-                    if (c == null) continue;
-                    if (ShouldSpare(c)) { players++; continue; }
-                    if (TryKill(c)) killed++;
-                }
-            }
-
-            Log.LogInfo("KillAll complete: " + killed + " creatures killed, " + players + " spared (players, pets and allies), " + allMono.Length + " total MonoBehaviours in scene.");
         }
 
         /// <summary>
-        /// Kill-all is for hostiles. Players, tamed animals and the friendly factions are never
-        /// targets, and neither is a player-built training post: it is its own faction in the
-        /// game and it is a structure somebody put up, not a creature that wandered in.
-        /// <para>
-        /// This is a copy of Commander's rule on purpose. Either plugin can be the one that
-        /// answers baka_killall (Commander answers it over its own RCON, this one registers the
-        /// in-game console command), and BakaLoader's own button promises "players, pets and
-        /// allies spared" whichever answers. A shorter rule here meant an operator who typed the
-        /// command at the server console lost every wolf, boar and lox their players had raised.
-        /// Change one of these and change the other.
-        /// </para>
+        /// The typed line split the way Commander splits an RCON line, verb still at index 0.
+        /// The game's own Terminal splits on every space and keeps the empty pieces, so two
+        /// spaces between a name and a radius would hand the parser a blank word.
         /// </summary>
-        private static bool ShouldSpare(Character c)
+        private static string[] Tokenize(string line)
         {
-            try
-            {
-                if (c.IsPlayer()) return true;
-                if (c.IsTamed()) return true; // pets: wolves, lox, modded companions
-
-                // Friendly and non-hostile factions. Everything else (ForestMonsters, Undead,
-                // Demon, MountainMonsters, SeaMonsters, PlainsMonsters, MistlandsMonsters,
-                // DeepNorth, Boss) is a hostile mob and stays killable.
-                switch (c.m_faction)
-                {
-                    case Character.Faction.Players:       // player-faction NPCs (many modded friendlies)
-                    case Character.Faction.AnimalsVeg:    // passive wildlife (deer, gulls, hares)
-                    case Character.Faction.Dverger:       // dvergr allies
-                    case Character.Faction.PlayerSpawned: // player-summoned allies
-                    case Character.Faction.TrainingDummy: // player-built training posts
-                        return true;
-                }
-
-                return false;
-            }
-            catch { return true; } // if in doubt, don't kill
-        }
-
-        private static bool TryKill(Character c)
-        {
-            try
-            {
-                HitData hit = new HitData();
-                hit.m_damage.m_damage = 1e10f;
-                hit.m_point = c.transform.position;
-                hit.m_dodgeable = false;
-                hit.m_blockable = false;
-                c.Damage(hit);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Log.LogWarning("Failed to kill " + c.name + ": " + ex.Message);
-                return false;
-            }
+            return (line ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace ValheimBakaLoader.Tests.Tools
@@ -47,6 +48,30 @@ namespace ValheimBakaLoader.Tests.Tools
 
         private static string KillAll =>
             Read("ValheimBakaLoader", "Resources", "KillAll", "BakaKillAll.cs");
+
+        /// <summary>
+        /// The pure half of baka_killall. It lives beside the KillAll plugin, it is compiled
+        /// into both companion DLLs, and it is also globbed into BakaLoader itself, which is
+        /// how KillAllPlanTests can call it for real instead of reading it as text.
+        /// </summary>
+        private static string KillAllPlanSource =>
+            Read("ValheimBakaLoader", "Resources", "KillAll", "BakaKillAllPlan.cs");
+
+        /// <summary>The half that touches the game, which only the plugin compiler ever sees.</summary>
+        private static string KillAllSweepSource =>
+            Read("ValheimBakaLoader", "Resources", "KillAll", "BakaKillAllSweep.cs");
+
+        private static string SourceNamed(string file)
+        {
+            switch (file)
+            {
+                case "Commander": return Commander;
+                case "KillAll": return KillAll;
+                case "Sweep": return KillAllSweepSource;
+                case "Plan": return KillAllPlanSource;
+                default: throw new ArgumentOutOfRangeException(nameof(file), file, "no such companion source");
+            }
+        }
 
         private static string MaxPlayers =>
             Read("ValheimBakaLoader", "Resources", "MaxPlayers", "BakaLoaderMaxPlayers.cs");
@@ -387,35 +412,188 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         // ---- P10: killall is for hostiles, and a training post is not one ----
-
-        [Theory]
-        [InlineData("Commander")]
-        [InlineData("KillAll")]
-        public void KillAll_SparesPlayerBuiltTrainingPosts(string plugin)
-        {
-            var src = plugin == "Commander" ? Commander : KillAll;
-            Assert.Contains("Character.Faction.TrainingDummy", src);
-        }
+        //
+        // The rule itself moved into KillAllPlan when the sweep was rewritten, and it is
+        // exercised for real in KillAllPlanTests rather than looked for as a literal. What is
+        // still only a literal is the naming across from the game's own enum to this plugin's
+        // copy of it, because only the plugin compiler ever sees that file.
 
         /// <summary>
         /// Two plugins answer the same command name and BakaLoader's button promises one thing
         /// for both: "players, pets and allies spared". Commander answers it over its own RCON,
         /// BakaKillAll registers the in-game console command, and BakaKillAll used to spare only
         /// players and training posts. An operator typing baka_killall at the server console lost
-        /// every tamed wolf, boar and lox on the server, and every dvergr ally with them.
+        /// every tamed wolf, boar and lox on the server, and every dvergr ally with them. The
+        /// cure was one sweep compiled into both DLLs, which is the arrangement this pins.
         /// </summary>
         [Theory]
         [InlineData("Commander")]
         [InlineData("KillAll")]
-        public void KillAll_SparesTamedPetsAndTheFriendlyFactions(string plugin)
+        public void KillAll_BothPluginsAreBuiltFromTheOneSweep(string plugin)
         {
-            var src = plugin == "Commander" ? Commander : KillAll;
+            var script = BuildScript;
+            var entry = script.IndexOf("Dir = \"" + plugin + "\"", StringComparison.Ordinal);
+            Assert.True(entry >= 0, "build-plugins.ps1 no longer builds " + plugin);
 
-            Assert.Contains("c.IsTamed()", src);
-            Assert.Contains("Character.Faction.Players", src);
-            Assert.Contains("Character.Faction.AnimalsVeg", src);
-            Assert.Contains("Character.Faction.Dverger", src);
-            Assert.Contains("Character.Faction.PlayerSpawned", src);
+            // Up to the next plugin entry, so a shared file listed for one is not read as
+            // listed for the other.
+            var next = script.IndexOf("Dir = \"", entry + 8, StringComparison.Ordinal);
+            var block = next > entry ? script.Substring(entry, next - entry) : script.Substring(entry);
+
+            Assert.Contains("BakaKillAllPlan.cs", block);
+            Assert.Contains("BakaKillAllSweep.cs", block);
+        }
+
+        /// <summary>
+        /// Every faction the game has must be named across into the plugin's own enum. A
+        /// faction missing from the switch arrives as Unknown, which is spared, so a forgotten
+        /// hostile silently survives every sweep.
+        /// </summary>
+        [Theory]
+        [InlineData("Players")]
+        [InlineData("AnimalsVeg")]
+        [InlineData("ForestMonsters")]
+        [InlineData("Undead")]
+        [InlineData("Demon")]
+        [InlineData("MountainMonsters")]
+        [InlineData("SeaMonsters")]
+        [InlineData("PlainsMonsters")]
+        [InlineData("Boss")]
+        [InlineData("MistlandsMonsters")]
+        [InlineData("Dverger")]
+        [InlineData("PlayerSpawned")]
+        [InlineData("TrainingDummy")]
+        [InlineData("DeepNorth")]
+        public void KillAll_NamesEveryGameFactionAcrossToItsOwn(string faction)
+        {
+            Assert.Contains("case Character.Faction." + faction + ": return KillAllFaction." + faction + ";",
+                KillAllSweepSource);
+        }
+
+        /// <summary>
+        /// THE 2026-09-19 BUG. Over RCON with four players online and hostiles standing next to
+        /// them, baka_killall answered "0 hostiles slain, 162 spared" and a summoned Eikthyr was
+        /// still alive. Character.GetAllCharacters() holds only what THIS process instantiated,
+        /// and on a dedicated server the creatures around players are instantiated and owned by
+        /// those players' clients, so the server's list has none of them in it. Neither the
+        /// sweep nor either plugin may go back to asking that question.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("KillAll")]
+        [InlineData("Sweep")]
+        public void KillAll_NeverAsksThisProcessWhichCreaturesExist(string file)
+        {
+            var code = WithoutComments(SourceNamed(file));
+
+            Assert.DoesNotContain("GetAllCharacters", code);
+            Assert.DoesNotContain("FindObjectsOfTypeAll<Character>", code);
+            Assert.DoesNotContain("FindObjectsOfType<MonoBehaviour>", code);
+        }
+
+        /// <summary>
+        /// The damage has to reach the creature's OWNER. Character.RPC_Damage returns at once
+        /// unless the process running it owns the object, so a hit sent anywhere else is a
+        /// count with nothing behind it.
+        /// </summary>
+        [Fact]
+        public void KillAll_SendsTheDamageToWhoeverOwnsTheCreature()
+        {
+            var code = WithoutComments(KillAllSweepSource);
+
+            Assert.Contains("var owner = zdo.GetOwner();", code);
+            Assert.Contains("InvokeRoutedRPC(owner, zdo.m_uid, \"RPC_Damage\", hit)", code);
+
+            // The owner is read before the hit is built and sent, not guessed at afterwards.
+            var owner = code.IndexOf("var owner = zdo.GetOwner();", StringComparison.Ordinal);
+            var send = code.IndexOf("InvokeRoutedRPC(owner", StringComparison.Ordinal);
+            Assert.True(owner >= 0 && send > owner, "the owner has to be resolved before the hit goes out");
+        }
+
+        /// <summary>
+        /// A creature nobody has loaded has no owner and cannot be damaged by anybody. It is
+        /// counted out of reach and LEFT ALONE. Destroying its record instead would drop no
+        /// loot, and for a boss it would leave the world's active-boss counter stuck.
+        /// </summary>
+        [Fact]
+        public void KillAll_NeverDestroysAWorldRecord()
+        {
+            var code = WithoutComments(KillAllSweepSource);
+
+            Assert.DoesNotContain("DestroyZDO", code);
+            Assert.DoesNotContain(".Destroy(", code);
+            Assert.Contains("unreachable++", code);
+        }
+
+        /// <summary>
+        /// There is no Character to ask whether a creature was tamed, so the fact is read from
+        /// the world record itself, out of the very key Character.Awake reads it from. Losing
+        /// this read loses every pet on the server.
+        /// </summary>
+        [Fact]
+        public void KillAll_ReadsTamedFromTheWorldRecord()
+        {
+            Assert.Contains("zdo.GetBool(ZDOVars.s_tamed, false)", WithoutComments(KillAllSweepSource));
+        }
+
+        /// <summary>
+        /// The sweep names Valheim's types and BakaLoader has no game assemblies to resolve
+        /// them against, yet the file sits under Resources where the app project's source glob
+        /// picks it up. The fence is what keeps the app building, and build-plugins.ps1 is the
+        /// only thing that lifts it.
+        /// </summary>
+        [Fact]
+        public void KillAll_TheGameHalfIsFencedOffFromTheAppBuild()
+        {
+            var sweep = KillAllSweepSource;
+
+            Assert.StartsWith("#if VALHEIM_PLUGIN", sweep, StringComparison.Ordinal);
+            Assert.EndsWith("#endif", sweep.TrimEnd(), StringComparison.Ordinal);
+            Assert.Contains("/define:VALHEIM_PLUGIN", BuildScript);
+        }
+
+        /// <summary>
+        /// And the pure half must stay pure, because the app project compiles it for real. One
+        /// using of UnityEngine here and BakaLoader itself stops building, with the failure
+        /// landing on whoever next touches the app rather than on whoever wrote the line.
+        /// </summary>
+        [Fact]
+        public void KillAll_ThePureHalfNamesNoGameType()
+        {
+            var plan = KillAllPlanSource;
+
+            Assert.DoesNotContain("#if", plan);
+
+            foreach (var forbidden in new[]
+                     {
+                         "using UnityEngine", "using BepInEx", "using HarmonyLib",
+                         "Character.", "ZDO", "ZNet", "HitData", "Vector3", "GameObject",
+                     })
+                Assert.False(WithoutComments(plan).Contains(forbidden),
+                    "BakaKillAllPlan.cs names " + forbidden + ", which the app project cannot compile");
+        }
+
+        /// <summary>
+        /// The reply's first words are the contract with anything that reads them, and the
+        /// three counts are the whole point of the rewrite.
+        /// </summary>
+        [Fact]
+        public void KillAll_TheReplyKeepsItsOpeningWordsAndCarriesTheReachCount()
+        {
+            var plan = KillAllPlanSource;
+
+            Assert.Contains("\"KillAll complete: \"", plan);
+            Assert.Contains("\" out of reach, \"", plan);
+            Assert.Contains("\" spared (players, pets & allies)\"", plan);
+        }
+
+        /// <summary>A rewritten plugin that ships under the old version number is a plugin nobody replaces.</summary>
+        [Theory]
+        [InlineData("Commander", "1.4.0")]
+        [InlineData("KillAll", "1.6.0")]
+        public void KillAll_BothPluginsAnnounceTheirNewVersion(string plugin, string version)
+        {
+            Assert.Contains("PluginVersion = \"" + version + "\"", SourceNamed(plugin));
         }
 
         // ---- P11: a trinket is equipment, and equipment is what keeps its quality ----
@@ -504,10 +682,25 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.DoesNotContain("GetString(bytes, offset", body);
         }
 
+        /// <summary>
+        /// The UTF-8 fix shipped in Commander 1.3.1, and a fixed plugin that goes out under an
+        /// older number is a plugin a host never gets. Pinned as a floor rather than as an
+        /// exact string: later work raises this number (the ZDO sweep took it to 1.4.0), and a
+        /// test that demands one exact version turns every honest bump into a red build.
+        /// </summary>
         [Fact]
-        public void Commander_CarriesTheVersionTheUtf8FixShippedIn()
+        public void Commander_CarriesAtLeastTheVersionTheUtf8FixShippedIn()
         {
-            Assert.Contains("PluginVersion = \"1.3.1\"", Commander);
+            Assert.True(PluginVersionOf(Commander) >= new Version("1.3.1"),
+                "Commander is published as " + PluginVersionOf(Commander) + ", below the 1.3.1 the UTF-8 fix shipped in");
+        }
+
+        /// <summary>The version a companion plugin publishes to BepInEx, read out of its source.</summary>
+        private static Version PluginVersionOf(string src)
+        {
+            var match = Regex.Match(src, "PluginVersion\\s*=\\s*\"([0-9]+(?:\\.[0-9]+)+)\"");
+            Assert.True(match.Success, "the plugin no longer declares a PluginVersion");
+            return new Version(match.Groups[1].Value);
         }
     }
 }
