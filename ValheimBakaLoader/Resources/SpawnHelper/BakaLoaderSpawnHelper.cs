@@ -1,4 +1,4 @@
-// BakaLoader Spawn Helper v1.4.0 - headless-server-safe spawn via main-thread dispatch.
+// BakaLoader Spawn Helper v1.5.0 - headless-server-safe spawn via main-thread dispatch.
 //
 // WHY THIS EXISTS:
 // WEC's "spawn_object" crashes dedicated servers because RCON commands execute on a
@@ -27,12 +27,30 @@
 //   baka_spawn Boar 123.4,567.8,90.1
 //   baka_spawn Lox 200,100,50 3 2
 //   baka_spawn PickaxeBronze 200,100,50 1 3
+//
+// CHEATED MARK (v1.5.0):
+// Valheim 1.0 shows "This item was summoned through cheating means." on anything its own
+// spawn command conjured, and pauses a player's achievement progress while such an item
+// sits in their inventory. This plugin does NOT mark its spawns any more. The behaviour is
+// one config entry, Spawning/MarkSpawnedAsCheated, default false, and the rule behind it
+// lives in BakaSpawnMark.cs so the suite can hold it to account without a game installed.
+// The entry is read off disk once, while the server is starting. BepInEx 5.4 keeps no
+// watcher on the .cfg, so changing the setting while the server runs does nothing until
+// the next start.
+// SCOPE: this entry governs the spawns THIS plugin's console command serves, and nothing
+// else. BakaLoader's own spawn button goes over RCON to Commander whenever Commander is the
+// plugin holding the port, which is the normal case, and Commander then reads its own copy
+// of the entry out of com.baka.commander.cfg - a file BakaLoader rewrites on every start,
+// which is why the mark cannot presently be turned on for those spawns. See the KNOWN GAP
+// note in ..\Commander\BakaLoaderCommander.cs.
 
 using System;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Reflection;
+using BakaLoaderSpawn;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using UnityEngine;
 
@@ -43,9 +61,16 @@ namespace BakaLoaderSpawnHelper
     {
         private const string PluginGuid = "com.baka.spawnhelper";
         private const string PluginName = "BakaLoader Spawn Helper";
-        private const string PluginVersion = "1.4.0";
+        private const string PluginVersion = "1.5.0";
 
         private static ManualLogSource Log;
+
+        // Bound in Awake, read from MarkAsSpawnedIn, which is static because the spawn loop
+        // that calls it is. Held as the entry rather than as a copied bool only so the value
+        // lives in one place. That is not a way to pick up a live .cfg edit: BepInEx 5.4
+        // parses the file once, while the ConfigFile is being constructed, and keeps no
+        // watcher on it, so a setting changed mid-session takes effect at the next start.
+        private static ConfigEntry<bool> CfgMarkSpawnedAsCheated;
 
         private struct SpawnRequest
         {
@@ -62,6 +87,15 @@ namespace BakaLoaderSpawnHelper
         private void Awake()
         {
             Log = Logger;
+
+            // The section, the key, the default and the wording all come from SpawnMark so the
+            // two plugins that serve baka_spawn cannot bind the same setting under different
+            // names, and so the suite can pin all four without a dedicated server to run.
+            CfgMarkSpawnedAsCheated = Config.Bind(
+                SpawnMark.ConfigSection,
+                SpawnMark.ConfigKey,
+                SpawnMark.ConfigDefault,
+                SpawnMark.ConfigDescription);
 
             new Terminal.ConsoleCommand(
                 "baka_spawn",
@@ -343,40 +377,85 @@ namespace BakaLoaderSpawnHelper
         }
 
         /// <summary>
-        /// Applies the same per-object bookkeeping the game's own "spawn" command applies.
-        /// Vanilla stamps every object it conjures with the cheated flag on its ZDO and runs
-        /// ItemDrop.OnCreateNew, which also records the world level the item was made at.
-        /// Without it a conjured object looks legitimately earned to every system that reads
-        /// the flag, and an item drop carries whatever world level happened to be on the
-        /// prefab. The command itself stays uncheat-flagged; that is a separate thing, and
-        /// this marks the objects, not the console.
+        /// Applies the per-object bookkeeping the game's own "spawn" command applies, minus the
+        /// one part of it a host asked not to have.
+        /// <para>
+        /// ItemDrop.OnCreateNew runs on every spawn whatever the setting says, because it does
+        /// two jobs: it records the world level the item was made at, and it writes the cheated
+        /// flag. Skipping the call to avoid the flag would leave every conjured item carrying
+        /// whatever world level happened to be on the prefab. So the call stays and the flag is
+        /// handed to it, true or false, exactly as SpawnMark.ShouldMark decides.
+        /// </para>
+        /// <para>
+        /// The ZDO key is written either way for the same reason: a creature's drops read
+        /// ZDOVars.s_cheated off its record, and an explicit false is the only thing that says
+        /// "not cheated" rather than "nobody looked". The console command itself stays
+        /// uncheat-flagged; that is a separate thing, and this marks the objects, not the
+        /// console.
+        /// </para>
         /// </summary>
         private static void MarkAsSpawnedIn(GameObject obj)
         {
+            var mark = ShouldMarkSpawn();
+
+            // Three guards rather than one, because the two records are independent and the
+            // second one is not optional. OnCreateNew is also what stamps the item's world
+            // level, so a ZDO write that throws must not be allowed to carry that call down
+            // with it and leave the item on whatever level sat on the prefab. Never lose the
+            // spawn over either piece of bookkeeping.
             try
             {
-                var cheated = !CheatChecksBypassed();
-
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
-                    view.GetZDO().Set(ZDOVars.s_cheated, cheated);
-
-                ItemDrop.OnCreateNew(obj, cheated);
+                    view.GetZDO().Set(ZDOVars.s_cheated, mark);
             }
             catch (Exception ex)
             {
-                // Never lose the spawn over the bookkeeping.
-                Log.LogWarning("Could not mark the spawned object: " + ex.Message);
+                Log.LogWarning("Could not record the cheated flag on the spawned object: " + ex.Message);
+            }
+
+            try
+            {
+                ItemDrop.OnCreateNew(obj, mark);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning("Could not stamp the spawned item's world level: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// The host's answer, run through <see cref="SpawnMark.ShouldMark"/>. Read through the
+        /// entry rather than a copied bool so the value lives in one place. A .cfg edited while
+        /// the server runs is not picked up here; BepInEx reads that file only at startup, so
+        /// such a change needs a restart. Null only while Awake has not run, which a queued
+        /// spawn cannot outrun, and the default answers for it if it ever did. A throw lands on
+        /// the default too: an unreadable setting must not decide to mark.
+        /// </summary>
+        private static bool ShouldMarkSpawn()
+        {
+            try
+            {
+                var wanted = CfgMarkSpawnedAsCheated != null
+                    ? CfgMarkSpawnedAsCheated.Value
+                    : SpawnMark.ConfigDefault;
+                return SpawnMark.ShouldMark(wanted, CheatChecksBypassed());
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning("Could not read the spawn mark setting, using the default: " + ex.Message);
+                return SpawnMark.ShouldMark(SpawnMark.ConfigDefault, false);
             }
         }
 
         // PlayerProfile.s_bypassCheatChecks was a plain static FIELD until Valheim 1.0.12
         // (build 25253791) turned it into a static PROPERTY. A compiled field read is an
         // ldsfld against a member that no longer exists, and Mono raises that
-        // MissingFieldException when it JITs the method holding the read - which is the
-        // CALLER, outside the try/catch above, so the whole spawn loop died after the first
-        // object with no level, no quality and one lonely item on the ground. Asking the live
-        // assembly what the member is today survives both shapes and any future third one.
+        // MissingFieldException when it JITs the method holding the read - and it raises it at
+        // that method's CALL SITE, so a try/catch written inside the method holding the read
+        // never runs at all. The whole spawn loop died after the first object with no level,
+        // no quality and one lonely item on the ground. Asking the live assembly what the
+        // member is today survives both shapes and any future third one.
         private static bool _bypassProbed;
         private static PropertyInfo _bypassProperty;
         private static FieldInfo _bypassField;
@@ -384,7 +463,8 @@ namespace BakaLoaderSpawnHelper
         /// <summary>
         /// Reads PlayerProfile.s_bypassCheatChecks without compiling a reference to it.
         /// Property first, then field, looked up once and cached. False when it is neither,
-        /// which marks the object cheated - exactly what vanilla does when the bypass is off.
+        /// which reads as "the bypass is off" and leaves the decision entirely with the host's
+        /// setting, the same way vanilla treats a server running without the bypass.
         /// </summary>
         private static bool CheatChecksBypassed()
         {

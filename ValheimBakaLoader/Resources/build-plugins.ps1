@@ -56,11 +56,23 @@ $refs += Get-ChildItem -LiteralPath $ManagedDir -Filter *.dll | ForEach-Object {
 $refs += (Join-Path $CoreDir "BepInEx.dll")
 $refs += (Join-Path $CoreDir "0Harmony.dll")
 
+# Source is a LIST, because two commands are each served by two plugins and there is one
+# shared file behind each. BakaKillAllPlan.cs and BakaKillAllSweep.cs are compiled into
+# Commander as well as into KillAll, and BakaSpawnMark.cs into Commander as well as into
+# SpawnHelper, so whichever of a pair a host has installed answers the command the same way
+# and neither needs the other to be there. A shared file can never be left out of one of a
+# pair without this list saying so.
 $plugins = @(
-    @{ Dir = "Commander";   Source = "BakaLoaderCommander.cs";     Out = "BakaLoaderCommander.dll" },
-    @{ Dir = "KillAll";     Source = "BakaKillAll.cs";             Out = "BakaKillAll.dll" },
-    @{ Dir = "SpawnHelper"; Source = "BakaLoaderSpawnHelper.cs";   Out = "BakaLoaderSpawnHelper.dll" },
-    @{ Dir = "MaxPlayers";  Source = "BakaLoaderMaxPlayers.cs";    Out = "BakaLoaderMaxPlayers.dll" }
+    @{ Dir = "Commander";   Source = @("BakaLoaderCommander.cs",
+                                       "..\KillAll\BakaKillAllPlan.cs",
+                                       "..\KillAll\BakaKillAllSweep.cs",
+                                       "..\SpawnHelper\BakaSpawnMark.cs"); Out = "BakaLoaderCommander.dll" },
+    @{ Dir = "KillAll";     Source = @("BakaKillAll.cs",
+                                       "BakaKillAllPlan.cs",
+                                       "BakaKillAllSweep.cs");            Out = "BakaKillAll.dll" },
+    @{ Dir = "SpawnHelper"; Source = @("BakaLoaderSpawnHelper.cs",
+                                       "BakaSpawnMark.cs");               Out = "BakaLoaderSpawnHelper.dll" },
+    @{ Dir = "MaxPlayers";  Source = @("BakaLoaderMaxPlayers.cs");        Out = "BakaLoaderMaxPlayers.dll" }
 )
 
 if ($IncludeItemIndexer) {
@@ -73,7 +85,7 @@ if ($SkipItemIndexer) {
     # The item indexer's source lives outside Resources (it has its own project folder), but the
     # DLL is bundled under Resources\ItemIndexer just like the others, and it is built here so all
     # five come out of one compiler against one reference set.
-    $plugins += @{ Dir = "ItemIndexer"; Source = "..\..\..\BakaLoaderItemIndexer\Plugin.cs"; Out = "BakaLoaderItemIndexer.dll" }
+    $plugins += @{ Dir = "ItemIndexer"; Source = @("..\..\..\BakaLoaderItemIndexer\Plugin.cs"); Out = "BakaLoaderItemIndexer.dll" }
 }
 
 $failed = @()
@@ -82,8 +94,12 @@ foreach ($p in $plugins) {
     $srcDir = Join-Path $root $p.Dir
     if (-not (Test-Path -LiteralPath $srcDir)) { New-Item -ItemType Directory -Path $srcDir | Out-Null }
 
-    $source = Join-Path $srcDir $p.Source
-    Require-File $source "source for $($p.Dir)"
+    $sources = @()
+    foreach ($s in @($p.Source)) {
+        $source = Join-Path $srcDir $s
+        Require-File $source "source for $($p.Dir)"
+        $sources += (Resolve-Path -LiteralPath $source).Path
+    }
 
     $target = if ($OutDir -ne "") { Join-Path $OutDir $p.Out } else { Join-Path $srcDir $p.Out }
     $targetDir = Split-Path -Parent $target
@@ -94,6 +110,12 @@ foreach ($p in $plugins) {
     $rsp = Join-Path $env:TEMP ("baka_" + $p.Dir + ".rsp")
     # /noconfig has to go on the command line: csc warns (CS2023) and ignores it inside a
     # response file, which would silently pull in the machine's default references.
+    # VALHEIM_PLUGIN is what tells BakaKillAllSweep.cs it is being compiled by THIS script
+    # rather than globbed into BakaLoader's own project. The sweep names Valheim's types, the
+    # app has no game assemblies, and the file lives under Resources like every other plugin
+    # source, so the fence is how the app keeps building. Define it for every plugin, not just
+    # the two that use it: a plugin that grows a game-fenced file later must not have to
+    # remember this.
     $lines = @(
         "/nostdlib+",
         "/target:library",
@@ -103,10 +125,11 @@ foreach ($p in $plugins) {
         "/warn:4",
         "/deterministic",
         "/utf8output",
+        "/define:VALHEIM_PLUGIN",
         "/out:`"$target`""
     )
     $lines += ($refs | ForEach-Object { "/reference:`"$_`"" })
-    $lines += "`"$((Resolve-Path -LiteralPath $source).Path)`""
+    $lines += ($sources | ForEach-Object { "`"$_`"" })
     Set-Content -LiteralPath $rsp -Value $lines -Encoding utf8
 
     Write-Host "Building $($p.Out) ..."

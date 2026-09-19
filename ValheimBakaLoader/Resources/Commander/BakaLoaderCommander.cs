@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.3.1 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.6.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -37,9 +37,39 @@
 //                                      BakaLoaderSpawnHelper). The 4th argument is a
 //                                      creature's star level (0 based) or an item's
 //                                      quality (1 based, 0 leaves it alone).
-//   baka_killall                     - kill all non-player characters (absorbed from
-//                                      BakaKillAll)
+//   baka_killall [<prefab> | near <player> <radius>] - kill hostiles, sparing players,
+//                                      pets and allies. The sweep itself lives in
+//                                      Resources\KillAll\BakaKillAllSweep.cs and is
+//                                      compiled into this DLL and into BakaKillAll.dll,
+//                                      so either plugin serves the command alone.
 //   anything else                    - forwarded to the in-game console if present
+//
+// CHEATED MARK (v1.6.0):
+// Valheim 1.0 shows "This item was summoned through cheating means." on anything its own
+// spawn command conjured, and pauses a player's achievement progress while such an item
+// sits in their inventory. baka_spawn does NOT mark its spawns any more. The behaviour is
+// one config entry, Spawning/MarkSpawnedAsCheated, default false, and the rule behind it
+// lives in ..\SpawnHelper\BakaSpawnMark.cs, compiled into this DLL and into the Spawn
+// Helper so the two can never drift into marking spawns differently.
+// The entry is read off disk once, while the server is starting. BepInEx 5.4 keeps no
+// watcher on the .cfg, so changing the setting while the server runs does nothing until
+// the next start.
+// KNOWN GAP: for as long as this plugin is the one serving RCON, which is the normal case
+// and the only arrangement BakaLoader sets up by itself, a host cannot turn this mark ON
+// for a spawn issued through the app. Such a spawn arrives at CmdSpawn below, which reads
+// this plugin's entry, and this plugin's entry can never be anything but the default.
+// BakaLoader rewrites com.baka.commander.cfg from the server profile on every start and
+// keeps only BindAddress, so a [Spawning] section written here by hand is destroyed before
+// BepInEx parses the file. Writing it again after a start does not help either: by then the
+// file has already been read, and the next start wipes it again. Curing this means teaching
+// Tools\CommanderInstaller.cs to carry a [Spawning] section across that rewrite the way it
+// already carries BindAddress.
+// com.baka.spawnhelper.cfg is NOT rewritten by BakaLoader and does hold its value, but it
+// governs only the spawns the Spawn Helper's own console command serves, never CmdSpawn's.
+// That command is reached from the game console and from a third-party RCON plugin that
+// forwards to it, so in the COEXISTENCE case below, where AviiNL-RCON won the port and this
+// plugin is dormant, the Spawn Helper's entry is the one in force and the gap does not
+// apply. It applies whenever Commander is the plugin answering.
 //
 // All game work is dispatched to the Unity main thread via a queue drained in
 // Update() - Object.Instantiate()/game API calls from the socket thread crash
@@ -51,13 +81,14 @@
 
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using BakaLoaderKillAll;
+using BakaLoaderSpawn;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -70,7 +101,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.3.1";
+        private const string PluginVersion = "1.6.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -95,6 +126,13 @@ namespace BakaLoaderCommander
         private ConfigEntry<int> CfgPort;
         private ConfigEntry<string> CfgPassword;
         private ConfigEntry<string> CfgBindAddress;
+
+        // Bound in Awake, read from MarkAsSpawnedIn, which is static because the spawn loop
+        // that calls it is. Held as the entry rather than as a copied bool only so the value
+        // lives in one place. That is not a way to pick up a live .cfg edit: BepInEx 5.4
+        // parses the file once, while the ConfigFile is being constructed, and keeps no
+        // watcher on it, so a setting changed mid-session takes effect at the next start.
+        private static ConfigEntry<bool> CfgMarkSpawnedAsCheated;
 
         private TcpListener _listener;
         private Thread _acceptThread;
@@ -125,6 +163,17 @@ namespace BakaLoaderCommander
                 "RCON password. Only gates the AUTH handshake (see plugin header); keep the bind address on loopback.");
             CfgBindAddress = Config.Bind("Server", "BindAddress", "127.0.0.1",
                 "Address to listen on. 127.0.0.1 (default) = local only; 0.0.0.0 = all interfaces (NOT recommended).");
+
+            // The section, the key, the default and the wording all come from SpawnMark so the
+            // two plugins that serve baka_spawn cannot bind the same setting under different
+            // names, and so the suite can pin all four without a dedicated server to run. Bound
+            // BEFORE the disabled-plugin return below: a host who turned the RCON listener off
+            // should still find the entry written out with its default in the config file.
+            CfgMarkSpawnedAsCheated = Config.Bind(
+                SpawnMark.ConfigSection,
+                SpawnMark.ConfigKey,
+                SpawnMark.ConfigDefault,
+                SpawnMark.ConfigDescription);
 
             if (!CfgEnabled.Value)
             {
@@ -400,6 +449,13 @@ namespace BakaLoaderCommander
                     cmd.Done.Set();
                 }
             }
+
+            // A kill-all too big to finish inside its own answer carries on here, a few
+            // milliseconds a frame, and posts its result line to the server log when it
+            // lands. It has to sit outside the drain loop above: the drain is what the RCON
+            // thread is waiting on, and holding it open for the rest of a sweep would put
+            // every other command behind the very timeout this arrangement exists to cure.
+            KillAllSweep.Pump();
         }
 
         private string ExecuteCommand(string text)
@@ -418,7 +474,7 @@ namespace BakaLoaderCommander
                 case "tp": return CmdTeleport(tokens);
                 case "kick": return CmdKick(text);
                 case "baka_spawn": return CmdSpawn(tokens);
-                case "baka_killall": return CmdKillAll();
+                case "baka_killall": return CmdKillAll(tokens);
                 default: return CmdFallback(text);
             }
         }
@@ -434,6 +490,21 @@ namespace BakaLoaderCommander
             return true;
         }
 
+        /// <summary>
+        /// A connected player by name, exact first and then ignoring case, because the game's
+        /// own lookup hashes the exact spelling.
+        /// <para>
+        /// BOTH halves require the peer to be READY, which is exactly what the game's own
+        /// ZNet.GetPeerByPlayerName requires of every peer it walks past. The fallback did not,
+        /// so it could answer where the game's own lookup refuses, and what it handed back was a
+        /// peer the game does not consider to be in the world yet. ZNetPeer.IsReady() is
+        /// m_uid != 0, and m_uid, m_playerName and m_refPos are all written together at the end
+        /// of the PeerInfo handshake. Until then m_uid is 0, and 0 is ZRoutedRpc.Everybody: a
+        /// dmg or a tp routed at such a peer goes to EVERY CLIENT ON THE SERVER rather than to
+        /// the one the host named. m_refPos is Vector3.zero for the same stretch, which is what
+        /// put a kill radius on the world origin.
+        /// </para>
+        /// </summary>
         private static ZNetPeer FindPeer(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
@@ -441,10 +512,10 @@ namespace BakaLoaderCommander
             var peer = ZNet.instance.GetPeerByPlayerName(name);
             if (peer != null) return peer;
 
-            // Case-insensitive fallback (exact-match API is case-sensitive)
             foreach (var p in ZNet.instance.GetPeers())
             {
-                if (p != null && string.Equals(p.m_playerName, name, StringComparison.OrdinalIgnoreCase))
+                if (p != null && p.IsReady() &&
+                    string.Equals(p.m_playerName, name, StringComparison.OrdinalIgnoreCase))
                     return p;
             }
             return null;
@@ -819,40 +890,84 @@ namespace BakaLoaderCommander
         }
 
         /// <summary>
-        /// Applies the same per-object bookkeeping the game's own "spawn" command applies.
-        /// Vanilla stamps every object it conjures with the cheated flag on its ZDO and runs
-        /// ItemDrop.OnCreateNew, which also records the world level the item was made at.
-        /// Without it a conjured object looks legitimately earned to every system that reads
-        /// the flag, and an item drop carries whatever world level happened to be on the
-        /// prefab. Whether the console command itself is cheat-flagged is a separate thing;
-        /// this marks the objects, not the console.
+        /// Applies the per-object bookkeeping the game's own "spawn" command applies, minus the
+        /// one part of it a host asked not to have.
+        /// <para>
+        /// ItemDrop.OnCreateNew runs on every spawn whatever the setting says, because it does
+        /// two jobs: it records the world level the item was made at, and it writes the cheated
+        /// flag. Skipping the call to avoid the flag would leave every conjured item carrying
+        /// whatever world level happened to be on the prefab. So the call stays and the flag is
+        /// handed to it, true or false, exactly as SpawnMark.ShouldMark decides.
+        /// </para>
+        /// <para>
+        /// The ZDO key is written either way for the same reason: a creature's drops read
+        /// ZDOVars.s_cheated off its record, and an explicit false is the only thing that says
+        /// "not cheated" rather than "nobody looked". Whether the console command itself is
+        /// cheat-flagged is a separate thing; this marks the objects, not the console.
+        /// </para>
         /// </summary>
         private static void MarkAsSpawnedIn(GameObject obj)
         {
+            var mark = ShouldMarkSpawn();
+
+            // Three guards rather than one, because the two records are independent and the
+            // second one is not optional. OnCreateNew is also what stamps the item's world
+            // level, so a ZDO write that throws must not be allowed to carry that call down
+            // with it and leave the item on whatever level sat on the prefab. Never lose the
+            // spawn over either piece of bookkeeping.
             try
             {
-                var cheated = !CheatChecksBypassed();
-
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
-                    view.GetZDO().Set(ZDOVars.s_cheated, cheated);
-
-                ItemDrop.OnCreateNew(obj, cheated);
+                    view.GetZDO().Set(ZDOVars.s_cheated, mark);
             }
             catch (Exception ex)
             {
-                // Never lose the spawn over the bookkeeping.
-                Log.LogWarning("Could not mark the spawned object: " + ex.Message);
+                Log.LogWarning("Could not record the cheated flag on the spawned object: " + ex.Message);
+            }
+
+            try
+            {
+                ItemDrop.OnCreateNew(obj, mark);
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning("Could not stamp the spawned item's world level: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// The host's answer, run through <see cref="SpawnMark.ShouldMark"/>. Read through the
+        /// entry rather than a copied bool so the value lives in one place. A .cfg edited while
+        /// the server runs is not picked up here; BepInEx reads that file only at startup, so
+        /// such a change needs a restart. Null only while Awake has not run, which a queued
+        /// spawn cannot outrun, and the default answers for it if it ever did. A throw lands on
+        /// the default too: an unreadable setting must not decide to mark.
+        /// </summary>
+        private static bool ShouldMarkSpawn()
+        {
+            try
+            {
+                var wanted = CfgMarkSpawnedAsCheated != null
+                    ? CfgMarkSpawnedAsCheated.Value
+                    : SpawnMark.ConfigDefault;
+                return SpawnMark.ShouldMark(wanted, CheatChecksBypassed());
+            }
+            catch (Exception ex)
+            {
+                Log.LogWarning("Could not read the spawn mark setting, using the default: " + ex.Message);
+                return SpawnMark.ShouldMark(SpawnMark.ConfigDefault, false);
             }
         }
 
         // PlayerProfile.s_bypassCheatChecks was a plain static FIELD until Valheim 1.0.12
         // (build 25253791) turned it into a static PROPERTY. A compiled field read is an
         // ldsfld against a member that no longer exists, and Mono raises that
-        // MissingFieldException when it JITs the method holding the read - which is the
-        // CALLER, outside the try/catch below, so the whole spawn loop died after the first
-        // object with no level, no quality and one lonely item on the ground. Asking the live
-        // assembly what the member is today survives both shapes and any future third one.
+        // MissingFieldException when it JITs the method holding the read - and it raises it at
+        // that method's CALL SITE, so a try/catch written inside the method holding the read
+        // never runs at all. The whole spawn loop died after the first object with no level,
+        // no quality and one lonely item on the ground. Asking the live assembly what the
+        // member is today survives both shapes and any future third one.
         private static bool _bypassProbed;
         private static PropertyInfo _bypassProperty;
         private static FieldInfo _bypassField;
@@ -860,7 +975,8 @@ namespace BakaLoaderCommander
         /// <summary>
         /// Reads PlayerProfile.s_bypassCheatChecks without compiling a reference to it.
         /// Property first, then field, looked up once and cached. False when it is neither,
-        /// which marks the object cheated - exactly what vanilla does when the bypass is off.
+        /// which reads as "the bypass is off" and leaves the decision entirely with the host's
+        /// setting, the same way vanilla treats a server running without the bypass.
         /// </summary>
         private static bool CheatChecksBypassed()
         {
@@ -887,97 +1003,40 @@ namespace BakaLoaderCommander
             return false;
         }
 
-        // ---- baka_killall -----------------------------------------------------
-        // Absorbed from BakaKillAll (3 enumeration fallbacks). HOSTILES ONLY:
-        // players, tamed pets, and friendly factions (AnimalsVeg passive wildlife,
-        // Dverger allies, PlayerSpawned summons, TrainingDummy training posts) are
-        // spared - modded servers add tons of friendly NPCs/pets, and training posts
-        // are player-built structures, so this must never wipe any of them.
+        // ---- baka_killall [<prefab> | near <player> <radius>] -----------------
+        //
+        // HOSTILES ONLY: players, tamed pets, and the friendly factions (AnimalsVeg
+        // passive wildlife, Dverger allies, PlayerSpawned summons, TrainingDummy
+        // training posts) are spared. Modded servers add plenty of friendly NPCs and
+        // pets, and a training post is a player-built structure, so a sweep must never
+        // wipe any of them.
+        //
+        // The work is in KillAllSweep (Resources\KillAll\BakaKillAllSweep.cs), compiled
+        // into this DLL and into BakaKillAll.dll so both companion plugins answer the
+        // command the same way and either one works installed alone. Commander gets here
+        // on the Unity main thread already: Update() drains the RCON queue.
+        //
+        // What it used to do was call Character.GetAllCharacters() and kill what came
+        // back. That is every creature in the world on a listen server and very nearly
+        // none of them on a dedicated one, because creatures around players are
+        // instantiated and owned by those players' clients. The sweep walks the world's
+        // own object records now and sends the damage to each creature's owner.
+        //
+        // THE ANSWER NEVER WAITS FOR THE WHOLE WALK. DispatchToMainThread gives up at
+        // CommandTimeoutMs and answers "Error: command timed out", and it has no way to
+        // call the work back: Update() goes right on and finishes the sweep. So a sweep
+        // that ran long told the host it had failed while it killed everything on the
+        // server. Start() answers with the whole result line when the walk fits inside one
+        // slice, which is every world a closed test will run on, and with "KillAll started:
+        // N candidates" when it does not. Pump(), at the bottom of Update(), carries the
+        // rest and puts the real "KillAll complete" line in the server log.
 
-        private static string CmdKillAll()
+        private static string CmdKillAll(string[] tokens)
         {
-            var killed = 0;
-            var spared = 0;
-
-            var staticList = Character.GetAllCharacters();
-            if (staticList != null && staticList.Count > 0)
-            {
-                for (var i = staticList.Count - 1; i >= 0; i--)
-                {
-                    var c = staticList[i];
-                    if (c == null) continue;
-                    if (ShouldSpare(c)) { spared++; continue; }
-                    if (TryKill(c)) killed++;
-                }
-            }
-            else
-            {
-                var sceneChars = Resources.FindObjectsOfTypeAll<Character>();
-                if (sceneChars != null && sceneChars.Length > 0)
-                {
-                    foreach (var c in sceneChars)
-                    {
-                        if (c == null) continue;
-                        if (ShouldSpare(c)) { spared++; continue; }
-                        if (TryKill(c)) killed++;
-                    }
-                }
-                else
-                {
-                    foreach (var m in UnityEngine.Object.FindObjectsOfType<MonoBehaviour>())
-                    {
-                        var c = m as Character;
-                        if (c == null) continue;
-                        if (ShouldSpare(c)) { spared++; continue; }
-                        if (TryKill(c)) killed++;
-                    }
-                }
-            }
-
-            return "KillAll complete: " + killed + " hostiles slain, " + spared + " spared (players, pets & allies)";
-        }
-
-        private static bool ShouldSpare(Character c)
-        {
-            try
-            {
-                if (c.IsPlayer()) return true;
-                if (c.IsTamed()) return true; // pets - wolves, lox, modded companions
-
-                // Friendly / non-hostile factions. Everything else (ForestMonsters,
-                // Undead, Demon, MountainMonsters, SeaMonsters, PlainsMonsters,
-                // MistlandsMonsters, DeepNorth, Boss) is a hostile mob and stays killable.
-                switch (c.m_faction)
-                {
-                    case Character.Faction.Players:       // player-faction NPCs (many modded friendlies)
-                    case Character.Faction.AnimalsVeg:    // passive wildlife (deer, gulls, hares)
-                    case Character.Faction.Dverger:       // dvergr allies
-                    case Character.Faction.PlayerSpawned: // player-summoned allies
-                    case Character.Faction.TrainingDummy: // player-built training posts
-                        return true;
-                }
-
-                return false;
-            }
-            catch { return true; } // if in doubt, don't kill
-        }
-
-        private static bool TryKill(Character c)
-        {
-            try
-            {
-                var hit = new HitData();
-                hit.m_damage.m_damage = 1e10f;
-                hit.m_point = c.transform.position;
-                hit.m_dodgeable = false;
-                hit.m_blockable = false;
-                c.Damage(hit);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
+            return KillAllSweep.Start(
+                tokens,
+                delegate(string message) { Log.LogWarning(message); },
+                delegate(string line) { Log.LogInfo(line); });
         }
 
         // ---- fallback: forward unknown commands to the in-game console --------
