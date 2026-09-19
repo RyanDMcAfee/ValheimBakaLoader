@@ -101,6 +101,12 @@ namespace ValheimBakaLoader.Tests.Tools
         /// way the default sits, and that turning it off does not un-mark anything already
         /// spawned. A host who reads "Mark spawned items as cheated" and nothing else cannot
         /// tell whether it costs anybody anything.
+        /// <para>
+        /// It also has to say that the change needs a restart. BepInEx parses a .cfg once, as
+        /// the server starts, and keeps no watcher on it, so a host who edits this entry mid
+        /// session and spawns sees no difference and concludes the setting does nothing. This
+        /// text is the only place that misreading can be headed off.
+        /// </para>
         /// </summary>
         [Theory]
         [InlineData("achievement")]
@@ -108,6 +114,7 @@ namespace ValheimBakaLoader.Tests.Tools
         [InlineData("drops")]
         [InlineData("default")]
         [InlineData("keep the mark they were given")]
+        [InlineData("next time the server starts")]
         public void TheEntryExplainsItselfToTheHost(string expected)
         {
             Assert.Contains(expected, SpawnMark.ConfigDescription);

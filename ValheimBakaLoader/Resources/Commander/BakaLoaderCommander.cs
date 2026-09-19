@@ -51,6 +51,9 @@
 // one config entry, Spawning/MarkSpawnedAsCheated, default false, and the rule behind it
 // lives in ..\SpawnHelper\BakaSpawnMark.cs, compiled into this DLL and into the Spawn
 // Helper so the two can never drift into marking spawns differently.
+// The entry is read off disk once, while the server is starting. BepInEx 5.4 keeps no
+// watcher on the .cfg, so changing the setting while the server runs does nothing until
+// the next start.
 // BakaLoader rewrites com.baka.commander.cfg from the server profile on every start and
 // keeps only BindAddress, so a host who wants the mark ON has to set it in the Spawn
 // Helper's own config, or set it here again after each start.
@@ -112,9 +115,10 @@ namespace BakaLoaderCommander
         private ConfigEntry<string> CfgBindAddress;
 
         // Bound in Awake, read from MarkAsSpawnedIn, which is static because the spawn loop
-        // that calls it is. Held as the entry rather than as a copied bool so a host who edits
-        // the .cfg while the server runs is obeyed on the next spawn: BepInEx watches the file
-        // and updates the entry in place.
+        // that calls it is. Held as the entry rather than as a copied bool only so the value
+        // lives in one place. That is not a way to pick up a live .cfg edit: BepInEx 5.4
+        // parses the file once, while the ConfigFile is being constructed, and keeps no
+        // watcher on it, so a setting changed mid-session takes effect at the next start.
         private static ConfigEntry<bool> CfgMarkSpawnedAsCheated;
 
         private TcpListener _listener;
@@ -893,9 +897,11 @@ namespace BakaLoaderCommander
         {
             try
             {
-                // Read through the entry rather than a copied bool so a host who edits the .cfg
-                // between spawns is obeyed. Null only while Awake has not run, which a queued
-                // spawn cannot outrun, and the default answers for it if it ever did.
+                // Read through the entry rather than a copied bool so the value lives in one
+                // place. A .cfg edited while the server runs is not picked up here; BepInEx
+                // reads that file only at startup, so such a change needs a restart. Null only
+                // while Awake has not run, which a queued spawn cannot outrun, and the default
+                // answers for it if it ever did.
                 var wanted = CfgMarkSpawnedAsCheated != null
                     ? CfgMarkSpawnedAsCheated.Value
                     : SpawnMark.ConfigDefault;

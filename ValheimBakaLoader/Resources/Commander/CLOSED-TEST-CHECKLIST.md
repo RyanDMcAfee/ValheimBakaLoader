@@ -221,12 +221,23 @@ From Commander 1.6.0 and Spawn Helper 1.5.0 nothing BakaLoader spawns is stamped
 config entry per plugin, `[Spawning] MarkSpawnedAsCheated`, default `false`, in
 `BepInEx/config/com.baka.commander.cfg` and `BepInEx/config/com.baka.spawnhelper.cfg`.
 
+**Either entry only takes effect at the next server start.** BepInEx reads a .cfg once,
+while the server is starting, and does not watch it afterwards, so editing one while the
+server runs changes nothing until you stop and start it.
+
 **Items and creatures spawned before this version keep their mark.** The flag lives inside
 each object, in the item's own saved data and on the creature's world record, not in this
 setting, so turning the entry off cannot reach back and clear anything already handed out.
 A player who still has achievements paused has to drop and destroy the old item.
 
 ### Entry off (the default, so leave both .cfg files alone for this pass)
+
+Walk this half on a character carrying **no** previously spawned items, and swinging a
+weapon that was not spawned either. Vanilla spreads the mark on its own once one marked
+object is in play: a clean stack merged into an already marked stack of the same item
+comes out marked, and a creature killed by a player holding a marked weapon is recorded
+as cheated, which then reaches its drops. Either would read as a failure here and neither
+would be the plugin's doing.
 
 - [ ] `baka_spawn SwordIron <x,z,y>` from the app. Pick the sword up and read its tooltip:
       there must be **no** "summoned through cheating means" line on it.

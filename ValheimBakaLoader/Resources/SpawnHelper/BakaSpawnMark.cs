@@ -43,6 +43,12 @@ namespace BakaLoaderSpawn
         /// What the host reads in BepInEx\config. Written as joined lines rather than as a
         /// verbatim string so a checkout with CRLF endings cannot push carriage returns into
         /// the .cfg file, which BepInEx writes one "## " line at a time.
+        /// <para>
+        /// It has to carry the restart, because this text is the only thing standing between a
+        /// host and the one way the entry looks broken: BepInEx 5.4 parses a .cfg once, while
+        /// the ConfigFile is being constructed, and keeps no watcher on the file, so a host who
+        /// edits this while the server runs and then spawns sees nothing change.
+        /// </para>
         /// </summary>
         internal const string ConfigDescription =
             "Mark everything this plugin spawns as summoned through cheating.\n" +
@@ -53,6 +59,8 @@ namespace BakaLoaderSpawn
             "BakaLoader leaves the flag off by default so a host replacing lost gear does not quietly cost\n" +
             "somebody their achievements. Set this to true to spawn the way the game's own console command\n" +
             "does.\n" +
+            "Changing this takes effect the next time the server starts: BepInEx reads this file once,\n" +
+            "while the server is starting, and does not watch it afterwards.\n" +
             "Items and creatures that were spawned before you changed this keep the mark they were given:\n" +
             "it is stored inside each object, not read back from this setting.";
 
