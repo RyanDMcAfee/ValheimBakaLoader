@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Text;
 
@@ -265,6 +266,198 @@ namespace ValheimBakaLoader.Tools
                 Seed = seed,
                 WorldVersion = WorldVersion,
             };
+        }
+    }
+
+    /// <summary>
+    /// Rewrites the world name stored INSIDE a .fwl or a .fwl2 header, so a copy made
+    /// under a new file name is a real rename rather than the same world wearing two
+    /// names at once.
+    /// <para>
+    /// The name is the third field of the header and the game writes it with a .NET
+    /// BinaryWriter, which means a 7 bit encoded BYTE COUNT followed by that many UTF-8
+    /// bytes. A longer or shorter name moves every byte behind it and changes the payload
+    /// size the file opens with, so the file is rebuilt rather than patched in place: the
+    /// four bytes of worldVersion, the new name, and the whole tail exactly as it was.
+    /// Nothing behind the name is parsed, which is what keeps this working across game
+    /// versions that add fields to the end.
+    /// </para>
+    /// <para>
+    /// It refuses rather than guesses. A file whose leading size claims more bytes than the
+    /// file holds, whose worldVersion is not plausible, or whose name and seed name do not
+    /// both parse as length prefixed strings inside that payload is left untouched and
+    /// answered with false, because a header written half way is a world that will not open.
+    /// </para>
+    /// <para>
+    /// That is STRICTER than the copy's own pre-check, and it is worth knowing by how much.
+    /// The pre-check is <see cref="FwlReader.TryRead"/>, which WorldStore.CopyWorldAs asks
+    /// before a byte moves. It only wants the fields at the front, so it holds the leading size
+    /// against the file's LENGTH and reads the name and the seed name straight out of the file.
+    /// This holds the size against the file's PAYLOAD, which is four bytes shorter, and holds
+    /// both of those strings inside the payload the header declares. So two bands of header
+    /// pass that pre-check and are still not renamed: one whose declared payload overshoots the
+    /// file by one, two, three or four bytes, and one whose declared payload is too small to
+    /// hold the name or the seed name the file really carries. Both are headers whose own size
+    /// field is contradicted by the file it sits in, and rebuilding either one would mean
+    /// measuring the tail by a number that was never true: past the last byte there is in the
+    /// first case, and short of the name in the second. A header in either band stops the copy
+    /// before anything takes the new name, and the staging it was working in goes with it,
+    /// rather than landing a world whose header disagrees with the folder it sits in.
+    /// </para>
+    /// <para>
+    /// Neither band says anything about the world LIST, which never opens a header at all.
+    /// WorldStore.Enumerate, Find and GetWorldNames name a world by the file or the directory
+    /// it sits in, so a world whose header will not parse is listed like any other and is
+    /// offered a copy like any other. What such a host meets is the pre-check's own "could not
+    /// be read", with the save folder untouched.
+    /// </para>
+    /// </summary>
+    public static class FwlNameRewriter
+    {
+        /// <summary>The suffix a rebuilt header is written under before it takes its place.</summary>
+        private const string WritingSuffix = ".renaming";
+
+        /// <summary>
+        /// Writes the header at <paramref name="metaPath"/> back with <paramref name="newName"/>
+        /// as the world name it stores. False when the header could not be read, in which case
+        /// the file on disk is exactly as it was.
+        /// </summary>
+        public static bool TryRewriteWorldName(string metaPath, string newName)
+        {
+            if (string.IsNullOrWhiteSpace(metaPath)) return false;
+            if (string.IsNullOrEmpty(newName)) return false;
+
+            byte[] original;
+            try
+            {
+                if (!File.Exists(metaPath)) return false;
+                original = File.ReadAllBytes(metaPath);
+            }
+            catch { return false; }
+
+            var rebuilt = Rebuild(original, newName);
+            if (rebuilt == null) return false;
+
+            var staging = metaPath + WritingSuffix;
+            try
+            {
+                File.WriteAllBytes(staging, rebuilt);
+                File.Move(staging, metaPath, overwrite: true);
+                return true;
+            }
+            catch
+            {
+                try { if (File.Exists(staging)) File.Delete(staging); } catch { /* best effort */ }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The bytes of a header with its world name swapped, or null when the bytes are not
+        /// a header this can read. Public so the rewrite can be held against a file built by
+        /// hand, byte for byte, without going near a save folder.
+        /// </summary>
+        public static byte[] Rebuild(byte[] header, string newName)
+        {
+            // An empty name is refused beside a null one. A header rebuilt around a
+            // zero length name parses and opens, and is a world with no name at all:
+            // returning it would be answering a question nobody can have meant to ask.
+            if (header == null || string.IsNullOrEmpty(newName)) return null;
+
+            // int32 payload size, int32 worldVersion, then the name: the shortest header
+            // that could hold all three is twelve bytes.
+            if (header.Length < 12) return null;
+
+            // The leading size measures the PAYLOAD, and a file is allowed to carry bytes
+            // past that payload rather than end exactly on it: those are kept untouched,
+            // because nothing here knows what they are. The size itself has to fit INSIDE
+            // the file, which is four bytes stricter than the copy's pre-check reader
+            // (FwlReader.TryRead), and everything below is bounded by where the payload ends
+            // rather than by where the file does. A header whose size overshoots the file by
+            // one to four bytes is therefore one the pre-check will pass and this will refuse:
+            // a tail measured past the last byte there is cannot be carried across, and a
+            // header rebuilt around a size that was never true is a world that will not open.
+            var payloadSize = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(0, 4));
+            if (payloadSize <= 0 || payloadSize > header.Length - 4) return null;
+            var payloadEnds = 4 + payloadSize;
+
+            var worldVersion = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(4, 4));
+            if (worldVersion <= 0 || worldVersion > 10_000) return null;
+
+            if (!TryReadLength(header, 8, payloadEnds, out var nameBytes, out var namePrefix)) return null;
+            // Added up in long on purpose. A length prefix is free to encode a byte count
+            // near int.MaxValue, and in int that sum wraps past zero: the bound underneath
+            // would then be measuring a negative offset, pass it, and hand it straight back
+            // to the reader to index with. A header this cannot read is refused, and
+            // refusing rather than throwing is the whole promise of this type.
+            var nameEnds = 8L + namePrefix + nameBytes;
+            if (nameEnds > payloadEnds) return null;
+            var nameAt = (int)nameEnds;
+
+            // The seed name has to parse too. Without that check any file whose ninth byte
+            // happens to be a small number would be rewritten as though it were a world.
+            if (!TryReadLength(header, nameAt, payloadEnds, out var seedBytes, out var seedPrefix)) return null;
+            if (nameEnds + seedPrefix + seedBytes > payloadEnds) return null;
+
+            var written = Encoding.UTF8.GetBytes(newName);
+            var lengthPrefix = Encode7Bit(written.Length);
+            var tailLength = payloadEnds - nameAt;       // the rest of the payload
+            var trailing = header.Length - payloadEnds;  // and whatever the file carries past it
+
+            var payload = new byte[4 + lengthPrefix.Length + written.Length + tailLength];
+            Buffer.BlockCopy(header, 4, payload, 0, 4);                       // worldVersion
+            Buffer.BlockCopy(lengthPrefix, 0, payload, 4, lengthPrefix.Length);
+            Buffer.BlockCopy(written, 0, payload, 4 + lengthPrefix.Length, written.Length);
+            Buffer.BlockCopy(header, nameAt, payload, 4 + lengthPrefix.Length + written.Length, tailLength);
+
+            var rebuilt = new byte[4 + payload.Length + trailing];
+            BinaryPrimitives.WriteInt32LittleEndian(rebuilt.AsSpan(0, 4), payload.Length);
+            Buffer.BlockCopy(payload, 0, rebuilt, 4, payload.Length);
+            if (trailing > 0) Buffer.BlockCopy(header, payloadEnds, rebuilt, 4 + payload.Length, trailing);
+            return rebuilt;
+        }
+
+        /// <summary>
+        /// The 7 bit encoded byte count a BinaryWriter puts in front of a string: seven bits
+        /// of the number per byte, the top bit saying another byte follows. Five bytes is the
+        /// most an int32 can take, and anything longer is not a length. Reading stops at
+        /// <paramref name="limit"/>, which is where the payload ends rather than where the
+        /// file does, so a prefix is never read out of bytes the header never claimed.
+        /// </summary>
+        private static bool TryReadLength(byte[] header, int at, int limit, out int length, out int prefixLength)
+        {
+            length = 0;
+            prefixLength = 0;
+            if (at < 0) return false;
+
+            var shift = 0;
+            for (var step = 0; step < 5; step++)
+            {
+                if (at + step >= limit) return false;
+                var b = header[at + step];
+                length |= (b & 0x7F) << shift;
+                shift += 7;
+                if ((b & 0x80) == 0)
+                {
+                    prefixLength = step + 1;
+                    return length >= 0;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>The same encoding, written out.</summary>
+        private static byte[] Encode7Bit(int value)
+        {
+            var bytes = new System.Collections.Generic.List<byte>(5);
+            var left = (uint)value;
+            while (left >= 0x80)
+            {
+                bytes.Add((byte)(left | 0x80));
+                left >>= 7;
+            }
+            bytes.Add((byte)left);
+            return bytes.ToArray();
         }
     }
 }

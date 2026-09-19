@@ -115,6 +115,18 @@ const HOST_SENTENCES=[
   {named:"bepinex.busy",           textId:"bepinex.reason.busy"},
   {named:"bepinex.noServerPath",   textId:"bepinex.reason.no_server_path"},
   {named:"bepinex.noWrongFolder",  textId:"bepinex.reason.no_wrong_folder"},
+  {named:"worlds.copySourceRequired",    textId:"world.copy.reason.source_required"},
+  {named:"worlds.copyBadSourceRef",      textId:"world.copy.reason.bad_source"},
+  {named:"worlds.copyBadSubfolder",      textId:"world.copy.reason.bad_subfolder"},
+  {named:"worlds.copyUnknownSaveFolder", textId:"world.copy.reason.unknown_save_folder"},
+  {named:"worlds.copyTargetRequired",    textId:"world.copy.reason.target_required"},
+  {named:"worlds.copyTargetTooLong",     textId:"world.copy.reason.target_too_long"},
+  {named:"worlds.copyBadTargetRef",      textId:"world.copy.reason.bad_target"},
+  {named:"worlds.copyTargetExists",      textId:"world.copy.reason.target_exists"},
+  {named:"worlds.copyServerRunning",     textId:"world.copy.reason.server_running"},
+  {named:"worlds.copyNoSuchWorld",       textId:"world.copy.reason.no_such_world"},
+  {named:"worlds.copyUnreadable",        textId:"world.copy.reason.unreadable"},
+  {named:"worlds.copyFailed",            textId:"world.copy.reason.failed"},
 ];
 /* The catalog sentence for a refusal the host named, or null when it named none this
    page owns the words for. */
@@ -450,6 +462,7 @@ function repaintBootCopy(){
   try{updAdvLabels();}catch(_){}          /* the three Advanced labels that carry a number */
   try{renderEyeChips();}catch(_){}        /* the two password chips' SHOW / HIDE word */
   try{repaintWorldDialCopy();}catch(_){}  /* the five world dials: options, notes, footnote */
+  try{repaintWorldSelectCopy();}catch(_){}  /* the World field: its New world entry and line */
   /* These two are async, so a throw inside them lands on the promise rather than in the
      try around the call, and an unhandled rejection is a console error on every boot. */
   try{renderWorldSeed()?.catch(()=>{});}catch(_){}   /* the seed field's not-created-yet line */
@@ -1185,6 +1198,15 @@ async function addServerProfile(){
     if((S.servers||[]).some(s=>String(s.name).toLowerCase()===name.toLowerCase())){
       statusN.textContent=T("realm.new.name.taken"); return;
     }
+    /* The world name is held to the same rule the World field and Copy world as
+       hold one to. The forge used to send whatever was typed: an unusable name got
+       as far as the first start, which then could not build a command line out of
+       it. A blank box is still fine, and still means "name it after the realm". */
+    const world=worldI.value.trim();
+    if(world){
+      const worldProblem=worldNameProblem(world,null);
+      if(worldProblem){statusN.textContent=worldProblem;worldI.focus();return;}
+    }
     const modifiers=collectWsMods();
     if(!Native.available){
       // Mock/preview: no native host to forge against, so add a local chip so the strip
@@ -1197,7 +1219,7 @@ async function addServerProfile(){
     okB.disabled=true; okB.textContent=T("realm.new.working");
     statusN.textContent=on(iso)?T("realm.new.status.provisioning"):T("realm.new.status.saving");
     const created=await rpc("servers.create",{
-      name, world:worldI.value.trim(),
+      name, world,
       worldSeed:m.querySelector("#wsWorldSeed").value.trim(),
       isolateInstall:on(iso), seedMods:on(iso)&&on(seed), isolateSaveFolder:on(saveIso),
       port:ports?ports.gamePort:null, rconPort:ports?ports.rconPort:null,
@@ -4160,20 +4182,37 @@ function onModalDismissed(fn){
    asks it again when the words change. A plain string still works and reads the same;
    it simply keeps the wording it was given. */
 const worded=v=>typeof v==="function"?String(v()):String(v==null?"":v);
-function promptModal(title,placeholder,onOk){
+function promptModal(title,placeholder,onOk,check){
   /* What is typed survives the redraw. Losing a half-typed name to a language switch
      would be the same class of loss a reload was rejected for. */
   let typed="";
+  /* check, when a caller hands one in, says what is wrong with what was typed, or ""
+     when nothing is. It is asked on the press, and a refusal keeps the dialog open with
+     the name still in the box rather than shutting it and leaving the host to open it
+     again and type the whole name again to fix one character of it.
+     refused only says that a press was turned down; the WORDS are asked for again on
+     every redraw, so a language switch re-words the line the way it re-words the rest. */
+  let refused=false;
   const again=()=>{
+    const problem=refused&&check?String(check(typed)||""):"";
     const m=modalOpen(
       `<div class="mtitle">${esc(worded(title))}</div>`+
       `<input type="text" id="mIn" placeholder="${esc(worded(placeholder))}" spellcheck="false" autocomplete="off">`+
+      (problem?`<div class="subval" id="mInNote" style="color:var(--blood);padding:4px 2px 0">${esc(problem)}</div>`:"")+
       `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(T("common.button.confirm"))}</button></div>`,
       again);
     const inp=m.querySelector("#mIn");
     inp.value=typed;
-    inp.addEventListener("input",()=>{typed=inp.value;});
-    const ok=()=>{const v=inp.value.trim(); if(!v)return; modalClose(); onOk(v);};
+    /* The line goes as soon as the host starts fixing the name: it was a reply to one
+       press, not a running commentary. Hidden rather than redrawn, because redrawing
+       the dialog on a keystroke would take the caret with it. */
+    inp.addEventListener("input",()=>{typed=inp.value;
+      if(refused){refused=false;const note=m.querySelector("#mInNote");if(note)note.style.display="none";}});
+    const ok=()=>{
+      const v=inp.value.trim(); if(!v)return;
+      if(check&&String(check(v)||"")){typed=inp.value;refused=true;again();return;}
+      modalClose(); onOk(v);
+    };
     m.querySelector("#mOk").addEventListener("click",ok);
     m.querySelector("#mCancel").addEventListener("click",modalClose);
     inp.addEventListener("keydown",e=>{if(e.key==="Enter")ok();});
@@ -5201,6 +5240,48 @@ function worldDeleteModal(ctx,after){
   name.addEventListener("keydown",e=>{if(e.key==="Enter")run();});
   setTimeout(()=>name.focus(),30);
 }
+/* ---------- COPY A WORLD UNDER A NEW NAME ----------
+   The one place a world is duplicated, shared by the Settings hall's World field and the
+   Barrow's world list, the way the delete is. worlds.copyAs makes every one of these
+   checks again on the way in, so this is not the guard: it is the guard said out loud, so
+   a control that could only come back refused is greyed with its reason instead of
+   offered. Whoever has the world merely CHOSEN is not asked: a copy leaves the source and
+   its backup layers exactly where they are, so there is nothing for them to lose. */
+function worldCopyBlock(ctx){
+  if(!ctx||!ctx.world) return T("world.copy.block.no_world");
+  if(ctx.running) return T("world.copy.block.running",{owner:ctx.owner||""});
+  return "";
+}
+function worldCopyModal(ctx,after){
+  const block=worldCopyBlock(ctx);
+  if(block){toast("ᚦ "+block);return;}
+  /* The rule goes INTO the dialog rather than being read after it has shut. A name the
+     rule turns down is said under the box with the name still in it, which is the only
+     place a host can act on it: a toast over a closed dialog meant opening the dialog
+     again and typing the whole name again to change one character of it. It is handed in
+     as the dialog's check, below, which the press runs before it hands the name on, so
+     this arm is only ever reached by a name the rule has already passed and says the
+     rule once rather than twice. worlds.copyAs asks it again on the way in regardless,
+     which is the check that actually holds. */
+  promptModal(
+    ()=>T("world.copy.title",{world:ctx.world}),
+    ()=>T("world.copy.placeholder"),
+    async typed=>{
+      const target=String(typed).trim();
+      if(!Native.available){
+        toast("ᛝ "+T("world.copy.preview.toast",{world:target}));
+        if(after) after(target);
+        return;
+      }
+      const r=await rpc("worlds.copyAs",
+        {source:ctx.world,target,folder:ctx.folder||"",sub:ctx.sub||""});
+      if(r===FAIL) return;
+      toast("ᛝ "+T("world.copy.done.toast",{source:ctx.world,target}));
+      logLine("ok","[BakaLoader] copied world '"+ctx.world+"' as '"+target+"'");
+      if(after) after(target);
+    },
+    typed=>worldNameProblem(typed,ctx.taken||[]));
+}
 /* Preview stand-in for world.info, so the card and its delete control can be walked
    without the app behind them. */
 const WORLD_INFO_MOCK={world:"Midgard",folder:"C:/Users/you/AppData/LocalLow/IronGate/Valheim",
@@ -5379,6 +5460,7 @@ async function barrowModal(){
     `<span class="dv">${g.owner?esc(g.owner):`<span style='opacity:.55'>${esc(T("barrow.world.unclaimed"))}</span>`}${g.running?` <span style="color:var(--ok,#7dc98f)">● ${esc(T("barrow.world.raiding"))}</span>`:""}</span>`+
     `<span class="dv mono">${esc(T("barrow.layers.count",{count:(g.backups||[]).length}))} · ${fmtBytes((g.sizeBytes||0)+(g.backupBytes||0))}</span>`+
     `<span class="dv" style="flex:0 0 auto">${agoAt(g.modifiedUtc)}</span>`+
+    `<span class="copychip bCopyAs" data-i="${i}" title="${esc(T("world.copy.chip.title"))}">${esc(T("world.copy.chip"))}</span>`+
     `</div><div class="subval mono" style="padding:0 2px 6px;opacity:.6">${esc(barrowFolderLabel(g))}${worldFormatLabel(g)?" · "+esc(worldFormatLabel(g)):""}${g.day!=null?" · "+esc(T("barrow.day",{day:g.day})):""}</div>`
   ).join(""):emptyState({mark:"\u16DD",title:T("barrow.worlds.empty.title"),
     reason:T("barrow.worlds.empty.reason")});
@@ -5410,6 +5492,14 @@ async function barrowModal(){
   m.classList.add("mwide");
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelectorAll(".browRow").forEach(r=>r.addEventListener("click",()=>barrowWorldModal(groups[+r.dataset.i])));
+  /* The chip sits inside a row that opens the world when it is pressed, so the press
+     has to stop there: without this, one press would open the drill-down behind the
+     name box and the copy would land on whatever the drill-down then showed. */
+  m.querySelectorAll(".bCopyAs").forEach(c=>c.addEventListener("click",e=>{
+    e.stopPropagation();
+    const g=groups[+c.dataset.i]; if(!g) return;
+    barrowCopyWorld(g,groups);
+  }));
   m.querySelectorAll(".oUnearth").forEach(c=>c.addEventListener("click",()=>{
     const o=orphans[+c.dataset.o]; if(!o) return;
     const b=o.backups[+c.dataset.i];
@@ -5482,6 +5572,33 @@ function barrowLayerRowHtml(g,b,i,sel,extra){
   `<span class="copychip ${cls.drop}" data-i="${i}"${at} style="color:var(--warn,#e0a35c)">✕</span>`+
   `</div>`;
 }
+/* Copy one of the Barrow's worlds under a new name and come back to the list with the
+   copy in it. In the browser preview there is no host to copy anything, so the mock list
+   grows a world the same way it loses one on a delete, and the Barrow stays walkable. */
+function barrowCopyWorld(g,groups){
+  /* The names already spoken for, when the caller knows them. The Barrow lists every
+     save folder BakaLoader knows in one go, and a name is only taken inside ONE of
+     them, so the listing is cut down to the folder this world sits in before it is
+     asked: a realm kept on its own save folder was being turned away from a name that
+     was free there, because some other folder had a world by that name. The world view
+     was handed ONE world and holds no listing at all, so in the app it says nothing
+     rather than guessing, and in the browser preview the mock listing stands in for the
+     native side, cut to this world's own save folder the same way. A preview that turned
+     down a name the app would take is a walker writing the feature up wrong, and this
+     view and the row it was opened from have to answer the same. Either way the native
+     side answers for certain on the way in. */
+  const here=groups?groups.filter(x=>x.folder===g.folder):null;
+  const taken=here?here.map(x=>x.world)
+    :(Native.available?[]:BARROW_MOCK.filter(x=>x.folder===g.folder).map(x=>x.world));
+  worldCopyModal({world:g.world,folder:g.folder,sub:g.sub,owner:g.owner,running:g.running,taken},
+    target=>{
+      if(!Native.available){
+        BARROW_MOCK.push({...g,world:target,owner:null,running:false,
+          backups:[],backupBytes:0,modifiedUtc:new Date().toISOString()});
+      }
+      barrowModal();
+    });
+}
 function barrowWorldModal(g){
   const layerRow=(b,i)=>barrowLayerRowHtml(g,b,i);
   const bks=g.backups||[];
@@ -5501,11 +5618,13 @@ function barrowWorldModal(g){
     `<div class="subval mono" style="margin-top:8px;word-break:break-all">${esc(g.folder)}/${esc(g.sub)}</div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mBack">${esc(T("common.button.back"))}</button>`+
+    `<button class="btn btn-ghost btn-sm" id="mCopyAs" title="${esc(T("world.copy.button.title"))}">${esc(T("world.copy.button"))}</button>`+
     `<button class="btn btn-blood btn-sm" id="mDelWorld"${delBlock?` disabled title="${esc(delBlock)}"`:` title="${esc(T("world.delete.button.title"))}"`}>${esc(T("world.delete.button"))}</button>`+
     `<button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.close"))}</button></div>`,()=>barrowWorldModal(g));
   m.classList.add("mwide");
   m.querySelector("#mCancel").addEventListener("click",modalClose);
   m.querySelector("#mBack").addEventListener("click",()=>barrowModal());
+  m.querySelector("#mCopyAs").addEventListener("click",()=>barrowCopyWorld(g,null));
   m.querySelector("#mDelWorld").addEventListener("click",()=>{
     if(delBlock){toast("ᚦ "+delBlock);return;}
     /* back to the world list: this one is not in it any more */
@@ -6190,13 +6309,135 @@ function renderWorldForm(){
   syncAdvGates();
   renderWorldSelect();
 }
+/* ---------- THE WORLD FIELD ----------
+   The list of worlds this realm can be pointed at, and the one entry at the end of it
+   that is not a world: New world, which opens a box to type a name in.
+
+   The value of that entry is a string no world can ever be called, because it holds two
+   characters Windows will not put in a file name. An empty value would not do: "" is
+   what the field carries before any world exists, so a sentinel that meant "type one"
+   and "there are none" at the same time could not tell the two apart. */
+const WORLD_NEW_VALUE="*new*";
+/* The names the field is showing right now, so a typed name can be held against them
+   before anything is sent. The native side answers the same question again on the way
+   in; this is the answer said out loud, early, while the host is still typing. */
+let WORLD_NAMES=[];
+/* Two worlds, so the World field and the Barrow can be walked in a browser with no app
+   behind them. Nothing here is ever written anywhere. */
+const WORLD_LIST_MOCK=["Midgard","Trialgrounds"];
+/* Everything Windows refuses in a file name, which is everything the game refuses in a
+   world name: the two separators, the drive colon, both wildcards, the redirections, the
+   pipe and the quote. A string and a loop rather than a character class, because a
+   backslash beside a slash inside one reads as the end of the pattern to more than one
+   tool that walks this file, and what follows it then reads as code. */
+const WORLD_NAME_BAD="\\/:*?\"<>|";
+/* True when a name carries one of those, or a character below space. */
+function worldNameHasBadCharacter(v){
+  for(let i=0;i<v.length;i++){
+    if(WORLD_NAME_BAD.indexOf(v[i])>=0||v.charCodeAt(i)<32) return true;
+  }
+  return false;
+}
+/* The names that reach a device rather than a file, whatever folder they are written in. */
+const WORLD_NAME_DEVICES=new Set(["CON","PRN","AUX","NUL",
+  "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
+  "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9"]);
+/* The same length the native side holds a new name to (WorldStore.WorldNameMaxLength).
+   Written down twice on purpose, because the two are read in two different languages and
+   a shared constant would have to travel over the wire before the first keystroke. A
+   test holds the two numbers together. */
+const WORLD_NAME_MAX=64;
+/* What is wrong with a world name, worded, or "" when nothing is. One reader for every
+   place a host types one: the New world box, the realm forge, and Copy world as. The
+   rules are the native side's own (WorldStore.IsSafeReferenceToken plus the length),
+   said here so a host is turned away while typing rather than after pressing. */
+function worldNameProblem(name,taken){
+  const v=String(name==null?"":name).trim();
+  if(!v) return T("world.name.problem.required");
+  if(v.length>WORLD_NAME_MAX) return T("world.name.problem.too_long",{limit:WORLD_NAME_MAX});
+  if(worldNameHasBadCharacter(v)||v.includes("..")||v===".") return T("world.name.problem.bad_characters");
+  const last=v[v.length-1];
+  if(last==="."||last===" ") return T("world.name.problem.bad_characters");
+  const dot=v.indexOf(".");
+  if(WORLD_NAME_DEVICES.has((dot>=0?v.slice(0,dot):v).toUpperCase()))
+    return T("world.name.problem.bad_characters");
+  if((taken||[]).some(n=>String(n).toLowerCase()===v.toLowerCase()))
+    return T("world.name.problem.taken",{world:v});
+  return "";
+}
+/* The world this hall is pointed at right now: the entry chosen in the list, or the name
+   typed in the New world box when New world is what is chosen. A half typed new name
+   answers as itself and never as the world the realm is still saved on, or the seed line
+   and the difficulty dials would be describing a world nobody is looking at. */
+function worldFieldValue(){
+  const sel=$("#fWorld");
+  if(!sel) return S.prefs?.WorldName||"";
+  if(sel.value===WORLD_NEW_VALUE){const box=$("#fWorldNew");return box?box.value.trim():"";}
+  return sel.value||S.prefs?.WorldName||"";
+}
+/* What is wrong with the name in the New world box, or "" when the box is shut, empty on
+   a hall that has no world of its own yet, or holding a name that is fine. Save Config
+   asks this before it writes anything.
+
+   The empty box is only a problem when answering it would CHANGE what the hall is pointed
+   at. A realm forged with the world box left blank has "" saved and nothing in its world
+   list, so New world is what the field picks by itself and the box opens empty: refusing
+   there would hold the port, the password, the RCON fields and the backup dials hostage to
+   a name nothing has asked for yet, on the one screen that can set them. A hall that HAS a
+   world saved is the other question, because an empty box there would quietly wipe it, so
+   that one is still asked. */
+function worldNewProblem(){
+  const sel=$("#fWorld");
+  if(!sel||sel.value!==WORLD_NEW_VALUE) return "";
+  const typed=String($("#fWorldNew")?.value??"").trim();
+  if(!typed&&!(S.prefs?.WorldName||"")) return "";
+  return worldNameProblem(typed,WORLD_NAMES);
+}
+/* Opens or shuts the New world box to match what is chosen, says what is wrong with what
+   is in it, and takes Copy world as away while there is no world chosen to copy.
+   Called from the list, from every keystroke in the box, and from the language switch. */
+function syncWorldNew(){
+  const sel=$("#fWorld"), box=$("#fWorldNew"), note=$("#fWorldNote");
+  const typing=!!sel&&sel.value===WORLD_NEW_VALUE;
+  if(box) box.style.display=typing?"":"none";
+  if(note){
+    if(!typing){note.style.display="none";note.textContent="";note.style.color="";}
+    else{
+      const typed=!!(box&&box.value.trim());
+      const problem=typed?worldNewProblem():"";
+      note.textContent=problem||T("world.new.note");
+      note.style.color=problem?"var(--blood)":"";
+      note.style.display="";
+    }
+  }
+  /* Copy as has nothing to act on while a new name is being typed, and the
+     chip goes rather than greys: its tooltip is the walker's, filled from the
+     markup, so a greyed one would be offering the wrong sentence on hover. */
+  const chip=$("#copyWorldAs");
+  if(chip) chip.style.display=(!typing&&!!(sel&&sel.value))?"":"none";
+}
 async function renderWorldSelect(){
   const cur=S.prefs?.WorldName??"";
-  const r=await rpc("worlds.list");
+  const r=Native.available?await rpc("worlds.list"):WORLD_LIST_MOCK;
   const names=[...new Set([...(Array.isArray(r)&&r!==FAIL?r:[]),...(cur?[cur]:[])])];
-  $("#fWorld").innerHTML=names.map(n=>`<option${n===cur?" selected":""}>${esc(n)}</option>`).join("");
+  WORLD_NAMES=names;
+  /* The union is what puts a typed name back on screen as the chosen one after a reload:
+     it is saved in the profile but not on disk until the server first starts, so the
+     world list alone would answer without it and the field would jump to another world. */
+  $("#fWorld").innerHTML=names.map(n=>`<option${n===cur?" selected":""}>${esc(n)}</option>`).join("")
+    +`<option value="${WORLD_NEW_VALUE}">${esc(T("world.new.option"))}</option>`;
+  syncWorldNew();
   renderWorldMods();
   renderWorldSeed();
+}
+/* The two words this field paints itself rather than reading out of the markup: the New
+   world entry at the end of the list and the line under the box. Repainted rather than
+   rendered again, so a half typed name and the host's chosen entry both survive a
+   language switch, and so a switch costs no trip to the world list. */
+function repaintWorldSelectCopy(){
+  const entry=$("#fWorld")?.querySelector('option[value="'+WORLD_NEW_VALUE+'"]');
+  if(entry) entry.textContent=T("world.new.option");
+  syncWorldNew();
 }
 /* World-generation dials. value "" = Normal = game default (no -modifier arg emitted).
    Every non-empty value must match Game/WorldGen.cs exactly - the C# save validates.
@@ -6529,7 +6770,7 @@ let _worldModsSeq=0;
    edit: while S.worldMods already holds THIS world, its values are re-painted as-is. Only a
    genuine change of world reloads the stored values from disk. */
 async function renderWorldMods(){
-  const world=$("#fWorld").value||S.prefs?.WorldName||"";
+  const world=worldFieldValue();
   // Same world we already hold: keep the host's (possibly unsaved) dials, no reload, no clobber.
   if(S.worldMods&&S.worldMods.world===world){ applyWorldModDials(S.worldMods.mods); return; }
   // A different world (or first load): pull its stored values fresh, guarded so a slow
@@ -6550,7 +6791,7 @@ async function renderWorldMods(){
 let _seedSeq=0;
 async function renderWorldSeed(){
   const el=$("#fSeed"); if(!el) return;
-  const world=$("#fWorld").value||S.prefs?.WorldName||"";
+  const world=worldFieldValue();
   const seq=++_seedSeq;
   if(!Native.available){el.value="yBvEFPKD9S · 649688311";el.dataset.copy="yBvEFPKD9S";return;}
   if(!world){el.value="";el.dataset.copy="";return;}
@@ -6566,12 +6807,61 @@ $("#copySeed").addEventListener("click",()=>{
   navigator.clipboard?.writeText(v).catch(()=>{});
   toast("ᛟ "+T("world.seed.copied.toast",{seed:v}));
 });
-$("#fWorld").addEventListener("change",()=>{renderWorldMods();renderWorldSeed();});
+$("#fWorld").addEventListener("change",()=>{
+  syncWorldNew();
+  if($("#fWorld").value===WORLD_NEW_VALUE) setTimeout(()=>$("#fWorldNew")?.focus(),0);
+  renderWorldMods();renderWorldSeed();
+});
+/* A keystroke in the New world box is a change of world, so everything that follows the
+   field follows it too. The seed line and the dials are held back a moment: both ask the
+   native side a question, and a question per keystroke is a question per keystroke. */
+let _worldNewT=null;
+function scheduleWorldNew(){
+  syncWorldNew();
+  clearTimeout(_worldNewT);
+  _worldNewT=setTimeout(()=>{
+    try{renderWorldMods();}catch(_){}
+    try{renderWorldSeed()?.catch(()=>{});}catch(_){}
+  },260);
+  try{scheduleEditBar();}catch(_){}
+}
+$("#fWorldNew")?.addEventListener("input",scheduleWorldNew);
+/* Copy world as, from the hall the world is chosen on. No folder and no subfolder travel
+   with it: the native side answers for the save folder this realm is reading, which is
+   the one the list on screen came from. */
+$("#copyWorldAs")?.addEventListener("click",()=>{
+  const sel=$("#fWorld");
+  const world=sel&&sel.value!==WORLD_NEW_VALUE?sel.value:"";
+  if(!world){toast("ᚦ "+T("world.copy.block.no_world"));return;}
+  const running=cfgServerIsUp()
+    &&String(S.prefs?.WorldName||"").toLowerCase()===String(world).toLowerCase();
+  /* The list is read again so the copy is in it, and the entry the host had chosen
+     is put back on top: a field that jumped to the saved world after a copy would
+     quietly undo a pick they had not saved yet. */
+  const refresh=async()=>{
+    const keep=$("#fWorld")?.value;
+    await renderWorldSelect();
+    const back=$("#fWorld");
+    if(!back||!keep) return;
+    if(![...back.options].some(o=>o.value===keep)) return;
+    back.value=keep;
+    syncWorldNew();renderWorldMods();renderWorldSeed();
+  };
+  worldCopyModal(
+    {world,folder:"",sub:"",owner:S.profileName||S.prefs?.ProfileName||"",running,taken:WORLD_NAMES},
+    target=>{
+      /* No host behind the preview, so the mock list grows the copy the way the
+         Barrow's mock list does. Without it the toast said a world had landed and
+         the field it landed in could not show it. */
+      if(!Native.available&&target&&!WORLD_LIST_MOCK.includes(target)) WORLD_LIST_MOCK.push(target);
+      refresh().catch(()=>{});
+    });
+});
 /* A dial the host turns updates the intended state for the selected world at once, so the
    value survives any later re-render and Save Config sends exactly what is on screen. */
 for(const [key,def] of Object.entries(WORLDGEN)){
   $("#"+def.sel).addEventListener("change",()=>{
-    const world=$("#fWorld").value||S.prefs?.WorldName||"";
+    const world=worldFieldValue();
     S.worldMods={world,mods:scrapeWorldModDials()};
   });
   /* The live sentence and the hover panel for this dial. The ids follow the select's
@@ -6619,6 +6909,11 @@ function renderCfgRunningNote(){
 }
 renderCfgRunningNote();
 $("#saveCfgBtn").addEventListener("click",async()=>{
+  /* A typed world name is held to the same rules the native side holds it to, before
+     anything is written: a name that could not be a folder is a realm that cannot be
+     launched, and the place to say so is here rather than at the next start. */
+  const typedProblem=worldNewProblem();
+  if(typedProblem){toast("ᚦ "+typedProblem);$("#fWorldNew")?.focus();return;}
   if(!Native.available){toast("ᛉ "+T("world.saved.preview.toast"));return;}
   const name=S.profileName||S.prefs?.ProfileName||"Default";
   // fetch fresh, mutate only form-controlled fields, send the WHOLE object back
@@ -6628,7 +6923,7 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   const num=(id,prev)=>{const v=parseInt($("#"+id).value,10);return Number.isNaN(v)?prev:v;};
   const prefs={...cur,
     Name:$("#fName").value.trim(),
-    WorldName:$("#fWorld").value,
+    WorldName:worldFieldValue(),
     Password:$("#fPassword").value,
     Port:num("fPort",cur.Port??2456),
     Public:swOn("tPublic"), Crossplay:swOn("tCrossplay"),
@@ -6729,7 +7024,7 @@ function editBarValues(){
   return {
     profile:S.profileName||p.ProfileName||"",
     name:String(gv("fName",p.Name)||"").trim(),
-    world:(worldSel&&worldSel.value)||p.WorldName||"",
+    world:worldSel?worldFieldValue():(p.WorldName||""),
     port:parseInt(gv("fPort",p.Port??2456),10)||0,
     rconEnabled:$("#tRcon")?swOn("tRcon"):!!p.RconEnabled,
     rconPort:parseInt(gv("fRconPort",p.RconPort??25575),10)||0,
@@ -6769,6 +7064,7 @@ function scheduleEditBar(){clearTimeout(_ebT);_ebT=setTimeout(()=>{renderEditBar
   const el=$("#"+id); if(el) el.addEventListener("input",scheduleEditBar);
 });
 $("#fWorld")?.addEventListener("change",scheduleEditBar);
+$("#fWorldNew")?.addEventListener("input",scheduleEditBar);
 $("#tRcon")?.addEventListener("click",scheduleEditBar);
 
 /* ---------- FIRST-LAUNCH SETUP WIZARD ---------- */
@@ -8728,7 +9024,21 @@ if(!Native.available){
     const again=()=>ctxOpen(x,y,mod.FullName,modRowItems(mod),again);
     again();
   });
-  $("#fWorld").innerHTML=`<option>Final Sunset</option>`;
+  /* The preview's own world, put INTO the mock list rather than written over the top
+     of the field: a hand written option list dropped the New world entry off the end
+     and left the names the field is holding saying something other than the names on
+     screen, on the very first frame, before a walk had driven anything.
+     The options are laid down here rather than by renderWorldSelect because app.js is
+     still being evaluated and the catalog has not landed yet, so the New world entry
+     is left wordless and repaintBootCopy fills it the moment the words arrive, which
+     is the road every other dynamic sentence on this page travels. renderAllFromPrefs
+     paints this field in the app and never runs here, which is why the preview has to
+     lay it down itself at all. */
+  if(!WORLD_LIST_MOCK.includes("Final Sunset")) WORLD_LIST_MOCK.unshift("Final Sunset");
+  WORLD_NAMES=WORLD_LIST_MOCK.slice();
+  $("#fWorld").innerHTML=WORLD_NAMES.map(n=>`<option>${esc(n)}</option>`).join("")
+    +`<option value="${WORLD_NEW_VALUE}"></option>`;
+  syncWorldNew();
 
   /* mock config vault (RUNES page preview) */
   CFG.mock={

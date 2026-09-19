@@ -1583,6 +1583,136 @@
     "world.field.world": {
       "translation": "[Ẋ World Ẋ] ẊẊ"
     },
+    "world.new.option": {
+      "translation": "[Ẋ New world… Ẋ] ẊẊẊẊ"
+    },
+    "world.new.placeholder": {
+      "translation": "[Ẋ name the new world Ẋ] ẊẊẊẊẊẊ"
+    },
+    "world.new.note": {
+      "translation": "[Ẋ This world does not exist yet. The server makes it the first time it starts, with a seed of its own. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.name.problem.required": {
+      "translation": "[Ẋ Give the world a name. Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "world.name.problem.too_long": {
+      "translation": "[Ẋ A world name can be at most {limit} characters long. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "limit": "number"
+      }
+    },
+    "world.name.problem.bad_characters": {
+      "translation": "[Ẋ A world name has to work as a folder name. Leave out slashes, colons, wildcards and the other characters Windows will not take, and do not end it with a dot or a space. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.name.problem.taken": {
+      "translation": "[Ẋ There is already a world called {world} in this save folder. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "world": "text"
+      }
+    },
+    "world.copy.chip": {
+      "translation": "[Ẋ COPY AS Ẋ] ẊẊẊ"
+    },
+    "world.copy.chip.title": {
+      "translation": "[Ẋ Copy this world under a new name Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.copy.button": {
+      "translation": "[Ẋ Copy world as Ẋ] ẊẊẊẊ"
+    },
+    "world.copy.button.title": {
+      "translation": "[Ẋ Copy this world under a new name and leave this one exactly as it is Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.copy.title": {
+      "translation": "[Ẋ What should the copy of {world} be called? Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "world": "text"
+      }
+    },
+    "world.copy.placeholder": {
+      "translation": "[Ẋ the new world's name Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "world.copy.block.no_world": {
+      "translation": "[Ẋ there is no world here to copy Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.copy.block.running": {
+      "translation": "[Ẋ '{owner}' is running this world right now. Stop the server first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "owner": "text"
+      }
+    },
+    "world.copy.done.toast": {
+      "translation": "[Ẋ Copied {source} as {target} Ẋ] ẊẊẊẊ",
+      "params": {
+        "source": "text",
+        "target": "text"
+      },
+      "mark": "ᛝ"
+    },
+    "world.copy.preview.toast": {
+      "translation": "[Ẋ World copied as {world} · preview only Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "world": "text"
+      },
+      "mark": "ᛝ"
+    },
+    "world.copy.reason.source_required": {
+      "translation": "[Ẋ No world was named to copy. Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.copy.reason.bad_source": {
+      "translation": "[Ẋ That world reference carries characters a world name cannot have. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.copy.reason.bad_subfolder": {
+      "translation": "[Ẋ That is not one of the game's own worlds folders. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.copy.reason.unknown_save_folder": {
+      "translation": "[Ẋ That save folder is not one BakaLoader knows. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.copy.reason.target_required": {
+      "translation": "[Ẋ Give the copy a world name. Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.copy.reason.target_too_long": {
+      "translation": "[Ẋ A world name can be at most {limit} characters long. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "limit": "number"
+      }
+    },
+    "world.copy.reason.bad_target": {
+      "translation": "[Ẋ '{target}' is not a name a world can be saved under. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "target": "text"
+      }
+    },
+    "world.copy.reason.target_exists": {
+      "translation": "[Ẋ There is already a world called '{target}' in that save folder, so nothing was copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "target": "text"
+      }
+    },
+    "world.copy.reason.server_running": {
+      "translation": "[Ẋ '{profile}' is running '{world}' right now. Stop it before copying the world. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "profile": "text",
+        "world": "text"
+      }
+    },
+    "world.copy.reason.no_such_world": {
+      "translation": "[Ẋ There is no world named '{world}' in that save folder any more. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "world": "text"
+      }
+    },
+    "world.copy.reason.unreadable": {
+      "translation": "[Ẋ The world file for '{world}' could not be read, so nothing was copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "world": "text"
+      }
+    },
+    "world.copy.reason.failed": {
+      "translation": "[Ẋ '{world}' could not be copied, so nothing in the worlds folder was changed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "world": "text"
+      }
+    },
     "world.field.seed": {
       "translation": "[Ẋ World Seed  Ẋ] ẊẊẊẊ"
     },

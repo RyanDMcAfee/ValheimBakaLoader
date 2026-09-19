@@ -197,6 +197,28 @@ namespace ValheimBakaLoader.Tools
         /// <summary>The timestamp shape Valheim 1.0 uses for its own backup names.</summary>
         public const string BackupStampFormat = "yyyyMMdd-HHmmss";
 
+        /// <summary>
+        /// The suffix every staged copy wears while it is being made: ".copying-" and a
+        /// stamp. Nothing under one of these names is a world, and nothing reads one
+        /// again once the copy that made it has either landed or been cleaned up.
+        /// </summary>
+        private const string CopyStagingMarker = ".copying-";
+
+        /// <summary>
+        /// True when a name is a staged copy's rather than a world's. The stamp is matched
+        /// as well as the marker, so a world a host really did call "Old.copying-notes" is
+        /// still a world.
+        /// </summary>
+        private static bool IsCopyStagingName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            var at = name.LastIndexOf(CopyStagingMarker, StringComparison.OrdinalIgnoreCase);
+            if (at < 0) return false;
+            var stamp = name[(at + CopyStagingMarker.Length)..];
+            return DateTime.TryParseExact(stamp, BackupStampFormat, CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out _);
+        }
+
         // ---------------------------------------------------------------- enumeration
 
         /// <summary>
@@ -243,6 +265,11 @@ namespace ValheimBakaLoader.Tools
                 {
                     var name = System.IO.Path.GetFileName(child);
                     if (string.IsNullOrWhiteSpace(name) || IsBackupDirectoryName(name)) continue;
+                    // A copy half way through, or one a kill caught between the last file
+                    // landing and the rename. It holds a whole generation whose header still
+                    // names the world it came from, so listing it would be the two worlds
+                    // under one name that the copy exists to prevent.
+                    if (IsCopyStagingName(name)) continue;
 
                     var world = ReadChunkedWorld(saveFolder, sub, child);
                     if (world == null) continue;
@@ -656,6 +683,50 @@ namespace ValheimBakaLoader.Tools
             if (ReservedDeviceNames.Contains(stem)) return false;
 
             return true;
+        }
+
+        /// <summary>
+        /// The longest name BakaLoader will take for a NEW world. Nothing on disk is
+        /// measured against it, so a world that already carries a longer name keeps it and
+        /// keeps working; this is the gate on a name a host is typing right now.
+        /// <para>
+        /// Sixty four is chosen so the game's own longest sibling of a world file still fits
+        /// comfortably in a path: it writes "{world}_backup_20260918-123456.fwl" beside the
+        /// world, which is another twenty eight characters on top of whatever the save folder
+        /// costs.
+        /// </para>
+        /// </summary>
+        public const int WorldNameMaxLength = 64;
+
+        /// <summary>
+        /// What is wrong with a name a host typed for a new world, or null when nothing is.
+        /// The answer is a stable token rather than a sentence, because the sentence a host
+        /// reads is the page's to word in the page's own language.
+        /// <para>
+        /// "required" for nothing at all, "tooLong" for past <see cref="WorldNameMaxLength"/>,
+        /// and "badCharacters" for anything <see cref="IsSafeReferenceToken"/> turns down:
+        /// a separator, a character Windows will not put in a file name, a trailing dot, or a
+        /// reserved device name.
+        /// </para>
+        /// <para>
+        /// The name is judged AS IT WILL BE USED, which is trimmed. A space either side of a
+        /// typed name is not a mistake to tell a host about, it is whitespace the name never
+        /// carries by the time it lands, and every caller here saves or copies under the
+        /// trimmed name for exactly that reason. The window's own rule (app.js
+        /// worldNameProblem) trims before it judges too, so the two answer the same question:
+        /// a rule that turned "Midgard " down while the box beside it accepted it would be
+        /// refusing a name that cannot reach disk in the first place. What is left of a name
+        /// after trimming is still held to the whole rule, so padding around nothing at all is
+        /// "required" and padding around a reserved device name is still "badCharacters".
+        /// </para>
+        /// </summary>
+        public static string WorldNameProblem(string name)
+        {
+            var typed = (name ?? string.Empty).Trim();
+            if (typed.Length == 0) return "required";
+            if (typed.Length > WorldNameMaxLength) return "tooLong";
+            if (!IsSafeReferenceToken(typed)) return "badCharacters";
+            return null;
         }
 
         /// <summary>
@@ -1113,6 +1184,226 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
+        /// Copies one world beside itself under a NEW name, in either save format, and
+        /// rewrites the name stored inside the copy's own header so the copy is a real
+        /// rename rather than the same world wearing two names at once.
+        /// <para>
+        /// The source is never touched, and neither are its backup layers: they belong to
+        /// the world that is still there. The copy lands in the same worlds folder the
+        /// source sits in, so it shows up in the world list beside it.
+        /// </para>
+        /// <para>
+        /// Nothing takes the new name until the whole copy is finished. Every file lands
+        /// under a temporary name first, the header is rewritten on THAT, and only then is
+        /// the finished copy moved into place. A header that cannot be read stops the copy
+        /// before the move, and a move that cannot land takes back whatever it had already
+        /// put down, so a refusal leaves nothing behind: a world whose folder name and stored
+        /// name disagreed would be LISTED under the folder it sits in and key its biome cache
+        /// on the name inside its header, and half a world is not a world at all.
+        /// </para>
+        /// </summary>
+        /// <returns>The folder the copy now lives in.</returns>
+        public static string CopyWorldAs(WorldInfo world, string targetName)
+        {
+            if (world == null) throw new ArgumentNullException(nameof(world));
+
+            // Trimmed here rather than trusted to arrive trimmed, because the rule below
+            // judges the trimmed name and the name that lands has to be the one that was
+            // judged. The RPC trims before it calls, so this changes nothing on the way a
+            // host actually reaches it; it is the guarantee for anything else that ever
+            // calls this.
+            targetName = (targetName ?? string.Empty).Trim();
+
+            if (WorldNameProblem(targetName) != null)
+                throw new HostFacingException("worlds.copyBadTargetRef",
+                    "That is not a name a world can be saved under.",
+                    ("target", targetName));
+
+            var worldsDir = SourceWorldsDir(world);
+            if (string.IsNullOrWhiteSpace(worldsDir) || !Directory.Exists(worldsDir))
+                throw new HostFacingException("worlds.copyFailed",
+                    $"'{world.Name}' is not in a worlds folder any more, so nothing was copied.",
+                    ("world", world.Name));
+
+            // Every way the name can already be spoken for, including the ones the world
+            // list refuses to return: a backup shaped folder holds its name just as hard as
+            // a world does, and a copy landing on one would mix two saves together.
+            if (string.Equals(world.Name, targetName, StringComparison.OrdinalIgnoreCase)
+                || FindWorldFilesOnDisk(world.SaveFolder, targetName) != null
+                || DirectoryHasAnything(System.IO.Path.Combine(worldsDir, targetName)))
+            {
+                throw new HostFacingException("worlds.copyTargetExists",
+                    $"A world called '{targetName}' is already in that save folder, so nothing was copied.",
+                    ("target", targetName));
+            }
+
+            // Asked before a byte moves. A header that will not parse is a header that
+            // cannot be rewritten, and a copy that kept the source's name inside it is the
+            // thing this whole method exists to avoid.
+            //
+            // This is the early no, not the last word. The rewrite holds a header to a
+            // stricter bound than this reader does (see FwlNameRewriter), so a header can
+            // pass here and be refused there, and that refusal is answered with the same
+            // sentence from inside the staging, with the staging thrown away.
+            if (FwlReader.TryRead(world.MetaPath) == null)
+                throw new HostFacingException("worlds.copyUnreadable",
+                    $"The world file for '{world.Name}' could not be read, so nothing was copied.",
+                    ("world", world.Name));
+
+            var cacheKey = BiomeCacheKey(world);
+
+            var landed = world.Format == WorldFormat.Chunked
+                ? CopyChunkedWorldAs(world, worldsDir, targetName)
+                : CopyLegacyWorldAs(world, worldsDir, targetName);
+
+            // The game keys the cache on the name inside the header, which is the new one
+            // now, so the copy gets its own cache rather than reading the source's.
+            CopyBiomeCacheAs(world.SaveFolder, cacheKey, targetName);
+            return landed;
+        }
+
+        /// <summary>
+        /// A 1.0 world directory copied under a new name: the whole tree lands in a sibling
+        /// folder, every "_main.{N}.fwl2" in it is rewritten, and the finished tree is
+        /// renamed into place in one move.
+        /// </summary>
+        private static string CopyChunkedWorldAs(WorldInfo world, string worldsDir, string targetName)
+        {
+            var destination = System.IO.Path.Combine(worldsDir, targetName);
+            var staged = destination + CopyStagingMarker
+                         + DateTime.Now.ToString(BackupStampFormat, CultureInfo.InvariantCulture);
+
+            TryDeleteDirectory(staged);
+
+            try
+            {
+                CopyDirectory(world.Folder, staged);
+
+                // The whole tree, not only the top of it. A "_main.{N}.fwl2" carried
+                // across in a subfolder and left unrewritten would still be naming the
+                // world it was copied from, and the count below would not notice: the
+                // top level files alone are enough to satisfy it.
+                var rewritten = 0;
+                foreach (var meta in Directory.EnumerateFiles(staged, "*", SearchOption.AllDirectories))
+                {
+                    if (!MainFwl2.IsMatch(System.IO.Path.GetFileName(meta))) continue;
+                    if (!FwlNameRewriter.TryRewriteWorldName(meta, targetName))
+                        throw new HostFacingException("worlds.copyUnreadable",
+                            $"The world file for '{world.Name}' could not be read, so nothing was copied.",
+                            ("world", world.Name));
+                    rewritten++;
+                }
+
+                if (rewritten == 0)
+                    throw new HostFacingException("worlds.copyUnreadable",
+                        $"The world file for '{world.Name}' could not be read, so nothing was copied.",
+                        ("world", world.Name));
+            }
+            catch (Exception e)
+            {
+                TryDeleteDirectory(staged);
+                if (e is HostFacingException) throw;
+                throw new HostFacingException("worlds.copyFailed",
+                    $"'{world.Name}' could not be copied, so nothing in the worlds folder was changed. "
+                    + e.Message, ("world", world.Name));
+            }
+
+            try
+            {
+                Directory.Move(staged, destination);
+            }
+            catch (Exception e)
+            {
+                TryDeleteDirectory(staged);
+                throw new HostFacingException("worlds.copyFailed",
+                    $"'{world.Name}' could not be copied, so nothing in the worlds folder was changed. "
+                    + e.Message, ("world", world.Name));
+            }
+
+            return destination;
+        }
+
+        /// <summary>
+        /// A pre-1.0 pair copied under a new name. Only the live pair travels: the ".old"
+        /// siblings are the previous save of the world that is staying, and a fresh copy has
+        /// no previous save of its own yet.
+        /// </summary>
+        private static string CopyLegacyWorldAs(WorldInfo world, string worldsDir, string targetName)
+        {
+            var suffix = CopyStagingMarker + DateTime.Now.ToString(BackupStampFormat, CultureInfo.InvariantCulture);
+            var staged = new List<(string Temp, string Final)>();
+
+            try
+            {
+                foreach (var ext in new[] { ".fwl", ".db" })
+                {
+                    var source = System.IO.Path.Combine(world.Folder, world.Name + ext);
+                    if (!File.Exists(source)) continue;
+
+                    var final = System.IO.Path.Combine(worldsDir, targetName + ext);
+                    var temp = final + suffix;
+                    staged.Add((temp, final));
+
+                    File.Copy(source, temp, overwrite: true);
+                    if (!File.Exists(temp) || SafeFileSize(temp) != SafeFileSize(source))
+                        throw new IOException($"'{targetName + ext}' did not land whole at the destination.");
+                }
+
+                var meta = staged.FirstOrDefault(
+                    s => s.Final.EndsWith(".fwl", StringComparison.OrdinalIgnoreCase));
+                if (meta.Temp == null || !FwlNameRewriter.TryRewriteWorldName(meta.Temp, targetName))
+                    throw new HostFacingException("worlds.copyUnreadable",
+                        $"The world file for '{world.Name}' could not be read, so nothing was copied.",
+                        ("world", world.Name));
+            }
+            catch (Exception e)
+            {
+                foreach (var (temp, _) in staged) TryDeleteFile(temp);
+                if (e is HostFacingException) throw;
+                throw new HostFacingException("worlds.copyFailed",
+                    $"'{world.Name}' could not be copied, so nothing in the worlds folder was changed. "
+                    + e.Message, ("world", world.Name));
+            }
+
+            // Every file is on disk beside the name it is about to take, and the copy's own
+            // header already names the copy. Only now does anything take the new name.
+            //
+            // Without overwrite, which is what the 1.0 path's Directory.Move has always done:
+            // the name was free when it was asked for, and if something took it in the gap
+            // between that question and this move, the copy fails closed rather than writing
+            // over a world that arrived while the copy was being made.
+            //
+            // And a move that throws part way through used to leave whatever had already
+            // landed standing. A ".fwl" with no ".db" beside it is half a world wearing a
+            // name of its own, and the world list reads it as a world: a host would be left
+            // looking at a save that cannot be opened and was never asked for. What landed is
+            // taken back out before the refusal is spoken, and the refusal is one the page
+            // has a sentence for rather than whatever the filesystem threw.
+            var landed = new List<string>();
+            try
+            {
+                foreach (var (temp, final) in staged)
+                {
+                    File.Move(temp, final);
+                    landed.Add(final);
+                }
+            }
+            catch (Exception e)
+            {
+                foreach (var file in landed) TryDeleteFile(file);
+                throw new HostFacingException("worlds.copyFailed",
+                    $"'{world.Name}' could not be copied, so nothing in the worlds folder was changed. "
+                    + e.Message, ("world", world.Name));
+            }
+            finally
+            {
+                foreach (var (temp, _) in staged) TryDeleteFile(temp);
+            }
+
+            return worldsDir;
+        }
+
+        /// <summary>
         /// Copies a legacy world's files into a worlds folder the staged way: every file lands
         /// beside its final name first and is checked, what was there is only taken once the
         /// whole set is on disk, and the temp names are swapped in last. Deleting first and
@@ -1121,7 +1412,7 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         private static void CopyLegacyPairIn(WorldInfo world, string destWorldsDir, bool overwrite)
         {
-            var suffix = ".copying-" + DateTime.Now.ToString(BackupStampFormat, CultureInfo.InvariantCulture);
+            var suffix = CopyStagingMarker + DateTime.Now.ToString(BackupStampFormat, CultureInfo.InvariantCulture);
             var staged = new List<(string Temp, string Final)>();
 
             try
@@ -1586,6 +1877,24 @@ namespace ValheimBakaLoader.Tools
                 var destDir = System.IO.Path.Combine(destSaveFolder, CacheFolderName);
                 Directory.CreateDirectory(destDir);
                 File.Copy(src, System.IO.Path.Combine(destDir, System.IO.Path.GetFileName(src)), overwrite: true);
+            }
+            catch { /* the game regenerates the cache; never fail a copy over it */ }
+        }
+
+        /// <summary>
+        /// Copies a world's biome data cache under ANOTHER name inside one save folder, which
+        /// is what a world copied under a new name needs: the game builds the cache file name
+        /// from the name stored in the header, and the copy's header names the copy.
+        /// </summary>
+        public static void CopyBiomeCacheAs(string saveFolder, string sourceWorldName, string targetWorldName)
+        {
+            try
+            {
+                var source = BiomeCachePath(saveFolder, sourceWorldName);
+                var destination = BiomeCachePath(saveFolder, targetWorldName);
+                if (source == null || destination == null || !File.Exists(source)) return;
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destination));
+                File.Copy(source, destination, overwrite: true);
             }
             catch { /* the game regenerates the cache; never fail a copy over it */ }
         }

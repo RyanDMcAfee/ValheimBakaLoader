@@ -354,7 +354,14 @@
             <div class="microlabel" data-i18n="world.server.label">Server<span class="cnorse" data-i18n="common.norse.heimr">Heimr</span></div>
             <div class="formgrid">
               <div class="field"><label data-i18n="world.field.name">Server Name</label><input type="text" id="fName" value="Baka Gaijin"></div>
-              <div class="field"><label data-i18n="world.field.world">World</label><select id="fWorld"></select></div>
+              <div class="field"><label data-i18n="world.field.world">World</label>
+                <div class="pathrow"><select id="fWorld"></select><span class="copychip" id="copyWorldAs" title="Copy this world under a new name" data-i18n="world.copy.chip" data-i18n-title="world.copy.chip.title">COPY AS</span></div>
+                <!-- The box the last entry in the list opens. It is hidden in the markup
+                     rather than absent from it so the walker can reach its placeholder on
+                     the first frame, like every other field on this hall. -->
+                <input type="text" id="fWorldNew" style="display:none;margin-top:6px" placeholder="name the new world" data-i18n-placeholder="world.new.placeholder" spellcheck="false" autocomplete="off">
+                <div class="fieldnote" id="fWorldNote" style="display:none"></div>
+              </div>
               <div class="field"><label data-i18n="world.field.seed">World Seed <span class="r" title="Seed is set at world creation and can never change" data-i18n-title="world.field.seed.rune.title">ᛟ</span></label>
                 <div class="pathrow"><input type="text" id="fSeed" value="" readonly title="A world's seed is fixed at creation and cannot be changed" data-i18n-title="world.field.seed.input.title"><span class="copychip" id="copySeed" title="Copy seed" data-i18n="common.chip.copy" data-i18n-title="world.seed.copy.title">COPY</span></div>
               </div>

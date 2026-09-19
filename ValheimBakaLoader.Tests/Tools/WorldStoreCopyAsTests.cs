@@ -1,0 +1,707 @@
+using System;
+using System.Buffers.Binary;
+using System.IO;
+using System.Linq;
+using System.Text;
+using ValheimBakaLoader.Tools;
+using Xunit;
+
+namespace ValheimBakaLoader.Tests.Tools
+{
+    /// <summary>
+    /// Copying a world beside itself under a new name, in both save formats.
+    /// <para>
+    /// The thing that makes this more than a file copy is the header: the game carries the
+    /// world's own name inside the .fwl or the .fwl2 and builds the biome cache file name
+    /// out of it, so a copy that kept the source's name would be two worlds answering to
+    /// one. Every test here checks the copy's header as well as its files, and checks that
+    /// the source came out of it untouched.
+    /// </para>
+    /// </summary>
+    public class WorldStoreCopyAsTests : IDisposable
+    {
+        private readonly string SaveFolder =
+            Path.Combine(Path.GetTempPath(), "vbl-copyas-tests-" + Guid.NewGuid().ToString("N"));
+
+        public void Dispose()
+        {
+            try { Directory.Delete(SaveFolder, recursive: true); } catch { /* best effort */ }
+        }
+
+        // ------------------------------------------------------------------ tree builders
+
+        private string WorldsDir(string sub = "worlds_local")
+        {
+            var dir = Path.Combine(SaveFolder, sub);
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        private static byte[] BuildFwl(int version, string worldName, string seedName)
+        {
+            using var payload = new MemoryStream();
+            using (var w = new BinaryWriter(payload, Encoding.UTF8, leaveOpen: true))
+            {
+                w.Write(version);
+                w.Write(worldName);
+                w.Write(seedName);
+                w.Write(FwlWriter.GetStableHashCode(seedName));
+                w.Write(1234567890123L);
+                w.Write(2);
+                w.Write(false);
+                w.Write(0);
+            }
+            var bytes = payload.ToArray();
+
+            using var file = new MemoryStream();
+            using (var w = new BinaryWriter(file, Encoding.UTF8, leaveOpen: true))
+            {
+                w.Write(bytes.Length);
+                w.Write(bytes);
+            }
+            return file.ToArray();
+        }
+
+        private static byte[] BuildDbHeader(int version, double netTime)
+        {
+            using var ms = new MemoryStream();
+            using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
+            {
+                w.Write(version);
+                w.Write(netTime);
+                w.Write(new byte[32]);
+            }
+            return ms.ToArray();
+        }
+
+        private void MakeLegacyWorld(string name, string sub = "worlds_local", string seedName = "seedy")
+        {
+            var dir = WorldsDir(sub);
+            File.WriteAllBytes(Path.Combine(dir, name + ".fwl"), BuildFwl(37, name, seedName));
+            File.WriteAllBytes(Path.Combine(dir, name + ".db"), BuildDbHeader(37, 3600));
+        }
+
+        private string MakeChunkedWorld(string name, string sub = "worlds_local",
+            string seedName = "chunkyseed", int number = 1)
+        {
+            var dir = Path.Combine(WorldsDir(sub), name);
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, $"_main.{number}.fwl2"), BuildFwl(41, name, seedName));
+            File.WriteAllBytes(Path.Combine(dir, $"_main.{number}.db2"), BuildDbHeader(41, 5400));
+            File.WriteAllBytes(Path.Combine(dir, $"_main.{number}.chunks"), new byte[] { 41, 0, 0, 0 });
+            File.WriteAllBytes(Path.Combine(dir, $"_main.{number}.ok"), BitConverter.GetBytes(41));
+            File.WriteAllBytes(Path.Combine(dir, "00_00__0_41.chunk"), new byte[64]);
+            return dir;
+        }
+
+        private static string StoredName(string metaPath) => FwlReader.TryRead(metaPath)?.WorldName;
+
+        // ------------------------------------------------------------------ the name rules
+
+        /// <summary>
+        /// The rules a new world name is held to, which are the rules a reference is held
+        /// to plus a length. The page says the same thing to a host who is typing, and a
+        /// test in the web suite holds the two numbers together.
+        /// </summary>
+        [Theory]
+        [InlineData("Midgard", null)]
+        [InlineData("Copy of Midgard", null)]
+        [InlineData("world.1", null)]
+        [InlineData(null, "required")]
+        [InlineData("", "required")]
+        [InlineData("   ", "required")]
+        [InlineData("a/b", "badCharacters")]
+        [InlineData("a\\b", "badCharacters")]
+        [InlineData("..", "badCharacters")]
+        [InlineData("../escape", "badCharacters")]
+        [InlineData("what?", "badCharacters")]
+        [InlineData("NUL", "badCharacters")]
+        [InlineData("nul.fwl", "badCharacters")]
+        [InlineData("trailing.", "badCharacters")]
+        // Padding is trimmed before the name is judged, the way the window trims it before
+        // it sends it, so what is left is what is held to the rule.
+        [InlineData("trailing ", null)]
+        [InlineData(" leading", null)]
+        [InlineData("  both  ", null)]
+        [InlineData(" NUL ", "badCharacters")]
+        [InlineData(" a/b ", "badCharacters")]
+        public void What_is_wrong_with_a_world_name(string name, string expected)
+        {
+            Assert.Equal(expected, WorldStore.WorldNameProblem(name));
+        }
+
+        /// <summary>
+        /// The rule and the window answer the same question, so the name the rule passed is
+        /// the name that lands: a copy asked for with padding around it is saved under the
+        /// trimmed name rather than under a folder name with a space on the end, which is a
+        /// name Windows itself will not keep.
+        /// </summary>
+        [Fact]
+        public void A_target_name_with_padding_lands_under_the_trimmed_name()
+        {
+            MakeLegacyWorld("Legacy");
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Legacy"), "  Padded  ");
+
+            Assert.True(File.Exists(Path.Combine(WorldsDir(), "Padded.fwl")));
+            Assert.Equal("Padded", StoredName(Path.Combine(WorldsDir(), "Padded.fwl")));
+            Assert.NotNull(WorldStore.Find(SaveFolder, "Padded"));
+        }
+
+        [Fact]
+        public void A_name_past_the_limit_is_too_long_rather_than_merely_wrong()
+        {
+            Assert.Equal(64, WorldStore.WorldNameMaxLength);
+            Assert.Null(WorldStore.WorldNameProblem(new string('w', WorldStore.WorldNameMaxLength)));
+            Assert.Equal("tooLong",
+                WorldStore.WorldNameProblem(new string('w', WorldStore.WorldNameMaxLength + 1)));
+
+            // The length is the trimmed name's, which is the name that lands. A name at the
+            // limit with a space either side is not over it, and the window measures it the
+            // same way.
+            Assert.Null(WorldStore.WorldNameProblem(" " + new string('w', WorldStore.WorldNameMaxLength) + " "));
+            Assert.Equal("tooLong",
+                WorldStore.WorldNameProblem(" " + new string('w', WorldStore.WorldNameMaxLength + 1) + " "));
+        }
+
+        // ------------------------------------------------------------------ the legacy copy
+
+        [Fact]
+        public void A_legacy_world_is_copied_under_the_new_name_and_carries_it_inside()
+        {
+            MakeLegacyWorld("Midgard");
+            var dir = WorldsDir();
+
+            var landed = WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.Equal(
+                Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar),
+                Path.GetFullPath(landed).TrimEnd(Path.DirectorySeparatorChar));
+
+            // Both halves of the pair landed, under the new name.
+            Assert.True(File.Exists(Path.Combine(dir, "Second Midgard.fwl")));
+            Assert.True(File.Exists(Path.Combine(dir, "Second Midgard.db")));
+
+            // And the copy's header names the copy, not the world it came from.
+            Assert.Equal("Second Midgard", StoredName(Path.Combine(dir, "Second Midgard.fwl")));
+
+            // The database travelled whole.
+            Assert.Equal(File.ReadAllBytes(Path.Combine(dir, "Midgard.db")),
+                         File.ReadAllBytes(Path.Combine(dir, "Second Midgard.db")));
+
+            // The seed is the one thing a copy must keep: it is what the world IS.
+            var source = FwlReader.TryRead(Path.Combine(dir, "Midgard.fwl"));
+            var copy = FwlReader.TryRead(Path.Combine(dir, "Second Midgard.fwl"));
+            Assert.Equal(source.SeedName, copy.SeedName);
+            Assert.Equal(source.Seed, copy.Seed);
+            Assert.Equal(source.Uid, copy.Uid);
+        }
+
+        [Fact]
+        public void The_source_of_a_legacy_copy_is_not_touched()
+        {
+            MakeLegacyWorld("Midgard");
+            var dir = WorldsDir();
+            var fwlBefore = File.ReadAllBytes(Path.Combine(dir, "Midgard.fwl"));
+            var dbBefore = File.ReadAllBytes(Path.Combine(dir, "Midgard.db"));
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.Equal(fwlBefore, File.ReadAllBytes(Path.Combine(dir, "Midgard.fwl")));
+            Assert.Equal(dbBefore, File.ReadAllBytes(Path.Combine(dir, "Midgard.db")));
+            Assert.Equal("Midgard", StoredName(Path.Combine(dir, "Midgard.fwl")));
+        }
+
+        /// <summary>
+        /// A backup layer belongs to the world that is staying. Copying them would double
+        /// the disk a copy costs and would offer the host a restore of somebody else's save
+        /// history under this world's name.
+        /// </summary>
+        [Fact]
+        public void The_backup_layers_of_the_source_stay_with_the_source()
+        {
+            MakeLegacyWorld("Midgard");
+            var dir = WorldsDir();
+            File.WriteAllBytes(Path.Combine(dir, "Midgard_backup_20260101-120000.fwl"),
+                BuildFwl(37, "Midgard", "seedy"));
+            File.WriteAllBytes(Path.Combine(dir, "Midgard_backup_20260101-120000.db"),
+                BuildDbHeader(37, 1800));
+            File.WriteAllBytes(Path.Combine(dir, "Midgard.fwl.old"), BuildFwl(37, "Midgard", "seedy"));
+            File.WriteAllBytes(Path.Combine(dir, "Midgard.db.old"), BuildDbHeader(37, 1800));
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.True(File.Exists(Path.Combine(dir, "Midgard_backup_20260101-120000.fwl")));
+            Assert.True(File.Exists(Path.Combine(dir, "Midgard.fwl.old")));
+
+            Assert.False(File.Exists(Path.Combine(dir, "Second Midgard_backup_20260101-120000.fwl")));
+            Assert.False(File.Exists(Path.Combine(dir, "Second Midgard.fwl.old")));
+            Assert.False(File.Exists(Path.Combine(dir, "Second Midgard.db.old")));
+        }
+
+        // ------------------------------------------------------------------ the 1.0 copy
+
+        [Fact]
+        public void A_chunked_world_is_copied_as_a_whole_directory_that_names_itself()
+        {
+            MakeChunkedWorld("Midgard");
+
+            var landed = WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.Equal(Path.Combine(WorldsDir(), "Second Midgard"), landed);
+            Assert.True(Directory.Exists(landed));
+
+            foreach (var name in new[] { "_main.1.fwl2", "_main.1.db2", "_main.1.chunks",
+                                         "_main.1.ok", "00_00__0_41.chunk" })
+                Assert.True(File.Exists(Path.Combine(landed, name)), name + " did not travel");
+
+            Assert.Equal("Second Midgard", StoredName(Path.Combine(landed, "_main.1.fwl2")));
+            Assert.Equal("Midgard", StoredName(Path.Combine(WorldsDir(), "Midgard", "_main.1.fwl2")));
+
+            // Nothing staged is left lying beside it.
+            Assert.Empty(Directory.EnumerateDirectories(WorldsDir())
+                .Where(d => Path.GetFileName(d).Contains(".copying-")));
+        }
+
+        /// <summary>
+        /// A 1.0 world directory can hold more than one generation while the game is busy
+        /// rolling one over. Every header in the copy names the copy, or a later save would
+        /// hand the game back the name it came from.
+        /// </summary>
+        [Fact]
+        public void Every_generation_in_a_chunked_copy_names_the_copy()
+        {
+            var dir = MakeChunkedWorld("Midgard", number: 4);
+            File.WriteAllBytes(Path.Combine(dir, "_main.5.fwl2"), BuildFwl(41, "Midgard", "chunkyseed"));
+
+            var landed = WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.Equal("Second Midgard", StoredName(Path.Combine(landed, "_main.4.fwl2")));
+            Assert.Equal("Second Midgard", StoredName(Path.Combine(landed, "_main.5.fwl2")));
+        }
+
+        /// <summary>
+        /// The copy is a world the moment it is there: it is what the world list answers
+        /// with, which is what the World field on the Settings hall paints from.
+        /// </summary>
+        [Fact]
+        public void The_copy_is_in_the_world_list_beside_the_world_it_came_from()
+        {
+            MakeChunkedWorld("Midgard");
+            MakeLegacyWorld("Trialgrounds");
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Trialgrounds"), "Proving 2");
+
+            var names = WorldStore.GetWorldNames(SaveFolder);
+            Assert.Contains("Midgard", names);
+            Assert.Contains("Second Midgard", names);
+            Assert.Contains("Trialgrounds", names);
+            Assert.Contains("Proving 2", names);
+
+            var copy = WorldStore.Find(SaveFolder, "Second Midgard");
+            Assert.NotNull(copy);
+            Assert.Equal(WorldFormat.Chunked, copy.Format);
+            Assert.True(copy.IsCommitted);
+        }
+
+        /// <summary>
+        /// A copy made in the second worlds folder stays in the second worlds folder. A copy
+        /// that quietly hopped to worlds_local would be a world the game reads instead of
+        /// the one beside it the next time both were there.
+        /// </summary>
+        [Fact]
+        public void A_copy_lands_in_the_same_worlds_folder_the_source_sits_in()
+        {
+            MakeLegacyWorld("Midgard", sub: "worlds");
+
+            WorldStore.CopyWorldAs(WorldStore.FindIn(SaveFolder, "worlds", "Midgard"), "Second Midgard");
+
+            Assert.True(File.Exists(Path.Combine(SaveFolder, "worlds", "Second Midgard.fwl")));
+            Assert.False(File.Exists(Path.Combine(SaveFolder, "worlds_local", "Second Midgard.fwl")));
+        }
+
+        // ------------------------------------------------------------------ the biome cache
+
+        [Fact]
+        public void The_biome_cache_travels_under_the_name_the_copy_now_stores()
+        {
+            MakeLegacyWorld("Midgard");
+            var cacheDir = Path.Combine(SaveFolder, "cache");
+            Directory.CreateDirectory(cacheDir);
+            File.WriteAllBytes(Path.Combine(cacheDir, "Midgard_biomedatacache.bin"), new byte[] { 1, 2, 3 });
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.True(File.Exists(Path.Combine(cacheDir, "Second Midgard_biomedatacache.bin")));
+            Assert.True(File.Exists(Path.Combine(cacheDir, "Midgard_biomedatacache.bin")));
+        }
+
+        // ------------------------------------------------------------------ refusals
+
+        [Fact]
+        public void A_name_already_in_the_save_folder_is_refused()
+        {
+            MakeLegacyWorld("Midgard");
+            MakeChunkedWorld("Trialgrounds");
+
+            var refused = Assert.Throws<HostFacingException>(
+                () => WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Trialgrounds"));
+            Assert.Equal("worlds.copyTargetExists", refused.MessageId);
+
+            // Nothing of the copy was started.
+            Assert.False(File.Exists(Path.Combine(WorldsDir(), "Trialgrounds.fwl")));
+        }
+
+        [Fact]
+        public void A_name_taken_in_the_other_worlds_folder_is_refused_too()
+        {
+            MakeLegacyWorld("Midgard");
+            MakeLegacyWorld("Second Midgard", sub: "worlds");
+
+            var refused = Assert.Throws<HostFacingException>(
+                () => WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard"));
+            Assert.Equal("worlds.copyTargetExists", refused.MessageId);
+        }
+
+        /// <summary>
+        /// A folder the world list refuses to return still holds its name: a backup shaped
+        /// one, and one holding nothing the list would call a world. A copy landing on
+        /// either would mix two saves into one folder.
+        /// </summary>
+        [Fact]
+        public void A_name_held_by_a_folder_the_world_list_never_shows_is_refused()
+        {
+            MakeLegacyWorld("Midgard");
+            Directory.CreateDirectory(Path.Combine(WorldsDir(), "Second Midgard"));
+            File.WriteAllBytes(Path.Combine(WorldsDir(), "Second Midgard", "stray.txt"), new byte[] { 1 });
+
+            var refused = Assert.Throws<HostFacingException>(
+                () => WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard"));
+            Assert.Equal("worlds.copyTargetExists", refused.MessageId);
+        }
+
+        [Fact]
+        public void A_world_cannot_be_copied_onto_itself()
+        {
+            MakeLegacyWorld("Midgard");
+
+            var refused = Assert.Throws<HostFacingException>(
+                () => WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "midgard"));
+            Assert.Equal("worlds.copyTargetExists", refused.MessageId);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("   ")]
+        [InlineData("a/b")]
+        [InlineData("..")]
+        [InlineData("NUL")]
+        public void A_name_no_world_can_be_saved_under_is_refused(string target)
+        {
+            MakeLegacyWorld("Midgard");
+
+            var refused = Assert.Throws<HostFacingException>(
+                () => WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), target));
+            Assert.Equal("worlds.copyBadTargetRef", refused.MessageId);
+        }
+
+        /// <summary>
+        /// A header that cannot be read cannot be rewritten, and a copy that kept the
+        /// source's name inside it is the thing this whole path exists to avoid. The
+        /// refusal has to leave the worlds folder exactly as it found it.
+        /// </summary>
+        [Fact]
+        public void A_world_whose_header_cannot_be_read_is_refused_and_leaves_nothing_behind()
+        {
+            var dir = WorldsDir();
+            File.WriteAllBytes(Path.Combine(dir, "Unreadable.fwl"), new byte[] { 9, 9, 9, 9 });
+            File.WriteAllBytes(Path.Combine(dir, "Unreadable.db"), BuildDbHeader(37, 3600));
+
+            var before = Directory.GetFileSystemEntries(dir).OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+            var refused = Assert.Throws<HostFacingException>(
+                () => WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Unreadable"), "Second"));
+            Assert.Equal("worlds.copyUnreadable", refused.MessageId);
+
+            Assert.Equal(before, Directory.GetFileSystemEntries(dir).OrderBy(x => x, StringComparer.Ordinal).ToList());
+        }
+
+        /// <summary>
+        /// The same for a 1.0 world: the directory copy is staged under a name of its own
+        /// and thrown away whole, so a refusal never leaves half a world standing.
+        /// </summary>
+        [Fact]
+        public void A_chunked_world_whose_header_cannot_be_read_leaves_no_staged_folder()
+        {
+            var dir = MakeChunkedWorld("Midgard");
+            var world = WorldStore.Find(SaveFolder, "Midgard");
+            Assert.NotNull(world);
+
+            // Broken AFTER the world was found, which is what a file going bad under the
+            // app looks like: the copy has to find it on its way past and stop there.
+            File.WriteAllBytes(Path.Combine(dir, "_main.1.fwl2"), new byte[] { 9, 9, 9, 9 });
+
+            var refused = Assert.Throws<HostFacingException>(
+                () => WorldStore.CopyWorldAs(world, "Second Midgard"));
+            Assert.Equal("worlds.copyUnreadable", refused.MessageId);
+
+            Assert.False(Directory.Exists(Path.Combine(WorldsDir(), "Second Midgard")));
+            Assert.Empty(Directory.EnumerateDirectories(WorldsDir())
+                .Where(d => Path.GetFileName(d).Contains(".copying-")));
+        }
+
+        [Fact]
+        public void A_world_that_is_nothing_is_refused_before_anything_else()
+        {
+            Assert.Throws<ArgumentNullException>(() => WorldStore.CopyWorldAs(null, "Second"));
+        }
+
+        /// <summary>
+        /// The last thing a pre-1.0 copy does is move two staged files onto their real names,
+        /// and the second one can still fail there: something is holding the name that the
+        /// occupancy check found free, a directory is standing where the ".db" wants to be, a
+        /// drive filled up. What had already landed used to stay: a ".fwl" with no ".db" is
+        /// half of one world wearing another world's name, and the world list reads it as a
+        /// world, so the host is left looking at a save that cannot be opened and was never
+        /// asked for. It is taken back out, and what the page hears is a sentence it owns.
+        /// </summary>
+        [Fact]
+        public void A_legacy_copy_whose_last_move_cannot_land_leaves_no_half_world_behind()
+        {
+            MakeLegacyWorld("Legacy");
+
+            // A directory standing exactly where the copy's ".db" has to land. Every check in
+            // front of the move is asking File.Exists, which a directory does not answer to,
+            // so this is a name the copy believes is free right up to the move itself.
+            Directory.CreateDirectory(Path.Combine(WorldsDir(), "Twin.db"));
+
+            var refused = Assert.Throws<HostFacingException>(
+                () => WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Legacy"), "Twin"));
+            Assert.Equal("worlds.copyFailed", refused.MessageId);
+
+            // No half world in the list, no half world on disk, and no staging left over.
+            Assert.Equal(new[] { "Legacy" }, WorldStore.Enumerate(SaveFolder).Select(w => w.Name).ToArray());
+            Assert.False(File.Exists(Path.Combine(WorldsDir(), "Twin.fwl")));
+            Assert.Empty(Directory.EnumerateFiles(WorldsDir())
+                .Where(f => Path.GetFileName(f).Contains(".copying-")));
+
+            // And the world it was copied from is untouched.
+            Assert.NotNull(WorldStore.Find(SaveFolder, "Legacy"));
+            Assert.Equal("Legacy", StoredName(Path.Combine(WorldsDir(), "Legacy.fwl")));
+        }
+
+        /// <summary>
+        /// A header carrying bytes past a payload it measures correctly is a header every
+        /// reader here takes, so a world in that shape lists AND copies, and what sits past
+        /// the payload comes across with it.
+        /// </summary>
+        [Fact]
+        public void A_world_whose_header_carries_bytes_past_its_payload_still_copies()
+        {
+            var dir = WorldsDir();
+            File.WriteAllBytes(Path.Combine(dir, "Ragnar.fwl"),
+                BuildFwl(37, "Ragnar", "sd12345678").Concat(new byte[13]).ToArray());
+            File.WriteAllBytes(Path.Combine(dir, "Ragnar.db"), BuildDbHeader(37, 3600));
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Ragnar"), "Ragnar 2");
+
+            Assert.Equal("Ragnar 2", StoredName(Path.Combine(dir, "Ragnar 2.fwl")));
+            Assert.True(File.Exists(Path.Combine(dir, "Ragnar 2.db")));
+            Assert.Equal("Ragnar", StoredName(Path.Combine(dir, "Ragnar.fwl")));
+
+            // The seed is what makes the copy the same world, and it came across.
+            Assert.Equal("sd12345678", FwlReader.TryRead(Path.Combine(dir, "Ragnar 2.fwl")).SeedName);
+        }
+
+        /// <summary>
+        /// The one band where the copy's own pre-check is more forgiving than the rewrite,
+        /// driven end to end so what a host would actually get is written down. A header whose
+        /// leading size claims one, two, three or four bytes more payload than the file holds
+        /// is past the file's PAYLOAD but not past its LENGTH, so the pre-check reads it and
+        /// the copy gets as far as the rewrite, which then refuses it. The world list is not
+        /// part of that difference: it never opens a header, so it shows this world exactly as
+        /// it shows one whose header is perfect.
+        /// <para>
+        /// That refusal is the right answer for a header whose size field is wrong about its
+        /// own file, and the point of this test is that it lands CLOSED: the sentence the host
+        /// gets is one the page owns, the source is untouched, nothing new is in the worlds
+        /// folder, and no staging is left standing.
+        /// </para>
+        /// </summary>
+        [Theory]
+        [InlineData(1)]
+        [InlineData(2)]
+        [InlineData(3)]
+        [InlineData(4)]
+        public void A_world_whose_header_overshoots_its_file_lists_and_is_refused_with_nothing_moved(int overshoot)
+        {
+            var dir = WorldsDir();
+            var header = BuildFwl(37, "Over", "sd12345678");
+            BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(0, 4), header.Length - 4 + overshoot);
+            File.WriteAllBytes(Path.Combine(dir, "Over.fwl"), header);
+            File.WriteAllBytes(Path.Combine(dir, "Over.db"), BuildDbHeader(37, 3600));
+
+            // The list shows it, which is how a host reaches the copy control at all.
+            var world = WorldStore.Find(SaveFolder, "Over");
+            Assert.NotNull(world);
+            Assert.Equal("Over", FwlReader.TryRead(world.MetaPath)?.WorldName);
+
+            var before = Directory.GetFileSystemEntries(dir).OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+            var refused = Assert.Throws<HostFacingException>(() => WorldStore.CopyWorldAs(world, "Over 2"));
+            Assert.Equal("worlds.copyUnreadable", refused.MessageId);
+
+            // Nothing landed, nothing was staged, and the source is byte for byte as it was.
+            Assert.Equal(before, Directory.GetFileSystemEntries(dir).OrderBy(x => x, StringComparer.Ordinal).ToList());
+            Assert.Equal(header, File.ReadAllBytes(Path.Combine(dir, "Over.fwl")));
+        }
+
+        /// <summary>
+        /// The world list does not open headers, and this is here to keep that written down in
+        /// something that can fail. Enumerate, GetWorldNames and Find name a world by the file
+        /// or the directory it sits in, so a world whose header is unreadable by any measure is
+        /// listed like any other, is offered a copy like any other, and meets the copy's own
+        /// pre-check rather than a missing row.
+        /// <para>
+        /// Twice now a comment around the rewrite has said the opposite, that an unreadable
+        /// header keeps a world out of the list and so out of reach of a copy. Both times the
+        /// words were wrong and the behaviour was right. A comment cannot fail a suite, so the
+        /// fact the comments lean on is asserted here instead: every shape of unreadable header
+        /// is LISTED and is answered with "worlds.copyUnreadable", not with silence.
+        /// </para>
+        /// </summary>
+        [Theory]
+        // A legacy .fwl holding nothing the reader can use.
+        [InlineData("Junk")]
+        // A leading size one byte past the file's own length, the band past the overshoot band.
+        [InlineData("Past")]
+        public void An_unreadable_header_is_still_listed_and_is_refused_by_the_copys_precheck(string name)
+        {
+            var dir = WorldsDir();
+            var bytes = name == "Past"
+                ? PastTheLength(BuildFwl(37, name, "sd12345678"))
+                : new byte[] { 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9 };
+            File.WriteAllBytes(Path.Combine(dir, name + ".fwl"), bytes);
+            File.WriteAllBytes(Path.Combine(dir, name + ".db"), BuildDbHeader(37, 3600));
+
+            // Unreadable by the pre-check's own reader, which is the strictly weaker of the two.
+            var world = WorldStore.Find(SaveFolder, name);
+            Assert.NotNull(world);
+            Assert.Null(FwlReader.TryRead(world.MetaPath));
+
+            // And listed all the same, by every door onto the list.
+            Assert.Contains(name, WorldStore.GetWorldNames(SaveFolder));
+            Assert.Contains(WorldStore.Enumerate(SaveFolder), w => w.Name == name);
+            Assert.True(WorldStore.Exists(SaveFolder, name));
+
+            var before = Directory.GetFileSystemEntries(dir).OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+            var refused = Assert.Throws<HostFacingException>(() => WorldStore.CopyWorldAs(world, name + " 2"));
+            Assert.Equal("worlds.copyUnreadable", refused.MessageId);
+
+            Assert.Equal(before, Directory.GetFileSystemEntries(dir).OrderBy(x => x, StringComparer.Ordinal).ToList());
+            Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(dir, name + ".fwl")));
+        }
+
+        /// <summary>The same header with a leading size one byte past the file's length.</summary>
+        private static byte[] PastTheLength(byte[] header)
+        {
+            var copy = (byte[])header.Clone();
+            BinaryPrimitives.WriteInt32LittleEndian(copy.AsSpan(0, 4), copy.Length + 1);
+            return copy;
+        }
+
+        /// <summary>
+        /// The 1.0 shape of the same thing: a committed "_main.N.fwl2" full of garbage. The
+        /// directory is what names the world, so the world is listed, and the refusal is the
+        /// pre-check's again.
+        /// </summary>
+        [Fact]
+        public void An_unreadable_chunked_header_is_still_listed_and_is_refused_by_the_copys_precheck()
+        {
+            var dir = MakeChunkedWorld("JunkChunked");
+            File.WriteAllBytes(Path.Combine(dir, "_main.1.fwl2"), new byte[16]);
+
+            var world = WorldStore.Find(SaveFolder, "JunkChunked");
+            Assert.NotNull(world);
+            Assert.Null(FwlReader.TryRead(world.MetaPath));
+            Assert.Contains("JunkChunked", WorldStore.GetWorldNames(SaveFolder));
+
+            var worldsDir = WorldsDir();
+            var before = Directory.GetFileSystemEntries(worldsDir).OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+            var refused = Assert.Throws<HostFacingException>(() => WorldStore.CopyWorldAs(world, "JunkChunked 2"));
+            Assert.Equal("worlds.copyUnreadable", refused.MessageId);
+
+            Assert.Equal(before, Directory.GetFileSystemEntries(worldsDir).OrderBy(x => x, StringComparer.Ordinal).ToList());
+        }
+
+        // ------------------------------------------------------ the whole copied tree
+
+        /// <summary>
+        /// Every header in the copied tree is rewritten, not only the ones lying at the
+        /// top of it. A "_main.{N}.fwl2" carried across in a subfolder and left alone
+        /// would still be naming the world it came from, and the count of rewrites would
+        /// not notice, because the top level files alone are enough to satisfy it.
+        /// </summary>
+        [Fact]
+        public void A_header_in_a_subfolder_of_the_world_is_rewritten_too()
+        {
+            var dir = MakeChunkedWorld("Nest");
+            var inner = Path.Combine(dir, "inner");
+            Directory.CreateDirectory(inner);
+            File.WriteAllBytes(Path.Combine(inner, "_main.9.fwl2"), BuildFwl(41, "Nest", "chunkyseed"));
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Nest"), "Nest2");
+
+            var copied = Path.Combine(WorldsDir(), "Nest2");
+            Assert.Equal("Nest2", StoredName(Path.Combine(copied, "_main.1.fwl2")));
+            Assert.Equal("Nest2", StoredName(Path.Combine(copied, "inner", "_main.9.fwl2")));
+
+            // And the world it came from is exactly as it was, at both depths.
+            Assert.Equal("Nest", StoredName(Path.Combine(dir, "_main.1.fwl2")));
+            Assert.Equal("Nest", StoredName(Path.Combine(inner, "_main.9.fwl2")));
+        }
+
+        // ------------------------------------------------------ the staging folder
+
+        /// <summary>
+        /// A staged copy is not a world. Every thrown refusal cleans its staging up, so
+        /// the only thing that can leave one standing is the process being killed between
+        /// the last file landing and the rename. What is in it at that moment is a whole
+        /// generation whose header still names the world it was copied FROM, so listing it
+        /// would be the two worlds under one name this whole feature exists to prevent.
+        /// </summary>
+        [Fact]
+        public void A_staged_copy_left_behind_by_a_kill_is_not_listed_as_a_world()
+        {
+            MakeChunkedWorld("Midgard");
+
+            // Exactly what a kill in that window leaves: the finished tree, still under
+            // the staging name, with the source's name inside its header.
+            var staged = Path.Combine(WorldsDir(), "Second Midgard.copying-20260918-101500");
+            Directory.CreateDirectory(staged);
+            File.WriteAllBytes(Path.Combine(staged, "_main.1.fwl2"), BuildFwl(41, "Midgard", "chunkyseed"));
+            File.WriteAllBytes(Path.Combine(staged, "_main.1.db2"), BuildDbHeader(41, 5400));
+
+            var names = WorldStore.Enumerate(SaveFolder).Select(w => w.Name).ToList();
+            Assert.Equal(new[] { "Midgard" }, names);
+            Assert.Null(WorldStore.Find(SaveFolder, "Second Midgard"));
+        }
+
+        /// <summary>
+        /// The marker is matched with its stamp, so a world a host really did name after
+        /// one is still a world. Nothing stops a folder being called that.
+        /// </summary>
+        [Fact]
+        public void A_world_whose_own_name_carries_the_marker_is_still_a_world()
+        {
+            MakeChunkedWorld("Old.copying-notes");
+
+            var found = WorldStore.Find(SaveFolder, "Old.copying-notes");
+            Assert.NotNull(found);
+            Assert.Equal("Old.copying-notes", found.Name);
+        }
+    }
+}

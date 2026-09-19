@@ -477,8 +477,9 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // Written down so a scanner that quietly stops finding calls fails too. A new
             // dialog moves this number and reads the rule above on its way past. 19 with
-            // the two BepInEx dialogs: the install offer and the misplaced-folder removal.
-            Assert.Equal(19, sites);
+            // the two BepInEx dialogs, the install offer and the misplaced-folder
+            // removal, and 20 with the name box Copy world as opens.
+            Assert.Equal(20, sites);
             Assert.True(frozen.Count == 0,
                 "a dialog would keep its wording through a language switch:\n  "
                 + string.Join("\n  ", frozen));

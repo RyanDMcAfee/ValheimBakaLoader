@@ -511,6 +511,76 @@
     "world.server.label": { "lore": "Server" },
     "world.field.name": { "lore": "Server Name" },
     "world.field.world": { "lore": "World" },
+    "world.new.option": { "lore": "New world\u2026" },
+    "world.new.placeholder": { "lore": "name the new world" },
+    "world.new.note": { "lore": "This world does not exist yet. The server makes it the first time it starts, with a seed of its own." },
+    "world.name.problem.required": { "lore": "Give the world a name." },
+    "world.name.problem.too_long": {
+      "lore": "A world name can be at most {limit} characters long.",
+      "params": { "limit": "number" }
+    },
+    "world.name.problem.bad_characters": { "lore": "A world name has to work as a folder name. Leave out slashes, colons, wildcards and the other characters Windows will not take, and do not end it with a dot or a space." },
+    "world.name.problem.taken": {
+      "lore": "There is already a world called {world} in this save folder.",
+      "params": { "world": "text" }
+    },
+    "world.copy.chip": { "lore": "COPY AS" },
+    "world.copy.chip.title": { "lore": "Copy this world under a new name" },
+    "world.copy.button": { "lore": "Copy world as" },
+    "world.copy.button.title": { "lore": "Copy this world under a new name and leave this one exactly as it is" },
+    "world.copy.title": {
+      "lore": "What should the copy of {world} be called?",
+      "params": { "world": "text" }
+    },
+    "world.copy.placeholder": { "lore": "the new world's name" },
+    "world.copy.block.no_world": { "lore": "there is no world here to copy" },
+    "world.copy.block.running": {
+      "lore": "'{owner}' is running this world right now. Stop the server first.",
+      "params": { "owner": "text" }
+    },
+    "world.copy.done.toast": {
+      "lore": "Copied {source} as {target}",
+      "params": { "source": "text", "target": "text" },
+      "mark": "\u16DD"
+    },
+    "world.copy.preview.toast": {
+      "lore": "World copied as {world} \u00b7 preview only",
+      "params": { "world": "text" },
+      "mark": "\u16DD"
+    },
+    "world.copy.reason.source_required": { "lore": "No world was named to copy." },
+    "world.copy.reason.bad_source": { "lore": "That world reference carries characters a world name cannot have." },
+    "world.copy.reason.bad_subfolder": { "lore": "That is not one of the game's own worlds folders." },
+    "world.copy.reason.unknown_save_folder": { "lore": "That save folder is not one BakaLoader knows." },
+    "world.copy.reason.target_required": { "lore": "Give the copy a world name." },
+    "world.copy.reason.target_too_long": {
+      "lore": "A world name can be at most {limit} characters long.",
+      "params": { "limit": "number" }
+    },
+    "world.copy.reason.bad_target": {
+      "lore": "'{target}' is not a name a world can be saved under.",
+      "params": { "target": "text" }
+    },
+    "world.copy.reason.target_exists": {
+      "lore": "There is already a world called '{target}' in that save folder, so nothing was copied.",
+      "params": { "target": "text" }
+    },
+    "world.copy.reason.server_running": {
+      "lore": "'{profile}' is running '{world}' right now. Stop it before copying the world.",
+      "params": { "profile": "text", "world": "text" }
+    },
+    "world.copy.reason.no_such_world": {
+      "lore": "There is no world named '{world}' in that save folder any more.",
+      "params": { "world": "text" }
+    },
+    "world.copy.reason.unreadable": {
+      "lore": "The world file for '{world}' could not be read, so nothing was copied.",
+      "params": { "world": "text" }
+    },
+    "world.copy.reason.failed": {
+      "lore": "'{world}' could not be copied, so nothing in the worlds folder was changed.",
+      "params": { "world": "text" }
+    },
     "world.field.seed": { "lore": "World Seed " },
     "world.field.seed.rune.title": { "lore": "Seed is set at world creation and can never change" },
     "world.field.seed.input.title": { "lore": "A world's seed is fixed at creation and cannot be changed" },

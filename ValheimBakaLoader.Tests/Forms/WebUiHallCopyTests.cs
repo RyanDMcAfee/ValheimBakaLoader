@@ -283,7 +283,9 @@ namespace ValheimBakaLoader.Tests.Forms
             {
                 "world.head.title", "common.norse.world", "world.head.sub", "world.save.label",
                 "world.server.label", "common.norse.heimr", "world.field.name",
-                "world.field.world", "world.field.seed", "world.field.seed.rune.title",
+                "world.field.world", "world.copy.chip", "world.copy.chip.title",
+                "world.new.placeholder",
+                "world.field.seed", "world.field.seed.rune.title",
                 "world.field.seed.input.title", "common.chip.copy", "world.seed.copy.title",
                 "world.field.password", "common.chip.show.title", "world.pwcheck.label",
                 "world.pwcheck.note", "world.field.port", "world.field.visibility",

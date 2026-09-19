@@ -3985,6 +3985,90 @@ namespace ValheimBakaLoader.Forms
                 return (object)new { world, folder = saveFolder, sub, deleted = removed, includeBackups };
             });
 
+            // Copies one world beside itself under a new name, and rewrites the name stored
+            // inside the copy's own header so the copy is a real rename in both save formats.
+            // The source and its backup layers are never touched.
+            //
+            // The same four things have to be true here as for a delete, for the same
+            // reasons: the reference names a save folder BakaLoader knows and, when it names
+            // one at all, one of the game's two worlds subfolders; the new name is a name a
+            // world can be saved under; nothing is running the world, because a live server
+            // rewrites it as it saves and a copy taken underneath one is a copy of half a
+            // save; and the world is really there. What is NOT checked here is whether the
+            // new name is free, because that answer goes stale between the check and the
+            // copy: WorldStore refuses an occupied name at the moment it would land on it.
+            RegisterRpc("worlds.copyAs", async p =>
+            {
+                var source = p.Value<string>("source");
+                var target = (p.Value<string>("target") ?? string.Empty).Trim();
+                var folder = p.Value<string>("folder");
+                var sub = p.Value<string>("sub");
+
+                if (string.IsNullOrWhiteSpace(source))
+                    throw new HostFacingException("worlds.copySourceRequired", "source is required");
+                if (!WorldStore.IsSafeReferenceToken(source))
+                    throw new HostFacingException("worlds.copyBadSourceRef", "Invalid characters in world reference.");
+                if (!string.IsNullOrWhiteSpace(sub) && sub != "worlds_local" && sub != "worlds")
+                    throw new HostFacingException("worlds.copyBadSubfolder", "Invalid save subfolder.");
+
+                var problem = WorldStore.WorldNameProblem(target);
+                if (problem == "required")
+                    throw new HostFacingException("worlds.copyTargetRequired", "Give the copy a world name.");
+                if (problem == "tooLong")
+                    throw new HostFacingException("worlds.copyTargetTooLong",
+                        $"A world name can be at most {WorldStore.WorldNameMaxLength} characters long.",
+                        ("limit", WorldStore.WorldNameMaxLength));
+                if (problem != null)
+                    throw new HostFacingException("worlds.copyBadTargetRef",
+                        "That is not a name a world can be saved under.", ("target", target));
+
+                string saveFolder;
+                if (string.IsNullOrWhiteSpace(folder))
+                {
+                    saveFolder = new ValheimServerOptions
+                    {
+                        SaveDataFolderPath = ResolveSaveDataFolder(null),
+                    }.GetValidatedSaveDataFolder().FullName;
+                }
+                else
+                {
+                    if (!KnownSaveFolders().Any(k => SameFolder(k, folder)))
+                        throw new HostFacingException("worlds.copyUnknownSaveFolder", "Unknown save folder.");
+                    saveFolder = Path.GetFullPath(folder);
+                }
+
+                var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
+                foreach (var session in Sessions.Values)
+                {
+                    if (session.Server.Status == ServerStatus.Stopped) continue;
+
+                    var live = session.Server.Options;
+                    var liveFolder = string.IsNullOrWhiteSpace(live?.SaveDataFolderPath)
+                        ? userSave
+                        : live.SaveDataFolderPath;
+
+                    if (string.Equals(live?.WorldName, source, StringComparison.OrdinalIgnoreCase)
+                        && SameFolder(liveFolder, saveFolder))
+                        throw new HostFacingException("worlds.copyServerRunning",
+                            $"'{session.ProfileName}' is running world '{source}' right now. Stop it before copying the world.",
+                            ("profile", session.ProfileName), ("world", source));
+                }
+
+                var world = string.IsNullOrWhiteSpace(sub)
+                    ? WorldStore.Find(saveFolder, source)
+                    : WorldStore.FindIn(saveFolder, sub, source);
+                if (world == null)
+                    throw new HostFacingException("worlds.copyNoSuchWorld",
+                        $"There is no world named '{source}' in that save folder.", ("world", source));
+
+                // A 1.0 world is a whole directory tree, so the copy goes off the UI thread.
+                var landed = await Task.Run(() => WorldStore.CopyWorldAs(world, target));
+
+                Logger.Information("Copied world '{source}' as '{target}' into {folder}.", source, target, landed);
+
+                return (object)new { source, target, folder = saveFolder, sub = world.Sub, landed };
+            });
+
             // --- The Skald (analytics) ---
             // Aggregates the local analytics journal for one server profile: playtime per
             // player (join->leave pairing), uptime (start->stop/crash pairing), deaths, a

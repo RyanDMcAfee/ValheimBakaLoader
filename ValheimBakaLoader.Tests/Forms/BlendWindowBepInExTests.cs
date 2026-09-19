@@ -27,6 +27,14 @@ namespace ValheimBakaLoader.Tests.Forms
 
         private static string Service() => AppSourceTree.Files()["BepInExService.cs"];
 
+        /// <summary>
+        /// The other file host facing refusals are thrown from. A refusal belongs
+        /// beside the rule it enforces, and the rule about what a world may be
+        /// copied to lives in the world store rather than in the bridge that calls
+        /// it, so the pairing table has to be able to find it there.
+        /// </summary>
+        private static string WorldStore() => AppSourceTree.Files()["WorldStore.cs"];
+
         private static string AppJs() => AppSourceTree.Web("app.js");
 
         private static Dictionary<string, JsonElement> Catalog()
@@ -416,7 +424,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_pages_pairing_table_names_no_refusal_that_is_gone()
         {
-            var thrown = Service() + Bridge();
+            var thrown = Service() + Bridge() + WorldStore();
             var named = Regex.Matches(AppJs(), "named:\"([^\"]+)\"")
                 .Cast<Match>()
                 .Select(m => m.Groups[1].Value)
