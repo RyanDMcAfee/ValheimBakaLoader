@@ -55,18 +55,20 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// Eleven of the thirteen serif rules sit at 13px or smaller; only the Hearth state
+        /// Thirteen of the fifteen serif rules sit at 13px or smaller; only the Hearth state
         /// line and the page heading are above it. A CJK display serif at 13px on a dark
         /// ground is thin and blurry, so the small ones take their own token and the two
         /// large ones keep the display face, which is where the brand voice actually lives.
-        /// The eleventh is the BepInEx row's name, at 12.5px above the mods table.
+        /// The eleventh is the BepInEx row's name, at 12.5px above the mods table, and the
+        /// last two came with the Settings hall's Directories work: the word Currently
+        /// above each path, and the title on the unsaved notice.
         /// </summary>
         [Fact]
         public void The_small_serif_rules_and_the_display_ones_are_separate_tokens()
         {
             var css = Css();
 
-            Assert.Equal(11, Regex.Matches(css, Regex.Escape("font-family:var(--serif-small)")).Count);
+            Assert.Equal(13, Regex.Matches(css, Regex.Escape("font-family:var(--serif-small)")).Count);
 
             var display = Regex.Matches(css, @"font-family:var\(--serif\)[^}]*")
                 .Cast<Match>().Select(m => m.Value).ToList();

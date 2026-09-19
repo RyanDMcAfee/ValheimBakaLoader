@@ -496,9 +496,16 @@ namespace ValheimBakaLoader.Tests.Forms
 
         /// <summary>
         /// The same sentence said in more than one hall is one entry there too, not
-        /// only for the Norse words. Two Open buttons in Directories, two sortable
+        /// only for the Norse words. Two Browse buttons in Directories, two sortable
         /// Name columns, two show-hide password chips, and the four foldable headers
         /// that all explain themselves the same way.
+        /// <para>
+        /// The two Open buttons used to be the first of those and are still one entry;
+        /// they are no longer in the markup because each one's tooltip names the folder
+        /// it opens, which only a render can know. So the pair moved: the markup shares
+        /// world.dir.browse twice, and app.js asks for common.button.open once, in the
+        /// loop that draws both buttons.
+        /// </para>
         /// </summary>
         [Fact]
         public void One_entry_answers_every_place_a_shared_sentence_is_shown()
@@ -506,7 +513,10 @@ namespace ValheimBakaLoader.Tests.Forms
             var html = Html();
             var catalog = Catalog();
 
-            Assert.Equal(2, Regex.Matches(html, @"data-i18n=""common\.button\.open""").Count);
+            Assert.Equal(2, Regex.Matches(html, @"data-i18n=""world\.dir\.browse""").Count);
+            Assert.Equal(0, Regex.Matches(html, @"data-i18n=""common\.button\.open""").Count);
+            Assert.Equal(1, Regex.Matches(AppSourceTree.Web("app.js"),
+                Regex.Escape("open.textContent=T(\"common.button.open\");")).Count);
             Assert.Equal(2, Regex.Matches(html, @"data-i18n-title=""common\.sort\.by_name""").Count);
             Assert.Equal(2, Regex.Matches(html, @"data-i18n-title=""common\.chip\.show\.title""").Count);
             // The Upkeep card and the three foldable sections of the Settings hall.

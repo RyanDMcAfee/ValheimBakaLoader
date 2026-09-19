@@ -1013,6 +1013,120 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .pathrow .copychip{flex:none}
 .pathrow .btn{flex:none}
 
+/* ---- Settings hall, Directories ----
+   The line above each of the two boxes: what BakaLoader will really open, where that
+   came from, and Open, which acts on THAT folder rather than on whatever is typed
+   below. Selectable on purpose: a host asked for this line so they could copy the path
+   into Explorer, so nothing here takes user-select away. */
+.dircur{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.dircur-k{font-family:var(--serif-small);font-size:9px;letter-spacing:1.6px;
+  text-transform:uppercase;color:var(--bone-faint);flex:none}
+.dircur-v{font-family:var(--mono);font-size:10px;color:var(--bone-dim);
+  user-select:text;word-break:break-all;min-width:0}
+.dircur-src{font-size:9px;letter-spacing:.6px;color:var(--bone-faint);
+  border:1px solid var(--bronze);border-radius:20px;padding:0 7px;flex:none;white-space:nowrap}
+.dircur-src.own{color:var(--amber);border-color:rgba(232,169,60,.45)}
+.dircur-open{margin-left:auto;flex:none}
+
+/* ---- a field with something unsaved in it ----
+   A dot beside the label and a rule down the left edge, which is a different shape
+   from the focus glow on purpose: the glow says "this is where the caret is" and goes
+   the moment focus does, and this says "this is not saved" and stays until it is.
+   The marker costs no layout, and that is the point of the way it is drawn. The first
+   shape of this gave the field padding-left:9px to stand the rule in, so the label and
+   the box both slid 9px right and the box lost 9px of its width the instant the first
+   character was typed: #fName measured left 131 clean and left 140 dirty, in the middle
+   of typing into it. A marker that moves the thing it is marking is worse than none.
+   So the rule is drawn in the gutter that is already there rather than in room the
+   field makes for it: the grid leaves 16px between the two columns and the card leaves
+   16px inside its own edge, and an absolutely positioned bar at left:-8px stands in
+   that space without the field's own box changing at all. The glow reaches 8px further
+   left, which lands exactly on the card's inner edge rather than under it.
+   The dot stays where it reads best, inline after the label's own text, and the only
+   room it could ever cost is a label one character short of wrapping taking a second
+   line for it. That was measured rather than assumed: neither catalog does it, at
+   either window size.
+   scripts/ui/dirty_marker_probe.js is the gate: it drives the real page and asserts
+   that every field's left and width are the same clean and dirty, at 1440x900 and at
+   the narrowest the window can be dragged to, and reports a label that re-wrapped. */
+.field.field-dirty{position:relative}
+.field.field-dirty::before{content:"";position:absolute;left:-8px;top:2px;bottom:2px;width:2px;
+  border-radius:0 2px 2px 0;background:var(--ember);box-shadow:0 0 8px rgba(255,122,26,.55)}
+.field.field-dirty>label::after{content:"";display:inline-block;width:5px;height:5px;
+  margin-left:7px;vertical-align:middle;border-radius:50%;
+  background:var(--ember);box-shadow:0 0 7px rgba(255,122,26,.8)}
+
+/* ---- the unsaved notice ----
+   Bottom left of the hall, diagonally opposite Save Config. No button: the only button
+   it could carry is the one already on the other corner.
+   It is a sibling of the halls rather than a child of one, and that is deliberate. A
+   hall scrolls inside itself, so an element pinned to the bottom of a hall has the form
+   sliding under it, and what slid under this one first was the box that had just been
+   typed into. So the notice sits out here, over nothing, and the hall gives up a band at
+   its foot for exactly as long as the notice is up.
+   How deep that band is, is NOT this number. This number is only what the band is before
+   the notice has ever been measured. The notice is two sentences, sentences wrap, and how
+   many lines they take depends on the language and on how wide the window is, so no
+   number written here can be right for all of them: a fixed 70px was the first shape of
+   this, and at 1408x880 in a language whose words run longer the notice stood 75px tall
+   and the last 5px of the form went back behind it. app.js measures the notice and writes
+   the real depth into this token, which is the only arrangement where the band cannot end
+   up shorter than the thing standing in it. scripts/ui/unsaved_band_probe.js is the gate:
+   it drives the real page and asserts the hall's bottom edge never falls below the
+   notice's top, at every width and in both catalogs. */
+:root{--unsaved-band:70px}
+.worldunsaved{position:absolute;left:22px;bottom:9px;z-index:6;width:max-content;
+  max-width:min(560px,70%);display:none;flex-direction:column;gap:3px;
+  /* Nothing to press, so it never takes a click. */
+  pointer-events:none;
+  background:linear-gradient(180deg,rgba(38,26,14,.97),rgba(22,17,12,.97));
+  border:1px solid rgba(255,122,26,.42);border-left:3px solid var(--ember);
+  border-radius:var(--r2);padding:8px 13px;
+  box-shadow:0 10px 26px rgba(0,0,0,.5)}
+/* Two owners, and they do not overlap: app.js says whether the form has anything
+   unsaved in it, and the hall on screen says whether this is the hall it belongs to.
+   The dot on the rail is what carries the state to the other halls. */
+#page-world.active ~ .worldunsaved.on{display:flex;animation:unsavedIn .22s var(--ease)}
+.worldunsaved .wu-k{font-family:var(--serif-small);font-size:10px;letter-spacing:2px;
+  text-transform:uppercase;color:var(--ember-hi)}
+.worldunsaved .wu-v{font-size:10.5px;line-height:1.45;color:var(--bone-dim)}
+/* The band. A hall is inset:0 of the pane, so lifting its bottom edge shortens the
+   scrolling area itself: the form now ENDS above the notice rather than passing behind
+   it, at every scroll position rather than only at the last one. The token is written by
+   sizeUnsavedBand in app.js from the notice's measured height, never by hand. */
+#page-world.unsaved-room{bottom:var(--unsaved-band)}
+/* And the fade that says there is more below follows the fold up with it, so it stays
+   the edge of the form rather than a shadow across the notice. A browser too old for
+   :has() simply leaves the fade where it was, which is a softer gradient in the wrong
+   place and nothing else. */
+.pages:has(> #page-world.active.unsaved-room)::after{bottom:var(--unsaved-band)}
+@keyframes unsavedIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* ---- Save Config, while there is something to save ----
+   A slow breath rather than a flash. Under reduced motion the animation is dropped
+   outright and a steady outline says the same thing without moving. */
+@keyframes saveCfgPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(255,122,26,0)}
+  50%{box-shadow:0 0 0 4px rgba(255,122,26,.28)}
+}
+#saveCfgBtn.pulse{animation:saveCfgPulse 1.9s var(--ease) infinite}
+@media (prefers-reduced-motion:reduce){
+  #saveCfgBtn.pulse{animation:none;outline:2px solid var(--ember-hi);outline-offset:2px}
+  /* Spelled with the same selector the slide is spelled with, and not a word shorter. A
+     media query adds no weight of its own, so a plain .worldunsaved here would lose to
+     the id in the rule above and the notice would go on sliding in for the one host who
+     asked it not to. */
+  #page-world.active ~ .worldunsaved.on{animation:none}
+}
+
+/* ---- the rail's own word for it ----
+   One dot on the Settings entry, so the state is readable from any other hall. Drawn
+   rather than added to the markup: it carries no words, and a rail entry that grew a
+   child would grow one the walker has to be told to leave alone. */
+.navitem.has-unsaved::after{content:"";position:absolute;top:6px;right:6px;
+  width:6px;height:6px;border-radius:50%;
+  background:var(--ember);box-shadow:0 0 8px rgba(255,122,26,.85)}
+
 /* gated parameter fields (toggle off → field sleeps) */
 .field input:disabled{opacity:.45;cursor:not-allowed}
 .field.gated label{opacity:.5}

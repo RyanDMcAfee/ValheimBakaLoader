@@ -303,10 +303,20 @@ namespace ValheimBakaLoader.Tests.Forms
                 "world.field.logs", "world.logs.label", "world.field.autostart",
                 "world.autostart.label", "world.field.rcon", "world.field.rcon_port",
                 "world.field.rcon_password", "world.field.priority", "world.sec.directories",
-                "world.field.server_exe", "common.button.open", "world.server_exe.open.title",
-                "world.field.save_dir", "world.save_dir.placeholder",
-                "world.save_dir.open.title", "world.field.args", "world.setup.reset",
-                "world.setup.reset.title", "world.setup.reset.note",
+                // Directories. The label, the word Currently, Browse and its two tooltips
+                // and the note under the section are static, so the walker owns them here.
+                // Four ids that used to be in this list are NOT any more, and that is the
+                // change rather than a loss: the two Open buttons and both placeholders now
+                // say a PATH, which the markup cannot know, so renderWorldDirs owns them
+                // whole. common.button.open, world.server_exe.open.title,
+                // world.save_dir.open.title and world.save_dir.placeholder are all still
+                // read, out of app.js, and the completeness gate holds them to it.
+                "world.field.server_exe", "world.dir.currently", "world.dir.browse",
+                "world.dir.browse.exe.title", "world.field.save_dir",
+                "world.dir.browse.save.title", "world.field.args", "world.dir.empty_note",
+                "world.setup.reset", "world.setup.reset.title", "world.setup.reset.note",
+                // And the unsaved notice, both sentences of it, in the corner of the hall.
+                "world.unsaved.title", "world.unsaved.note",
             });
         }
 

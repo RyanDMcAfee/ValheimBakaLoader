@@ -3039,7 +3039,7 @@ namespace ValheimBakaLoader.Forms
                 CurrentProfile = prefs.ProfileName;
                 // Loading a profile IS the server switch - refresh the chips' active marker.
                 PostEvent("servers.changed", BuildServersList());
-                return Task.FromResult<object>(prefs);
+                return Task.FromResult<object>(BuildProfilePrefsDto(prefs, UserPrefsProvider.LoadPreferences()));
             });
 
             RegisterRpc("profiles.save", p =>
@@ -3052,7 +3052,9 @@ namespace ValheimBakaLoader.Forms
                 ServerPrefsProvider.SavePreferences(prefs);
                 CurrentProfile = prefs.ProfileName;
                 PostEvent("servers.changed", BuildServersList());
-                return Task.FromResult<object>(prefs);
+                // The same shape the page was handed on the way in, so the Directories lines
+                // are answered from the save rather than left describing the state before it.
+                return Task.FromResult<object>(BuildProfilePrefsDto(prefs, UserPrefsProvider.LoadPreferences()));
             });
 
             RegisterRpc("profiles.remove", p =>
@@ -5878,6 +5880,128 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(true);
             });
 
+            // --- The two Directories boxes: pick a path, and look at one ---
+            // Windows' own file picker, filtered to the one file name a dedicated server is
+            // ever called. Like shell.open, the page may only send a closed keyword; the
+            // dialog itself is what produces a path, so nothing the page says can point this
+            // at anything. Nothing is saved: the answer goes into the box and waits for
+            // Save Config like every other field on the hall.
+            RegisterRpc("shell.pickFile", p =>
+            {
+                var kind = p.Value<string>("kind");
+                if (!string.Equals(kind, PathCheck.KindExe, StringComparison.Ordinal))
+                    throw new ArgumentException($"Unknown shell.pickFile kind: {kind}");
+
+                return Task.FromResult(RunOnUiThread(() =>
+                {
+                    using var dialog = new OpenFileDialog
+                    {
+                        // No title and no filter label: both would be English in a window
+                        // the catalog cannot reach. The file name IS the label, and it is a
+                        // name rather than a word, so it reads the same in every language.
+                        Filter = PathCheck.ServerExeName + "|" + PathCheck.ServerExeName,
+                        CheckFileExists = true,
+                        Multiselect = false,
+                        InitialDirectory = PickerStartFolder(PathCheck.KindExe),
+                    };
+                    return PickReply(dialog.ShowDialog(this) == DialogResult.OK, dialog.FileName);
+                }));
+            });
+
+            // The same for the save folder. A folder that is not there yet can be made from
+            // inside the dialog, which is the case the inline note calls "will be created".
+            RegisterRpc("shell.pickFolder", p =>
+            {
+                var kind = p.Value<string>("kind");
+                if (!string.Equals(kind, PathCheck.KindDir, StringComparison.Ordinal))
+                    throw new ArgumentException($"Unknown shell.pickFolder kind: {kind}");
+
+                return Task.FromResult(RunOnUiThread(() =>
+                {
+                    using var dialog = new FolderBrowserDialog
+                    {
+                        ShowNewFolderButton = true,
+                        SelectedPath = PickerStartFolder(PathCheck.KindDir),
+                    };
+                    return PickReply(dialog.ShowDialog(this) == DialogResult.OK, dialog.SelectedPath);
+                }));
+            });
+
+            // What is at a path, while the host is still typing it. This never refuses
+            // anything and never blocks a save: it answers, the page writes one sentence
+            // under the box, and Save Config behaves exactly as it did before.
+            //
+            // AND IT NEVER BLOCKS THE WINDOW. An RPC handler runs on the window's own
+            // thread, because that is where WebView2 raises the message, so everything a
+            // handler does before its first await is done with the window's painting
+            // stopped. What this one does is ask the disk four questions about a path the
+            // host is in the middle of typing, and two of those questions have no upper
+            // bound on how long they take: a share on a machine that is not answering
+            // holds Directory.Exists until SMB gives up, and a drive that has spun down
+            // holds it until the platters are back. The page asks again every time the
+            // typing pauses, so a host who pasted an unreachable path met a window that
+            // had stopped repainting, once per keystroke.
+            //
+            // So the disk work goes to a worker and this thread waits on it with a
+            // budget. Running out is an ANSWER rather than a throw, because a sentence
+            // under the box is what every other outcome here produces and a refusal would
+            // be the one thing this whole surface was written not to do. The page's own
+            // sequence guard covers the other half: the worker is left to finish in its
+            // own time, and an answer for a keystroke that is no longer the newest one is
+            // dropped where it lands rather than painted over a newer one.
+            RegisterRpc("paths.check", async p =>
+            {
+                var kind = p.Value<string>("kind");
+                if (!string.Equals(kind, PathCheck.KindExe, StringComparison.Ordinal)
+                    && !string.Equals(kind, PathCheck.KindDir, StringComparison.Ordinal))
+                    throw new ArgumentException($"Unknown paths.check kind: {kind}");
+
+                // Filling in %VARIABLES% is string work and stays here. Only the questions
+                // that reach a disk go to the worker.
+                var expanded = PathCheck.Expand(p.Value<string>("path") ?? "");
+                var looking = Task.Run(() => PathCheck.Look(kind, expanded));
+                var finished = await Task.WhenAny(looking, Task.Delay(PathCheckBudget));
+
+                PathCheckAnswer answer;
+                if (finished != looking)
+                {
+                    answer = PathCheck.CouldNotBeChecked(expanded);
+                    // The worker is left to finish in its own time, and nothing awaits it
+                    // after this, so anything it raises on the way out is an unobserved
+                    // task exception sitting there until a collection notices it. Read it
+                    // and write it down instead: this is the one arm where a path that
+                    // really is unreachable ends up, so it is the one worth a log line.
+                    _ = looking.ContinueWith(
+                        t => Logger.Warning(
+                            t.Exception,
+                            "Looking at {path} for the Directories box failed after it was given up on",
+                            expanded),
+                        TaskContinuationOptions.OnlyOnFaulted);
+                }
+                else
+                {
+                    // Look catches everything a path a host can type is able to raise, so
+                    // a faulted task here is something nobody has seen. It still gets an
+                    // answer rather than a refusal: the one rule this surface has is that
+                    // it says a sentence and lets the host carry on.
+                    try { answer = PathCheck.Judge(kind, expanded, await looking); }
+                    catch (Exception ex)
+                    {
+                        Logger.Warning(ex, "Looking at {path} for the Directories box failed", expanded);
+                        answer = PathCheck.CouldNotBeChecked(expanded);
+                    }
+                }
+
+                return new
+                {
+                    expanded = answer.Expanded,
+                    exists = answer.Exists,
+                    looksRight = answer.LooksRight,
+                    writable = answer.Writable,
+                    problemId = answer.ProblemId,
+                };
+            });
+
             // --- First-launch setup ---
             // Reports whether the guided setup has been completed and whether the
             // currently-saved paths actually exist on disk.
@@ -7130,6 +7254,101 @@ namespace ValheimBakaLoader.Forms
                 + packageNamespace.Trim() + "/" + packageName.Trim() + "/";
         }
 
+        /// <summary>
+        /// One server profile as the Settings hall reads it: everything that is stored,
+        /// plus the two paths BakaLoader will REALLY use for this server and where each of
+        /// them came from.
+        /// <para>
+        /// The four added keys are why the Directories boxes used to look blank on a fresh
+        /// install. The first time setup writes its answers to the app wide settings, and a
+        /// profile only carries a path when somebody overrode it for that one server, so the
+        /// hall was rendering a null while Open was resolving the same fallback the launcher
+        /// resolves. The boxes are still the override and still show the profile's own
+        /// value; the line above them says what is in force.
+        /// </para>
+        /// <para>
+        /// Additive: every key that was in this reply before is still in it, spelled the
+        /// same way, so a page that knows nothing about the four new ones is unaffected.
+        /// </para>
+        /// </summary>
+        public static JObject BuildProfilePrefsDto(ServerPreferences profile, UserPreferences user)
+        {
+            var dto = profile == null ? new JObject() : JObject.FromObject(profile);
+
+            var exe = PathCheck.Effective(profile?.ServerExePath, user?.ServerExePath);
+            var save = PathCheck.Effective(profile?.SaveDataFolderPath, user?.SaveDataFolderPath);
+
+            dto["EffectiveServerExePath"] = exe.Path;
+            dto["ServerExePathSource"] = exe.Source;
+            dto["EffectiveSaveDataFolderPath"] = save.Path;
+            dto["SaveDataFolderPathSource"] = save.Source;
+            return dto;
+        }
+
+        /// <summary>
+        /// What a picker answers: the path that was chosen, or that it was cancelled. Two
+        /// shapes rather than a null, so the page never has to tell "nothing was chosen"
+        /// apart from "the call failed" by looking at what came back.
+        /// </summary>
+        public static object PickReply(bool accepted, string path)
+            => accepted && !string.IsNullOrWhiteSpace(path)
+                ? new { path = path.Trim() }
+                : (object)new { cancelled = true };
+
+        /// <summary>
+        /// Runs a piece of work on the window's own thread and hands the answer back.
+        /// <para>
+        /// A modal Windows dialog has to be opened on the thread that owns the window, and
+        /// an RPC handler is not reliably on it: WebView2 raises the message there, but the
+        /// handler before this one may have awaited, and a continuation lands wherever the
+        /// scheduler puts it. Opening a picker off that thread either throws or puts up a
+        /// window with no owner that the app can be closed behind.
+        /// </para>
+        /// </summary>
+        private T RunOnUiThread<T>(Func<T> work)
+        {
+            if (work == null) return default;
+            if (!InvokeRequired) return work();
+            return (T)Invoke(work);
+        }
+
+        /// <summary>
+        /// How long <c>paths.check</c> waits for the disk before it answers that the path
+        /// could not be checked in time.
+        /// <para>
+        /// Short on purpose. The page asks again 320ms after the typing pauses, so this is
+        /// the longest a line under the box can stay blank before it says something, and
+        /// nothing downstream of it is worth waiting longer for: an answer that arrives
+        /// after the next keystroke is dropped by the page's sequence guard anyway. It is
+        /// generous enough for a disk that is merely busy and short enough that a share
+        /// nobody is answering on says so while the host is still looking at the box.
+        /// </para>
+        /// </summary>
+        internal static readonly TimeSpan PathCheckBudget = TimeSpan.FromMilliseconds(1500);
+
+        /// <summary>
+        /// Where a picker should open: the folder the path in force for this server already
+        /// points at, when that folder is really there. Null otherwise, which is Windows'
+        /// own "wherever you were last", and never a refusal: this only decides a starting
+        /// view.
+        /// </summary>
+        private string PickerStartFolder(string kind)
+        {
+            try
+            {
+                if (string.Equals(kind, PathCheck.KindExe, StringComparison.Ordinal))
+                {
+                    var exe = PathCheck.Expand(GetServerExePath());
+                    var folder = string.IsNullOrWhiteSpace(exe) ? null : Path.GetDirectoryName(exe);
+                    return !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder) ? folder : null;
+                }
+
+                var save = PathCheck.Expand(ResolveSaveDataFolder(null));
+                return !string.IsNullOrWhiteSpace(save) && Directory.Exists(save) ? save : null;
+            }
+            catch { return null; }
+        }
+
         private object BuildUserPrefsDto()
         {
             var prefs = UserPrefsProvider.LoadPreferences();
@@ -7137,6 +7356,11 @@ namespace ValheimBakaLoader.Forms
             {
                 prefs.ServerExePath,
                 prefs.SaveDataFolderPath,
+                // The same two paths with their variables filled in, which is what the
+                // Directories boxes show as "default: ..." when a profile overrides nothing.
+                // Named the way DefaultLogsFolderPath below already is.
+                DefaultServerExePath = PathCheck.Expand(prefs.ServerExePath),
+                DefaultSaveDataFolderPath = PathCheck.Expand(prefs.SaveDataFolderPath),
                 prefs.CheckForUpdates,
                 prefs.AutoUpdateMods,
                 prefs.UseHexiumSource,

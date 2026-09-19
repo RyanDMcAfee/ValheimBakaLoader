@@ -437,14 +437,37 @@
             <div class="formsec collapsible" id="secDirs" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse" data-i18n="world.sec.directories" data-i18n-title="hearth.upkeep.head.title"><span class="r">ᛞ</span> DIRECTORIES</div>
             <div class="formsec-body">
             <div class="formgrid">
+              <!-- Each of the two path fields is three rows: the line saying what is in
+                   force right now (with Open on it, because Open acts on that folder and
+                   not on the box), the box itself, which is an OVERRIDE for this one
+                   server, and a line for whatever the check had to say about what was
+                   typed. The Currently line's value, its source word and Open's tooltip
+                   are written by renderWorldDirs and carry no data-i18n: one owner per
+                   element, and that owner is the render because the words depend on a
+                   path. Browse is static both ways, so the walker owns it whole. -->
               <div class="field" style="grid-column:1/-1"><label data-i18n="world.field.server_exe">Server Executable</label>
-                <div class="pathrow"><input type="text" id="fServerExe" value=""><button class="btn btn-ghost btn-sm" id="btnOpenSrv" title="Open the server folder in Explorer" data-i18n="common.button.open" data-i18n-title="world.server_exe.open.title">Open</button></div>
+                <div class="dircur">
+                  <span class="dircur-k" data-i18n="world.dir.currently">Currently</span>
+                  <span class="dircur-v" id="curServerExe"></span>
+                  <span class="dircur-src" id="curServerExeSrc"></span>
+                  <button class="btn btn-ghost btn-sm dircur-open" id="btnOpenSrv" title="Open the server folder in Explorer">Open</button>
+                </div>
+                <div class="pathrow"><input type="text" id="fServerExe" value="" spellcheck="false" autocomplete="off" placeholder="default: %ProgramFiles(x86)%\Steam\steamapps\common\Valheim dedicated server\valheim_server.exe"><button class="btn btn-ghost btn-sm" id="btnBrowseSrv" title="Choose valheim_server.exe on this computer" data-i18n="world.dir.browse" data-i18n-title="world.dir.browse.exe.title">Browse</button></div>
+                <div class="fieldnote" id="noteServerExe" style="display:none"></div>
               </div>
               <div class="field" style="grid-column:1/-1"><label data-i18n="world.field.save_dir">Save Data Folder</label>
-                <div class="pathrow"><input type="text" id="fSaveDir" value="" placeholder="default: %USERPROFILE%\AppData\LocalLow\IronGate\Valheim" data-i18n-placeholder="world.save_dir.placeholder"><button class="btn btn-ghost btn-sm" id="btnOpenSave" title="Open the save data folder in Explorer" data-i18n="common.button.open" data-i18n-title="world.save_dir.open.title">Open</button></div>
+                <div class="dircur">
+                  <span class="dircur-k" data-i18n="world.dir.currently">Currently</span>
+                  <span class="dircur-v" id="curSaveDir"></span>
+                  <span class="dircur-src" id="curSaveDirSrc"></span>
+                  <button class="btn btn-ghost btn-sm dircur-open" id="btnOpenSave" title="Open the save data folder in Explorer">Open</button>
+                </div>
+                <div class="pathrow"><input type="text" id="fSaveDir" value="" spellcheck="false" autocomplete="off" placeholder="default: %USERPROFILE%\AppData\LocalLow\IronGate\Valheim"><button class="btn btn-ghost btn-sm" id="btnBrowseSave" title="Choose the folder worlds and backups are written to" data-i18n="world.dir.browse" data-i18n-title="world.dir.browse.save.title">Browse</button></div>
+                <div class="fieldnote" id="noteSaveDir" style="display:none"></div>
               </div>
               <div class="field" style="grid-column:1/-1"><label data-i18n="world.field.args">Additional Launch Args</label><input type="text" id="fArgs" value=""></div>
             </div>
+            <div class="setupreset-note" style="display:block;margin-top:8px" data-i18n="world.dir.empty_note">Leave a box empty and BakaLoader uses the path on the line above it. A path typed here applies to this server only, and nothing is written until Save Config.</div>
             </div>
 
             <div class="setupreset">
@@ -453,6 +476,25 @@
             </div>
           </div>
         </section>
+        <!-- The unsaved notice. It sits at the bottom left of the hall, diagonally
+             opposite Save Config, and it has no button on purpose: the button it would
+             carry is the one already at the top right, and a second one is a second thing
+             to keep in step. Both sentences are static, so the walker owns them and a
+             language switch redraws them with everything else.
+             It sits OUTSIDE the hall rather than at the end of it, which is the whole of
+             why it can be trusted: a hall scrolls inside itself, so anything pinned to the
+             bottom of it has the form sliding underneath, and the first thing that slid
+             under this was the very box that had just been typed into. Out here it is a
+             sibling of the hall, and the hall gives up a band at its foot while the notice
+             is up. How deep that band is, is the notice's own measured height: these two
+             sentences wrap, so they stand one line taller in a language whose words run
+             longer, and a band written down as a number was short by a line in exactly
+             that case. app.js measures and writes it. Which hall is showing decides
+             whether it is on screen at all, in CSS. -->
+        <div class="worldunsaved" id="worldUnsaved" role="status">
+          <span class="wu-k" data-i18n="world.unsaved.title">Unsaved changes</span>
+          <span class="wu-v" data-i18n="world.unsaved.note">Save Config writes them. They stay on this hall until then, even if you walk to another one.</span>
+        </div>
 
         <!-- ============ PAGE: ATLAS (webmap + skies) ============ -->
         <section class="page" id="page-atlas">

@@ -200,6 +200,14 @@ const S={
      an update waiting for it, and whether BakaLoader can apply that update itself. */
   update:{installKind:null,updatePending:false,pendingBytes:0,buildId:null,targetBuildId:null,
           canUpdate:false,running:false,reason:""},
+  /* The two app wide paths a server with an empty Directories box falls back to, with
+     their variables already filled in, as userprefs.get answers them. Null until that
+     read lands, and the two per kind placeholders are what the boxes read until it does.
+     Keyed the way paths.check is keyed: "exe" for the executable, "dir" for the folder. */
+  userPaths:{exe:null,dir:null},
+  /* The last answer paths.check gave for each box, with the path it was asked about kept
+     beside it so a note is never shown against a path that has since been retyped. */
+  pathChecks:{exe:null,dir:null},
 };
 
 /* An update rewrites valheim_server.exe and the managed assemblies under the install
@@ -463,6 +471,7 @@ function repaintBootCopy(){
   try{renderEyeChips();}catch(_){}        /* the two password chips' SHOW / HIDE word */
   try{repaintWorldDialCopy();}catch(_){}  /* the five world dials: options, notes, footnote */
   try{repaintWorldSelectCopy();}catch(_){}  /* the World field: its New world entry and line */
+  try{renderWorldDirty();}catch(_){}      /* the unsaved signs, and with them both Directories lines */
   /* These two are async, so a throw inside them lands on the promise rather than in the
      try around the call, and an unhandled rejection is a console error on every boot. */
   try{renderWorldSeed()?.catch(()=>{});}catch(_){}   /* the seed field's not-created-yet line */
@@ -3877,6 +3886,10 @@ async function initUpkeep(){
     /* Lives on the World hall beside the password box, but it is a user setting and it
        rides in on the same document, so it is read here with the rest of them. */
     setT("tPwCheck",up.EnablePasswordValidation);
+    /* The two app wide paths, variables filled in, which is what an empty Directories box
+       falls back to. Read here because they arrive on this same document, and set BEFORE
+       the redraw below so both placeholders are right on the first painting of the hall. */
+    S.userPaths={exe:up.DefaultServerExePath||null,dir:up.DefaultSaveDataFolderPath||null};
     /* The switch reads "Show Norse names", so it sits at the INVERSE of the stored
        PlainTerminology flag. The pref keeps its original meaning and its original key,
        so nothing on disk has to be migrated. */
@@ -4646,6 +4659,44 @@ window.BakaPreview={
     document.body.dataset.win=maximized?"max":"normal";
     renderWinState();
     return document.body.dataset.win;
+  },
+  /* The Directories seam. Every state of that section depends on an answer only the app
+     can give (the path in force for this server, the app wide default behind it, what
+     paths.check found at a typed path), so a browser can reach none of them and a walk
+     could screenshot exactly one state: empty. This hands all three straight in.
+       prefs    the four keys profiles.get adds (EffectiveServerExePath and its source word)
+       defaults {exe,dir} the app wide paths the placeholders read
+       typed    {exe,dir} what to put in each box, as if the host had typed it
+       checks   {exe,dir} a paths.check answer each, or null for no note
+       snapshot true to call what is on screen the saved state, so nothing reads as unsaved
+     Answers with what is on screen afterwards, so a walk can assert rather than only
+     photograph. Nothing here reaches a real path or writes anything anywhere. */
+  worldDirs:o=>{
+    const d=o||{};
+    if(d.prefs) S.prefs=Object.assign({},S.prefs||{},d.prefs);
+    if(d.defaults) S.userPaths=Object.assign({},S.userPaths,d.defaults);
+    if(d.typed) for(const kind in d.typed){
+      const row=WORLD_DIRS.find(x=>x.kind===kind), box=row?$("#"+row.input):null;
+      if(box) box.value=d.typed[kind];
+    }
+    if(d.snapshot) worldFormSnapshot();
+    if(d.checks) for(const kind in d.checks){
+      const row=WORLD_DIRS.find(x=>x.kind===kind);
+      const typed=row?String($("#"+row.input)?.value||"").trim():"";
+      S.pathChecks[kind]=d.checks[kind]?Object.assign({forPath:typed},d.checks[kind]):null;
+    }
+    const dirty=renderWorldDirty();
+    return {
+      dirty,
+      exe:$("#curServerExe")?.textContent||"",
+      exeSource:$("#curServerExeSrc")?.textContent||"",
+      save:$("#curSaveDir")?.textContent||"",
+      saveSource:$("#curSaveDirSrc")?.textContent||"",
+      openTitle:$("#btnOpenSrv")?.title||"",
+      notice:!!$("#worldUnsaved")?.classList.contains("on"),
+      band:!!$("#page-world")?.classList.contains("unsaved-room"),
+      dirsOpen:!!$("#secDirs")?.classList.contains("open"),
+    };
   },
   /* Fetches that catalog from beside the page first. Answers false when there is none,
      because a walk that silently proved nothing is worse than one that says so. */
@@ -6276,15 +6327,6 @@ $("#tPwCheck")?.addEventListener("click",async()=>{
     ?"ᛃ "+T("world.pwcheck.on.toast")
     :"ᛃ "+T("world.pwcheck.off.toast"));
 });
-/* directory Open buttons (shell.open - native only) */
-$("#btnOpenSrv").addEventListener("click",()=>{
-  if(Native.available) rpc("shell.open",{target:"serverDir"});
-  else toast("ᛃ "+T("world.server_exe.open.preview.toast"));
-});
-$("#btnOpenSave").addEventListener("click",()=>{
-  if(Native.available) rpc("shell.open",{target:"saveData"});
-  else toast("ᛃ "+T("world.save_dir.open.preview.toast"));
-});
 syncAdvGates(); // initial gate state from the static markup (both modes)
 function renderWorldForm(){
   const p=S.prefs; if(!p) return;
@@ -6307,7 +6349,387 @@ function renderWorldForm(){
   setT("tEmpty",p.EmptyServerRestart); setT("tSched",p.ScheduledRestart); setT("tRcon",p.RconEnabled);
   setT("tLogs",p.WriteServerLogsToFile); setT("tAutoStart",p.AutoStart); setT("tCrash",p.AutoRestart);
   syncAdvGates();
-  renderWorldSelect();
+  /* This form has just been filled from what is saved, so nothing in it is unsaved.
+     The world is the one control that is not filled by the lines above: its list is
+     fetched, and the chosen entry only becomes the saved world when it lands. So it is
+     ADOPTED when it does, on its own, rather than a second snapshot being taken of the
+     whole form. A second snapshot would also swallow anything typed into any other box
+     in the meantime, which is a small window but a real one: the fetch can take as long
+     as the disk does, and a reader who starts typing a server name into a hall that is
+     already on screen would have had it declared saved without ever being saved. */
+  worldFormSnapshot();
+  renderWorldSelect().then(()=>worldFormAdopt("world")).catch(()=>{});
+}
+
+/* ---------- DIRECTORIES ----------
+   Two boxes that were reported as blank on a fresh install, and they were: the first
+   time setup writes its two answers to the APP WIDE settings, and a profile only holds
+   a path when somebody set one for that ONE server. The boxes show the profile's own
+   value, so on a normal install they show nothing at all, while Open was resolving the
+   same fallback the launcher resolves and opening the right folder. Both halves true,
+   and together they read as a setting that had been lost.
+
+   Nothing about where the values live has changed. What is new is the line ABOVE each
+   box: the path BakaLoader will really use, variables filled in, with one word saying
+   whether it was set for this server or is the default every server falls back to. Open
+   moved onto that line, because that line is what Open acts on. The box underneath is
+   still the override and is still allowed to be empty.
+
+   Ownership, since two things write to this section: the walker owns the label, the
+   Browse button and the note under the section, all of which are static; renderWorldDirs
+   owns the Currently value, the source word, Open's words and its tooltip, and both
+   placeholders, all of which need a path to say anything at all. No element has both. */
+const WORLD_DIRS=[
+  {kind:"exe", input:"fServerExe", cur:"curServerExe", src:"curServerExeSrc", note:"noteServerExe",
+   open:"btnOpenSrv", browse:"btnBrowseSrv", target:"serverDir", pick:"shell.pickFile",
+   effKey:"EffectiveServerExePath", srcKey:"ServerExePathSource",
+   openAriaId:"world.server_exe.open.title",
+   placeholderId:"world.server_exe.placeholder",
+   okId:"paths.ok.exe"},
+  {kind:"dir", input:"fSaveDir", cur:"curSaveDir", src:"curSaveDirSrc", note:"noteSaveDir",
+   open:"btnOpenSave", browse:"btnBrowseSave", target:"saveData", pick:"shell.pickFolder",
+   effKey:"EffectiveSaveDataFolderPath", srcKey:"SaveDataFolderPathSource",
+   openAriaId:"world.save_dir.open.title",
+   placeholderId:"world.save_dir.placeholder",
+   okId:"paths.ok.dir"},
+];
+/* Every sentence paths.check is allowed to put under a box, and nothing else. The native
+   side sends an id (Tools/PathCheck.cs holds the same list) and this is the closed set
+   the page will read out of the catalog: an id this does not know shows no note at all
+   rather than printing a dotted name on screen. Written out rather than derived, because
+   a derived id is one the completeness gate cannot see and a translator cannot find.
+   `bad` decides the colour only. None of these is a refusal: Save Config behaves exactly
+   as it did before whatever is said here. */
+const PATH_PROBLEMS=[
+  {problem:"exe_wrong_name",     textId:"paths.problem.exe_wrong_name",     bad:true},
+  {problem:"exe_missing",        textId:"paths.problem.exe_missing",        bad:true},
+  {problem:"exe_no_data_folder", textId:"paths.problem.exe_no_data_folder", bad:true},
+  {problem:"exe_is_folder",      textId:"paths.problem.exe_is_folder",      bad:true},
+  {problem:"dir_read_only",      textId:"paths.problem.dir_read_only",      bad:true},
+  {problem:"dir_will_be_created",textId:"paths.problem.dir_will_be_created", bad:false},
+  {problem:"dir_missing_parent", textId:"paths.problem.dir_missing_parent", bad:true},
+  {problem:"dir_is_file",        textId:"paths.problem.dir_is_file",        bad:true},
+  {problem:"unreadable",         textId:"paths.problem.unreadable",         bad:true},
+  /* Not the path's fault and not a verdict on it, so it is the amber one: the disk did
+     not answer inside the budget the native side gives it, and the next keystroke asks
+     again. */
+  {problem:"timed_out",          textId:"paths.problem.timed_out",          bad:false},
+];
+function pathProblemRow(id){return id?PATH_PROBLEMS.find(r=>r.textId===id)||null:null;}
+/* The two Currently lines, both placeholders, Open's words and tooltip, and the note
+   under each box. One pass, from S.prefs and the last check, so a language switch and a
+   profile load both arrive here by the same road. */
+function renderWorldDirs(){
+  const p=S.prefs||{};
+  const dirty=worldFormDirtyKeys();
+  for(const d of WORLD_DIRS){
+    const path=String(p[d.effKey]||"").trim();
+    const own=p[d.srcKey]==="profile";
+    const line=$("#"+d.cur);
+    if(line) line.textContent=path||T("world.dir.unresolved");
+    const word=$("#"+d.src);
+    if(word){
+      word.textContent=own?T("world.dir.source.profile"):T("world.dir.source.default");
+      word.classList.toggle("own",own);
+    }
+    const open=$("#"+d.open);
+    if(open){
+      open.textContent=T("common.button.open");
+      /* Open acts on what is SAVED, so while the box below holds something else the
+         tooltip says which of the two folders is about to be opened. That was the whole
+         of one report: a path typed, Open pressed, the old folder opened, no word said. */
+      open.title=!path?T("world.dir.open.none.title")
+        :dirty.indexOf(d.input)>=0?T("world.dir.open.dirty.title",{path})
+        :T("world.dir.open.title",{path});
+      /* Two buttons both read Open, so each one carries the folder it belongs to as its
+         accessible name. Set here rather than in the markup: one owner per element. */
+      open.setAttribute("aria-label",T(d.openAriaId));
+    }
+    const box=$("#"+d.input);
+    const fallback=S.userPaths?S.userPaths[d.kind]:null;
+    if(box) box.placeholder=fallback?T("world.dir.placeholder",{path:fallback}):T(d.placeholderId);
+    renderPathNote(d);
+  }
+  syncDirsSection();
+}
+/* The one line under a box. Nothing typed means nothing to say: the note under the whole
+   section already explains what an empty box does, and repeating it twice more would
+   make the common case the noisy one. */
+function renderPathNote(d){
+  const el=$("#"+d.note); if(!el) return;
+  const typed=String($("#"+d.input)?.value||"").trim();
+  const answer=S.pathChecks?S.pathChecks[d.kind]:null;
+  if(!typed||!answer||answer.forPath!==typed){
+    el.style.display="none"; el.textContent=""; el.style.color="";
+    return;
+  }
+  const row=pathProblemRow(answer.problemId);
+  if(answer.problemId&&!row){
+    /* A refusal id this page has no sentence for. Saying nothing is right: the id is
+       not copy, and a dotted name under a text box is worse than an empty line. */
+    el.style.display="none"; el.textContent=""; el.style.color="";
+    delete el.dataset.problem;
+    return;
+  }
+  el.textContent=row?T(row.textId):T(d.okId);
+  el.style.color=row?(row.bad?"var(--blood)":"var(--amber)"):"var(--moss)";
+  el.style.display="";
+  /* Which of the two kinds of line this is, so the section below knows whether it is
+     worth unfolding for. A confirmation is not: a host who folded the section away is
+     not owed a fold back to be told that the path they saved is still fine. */
+  if(row) el.dataset.problem="1"; else delete el.dataset.problem;
+}
+/* A warning folded inside a shut section is a warning nobody reads, so the section opens
+   itself the moment a box inside it holds something unsaved or has something to say.
+   What this function does and does not do, exactly, because the sentence that used to
+   stand here said the second half and the code never did it. It never SHUTS the section:
+   nothing in here removes the class, and a section that is already open is left alone on
+   the first line. It does open the section again. This runs from renderWorldDirs, which
+   runs from renderWorldDirty, which runs on every keystroke on the hall, so a host who
+   folds the section away while a box inside it is still unsaved or still has a problem
+   to say gets it back the next time anything on the hall is touched. Folding it away for
+   good means saving or clearing what is in it first.
+   That is the behaviour this is meant to have: the section is folded shut the moment a
+   host lands on the hall, and a warning underneath it about a path that will not work is
+   worth more than the fold. What it is NOT is a fold that stays folded, and a comment
+   promising one was how a reader would come to expect it. */
+function syncDirsSection(){
+  const sec=$("#secDirs"); if(!sec||sec.classList.contains("open")) return;
+  const dirty=worldFormDirtyKeys();
+  const wanted=WORLD_DIRS.some(d=>{
+    if(dirty.indexOf(d.input)>=0) return true;
+    const note=$("#"+d.note);
+    return !!(note&&note.style.display!=="none"&&note.dataset.problem==="1");
+  });
+  if(!wanted) return;
+  sec.classList.add("open");
+  try{syncCollapsibleTerms();}catch(_){}
+  try{rescanScrollCues();}catch(_){}
+}
+/* What is at the path in the box, asked while it is still being typed and never oftener
+   than the host can read an answer. The sequence guard is the usual one: a slow answer
+   for an older keystroke must never land on a newer one. */
+const PATH_CHECK_MS=320;
+const _pathCheckT={}, _pathCheckSeq={};
+function schedulePathCheck(kind){
+  clearTimeout(_pathCheckT[kind]);
+  _pathCheckT[kind]=setTimeout(()=>{runPathCheck(kind).catch(()=>{});},PATH_CHECK_MS);
+}
+async function runPathCheck(kind){
+  const d=WORLD_DIRS.find(x=>x.kind===kind); if(!d) return;
+  const typed=String($("#"+d.input)?.value||"").trim();
+  if(!typed){S.pathChecks[kind]=null;renderWorldDirs();return;}
+  /* No host behind the preview, so whatever BakaPreview.worldDirs seeded stands. */
+  if(!Native.available){renderWorldDirs();return;}
+  const seq=(_pathCheckSeq[kind]=(_pathCheckSeq[kind]||0)+1);
+  const r=await rpc("paths.check",{kind,path:typed});
+  if(seq!==_pathCheckSeq[kind]) return;
+  if(r===FAIL||!r) return;
+  S.pathChecks[kind]=Object.assign({},r,{forPath:typed});
+  renderWorldDirs();
+}
+
+/* ---------- UNSAVED CHANGES (Settings hall) ----------
+   Saving stays manual, which is what the hall has always done and what the report asked
+   to keep. What was missing was any sign that there was something to save: the focus
+   glow on a box reads as "stored", and a host walked away from a hall full of edits
+   believing the opposite.
+   So a snapshot is taken whenever the form is filled from what is saved, and every
+   keystroke is held against it. Four signs, none of them a dialog: a marker on each
+   changed field that survives blur, a notice in the far corner from Save Config, the
+   button itself breathing, and a dot on the rail so the state is readable from another
+   hall. Nothing blocks navigation: the values stay put and the dot says so. */
+/* The controls the form is made of, by the id of the control itself. The world is
+   tracked as one key rather than two, because the name can be picked from the list or
+   typed into the box that opens under it and those are one setting. The five difficulty
+   dials are here too: they ride along with Save Config, so an unsaved one is unsaved.
+   Not here: the seed, which is read only, and the process priority, which Save Config
+   has never sent anywhere. A marker on a control nothing saves would be a lie. */
+const WORLD_FORM_FIELDS=["fName","fPassword","fPort","fSaveInterval","fBackups","fBackShort",
+  "fBackLong","fEmptyDelay","fSchedHours","fCrashDelay","fRconPort","fRconPw",
+  "fServerExe","fSaveDir","fArgs","fMaxPlayers"];
+const WORLD_FORM_TOGGLES=["tPublic","tCrossplay","tEmpty","tSched","tRcon","tLogs",
+  "tAutoStart","tCrash"];
+/* Which control's field wears the marker for a key that is not a control of its own. */
+const WORLD_FORM_MARKER={world:"fWorld"};
+function worldFormMarkerFor(key){return WORLD_FORM_MARKER[key]||key;}
+/* The whole form as a flat map of strings, which is the only shape two moments of it can
+   be compared in. A toggle answers "1" or "0" rather than a class list. */
+function worldFormRead(){
+  const out={};
+  for(const id of WORLD_FORM_FIELDS){const el=$("#"+id);if(el)out[id]=String(el.value??"");}
+  for(const id of WORLD_FORM_TOGGLES){const el=$("#"+id);if(el)out[id]=el.classList.contains("on")?"1":"0";}
+  for(const key in WORLDGEN){const el=$("#"+WORLDGEN[key].sel);if(el)out[WORLDGEN[key].sel]=String(el.value??"");}
+  out.world=worldFieldValue();
+  return out;
+}
+/* The clean state, and null before the form has ever been filled, which is read as
+   "nothing is unsaved" rather than as "everything is". */
+let WORLD_SNAP=null;
+function worldFormSnapshot(){WORLD_SNAP=worldFormRead();renderWorldDirty();}
+/* One or more controls are declared clean without touching the rest. This is for a
+   control the app itself fills LATER than the form was snapshotted: the max players
+   count and the five dials are both fetched, and without this each of them raised the
+   notice about a value the host had never seen, let alone changed. */
+function worldFormAdopt(...ids){
+  if(!WORLD_SNAP){worldFormSnapshot();return;}
+  const now=worldFormRead();
+  for(const id of ids) if(Object.prototype.hasOwnProperty.call(now,id)) WORLD_SNAP[id]=now[id];
+  renderWorldDirty();
+}
+function worldFormDirtyKeys(){
+  if(!WORLD_SNAP) return [];
+  const now=worldFormRead(), out=[];
+  for(const key in now) if(now[key]!==WORLD_SNAP[key]) out.push(key);
+  return out;
+}
+/* ---------- THE BAND THE NOTICE STANDS IN ----------
+   The hall gives up the foot of its own scrolling area while the notice is up, and how
+   deep that has to be is the notice's height. That is not a number anyone can write
+   down. The notice is two sentences, sentences wrap, and the same two sentences take a
+   line more in a language whose words run longer or in a window one step narrower. The
+   first shape of this was a fixed 70px in the stylesheet, and it was short: at 1408x880
+   in the pseudo catalog the notice stood 75px tall against a 70px band, and the last
+   5px of the form sat behind an opaque notice. Which is the very defect the band was
+   added to close, reappearing at a width nobody had re-measured at.
+   So it is measured. The gap under the notice is read back out of the stylesheet rather
+   than repeated here, so the two cannot drift apart, and a few px of slack sit on top so
+   a fractional layout never lands the two edges on the same line. */
+const UNSAVED_BAND_SLACK=6;
+function sizeUnsavedBand(){
+  const notice=$("#worldUnsaved"); if(!notice) return;
+  const box=notice.getBoundingClientRect();
+  /* Nothing on screen to measure: another hall is showing, or there is nothing unsaved
+     and the notice is display:none. The last good depth stands, and the observer below
+     brings the real one back the instant the notice is up again. */
+  if(!box.height) return;
+  const foot=parseFloat(getComputedStyle(notice).bottom)||0;
+  document.documentElement.style.setProperty(
+    "--unsaved-band",Math.ceil(box.height+foot+UNSAVED_BAND_SLACK)+"px");
+}
+/* Every other way that height can change reaches the same measurement: the window
+   getting narrower, a webfont swapping in after first paint, a language switch, the
+   notice coming up at all when the rail walks back to this hall. One observer rather
+   than a call at each of those sites, because the site that gets forgotten is the one
+   that brings the defect back. The notice's width does not depend on the band, so
+   writing the token cannot feed back in here. */
+if(typeof ResizeObserver!=="undefined"){
+  try{
+    const watched=$("#worldUnsaved");
+    if(watched) new ResizeObserver(()=>sizeUnsavedBand()).observe(watched);
+  }catch(_){}
+}
+/* Every sign the form carries, painted from one comparison. Also the one entry point:
+   the Directories lines are drawn from here too, because Open's tooltip depends on
+   whether the box under it has been touched. */
+function renderWorldDirty(){
+  const now=worldFormRead(), dirty=[];
+  for(const key in now){
+    const changed=!!WORLD_SNAP&&now[key]!==WORLD_SNAP[key];
+    if(changed) dirty.push(key);
+    const el=$("#"+worldFormMarkerFor(key));
+    const field=el&&el.closest?el.closest(".field"):null;
+    if(field) field.classList.toggle("field-dirty",changed);
+  }
+  const any=dirty.length>0;
+  /* A class rather than a display, because this is only half of the answer: the notice
+     lives outside the halls, so whether it is on screen is this AND which hall is
+     showing, and that second half is the stylesheet's to know. */
+  const notice=$("#worldUnsaved"); if(notice) notice.classList.toggle("on",any);
+  /* The band the notice stands in. The hall gives up the foot of its scrolling area for
+     as long as the notice is up, so the form ends above it instead of sliding behind it
+     at every scroll position but the last one. Measured right here rather than left to
+     the observer below, so the very first frame the notice appears in already has a band
+     deep enough to hold it. */
+  const hall=$("#page-world"); if(hall) hall.classList.toggle("unsaved-room",any);
+  sizeUnsavedBand();
+  const save=$("#saveCfgBtn"); if(save) save.classList.toggle("pulse",any);
+  const rail=document.querySelector('.navitem[data-page="world"]');
+  if(rail) rail.classList.toggle("has-unsaved",any);
+  renderWorldDirs();
+  return dirty;
+}
+/* Every way a value in this hall can change reaches the same recount. The toggles need
+   their own line: the shared [data-t] handler flips a class and fires no input event,
+   and it is registered on the switch itself, so by the time the click reaches the hall
+   the class is already the new one. */
+$("#page-world")?.addEventListener("input",()=>{renderWorldDirty();});
+$("#page-world")?.addEventListener("change",()=>{renderWorldDirty();});
+$("#page-world")?.addEventListener("click",e=>{
+  const t=e.target;
+  if(t&&typeof t.closest==="function"&&t.closest("[data-t]")) renderWorldDirty();
+});
+/* A path with one matched pair of double quotes taken off the outside of it.
+   Explorer's own Copy as path wraps what it puts on the clipboard in quotes, which makes
+   a quoted path the commonest way one arrives in either of these boxes, and it arrived
+   unusable: the closing quote was part of the value, so the name no longer ended in
+   valheim_server.exe and the line under the box said the file was the wrong one. The
+   file name was right all along.
+   The same rule as Tools/PathCheck.cs Expand, said again here because the two boxes are
+   the other half of it: the native side can only fix what it is asked about, and what is
+   IN the box is what Save Config writes to the profile. Whitespace either side comes off
+   with the quotes, the way Expand takes it off, so a path copied with a trailing newline
+   behind it lands as the path. A quote anywhere else is left where it is, and is one of
+   the marks Windows will not take.
+   The quote is named rather than written twice as a literal: two of those on one line
+   puts a double quote on either side of a minus, and the copy gate reads the stretch
+   between them as a sentence with a dash standing in it. */
+const PATH_QUOTE='"';
+function unquotePath(v){
+  let s=String(v??"").trim();
+  const last=s.length-1;
+  if(last>=1&&s[0]===PATH_QUOTE&&s[last]===PATH_QUOTE) s=s.slice(1,last).trim();
+  return s;
+}
+/* The two boxes, their pickers and their Open buttons. */
+for(const d of WORLD_DIRS){
+  $("#"+d.input)?.addEventListener("input",()=>{schedulePathCheck(d.kind);});
+  /* A paste is the one way a quoted path gets in, so it is the one place the quotes come
+     off. Not on every input event: a host typing a quote deliberately would have it
+     vanish under the caret the moment they typed the second one, and a box that eats
+     what is typed into it is worse than a box that takes a path with quotes on it.
+     Only a paste that is actually wrapped is intercepted. Anything else falls through to
+     the browser's own handling, which is what puts it at the caret, keeps the undo stack
+     and fires the input event that the rest of this hall listens for. */
+  $("#"+d.input)?.addEventListener("paste",e=>{
+    const box=e.currentTarget;
+    const pasted=(e.clipboardData||window.clipboardData)?.getData("text")||"";
+    const clean=unquotePath(pasted);
+    if(!clean||clean===pasted) return;
+    e.preventDefault();
+    const from=box.selectionStart??box.value.length, to=box.selectionEnd??from;
+    box.value=box.value.slice(0,from)+clean+box.value.slice(to);
+    const caret=from+clean.length;
+    try{box.setSelectionRange(caret,caret);}catch(_){}
+    /* Said out loud rather than left to the browser, because preventDefault took the
+       browser's own event with it, and the marker, the notice and the check under the
+       box all hang off it. */
+    box.dispatchEvent(new Event("input",{bubbles:true}));
+  });
+  /* The preview's two sentences are spelled out here rather than kept in the table
+     above, so each one still sits a line below the rune that leads it: the gate that
+     holds a mark against its call site reads the glyph printed nearest the lookup, and
+     an id reached through a table has no call site for it to read. */
+  $("#"+d.open)?.addEventListener("click",()=>{
+    if(Native.available){rpc("shell.open",{target:d.target});return;}
+    if(d.kind==="exe") toast("ᛃ "+T("world.server_exe.open.preview.toast"));
+    else toast("ᛃ "+T("world.save_dir.open.preview.toast"));
+  });
+  /* Browse fills the box and marks it changed. It never saves: what it produces is a
+     path the host still has to keep, like anything else typed on this hall. */
+  $("#"+d.browse)?.addEventListener("click",async()=>{
+    if(!Native.available){toast("ᛃ "+T("world.dir.browse.preview.toast"));return;}
+    const r=await rpc(d.pick,{kind:d.kind});
+    if(r===FAIL||!r||r.cancelled||!r.path) return;
+    const box=$("#"+d.input); if(!box) return;
+    /* Through the same rule a paste goes through. A Windows picker hands back a bare
+       path, so this takes nothing off today; it is here so there is ONE way a path gets
+       into this box from outside, rather than one that is cleaned and one that is not. */
+    box.value=unquotePath(r.path);
+    renderWorldDirty();
+    schedulePathCheck(d.kind);
+    try{scheduleEditBar();}catch(_){}
+  });
 }
 /* ---------- THE WORLD FIELD ----------
    The list of worlds this realm can be pointed at, and the one entry at the end of it
@@ -6784,6 +7206,10 @@ async function renderWorldMods(){
   }
   S.worldMods={world,mods:{...cur}};
   applyWorldModDials(cur);
+  /* The dials now show what is stored for THIS world, so that is their clean state. Only
+     these five are adopted: a host who typed a server name and then changed world still
+     has the name marked, which is the whole point of adopting rather than re-snapshotting. */
+  try{worldFormAdopt(...Object.values(WORLDGEN).map(def=>def.sel));}catch(_){}
 }
 /* World seed: read-only identity from the world's .fwl. A seed is fixed at world
    creation and can NEVER change (the field is locked); a world with no .fwl yet
@@ -6888,9 +7314,21 @@ renderWorldSeed();
 async function renderMaxPlayers(){
   if(!Native.available) return;
   const r=await rpc("maxplayers.get",{});
-  if(r!==FAIL&&r?.count!=null) $("#fMaxPlayers").value=r.count;
+  /* Fetched, and therefore filled after the form was snapshotted. Adopted rather than
+     re-snapshotted so nothing else in the form is quietly declared saved. Inside the arm
+     that FILLED the box, never beside it: a call that failed leaves whatever was in the
+     box, and adopting then would declare a number the reader may well have typed
+     themselves to be the saved one. */
+  if(r!==FAIL&&r?.count!=null){
+    $("#fMaxPlayers").value=r.count;
+    try{worldFormAdopt("fMaxPlayers");}catch(_){}
+  }
 }
 renderMaxPlayers();
+/* The clean state the hall starts in. Taken here, at the bottom of the World block, so
+   every control it reads is already in the page. renderWorldForm takes it again the
+   moment a profile is loaded, and the save takes it again once the write has landed. */
+worldFormSnapshot();
 /* True while a server is up (or on its way up) for the profile the halls are showing. The
    Settings note and the Save Config sentence both turn on it, and it is the same pair of
    states the native side calls "restart pending". */
@@ -6941,6 +7379,14 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
     SaveDataFolderPath:$("#fSaveDir").value.trim(),
     AdditionalArgs:$("#fArgs").value,
   };
+  /* The reply this was built from carries four keys that are answers rather than
+     settings: the path in force for each of the two boxes and where it came from. They
+     are dropped on the way back so what is sent is the profile and nothing else. The
+     native side ignores a key it has no field for, so this is belt and braces; it is
+     here because a payload that says things it does not mean is how one of them ends up
+     being read one day. */
+  delete prefs.EffectiveServerExePath; delete prefs.ServerExePathSource;
+  delete prefs.EffectiveSaveDataFolderPath; delete prefs.SaveDataFolderPathSource;
   const r=await rpc("profiles.save",{name,prefs});
   if(r===FAIL) return;
   // World dials ride along with Save Config, keyed to the selected world. Only write them
@@ -6974,6 +7420,10 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   }
   S.prefs=r; S.profileName=r.ProfileName; S.saveInterval=r.SaveInterval??600;
   renderAllFromPrefs();
+  /* The write landed, so the form on screen IS what is saved. renderWorldForm above has
+     already said so; this is said again here because "after a successful save" is the
+     rule, and a later change to how the form is redrawn must not be able to lose it. */
+  worldFormSnapshot();
   /* Whether the running server is now behind what is saved is the native side's answer, and
      nothing about a save moves the server's status, so ask for the state again rather than
      leaving the row to wait for the next start or stop. */

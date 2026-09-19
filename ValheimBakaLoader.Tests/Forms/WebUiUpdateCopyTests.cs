@@ -258,13 +258,14 @@ namespace ValheimBakaLoader.Tests.Forms
             // Every entry that carries a mark is asked for by app.js: a mark on a sentence
             // nothing prints would be a rune waiting to appear out of nowhere.
             Assert.Equal(catalog.Count(pair => Field(pair.Value, "mark") != null), marked.Count);
-            // 178 after Copy world as: the BepInEx hall brought the row's own three, the
-            // pack-installed note on a pasted link, the first-start question's two answers,
-            // the address box with nothing in it and the maintenance switch either way, and
-            // the world copy brought its two, the real one and the preview one. The number
+            // 179 after the Directories work: the BepInEx hall brought the row's own three,
+            // the pack-installed note on a pasted link, the first-start question's two
+            // answers, the address box with nothing in it and the maintenance switch either
+            // way, the world copy brought its two, the real one and the preview one, and
+            // Browse brought the one the preview shows instead of a file picker. The number
             // is the gate: a new toast whose rune is spelled at the call site and nowhere
             // else lands here.
-            Assert.Equal(178, marked.Count);
+            Assert.Equal(179, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

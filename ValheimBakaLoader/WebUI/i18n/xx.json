@@ -1857,6 +1857,9 @@
     "world.server_exe.open.title": {
       "translation": "[Ẋ Open the server folder in Explorer Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "world.server_exe.placeholder": {
+      "translation": "[Ẋ default: %ProgramFiles(x86)%\\Steam\\steamapps\\common\\Valheim dedicated server\\valheim_server.exe Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "world.field.save_dir": {
       "translation": "[Ẋ Save Data Folder Ẋ] ẊẊẊẊẊ"
     },
@@ -1865,6 +1868,42 @@
     },
     "world.save_dir.open.title": {
       "translation": "[Ẋ Open the save data folder in Explorer Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.dir.currently": {
+      "translation": "[Ẋ Currently Ẋ] ẊẊẊ"
+    },
+    "world.dir.source.profile": {
+      "translation": "[Ẋ set for this server Ẋ] ẊẊẊẊẊẊ"
+    },
+    "world.dir.source.default": {
+      "translation": "[Ẋ default Ẋ] ẊẊẊ"
+    },
+    "world.dir.unresolved": {
+      "translation": "[Ẋ nothing is set yet Ẋ] ẊẊẊẊẊẊ"
+    },
+    "world.dir.placeholder": {
+      "translation": "[Ẋ default: {path} Ẋ] ẊẊẊ"
+    },
+    "world.dir.open.title": {
+      "translation": "[Ẋ Open {path} in Explorer Ẋ] ẊẊẊẊẊẊ"
+    },
+    "world.dir.open.dirty.title": {
+      "translation": "[Ẋ Opens {path}, which is what is saved. The path typed below has not been saved yet. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.dir.open.none.title": {
+      "translation": "[Ẋ There is no folder to open until a path is set. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.dir.browse": {
+      "translation": "[Ẋ Browse Ẋ] ẊẊ"
+    },
+    "world.dir.browse.exe.title": {
+      "translation": "[Ẋ Choose valheim_server.exe on this computer Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.dir.browse.save.title": {
+      "translation": "[Ẋ Choose the folder worlds and backups are written to Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.dir.empty_note": {
+      "translation": "[Ẋ Leave a box empty and BakaLoader uses the path on the line above it. A path typed here applies to this server only, and nothing is written until Save Config. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "world.field.args": {
       "translation": "[Ẋ Additional Launch Args Ẋ] ẊẊẊẊẊẊẊ"
@@ -1877,6 +1916,48 @@
     },
     "world.setup.reset.note": {
       "translation": "[Ẋ resets setup answers only · server files and worlds are never touched Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "world.unsaved.title": {
+      "translation": "[Ẋ Unsaved changes Ẋ] ẊẊẊẊẊ"
+    },
+    "world.unsaved.note": {
+      "translation": "[Ẋ Save Config writes them. They stay on this hall until then, even if you walk to another one. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.ok.exe": {
+      "translation": "[Ẋ A Valheim dedicated server is here. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.ok.dir": {
+      "translation": "[Ẋ The folder is there and takes a write. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.exe_wrong_name": {
+      "translation": "[Ẋ A dedicated server is started from valheim_server.exe, and this path names another file. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.exe_missing": {
+      "translation": "[Ẋ There is no file at this path. Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.exe_no_data_folder": {
+      "translation": "[Ẋ The file is there, but valheim_server_Data is not in the folder beside it, so the server has nothing to load. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.exe_is_folder": {
+      "translation": "[Ẋ This path names a folder rather than a file. The box wants the program itself, which is the valheim_server.exe inside that folder. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.dir_read_only": {
+      "translation": "[Ẋ The folder is there and will not take a write, so worlds and backups cannot be saved into it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.dir_will_be_created": {
+      "translation": "[Ẋ The folder is not there yet. It is created the first time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.dir_missing_parent": {
+      "translation": "[Ẋ Neither this folder nor the one above it is there, so nothing can be created here. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.dir_is_file": {
+      "translation": "[Ẋ This path names a file rather than a folder, and the server cannot make a folder where a file of that name already sits. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.unreadable": {
+      "translation": "[Ẋ Windows will not take a path written this way. A name in it uses a mark that is not allowed in a file name, or is one Windows keeps for a device. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "paths.problem.timed_out": {
+      "translation": "[Ẋ This path could not be checked in time. A drive that is asleep or a folder on a machine that is not answering takes longer than the line under the box waits, so nothing here says the path is wrong. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "atlas.head.title": {
       "translation": "[Ẋ MAP Ẋ] Ẋ"
@@ -3331,6 +3412,10 @@
     },
     "world.save_dir.open.preview.toast": {
       "translation": "[Ẋ Save data folder · preview only Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛃ"
+    },
+    "world.dir.browse.preview.toast": {
+      "translation": "[Ẋ The file picker belongs to the app · preview only Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "mark": "ᛃ"
     },
     "world.seed.copied.toast": {
