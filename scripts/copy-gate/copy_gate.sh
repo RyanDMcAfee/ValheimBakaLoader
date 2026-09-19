@@ -102,7 +102,14 @@ hits=$(allow_filter "$hits")
 [ -n "$hits" ] && { echo "$hits"; fail=1; } || echo "  0 hits"
 cat_note
 
-echo "== 5. Every C#/JS/CATALOG STRING LITERAL (tokenizer, not grep) =="
+# The heading says " - " on purpose. This whole file is a DASH gate: checks 1 to 6 read
+# string literals and ask one question of each, which is whether a space hyphen space is
+# standing in for a dash. What it is NOT is a check that a literal is going through the
+# catalog, and it used to be headed as though it were ("Every C#/JS/CATALOG STRING
+# LITERAL"), which is how a raw English sentence handed to an event and toasted by the
+# page shipped under a green "C# TOTAL (after allowlist) 0". That one belongs to
+# scripts/i18n/check_catalog.py and to the tests; this one counts dashes.
+echo "== 5. \" - \" inside any C#/JS/CATALOG string literal (tokenizer, not grep) =="
 "$py" "$HERE/sw_scanjs.py" "$APP/WebUI/app.js" | tail -1
 n=$("$py" "$HERE/sw_scanjs.py" "$APP/WebUI/app.js" | tail -1 | awk '{print $2}')
 [ "$n" != "0" ] && fail=1

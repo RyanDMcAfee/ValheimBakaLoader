@@ -98,6 +98,14 @@
 		  ships. The file itself stays in the repository.
 		-->
 		<Content Remove="WebUI\i18n\xx.json" />
+		<!--
+		  The English catalog a second time, inside the assembly. The page fetches the file
+		  beside it; the sentences that never reach a page (the restart countdown a player
+		  reads, the Discord post a community reads) are written on this side, where there is
+		  no fetch and no browser. Tools\HostCatalog.cs reads them out of here, so one catalog
+		  holds every sentence in the product and a translator is handed one document.
+		-->
+		<EmbeddedResource Include="WebUI\i18n\en.json" LogicalName="ValheimBakaLoader.WebUI.i18n.en.json" />
 	</ItemGroup>
 
 </Project>

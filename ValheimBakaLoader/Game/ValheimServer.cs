@@ -275,10 +275,57 @@ namespace ValheimBakaLoader.Game
         public event EventHandler<string> PlayerDied;
 
         /// <summary>
-        /// Raised while a scheduled restart countdown is running. The string is a short
-        /// status message (e.g. "Restart in 5 minutes"), or null when the countdown ends.
+        /// What the window's own countdown chip is saying right now, or null when the
+        /// countdown ends. It carries an id and a number rather than a sentence, because the
+        /// host reading that chip and the players reading the chat can be on two different
+        /// languages and only the page knows which one the window is in. See
+        /// <see cref="CountdownChip"/>.
         /// </summary>
-        public event EventHandler<string> CountdownTick;
+        public event EventHandler<CountdownChip> CountdownTick;
+
+        /// <summary>
+        /// One countdown tick, as the window is meant to read it: which of the two sentences
+        /// it is, and the span of time inside the first one broken into a unit and a count.
+        /// <para>
+        /// The split is what keeps the chip out of English. This side decides the tier, the
+        /// same tier the players' own announcement uses, and the page writes the words out of
+        /// the interface catalog under <c>hearth.countdown.</c>. Nothing here is a sentence,
+        /// so there is nothing here to translate twice.
+        /// </para>
+        /// </summary>
+        public sealed class CountdownChip
+        {
+            private CountdownChip(string id, string unit, int count)
+            {
+                Id = id;
+                Unit = unit;
+                Count = count;
+            }
+
+            /// <summary>"restart_in" or "restart_now". The page owns the words for both.</summary>
+            public string Id { get; }
+
+            /// <summary>"hours", "minutes" or "seconds", and null for "restart_now".</summary>
+            public string Unit { get; }
+
+            /// <summary>How many of <see cref="Unit"/> are left, and 0 for "restart_now".</summary>
+            public int Count { get; }
+
+            /// <summary>The last tick: no span of time left to name.</summary>
+            public static CountdownChip RestartNow { get; } = new("restart_now", null, 0);
+
+            /// <summary>
+            /// A tick with a span of time in it. The tiers are the ones the chip has always
+            /// shown: hours above an hour, minutes above a minute, seconds below it.
+            /// </summary>
+            public static CountdownChip RestartIn(int seconds)
+            {
+                if (seconds >= 3600) return new("restart_in", "hours", seconds / 3600);
+                if (seconds >= 60) return new("restart_in", "minutes", seconds / 60);
+
+                return new("restart_in", "seconds", seconds);
+            }
+        }
 
         /// <summary>
         /// Optional hook (set by the UI) that returns the number of installed mods with a
@@ -1614,9 +1661,12 @@ namespace ValheimBakaLoader.Game
                 catch (Exception e) { ApplicationLogger.Error(e, "Could not determine pending mod updates."); }
             }
 
-            // The update message suffix appended to each countdown announcement.
+            // The update message suffix appended to each countdown announcement. It is read
+            // by the people on the server rather than by the host, so it comes out of the host
+            // catalog in whatever language the player messages are being written in, and the
+            // plural is the catalog's rather than an "s" glued on the end.
             var updateNote = modUpdateCount > 0
-                ? $" ({modUpdateCount} mod update{(modUpdateCount == 1 ? "" : "s")} pending)"
+                ? " " + HostCatalog.T("host.countdown.update_note", ("count", modUpdateCount))
                 : string.Empty;
 
             // No RCON configured -> nothing to announce, just restart now
@@ -1682,16 +1732,17 @@ namespace ValheimBakaLoader.Game
                     token.ThrowIfCancellationRequested();
 
                     var remaining = points[i];
-                    await SendCountdownBroadcastAsync($"Server restarting in {FormatTime(remaining)}!{updateNote}");
-                    CountdownTick?.Invoke(this, $"Restart in {FormatTime(remaining)}");
+                    await SendCountdownBroadcastAsync(
+                        HostCatalog.T("host.countdown.restart_in", ("time", PlayerTime(remaining))) + updateNote);
+                    CountdownTick?.Invoke(this, CountdownChip.RestartIn(remaining));
 
                     var next = (i + 1 < points.Length) ? points[i + 1] : 0;
                     var waitTime = restartAtUtc.AddSeconds(-next) - DateTime.UtcNow;
                     if (waitTime > TimeSpan.Zero) await Task.Delay(waitTime, token);
                 }
 
-                await SendCountdownBroadcastAsync($"Server restarting NOW!{updateNote}");
-                CountdownTick?.Invoke(this, "Restarting now");
+                await SendCountdownBroadcastAsync(HostCatalog.T("host.countdown.restart_now") + updateNote);
+                CountdownTick?.Invoke(this, CountdownChip.RestartNow);
                 await Task.Delay(1500, token);
 
                 shouldRestart = true;
@@ -1705,7 +1756,8 @@ namespace ValheimBakaLoader.Game
                     ApplicationLogger.Information("Restart countdown bypassed. Restarting now.");
                     try
                     {
-                        await SendCountdownBroadcastAsync($"Server restarting NOW!{updateNote}");
+                        await SendCountdownBroadcastAsync(
+                            HostCatalog.T("host.countdown.restart_now") + updateNote);
                     }
                     catch { }
                     shouldRestart = true;
@@ -1715,7 +1767,7 @@ namespace ValheimBakaLoader.Game
                     ApplicationLogger.Information("Scheduled restart cancelled.");
                     try
                     {
-                        await SendCountdownBroadcastAsync("Server restart cancelled.");
+                        await SendCountdownBroadcastAsync(HostCatalog.T("host.countdown.cancelled"));
                     }
                     catch { }
                 }
@@ -3112,21 +3164,24 @@ namespace ValheimBakaLoader.Game
             }
         }
 
-        private static string FormatTime(int seconds)
+        /// <summary>
+        /// A span of time in the language the people on the server are written to in. The
+        /// English it produces is the English the chip's own tiers produce, to the byte; what
+        /// it adds is that a language with more than two plural forms gets all of them, which
+        /// no ternary on an "s" can do.
+        /// <para>
+        /// There used to be a hand rolled sibling here, FormatTime, writing the same span in
+        /// English for the window's countdown chip. It went when the chip started carrying
+        /// <see cref="CountdownChip.Unit"/> and a count instead of a finished sentence: two
+        /// helpers meant the one English sentence nothing could translate.
+        /// </para>
+        /// </summary>
+        private static string PlayerTime(int seconds)
         {
-            if (seconds >= 3600)
-            {
-                var hours = seconds / 3600;
-                return hours == 1 ? "1 hour" : $"{hours} hours";
-            }
+            if (seconds >= 3600) return HostCatalog.T("host.time.hours", ("count", seconds / 3600));
+            if (seconds >= 60) return HostCatalog.T("host.time.minutes", ("count", seconds / 60));
 
-            if (seconds >= 60)
-            {
-                var minutes = seconds / 60;
-                return minutes == 1 ? "1 minute" : $"{minutes} minutes";
-            }
-
-            return seconds == 1 ? "1 second" : $"{seconds} seconds";
+            return HostCatalog.T("host.time.seconds", ("count", seconds));
         }
 
         #endregion

@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -548,6 +548,14 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         internal Action<string> BeforePlacing { get; set; }
 
+        /// <summary>
+        /// Called on the download thread in the last instant a cancel can still be honoured,
+        /// which is the instant before the door is taken. The suite stands here to press the
+        /// button in the one window where the answer used to be wrong; nothing in the app
+        /// sets it.
+        /// </summary>
+        internal Action<string> BeforeTakingTheDoor { get; set; }
+
         public event EventHandler<LanguageChangedEventArgs> LanguageChanged;
 
         public bool IsBusy
@@ -653,9 +661,14 @@ namespace ValheimBakaLoader.Tools
                 // The switch that governs reaching out is not consulted here, and that is a
                 // decision rather than an oversight. Opening the globe menu is the host asking
                 // out loud, the same as pressing check for updates, and the switch governs what
-                // the app does on its own account. The held manifest answers most of these
-                // without a request at all, and nothing is fetched to draw the menu. The
-                // unattended path is the one that asks: see DownloadAsync and QuietFetchDecision.
+                // the app does on its own account rather than what the host asked for.
+                //
+                // Be exact about what that means on the wire, because the wiki is written from
+                // this comment: with the switch OFF, a menu opened outside the six hour floor
+                // DOES reach GitHub, for the release lookup and the manifest. What is never
+                // fetched to draw the menu is a PACK; inside the floor the held manifest
+                // answers with no request at all. The unattended road is the one the switch
+                // closes: see QuietFetchDecision and DownloadAsync's userInitiated.
                 var resolved = await ResolveManifestAsync(allowNetwork: true, ct);
                 state = resolved.State;
                 manifest = resolved.Manifest;
@@ -882,7 +895,7 @@ namespace ValheimBakaLoader.Tools
 
                 // The catalogue did not change, so there are no new words to fetch. A patch
                 // release that fixed a crash must not cost four CJK downloads.
-                var shortcut = TryUnchangedCatalog(run, entry, version, progress);
+                var shortcut = TryUnchangedCatalog(run, entry, version, progress, callerToken);
                 if (shortcut != null) return shortcut;
 
                 if (string.IsNullOrWhiteSpace(entry.Url)) return Fail(code, LanguagePackReasons.NoPack, progress);
@@ -969,15 +982,16 @@ namespace ValheimBakaLoader.Tools
 
                 WritePackFile(Path.Combine(unpacked, PackFileName), checkedPack.Pack);
 
-                // The last look before the door shuts. Storing the faces and writing pack.json
-                // take long enough for a host to press the button inside them, and a cancel
-                // that arrives in that gap would be told true by Cancel and then stop nothing,
-                // which is the one answer this service is not allowed to give.
-                token.ThrowIfCancellationRequested();
-
-                // From here the cancel would be a lie, so it stops being offered first and the
-                // move happens second.
-                lock (Gate) run.PastCancel = true;
+                // The last look before the door shuts, and it is taken with the door in hand.
+                // Storing the faces and writing pack.json take long enough for a host to press
+                // the button inside them, and a cancel that arrives in that gap would be told
+                // true by Cancel and then stop nothing, which is the one answer this service is
+                // not allowed to give. Looking and then latching would be two decisions with a
+                // gap of their own between them, and the press that lands in THAT gap is told
+                // true by a Cancel that has already lost: it is checked and latched as one
+                // decision, under the lock Cancel itself has to take to answer at all.
+                BeforeTakingTheDoor?.Invoke(code);
+                if (!TakeTheDoor(run, token)) throw new OperationCanceledException(token);
                 Report(progress, code, LanguagePackPhases.Installing, 100, downloaded.Bytes, downloaded.Bytes);
                 BeforePlacing?.Invoke(code);
 
@@ -1013,7 +1027,11 @@ namespace ValheimBakaLoader.Tools
         /// apply, and in that case not one request has been made for an asset.
         /// </summary>
         private LanguagePackResult TryUnchangedCatalog(
-            Run run, LanguageManifestEntry entry, string version, IProgress<LanguagePackProgress> progress)
+            Run run,
+            LanguageManifestEntry entry,
+            string version,
+            IProgress<LanguagePackProgress> progress,
+            CancellationToken callerToken)
         {
             var code = run.Code;
 
@@ -1037,7 +1055,18 @@ namespace ValheimBakaLoader.Tools
 
             try
             {
-                lock (Gate) run.PastCancel = true;
+                // The same one decision the fetched path makes: a cancel that arrives before
+                // this line is honoured and stops the copy, and one that arrives after it is
+                // told false. There is no third answer and no gap for one to happen in.
+                //
+                // The hook is the fetched path's, on purpose. A decision that is made twice in
+                // two methods has to be DRIVEN in both, or the second copy of it is only ever
+                // read rather than run, and this one has already been written the other way
+                // once: the cancel was noted and the copy reported Ok regardless.
+                BeforeTakingTheDoor?.Invoke(code);
+                if (!TakeTheDoor(run, run.Cancellation.Token))
+                    return Cancelled(run, progress, callerToken);
+
                 Report(progress, code, LanguagePackPhases.Installing, 100, 0, 0);
                 BeforePlacing?.Invoke(code);
 
@@ -1293,6 +1322,22 @@ namespace ValheimBakaLoader.Tools
                     return Unwind(moved, LanguagePackReasons.Integrity);
                 }
 
+                // The fonts list is the one place a pack says "take this file out of here",
+                // and it is read AFTER the pack has been approved: the catalogue parsed, the
+                // language matched, everything checked. A pack that listed strings.json as one
+                // of its faces would have that file moved into the shared store under a digest
+                // for a name, and the folder that is then placed would hold no strings at all.
+                // So a face has to be a face, by the name it is published under and by what is
+                // actually in it, and either half alone is not enough: a name is what the pack
+                // chose to call the file, and bytes are what the file is.
+                if (!NamesAFace(font.File) || !HoldsAFace(staged))
+                {
+                    Logger.Warning(
+                        "The {0} pack lists {1} among its faces and that is not a font, so it was not installed.",
+                        code, font.File);
+                    return Unwind(moved, LanguagePackReasons.Contents);
+                }
+
                 var stored = Path.Combine(FontsRoot, digest + StoreExtension(staged));
                 if (File.Exists(stored))
                 {
@@ -1376,13 +1421,27 @@ namespace ValheimBakaLoader.Tools
         /// folder this process can reach, take it away and leave the pack's files in its place.
         /// </para>
         /// <para>
-        /// Two floors, because either one alone reads as enough and is not. The first is the
-        /// shape: a version is the twenty six letters, the ten digits and the four marks a
+        /// Three floors, because any one of them alone reads as enough and is not. The first is
+        /// the shape: a version is the twenty six letters, the ten digits and the four marks a
         /// version is spelled with, which is the allowlist GetReleaseByTagAsync holds a tag to
         /// and for the same reason. That holds no separator, so a version cannot name a folder
         /// further down. The second is where it lands, resolved and refused unless it is
         /// directly inside this language's folder, which is what the shape alone cannot see:
         /// ".." is spelled entirely in characters the first floor allows.
+        /// </para>
+        /// <para>
+        /// The third is that the folder the filesystem would make is spelled the way the
+        /// manifest spelled it. Windows drops a trailing dot and a trailing space off a name
+        /// silently, so "1.2.0." passes both floors above and lands in the folder called
+        /// "1.2.0" while every answer this service gives still says "1.2.0." - the version in
+        /// the result, the folder the page builds its strings URL from, and the name
+        /// <see cref="ReadInstall"/> looks for the next time it is asked. That is a pack that
+        /// installs and then cannot be found, and worse, a second language published with a
+        /// trailing dot would take the plain version's folder away from it. A version with
+        /// three or more dots in it is a version and is left alone; a version the filesystem
+        /// would rename is not one, and is refused here rather than quietly renamed, because
+        /// the manifest is the untrusted side of this exchange and a name it did not publish
+        /// is not a name to make up for it.
         /// </para>
         /// </summary>
         private string VersionFolder(string code, string version)
@@ -1398,7 +1457,13 @@ namespace ValheimBakaLoader.Tools
                     languageRoot += Path.DirectorySeparatorChar;
 
                 var target = Path.GetFullPath(Path.Combine(languageRoot, version));
-                return target.StartsWith(languageRoot, StringComparison.OrdinalIgnoreCase) ? target : null;
+                if (!target.StartsWith(languageRoot, StringComparison.OrdinalIgnoreCase)) return null;
+
+                // What is left after the language folder is the one name this version may be,
+                // and it has to be the name that was published. The shape above allows no
+                // separator, so anything else here is the filesystem having had an opinion.
+                var landed = target.Substring(languageRoot.Length);
+                return string.Equals(landed, version, StringComparison.Ordinal) ? target : null;
             }
             catch (Exception)
             {
@@ -1407,6 +1472,59 @@ namespace ValheimBakaLoader.Tools
         }
 
         private static bool IsVersionChar(char c) => IsPlainLetterOrDigit(c) || c is '.' or '-' or '_' or '+';
+
+        /// <summary>The extensions a face in a pack may be published under.</summary>
+        private static readonly string[] FaceExtensions = { "woff2", "woff", "ttf", "otf", "ttc" };
+
+        /// <summary>
+        /// Whether the name a pack published for a face is the name of a font file. A face
+        /// carried with no extension at all is allowed, and lands in the store under the one
+        /// the store assumes; a face carried as anything else is a file the pack wants moved
+        /// that is not a font.
+        /// </summary>
+        private static bool NamesAFace(string named)
+        {
+            var extension = Path.GetExtension(named ?? string.Empty).TrimStart('.');
+            if (extension.Length == 0) return true;
+
+            return FaceExtensions.Any(e => string.Equals(e, extension, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Whether the file itself opens the way a font opens. Every format the store can
+        /// serve starts with four bytes that say what it is: "wOF2" and "wOFF" for the two web
+        /// formats, "OTTO" for an OpenType face with a compact outline, "ttcf" for a
+        /// collection, and the version number 1.0 written as 00 01 00 00 (or the word "true")
+        /// for a TrueType one. A file too short to hold those four bytes is not one either.
+        /// </summary>
+        private static bool HoldsAFace(string path)
+        {
+            try
+            {
+                var head = new byte[4];
+                using (var stream = File.OpenRead(path))
+                {
+                    var read = 0;
+                    while (read < head.Length)
+                    {
+                        var got = stream.Read(head, read, head.Length - read);
+                        if (got <= 0) break;
+                        read += got;
+                    }
+
+                    if (read < head.Length) return false;
+                }
+
+                var tag = System.Text.Encoding.ASCII.GetString(head);
+                if (tag is "wOF2" or "wOFF" or "OTTO" or "ttcf" or "true" or "typ1") return true;
+
+                return head[0] == 0x00 && head[1] == 0x01 && head[2] == 0x00 && head[3] == 0x00;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
 
         /// <summary>
         /// The extension a face keeps in the shared store. The name is still the pack's, so
@@ -1761,6 +1879,8 @@ namespace ValheimBakaLoader.Tools
 
         public int PruneOnBoot()
         {
+            var removed = 0;
+
             // The sweep and a download share the staging folder and the font store, and the
             // sweep is the one that can stand aside: it empties staging outright and drops
             // every face no pack on disk names yet, which is exactly the shape of a run that
@@ -1782,8 +1902,9 @@ namespace ValheimBakaLoader.Tools
                 Sweeping = true;
             }
 
-            var removed = 0;
-
+            // Nothing at all between taking the latch and the try that gives it back. A line
+            // that cannot throw today is a line somebody edits tomorrow, and a sweep that took
+            // the latch and left it set turns away every fetch for as long as the app is open.
             try
             {
                 if (!Directory.Exists(RootFolder)) return 0;
@@ -1911,6 +2032,28 @@ namespace ValheimBakaLoader.Tools
             {
                 Logger.Warning("The update switch could not be read, so nothing was fetched: {0}", e.Message);
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Closes the door on cancelling this run, and answers whether it was still open. True
+        /// means nobody had asked to stop and nobody can be told true from here on; false means
+        /// somebody had, and the run owes them a cancel rather than a pack.
+        /// <para>
+        /// The looking and the latching are one decision under the gate on purpose. Two
+        /// decisions leave a gap, and the press that lands in the gap is answered true by a
+        /// <see cref="Cancel"/> that has already lost the race, which is the one thing a cancel
+        /// must never do: say it stopped something and then not stop it.
+        /// </para>
+        /// </summary>
+        private bool TakeTheDoor(Run run, CancellationToken token)
+        {
+            lock (Gate)
+            {
+                if (run.CancelRequested || token.IsCancellationRequested) return false;
+
+                run.PastCancel = true;
+                return true;
             }
         }
 

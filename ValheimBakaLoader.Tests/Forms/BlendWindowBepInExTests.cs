@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -420,12 +420,20 @@ namespace ValheimBakaLoader.Tests.Forms
         /// <summary>
         /// Every id in the page's own pairing table names a throw that really exists. A row
         /// left behind after a refusal was renamed would silently stop wording anything.
+        /// <para>
+        /// HOST_SENTENCES is the table of THROWS, so the scan is that table rather than every
+        /// named row in the file. The language pack's endings are named by the service in a
+        /// result instead, in LANG_REASONS below it, and they are held to the same standard
+        /// from the other end: BlendWindowLanguageBridgeTests derives the list from the
+        /// service's own constants and asks the page for words for each one.
+        /// </para>
         /// </summary>
         [Fact]
         public void The_pages_pairing_table_names_no_refusal_that_is_gone()
         {
             var thrown = Service() + Bridge() + WorldStore();
-            var named = Regex.Matches(AppJs(), "named:\"([^\"]+)\"")
+            var table = HostSentencesTable();
+            var named = Regex.Matches(table, "named:\"([^\"]+)\"")
                 .Cast<Match>()
                 .Select(m => m.Groups[1].Value)
                 .ToList();
@@ -438,6 +446,56 @@ namespace ValheimBakaLoader.Tests.Forms
 
             Assert.True(missing.Count == 0,
                 "the page pairs a sentence with refusals nothing throws any more: " + string.Join(", ", missing));
+        }
+
+        /// <summary>The HOST_SENTENCES table itself, from its opening bracket to its close.</summary>
+        private static string HostSentencesTable() => NamedTable("const HOST_SENTENCES=[");
+
+        /// <summary>The language pack endings table, from its opening bracket to its close.</summary>
+        private static string LangReasonsTable() => NamedTable("const LANG_REASONS=[");
+
+        /// <summary>One table in the page, from its opening bracket to the line that closes it.</summary>
+        private static string NamedTable(string opens)
+        {
+            var app = AppJs();
+            var at = app.IndexOf(opens, StringComparison.Ordinal);
+            Assert.True(at > 0, "the page has no " + opens.Replace("const ", "").Replace("=[", "") + " table");
+
+            var end = app.IndexOf("];", at, StringComparison.Ordinal);
+            Assert.True(end > at, opens + " does not close");
+
+            return app.Substring(at, end - at);
+        }
+
+        /// <summary>
+        /// The net under the two tables above. Each of them is checked from one end or the
+        /// other, HOST_SENTENCES against the throws in the source and LANG_REASONS against the
+        /// service's own constants, and between them they cover every paired row in the page
+        /// TODAY. What neither covers is a THIRD table added tomorrow: rows in it would be
+        /// wording something nothing checks, and both existing gates would stay green while it
+        /// rotted. So the page is held to two tables, and a third one has to arrive with the
+        /// gate that stands under it.
+        /// </summary>
+        [Fact]
+        public void The_page_pairs_its_sentences_in_the_two_tables_that_are_guarded()
+        {
+            var app = AppJs();
+            var everywhere = Regex.Matches(app, "named:\\s*\"([^\"]+)\"")
+                .Cast<Match>()
+                .Select(m => m.Groups[1].Value)
+                .ToList();
+
+            Assert.NotEmpty(everywhere);
+
+            var guarded = HostSentencesTable() + LangReasonsTable();
+            var loose = everywhere
+                .Where(id => !Regex.IsMatch(guarded, "named:\\s*\"" + Regex.Escape(id) + "\""))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            Assert.True(loose.Count == 0,
+                "these rows pair a sentence outside HOST_SENTENCES and LANG_REASONS, where nothing checks them: "
+                    + string.Join(", ", loose));
         }
 
         /// <summary>

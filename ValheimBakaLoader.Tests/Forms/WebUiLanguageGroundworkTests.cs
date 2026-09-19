@@ -79,8 +79,15 @@ namespace ValheimBakaLoader.Tests.Forms
 
         // ------------------------------------------------------------------ B. the stacks
 
+        /// <remarks>
+        /// Russian names Baka Roman rather than Forum, and the difference is not cosmetic:
+        /// Forum is a Reserved Font Name under OFL 1.1 clause 3, so the subset the pack
+        /// carries is renamed and the manifest publishes it under the new name. A stack
+        /// naming Forum matched nothing and fell through to Georgia, which put the Hearth
+        /// state in a system serif for every Russian reader.
+        /// </remarks>
         [Theory]
-        [InlineData("ru", "'Cinzel','Forum',Georgia")]
+        [InlineData("ru", "'Cinzel','Baka Roman',Georgia")]
         [InlineData("ja", "'Cinzel','Noto Serif JP','Yu Gothic UI'")]
         [InlineData("zh-Hans", "'Cinzel','Noto Serif SC','Microsoft YaHei UI'")]
         [InlineData("zh-Hant", "'Cinzel','Noto Serif TC','Microsoft JhengHei UI'")]
@@ -93,11 +100,21 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The Latin face is FIRST in every stack, because CSS fallback is per character.
-        /// With Inter first, every digit, server name and version string keeps Inter and
-        /// only the characters Inter lacks reach the packed face. Put the CJK face first and
-        /// the whole numeric texture of the app changes without ever looking broken, which
-        /// is the easiest way to get this wrong.
+        /// The Latin face is FIRST among the faces that cover Latin, because CSS fallback is
+        /// per character. With Inter ahead of the full CJK face, every digit, server name and
+        /// version string keeps Inter and only the characters Inter lacks reach the packed
+        /// face. Put the full CJK face first and the whole numeric texture of the app changes
+        /// without ever looking broken, which is the easiest way to get this wrong.
+        /// <para>
+        /// ONE family is allowed in front of Inter, and only one: the Marks face. U+2026,
+        /// U+00B7 and, in Simplified, the curly quotes are full-width characters of the
+        /// script whose code points live in Latin-1 and General Punctuation, which Inter
+        /// declares and therefore wins. The pack publishes the same file a second time under
+        /// "&lt;family&gt; Marks" with a range of exactly those marks, so putting it first
+        /// pulls back the handful of marks and nothing else. Its name has to end in Marks,
+        /// which is what this holds: a full face smuggled into that slot would take the
+        /// digits with it.
+        /// </para>
         /// </summary>
         [Theory]
         [InlineData("ja")]
@@ -109,14 +126,25 @@ namespace ValheimBakaLoader.Tests.Forms
 
             foreach (var line in block.Split('\n').Where(l => l.Contains("--sans:") || l.Contains("--mono:")))
             {
-                var families = line.Substring(line.IndexOf(':') + 1).Split(',');
-                Assert.True(families[0].Trim().StartsWith("'Inter'", StringComparison.Ordinal)
-                            || families[0].Trim().StartsWith("'JetBrains Mono'", StringComparison.Ordinal),
+                var families = line.Substring(line.IndexOf(':') + 1).Split(',')
+                    .Select(f => f.Trim()).ToList();
+
+                // The marks-only face, if there is one, and nothing else, may stand first.
+                if (families[0].StartsWith("'Noto", StringComparison.Ordinal))
+                {
+                    Assert.True(families[0].EndsWith("Marks'", StringComparison.Ordinal),
+                        "a full CJK face was put ahead of the Latin one in: " + line.Trim());
+                    families.RemoveAt(0);
+                }
+
+                Assert.True(families[0].StartsWith("'Inter'", StringComparison.Ordinal)
+                            || families[0].StartsWith("'JetBrains Mono'", StringComparison.Ordinal),
                     "a CJK face was put ahead of the Latin one in: " + line.Trim());
                 // Packed face, then the Windows face that always exists, then the generics.
-                Assert.True(families[1].Trim().StartsWith("'Noto", StringComparison.Ordinal), line.Trim());
-                Assert.True(families[2].Trim().StartsWith("'Yu Gothic UI'", StringComparison.Ordinal)
-                            || families[2].Trim().StartsWith("'Microsoft ", StringComparison.Ordinal), line.Trim());
+                Assert.True(families[1].StartsWith("'Noto", StringComparison.Ordinal)
+                            && !families[1].EndsWith("Marks'", StringComparison.Ordinal), line.Trim());
+                Assert.True(families[2].StartsWith("'Yu Gothic UI'", StringComparison.Ordinal)
+                            || families[2].StartsWith("'Microsoft ", StringComparison.Ordinal), line.Trim());
             }
         }
 
@@ -138,66 +166,146 @@ namespace ValheimBakaLoader.Tests.Forms
         // ------------------------------------------------------------------ C. the pack faces
 
         /// <summary>
-        /// The pack's faces are declared now and pointed at real files later. A declaration
-        /// costs nothing until a character it covers is rendered in a stack that names it,
-        /// and no stack names one while the language is English, so an English install never
-        /// asks for any of these.
-        /// </summary>
-        [Theory]
-        [InlineData("Forum", "ru", "Forum-cyrillic.woff2")]
-        [InlineData("Noto Sans JP", "ja", "NotoSansJP-jp.woff2")]
-        [InlineData("Noto Serif JP", "ja", "NotoSerifJP-jp.woff2")]
-        [InlineData("Noto Sans SC", "zh-Hans", "NotoSansSC-sc.woff2")]
-        [InlineData("Noto Serif SC", "zh-Hans", "NotoSerifSC-sc.woff2")]
-        [InlineData("Noto Sans TC", "zh-Hant", "NotoSansTC-tc.woff2")]
-        [InlineData("Noto Serif TC", "zh-Hant", "NotoSerifTC-tc.woff2")]
-        public void A_pack_face_is_declared_and_addressed_on_the_apps_own_origin(
-            string family, string code, string file)
-        {
-            var css = Css();
-            var face = css.Split('\n').FirstOrDefault(l => l.Contains("font-family:'" + family + "'", StringComparison.Ordinal)
-                                                           && l.StartsWith("@font-face", StringComparison.Ordinal));
-
-            Assert.True(face != null, "no @font-face declares " + family);
-            Assert.Contains("https://app.baka/lang/" + code + "/" + ShippedVersion() + "/fonts/" + file, face);
-            Assert.Contains("font-display:swap", face);
-            Assert.Contains("unicode-range:", face);
-        }
-
-        /// <summary>
-        /// Belt and braces on the per character rule: if a stack is ever reordered, a range
-        /// that stops short of Latin means Latin still cannot be served from a CJK file.
+        /// THE STYLESHEET DECLARES NO PACK FACE AT ALL, and that is the fix rather than a
+        /// regression. Seven rules used to stand at the top of app.css, each addressing
+        /// https://app.baka/lang/&lt;code&gt;/&lt;version&gt;/fonts/&lt;file&gt;.woff2. The font
+        /// store is content addressed now: a face lives at /lang/_fonts/&lt;sha256&gt;.woff2,
+        /// shared by every language and every version whose bytes are the same, so the
+        /// address a stylesheet could write down does not exist. A rule written against the
+        /// old shape would ask for a file that is not there on every single switch, and look
+        /// exactly like a font that failed to load.
+        /// <para>
+        /// Only the six bundled Latin faces remain, and each of those is addressed beside the
+        /// page, which is what makes an English install ask the pack store for nothing.
+        /// </para>
         /// </summary>
         [Fact]
-        public void No_pack_face_claims_the_latin_range()
+        public void The_stylesheet_declares_no_pack_face_and_composes_no_pack_address()
         {
-            foreach (var line in Css().Split('\n').Where(l => l.StartsWith("@font-face", StringComparison.Ordinal)
-                                                              && l.Contains("https://app.baka/lang/", StringComparison.Ordinal)))
-            {
-                Assert.DoesNotContain("U+0000-00FF", line);
-                Assert.DoesNotContain("U+0100-02BA", line);
-            }
-        }
-
-        /// <summary>
-        /// The pack folder is named after the app version, so the address in the stylesheet
-        /// has to move with a release. Pinned here rather than left to be noticed.
-        /// </summary>
-        [Fact]
-        public void The_pack_address_carries_the_version_this_build_ships()
-        {
-            var version = ShippedVersion();
-
             var faces = Css().Split('\n')
                 .Where(l => l.StartsWith("@font-face", StringComparison.Ordinal))
                 .ToList();
 
-            var addresses = faces
-                .SelectMany(l => Regex.Matches(l, @"https://app\.baka/lang/[^/]+/([^/]+)/").Cast<Match>())
+            Assert.Equal(6, faces.Count);
+            foreach (var face in faces)
+            {
+                Assert.DoesNotContain("app.baka", face);
+                Assert.Contains("src:url('fonts/", face);
+            }
+
+            // Not in a rule either: nothing the browser reads may name the pack origin. The
+            // comment where the block used to stand explains both addresses and is meant to,
+            // so the declarations are read with the comments stripped out.
+            var rules = Regex.Replace(Css(), @"/\*.*?\*/", "", RegexOptions.Singleline);
+            Assert.DoesNotContain("https://app.baka/lang/", rules);
+        }
+
+        /// <summary>
+        /// The faces are written at runtime instead, by the side that knows the hashes. One
+        /// element, owned by one function, replaced whole on every switch and removed when
+        /// there is nothing to declare, which is how an English window ends up with no pack
+        /// faces standing at all.
+        /// <para>
+        /// The address is the one the host reported and is never composed here. That is the
+        /// same rule the manifest URL follows on the C# side, and for the same reason: an
+        /// address this page builds is an address that can be built wrongly.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_pack_faces_are_written_at_runtime_from_the_addresses_the_host_reported()
+        {
+            var js = AppJs();
+            var body = Body(js, "function langInjectFonts(fonts){");
+
+            Assert.Contains("document.getElementById(\"langFonts\")", body);
+            Assert.Contains("style.id=\"langFonts\"", body);
+            // Nothing to declare: the element goes rather than being left holding the last
+            // language's faces over the new one.
+            Assert.Contains("if(!list.length){if(style)style.remove();return 0;}", body);
+            Assert.Contains("\"@font-face{font-family:'\"", body);
+            Assert.Contains("\"font-display:swap;\"", body);
+            // The format word is READ off the address, never assumed. The store admits five
+            // extensions and a src whose declared format does not match the bytes is a src the
+            // browser skips: a .ttf face declared woff2 installs, hashes, sniffs clean and then
+            // never draws, which is the quietest way a language can fail.
+            Assert.Contains("\"src:url('\"+clean(f.url)+\"') format('\"+langFontFormat(clean(f.url))+\"');\"", body);
+            Assert.DoesNotContain("format('woff2');\"", body);
+            Assert.Contains("f.unicodeRange?\"unicode-range:\"+clean(f.unicodeRange)+\";\":\"\"", body);
+
+            // A stylesheet built out of a file somebody else wrote. The three characters that
+            // could end a declaration early are dropped, quotes and angle brackets with them.
+            Assert.Contains("replace(/[;{}\"'<>\\\\]/g,\"\")", body);
+
+            // No address is composed on this side. The only /lang/ literal in app.js is the
+            // one the harness fetches, and nothing builds a fonts path out of a version.
+            Assert.DoesNotContain("\"https://app.baka/lang/", js);
+        }
+
+        /// <summary>
+        /// The page's format words and the store's admitted extensions are one list read from
+        /// two ends, so the day a sixth extension is admitted the page stops declaring it as
+        /// woff2. Each of the five gets its own CSS format word, and the store's assumption for
+        /// a face carried with no extension at all is the page's default for the same reason.
+        /// <para>
+        /// This is the pairing the review found missing: the service grew four extensions and
+        /// the page kept saying woff2, which the browser answers by skipping the src. Nothing
+        /// throws, nothing logs, the face simply never draws.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Every_extension_the_store_admits_has_its_own_format_word_on_the_page()
+        {
+            var service = AppSourceTree.Files()["LanguagePackService.cs"];
+
+            var declared = Regex.Match(service, @"FaceExtensions\s*=\s*\{([^}]+)\}");
+            Assert.True(declared.Success, "the service no longer names the extensions it admits");
+
+            var admitted = Regex.Matches(declared.Groups[1].Value, "\"([^\"]+)\"")
+                .Cast<Match>()
+                .Select(m => m.Groups[1].Value)
                 .ToList();
 
-            Assert.Equal(7, addresses.Count);
-            foreach (var m in addresses) Assert.Equal(version, m.Groups[1].Value);
+            Assert.Equal(new[] { "woff2", "woff", "ttf", "otf", "ttc" }, admitted);
+
+            var body = Body(AppJs(), "function langFontFormat(url){");
+
+            // woff2 is the default rather than a case, because it is also what the store
+            // assumes for a face published with no extension at all.
+            Assert.Contains("case \"woff\": return \"woff\";", body);
+            Assert.Contains("case \"ttf\": return \"truetype\";", body);
+            Assert.Contains("case \"otf\": return \"opentype\";", body);
+            Assert.Contains("case \"ttc\": return \"collection\";", body);
+            Assert.Contains("default: return \"woff2\";", body);
+
+            // And the handler names all five as fonts rather than serving one as bytes.
+            var serving = AppSourceTree.Files()["BlendWindow.cs"];
+            foreach (var pair in new[]
+            {
+                "\".woff2\" => \"font/woff2\"",
+                "\".woff\" => \"font/woff\"",
+                "\".ttf\" => \"font/ttf\"",
+                "\".otf\" => \"font/otf\"",
+                "\".ttc\" => \"font/collection\"",
+            })
+            {
+                Assert.Contains(pair, serving, StringComparison.Ordinal);
+            }
+        }
+
+        /// <summary>
+        /// The faces arrive with the switch, so the switch has to hand them over before the
+        /// words are loaded: a catalog swapped in ahead of the rules it needs paints one
+        /// frame in a face that cannot draw it.
+        /// </summary>
+        [Fact]
+        public void The_switch_injects_the_faces_before_it_loads_the_words()
+        {
+            var body = Body(AppJs(), "async function switchLanguage(payload){");
+
+            var faces = body.IndexOf("langInjectFonts(p.fonts)", StringComparison.Ordinal);
+            var words = body.IndexOf("window.I18N.load(cat,code)", StringComparison.Ordinal);
+            Assert.True(faces >= 0 && words >= 0, "the switch no longer does both");
+            Assert.True(faces < words, "the words were loaded before the faces that draw them");
         }
 
         // ------------------------------------------------------------------ D. lang and data-lang
@@ -350,6 +458,22 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.True(start >= 0, "no block for " + selector);
             var end = css.IndexOf('}', start);
             return css.Substring(start, end - start);
+        }
+
+        /// <summary>One function's body, brace matched from its opening line.</summary>
+        internal static string Body(string source, string opener)
+        {
+            var start = source.IndexOf(opener, StringComparison.Ordinal);
+            Assert.True(start >= 0, "app.js no longer declares " + opener);
+
+            var index = start + opener.Length - 1;   // the opening brace itself
+            var depth = 0;
+            for (; index < source.Length; index++)
+            {
+                if (source[index] == '{') depth++;
+                else if (source[index] == '}' && --depth == 0) break;
+            }
+            return source.Substring(start, Math.Min(index + 1, source.Length) - start);
         }
     }
 }

@@ -1,4 +1,4 @@
-using Moq;
+﻿using Moq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Serilog;
@@ -84,8 +84,14 @@ namespace ValheimBakaLoader.Tests.Tools
                 },
             }, Formatting.Indented), new UTF8Encoding(false));
 
+            // A face the service will actually take: the first four bytes of a woff2 file
+            // say what it is, and the service moves a file into the shared font store only
+            // when its name and its bytes both say font. A real pack cut by pack_tools
+            // carries real faces, so the fixture has to as well or the two disagree here and
+            // nowhere else.
             var face = new byte[6000];
             new Random(7).NextBytes(face);
+            Array.Copy(Encoding.ASCII.GetBytes("wOF2"), face, 4);
             File.WriteAllBytes(Path.Combine(fonts, "Fixture.woff2"), face);
             File.WriteAllText(Path.Combine(fonts, "OFL.txt"), "SIL Open Font License");
 

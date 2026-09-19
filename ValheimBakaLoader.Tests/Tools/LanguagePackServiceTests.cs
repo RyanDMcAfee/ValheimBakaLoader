@@ -1,4 +1,4 @@
-using Moq;
+﻿using Moq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Serilog;
@@ -82,6 +82,23 @@ namespace ValheimBakaLoader.Tests.Tools
             var buffer = new byte[bytes];
             new Random(seed).NextBytes(buffer);
             return buffer;
+        }
+
+        /// <summary>
+        /// Filler that opens the way a font opens. A pack's faces are moved out of the pack
+        /// and into the shared store, and the service will only move a file that is a font by
+        /// its name and by its first four bytes, so a fixture face has to carry them: "wOF2"
+        /// for a web font and the version number 1.0 for a TrueType one.
+        /// </summary>
+        private static byte[] Face(int bytes, int seed, string tag = "wOF2")
+        {
+            var head = tag == "ttf"
+                ? new byte[] { 0x00, 0x01, 0x00, 0x00 }
+                : Encoding.ASCII.GetBytes(tag);
+
+            var all = Filler(bytes, seed);
+            Array.Copy(head, all, head.Length);
+            return all;
         }
 
         private static string CatalogJson(string code, string version, int catalog) =>
@@ -483,7 +500,7 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public async Task Progress_only_ever_moves_forward_and_reaches_a_hundred_before_done()
         {
-            var zip = PackZip("ru", AppVersion, 7, new[] { ("Filler.woff2", Filler(300_000, seed: 11)) });
+            var zip = PackZip("ru", AppVersion, 7, new[] { ("Filler.woff2", Face(300_000, seed: 11)) });
             var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
 
             var seen = new List<LanguagePackProgress>();
@@ -763,8 +780,8 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public async Task A_face_two_packs_share_is_stored_once_and_named_by_its_digest()
         {
-            var shared = Filler(9_000, seed: 21);
-            var onlyJapanese = Filler(4_000, seed: 22);
+            var shared = Face(9_000, seed: 21);
+            var onlyJapanese = Face(4_000, seed: 22);
 
             var ru = PackZip("ru", AppVersion, 7, new[] { ("Shared.woff2", shared) });
             var ja = PackZip("ja", AppVersion, 7, new[] { ("Shared.woff2", shared), ("NotoSansJP.woff2", onlyJapanese) });
@@ -989,8 +1006,8 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public async Task A_refusal_on_a_later_face_takes_the_earlier_ones_back_out_of_the_store()
         {
-            var good = Filler(3_500, seed: 61);
-            var bad = Filler(2_500, seed: 62);
+            var good = Face(3_500, seed: 61);
+            var bad = Face(2_500, seed: 62);
 
             var zip = PackNamingFaces(
                 "ru", AppVersion, 7,
@@ -1017,8 +1034,8 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public async Task A_face_keeps_its_extension_only_while_it_is_a_plain_one()
         {
-            var bare = Filler(1_500, seed: 71);
-            var shouted = Filler(1_600, seed: 72);
+            var bare = Face(1_500, seed: 71);
+            var shouted = Face(1_600, seed: 72, tag: "ttf");
 
             var zip = PackNamingFaces(
                 "ru", AppVersion, 7,
@@ -1765,7 +1782,7 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public async Task The_licence_list_installed_is_the_one_found_beside_the_faces()
         {
-            var face = Filler(3_000, seed: 71);
+            var face = Face(3_000, seed: 71);
             var zip = PackDeclaringLicences("ru", AppVersion, 7, new[] { "../../../borrowed/OFL.txt" }, face);
             var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
 

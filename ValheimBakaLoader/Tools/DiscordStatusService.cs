@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -302,42 +302,75 @@ namespace ValheimBakaLoader.Tools
                 : s.ServerStarting ? 0xF39C12            // orange - on the way up/down
                 : 0x95A5A6;                              // gray - down
 
+            // Every word in this post is read in a Discord channel by the people who play on
+            // the server, so it comes out of the host catalog rather than out of this file. The
+            // values that are not words stay where they are: a name the host typed, a count, a
+            // Discord timestamp, and the bare hyphen that stands for "nothing here".
             var fields = new List<object>
             {
-                new { name = "Status", value = s.StatusText ?? "Unknown", inline = true },
-                new { name = "Players online", value = s.ServerRunning ? s.PlayersOnline.ToString() : "-", inline = true },
-                new { name = "World", value = string.IsNullOrWhiteSpace(s.WorldName) ? "-" : s.WorldName, inline = true },
+                new
+                {
+                    name = HostCatalog.T("host.status.field.status"),
+                    value = s.StatusText ?? HostCatalog.T("host.status.value.unknown"),
+                    inline = true,
+                },
+                new
+                {
+                    name = HostCatalog.T("host.status.field.players"),
+                    value = s.ServerRunning ? s.PlayersOnline.ToString() : "-",
+                    inline = true,
+                },
+                new
+                {
+                    name = HostCatalog.T("host.status.field.world"),
+                    value = string.IsNullOrWhiteSpace(s.WorldName) ? "-" : s.WorldName,
+                    inline = true,
+                },
             };
 
             if (prefs.DiscordShareAddress)
             {
                 fields.Add(new
                 {
-                    name = "Join address",
+                    name = HostCatalog.T("host.status.field.address"),
                     value = string.IsNullOrWhiteSpace(s.AddressText) ? "-" : $"`{s.AddressText}`",
                     inline = true,
                 });
             }
 
-            fields.Add(new { name = "Mods", value = s.ModCount > 0 ? $"{s.ModCount} installed" : "vanilla", inline = true });
+            fields.Add(new
+            {
+                name = HostCatalog.T("host.status.field.mods"),
+                value = s.ModCount > 0
+                    ? HostCatalog.T("host.status.value.mods_installed", ("count", s.ModCount))
+                    : HostCatalog.T("host.status.value.vanilla"),
+                inline = true,
+            });
 
             fields.Add(new
             {
-                name = "Last mod update",
+                name = HostCatalog.T("host.status.field.last_mod_update"),
                 value = s.LastModUpdateUtc.HasValue ? $"<t:{ToUnix(s.LastModUpdateUtc.Value)}:R>" : "-",
                 inline = true,
             });
 
             fields.Add(new
             {
-                name = "Next restart",
-                value = s.NextRestartUtc.HasValue ? $"<t:{ToUnix(s.NextRestartUtc.Value)}:R>" : "not scheduled",
+                name = HostCatalog.T("host.status.field.next_restart"),
+                value = s.NextRestartUtc.HasValue
+                    ? $"<t:{ToUnix(s.NextRestartUtc.Value)}:R>"
+                    : HostCatalog.T("host.status.value.not_scheduled"),
                 inline = true,
             });
 
             if (prefs.DiscordSharePassword && !string.IsNullOrWhiteSpace(s.Password))
             {
-                fields.Add(new { name = "Password", value = $"`{s.Password}`", inline = true });
+                fields.Add(new
+                {
+                    name = HostCatalog.T("host.status.field.password"),
+                    value = $"`{s.Password}`",
+                    inline = true,
+                });
             }
 
             var payload = new
@@ -346,11 +379,16 @@ namespace ValheimBakaLoader.Tools
                 {
                     new
                     {
-                        title = string.IsNullOrWhiteSpace(s.ServerName) ? "Valheim server" : s.ServerName,
+                        title = string.IsNullOrWhiteSpace(s.ServerName)
+                            ? HostCatalog.T("host.status.title")
+                            : s.ServerName,
                         color,
                         fields = fields.ToArray(),
                         timestamp = DateTime.UtcNow.ToString("o"),
-                        footer = new { text = $"Valheim BakaLoader v{s.AppVersion} · this post updates itself" },
+                        footer = new
+                        {
+                            text = HostCatalog.T("host.status.footer", ("version", s.AppVersion)),
+                        },
                     }
                 },
                 // An empty mention allowlist so nothing in a server name can ever ping anyone.

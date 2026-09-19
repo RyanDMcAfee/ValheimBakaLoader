@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using System;
 using System.Net.Http;
 using System.Text;
@@ -40,30 +40,43 @@ namespace ValheimBakaLoader.Tools
 
         public void SendServerStarted(string serverName)
         {
-            SendEmbed("Server Started", $"**{serverName}** is now online.", 0x57F287); // Green
+            SendEmbed(
+                HostCatalog.T("host.discord.started.title"),
+                HostCatalog.T("host.discord.started.body", ("server", serverName)),
+                0x57F287); // Green
         }
 
         public void SendServerStopped(string serverName)
         {
-            SendEmbed("Server Stopped", $"**{serverName}** has been shut down.", 0x95A5A6); // Gray
+            SendEmbed(
+                HostCatalog.T("host.discord.stopped.title"),
+                HostCatalog.T("host.discord.stopped.body", ("server", serverName)),
+                0x95A5A6); // Gray
         }
 
         public void SendServerCrashed(string serverName, bool willRestart, int restartDelay)
         {
             var description = willRestart
-                ? $"**{serverName}** has crashed! Auto-restarting in {restartDelay} seconds..."
-                : $"**{serverName}** has crashed!";
-            SendEmbed("Server Crashed", description, 0xED4245); // Red
+                ? HostCatalog.T(
+                    "host.discord.crashed.body_restarting", ("server", serverName), ("seconds", restartDelay))
+                : HostCatalog.T("host.discord.crashed.body", ("server", serverName));
+            SendEmbed(HostCatalog.T("host.discord.crashed.title"), description, 0xED4245); // Red
         }
 
         public void SendPlayerJoined(string playerName, string serverName)
         {
-            SendEmbed("Player Joined", $"**{playerName}** joined **{serverName}**.", 0x3498DB); // Blue
+            SendEmbed(
+                HostCatalog.T("host.discord.joined.title"),
+                HostCatalog.T("host.discord.joined.body", ("player", playerName), ("server", serverName)),
+                0x3498DB); // Blue
         }
 
         public void SendPlayerLeft(string playerName, string serverName)
         {
-            SendEmbed("Player Left", $"**{playerName}** left **{serverName}**.", 0xF39C12); // Orange
+            SendEmbed(
+                HostCatalog.T("host.discord.left.title"),
+                HostCatalog.T("host.discord.left.body", ("player", playerName), ("server", serverName)),
+                0xF39C12); // Orange
         }
 
         /// <summary>
@@ -73,8 +86,8 @@ namespace ValheimBakaLoader.Tools
         public void SendLaunchHeld(string serverName, string reason)
         {
             SendEmbed(
-                "Start Held",
-                $"**{serverName}** was not started automatically. {reason}",
+                HostCatalog.T("host.discord.held.title"),
+                HostCatalog.T("host.discord.held.body", ("server", serverName), ("reason", reason)),
                 0xE0A35C); // Amber
         }
 
@@ -84,11 +97,15 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         public void SendServerUpdated(string serverName, string buildId, bool starting)
         {
-            var build = string.IsNullOrWhiteSpace(buildId) ? "" : $" It is now on build {buildId}.";
-            var next = starting ? " Starting it now." : " Start it when you are ready.";
+            var build = string.IsNullOrWhiteSpace(buildId)
+                ? ""
+                : " " + HostCatalog.T("host.discord.updated.build", ("build", buildId));
+            var next = " " + (starting
+                ? HostCatalog.T("host.discord.updated.starting")
+                : HostCatalog.T("host.discord.updated.when_ready"));
             SendEmbed(
-                "Server Updated",
-                $"**{serverName}** finished updating.{build}{next}",
+                HostCatalog.T("host.discord.updated.title"),
+                HostCatalog.T("host.discord.updated.body", ("server", serverName)) + build + next,
                 0x57F287); // Green
         }
 
@@ -96,17 +113,16 @@ namespace ValheimBakaLoader.Tools
         public void SendServerUpdateFailed(string serverName, string reason)
         {
             SendEmbed(
-                "Server Update Failed",
-                $"**{serverName}** was not updated. {reason} The server was not started.",
+                HostCatalog.T("host.discord.update_failed.title"),
+                HostCatalog.T("host.discord.update_failed.body", ("server", serverName), ("reason", reason)),
                 0xED4245); // Red
         }
 
         public void SendLegacyWorldLoaded(string serverName, string worldName)
         {
             SendEmbed(
-                "Old World Format",
-                $"**{serverName}** loaded **{worldName}** in the pre-1.0 save format. "
-                + "The next save converts it, and older servers will not be able to load it afterwards.",
+                HostCatalog.T("host.discord.legacy_world.title"),
+                HostCatalog.T("host.discord.legacy_world.body", ("server", serverName), ("world", worldName)),
                 0xE0A35C); // Amber
         }
 

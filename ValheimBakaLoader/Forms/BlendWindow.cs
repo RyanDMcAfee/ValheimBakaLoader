@@ -189,6 +189,9 @@ namespace ValheimBakaLoader.Forms
                 ".woff" => "font/woff",
                 ".ttf" => "font/ttf",
                 ".otf" => "font/otf",
+                // The fifth extension the store admits. Left out once, which served a
+                // collection as bytes while the other four were named properly.
+                ".ttc" => "font/collection",
                 ".json" => "application/json; charset=utf-8",
                 ".css" => "text/css; charset=utf-8",
                 ".txt" => "text/plain; charset=utf-8",

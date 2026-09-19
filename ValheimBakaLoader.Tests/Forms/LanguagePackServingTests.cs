@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using ValheimBakaLoader.Forms;
 using ValheimBakaLoader.Tests.Tools;
@@ -34,6 +34,42 @@ namespace ValheimBakaLoader.Tests.Forms
         public void A_pack_file_resolves_under_the_languages_folder(string requested, string expectedTail)
         {
             Assert.Equal(Path.Combine(Root, expectedTail), Map(requested));
+        }
+
+        /// <summary>
+        /// The two addresses the page actually builds, which is what SPEC section 9 item 18
+        /// asks for: the catalog for one version of one language, and a face in the store the
+        /// languages share. The store is content addressed and sits beside the language
+        /// folders rather than inside one, so it is the shape most likely to be broken by a
+        /// change to the mapper that only ever considered a code and a version.
+        /// </summary>
+        [Theory]
+        [InlineData(
+            "/lang/_fonts/8f14e45fceea167a5a36dedd4bea2543c9c1ff0f0c6d1e6d97cb5d0bf1234567.woff2",
+            @"_fonts\8f14e45fceea167a5a36dedd4bea2543c9c1ff0f0c6d1e6d97cb5d0bf1234567.woff2")]
+        [InlineData("/lang/_fonts/OFL-8f14e45fceea167a5a36dedd4bea2543.txt", @"_fonts\OFL-8f14e45fceea167a5a36dedd4bea2543.txt")]
+        [InlineData("/lang/ru/1.2.0/strings.json", @"ru\1.2.0\strings.json")]
+        [InlineData("/lang/ru/1.1.9/strings.json", @"ru\1.1.9\strings.json")]
+        [InlineData("/lang/ru/1.2.0/pack.json", @"ru\1.2.0\pack.json")]
+        public void The_two_addresses_the_page_builds_resolve(string requested, string expectedTail)
+        {
+            Assert.Equal(Path.Combine(Root, expectedTail), Map(requested));
+        }
+
+        /// <summary>
+        /// And the same two shapes with a climb in them are refused. The font store is the
+        /// interesting one: it is the only path with no version segment in it, so a mapper
+        /// that grew a special case for it is exactly what this would catch.
+        /// </summary>
+        [Theory]
+        [InlineData("/lang/_fonts/../../userprefs.json")]
+        [InlineData("/lang/_fonts/..\\..\\userprefs.json")]
+        [InlineData("/lang/_fonts/%2e%2e/%2e%2e/userprefs.json")]
+        [InlineData("/lang/ru/1.2.0/../../../userprefs.json")]
+        [InlineData("/lang/ru/../../userprefs.json")]
+        public void A_climb_out_of_either_shape_is_refused(string requested)
+        {
+            Assert.Null(Map(requested));
         }
 
         /// <summary>A cache buster on the end is not part of the file name.</summary>

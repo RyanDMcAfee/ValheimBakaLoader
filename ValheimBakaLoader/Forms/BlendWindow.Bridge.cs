@@ -52,6 +52,7 @@ namespace ValheimBakaLoader.Forms
         private ISoftwareUpdateProvider SoftwareUpdates;
         private IServerUpdateService ServerUpdates;
         private IServerSessionRegistry SessionRegistry;
+        private ILanguagePackService LanguagePacks;
         private IApplicationLogger AppLogger;
 
         // One cancellation source per profile with an update in flight. It is the app's own
@@ -184,6 +185,14 @@ namespace ValheimBakaLoader.Forms
             new HostFacingException("bepinex.busy",
                 "BepInEx is already being written. Try again in a moment.");
 
+        /// <summary>
+        /// The refusal both language methods give a code the app has never heard of, written
+        /// once for the same reason BepInExBusy is: an id is an identity, and one sentence
+        /// spelled at two call sites is one chance for the two to drift apart.
+        /// </summary>
+        private static HostFacingException UnknownLanguage() =>
+            new HostFacingException("lang.unknownCode", "BakaLoader has no language by that name.");
+
         // When each live server process was started, so the load check has something to
         // compare BepInEx/LogOutput.log against. Set the moment a start is taken, cleared
         // when the server stops.
@@ -272,7 +281,12 @@ namespace ValheimBakaLoader.Forms
             SoftwareUpdates = serviceProvider.GetRequiredService<ISoftwareUpdateProvider>();
             ServerUpdates = serviceProvider.GetRequiredService<IServerUpdateService>();
             SessionRegistry = serviceProvider.GetRequiredService<IServerSessionRegistry>();
+            LanguagePacks = serviceProvider.GetRequiredService<ILanguagePackService>();
             AppLogger = appLogger;
+
+            // The sentences the people on the server read are written on this side, so the
+            // catalog they come out of is picked before anything can send one.
+            RefreshHostCatalog();
 
             // The Herald: single self-editing Discord status post (gated on prefs inside the service).
             DiscordStatus.SnapshotProvider = BuildDiscordSnapshot;
@@ -493,7 +507,12 @@ namespace ValheimBakaLoader.Forms
                     DiscordWebhooks.SendServerCrashed(DisplayName(), willRestart, server.Options?.AutoRestartDelay ?? 0);
                 }
             };
-            server.CountdownTick += (s, message) => PostEvent("server.countdown", new { message, profile });
+            /* The chip's own tick. An id and a number, never a sentence: the page writes the
+               words out of the interface catalog, which is the only place that knows which
+               language this window is being read in. A null tick is the countdown ending, and
+               carries no id, which is how the page knows to say nothing. */
+            server.CountdownTick += (s, chip) => PostEvent("server.countdown",
+                new { id = chip?.Id, unit = chip?.Unit, count = chip?.Count ?? 0, profile });
             server.PlayerDied += (s, characterName) =>
             {
                 // Tie the character back to a known player when possible: same server,
@@ -2246,6 +2265,16 @@ namespace ValheimBakaLoader.Forms
             // method already runs once per window, so the subscription belongs here.
             SoftwareUpdates.UpdateAvailable += (s, found) => PostAppUpdateAvailable(found);
 
+            // The interface language. One window's globe menu changes it for the app, and the
+            // service is the singleton every window shares, so every open window follows: this
+            // method runs once per window, the same way the release banner above does. A window
+            // that has gone is not a problem, because PostEvent drops a push to a dead handle.
+            LanguagePacks.LanguageChanged += (s, changed) =>
+            {
+                RefreshHostCatalog();
+                PostEvent("lang.changed", new { code = changed?.Code, version = changed?.Version });
+            };
+
             // The server update the host started from this app. Progress is a push rather
             // than a poll: a steamcmd run prints for minutes and the bar follows it live.
             ServerUpdates.Progress += (s, progress) =>
@@ -3595,6 +3624,31 @@ namespace ValheimBakaLoader.Forms
                     Apply("DiscordSharePassword", v => prefs.DiscordSharePassword = v.Value<bool>());
                     Apply("DiscordEventPosts", v => prefs.DiscordEventPosts = v.Value<bool>());
                     Apply("CustomJoinDomain", v => prefs.CustomJoinDomain = v.Value<string>()?.Trim());
+
+                    // Both of these are spellings from a closed list, so a spelling nothing
+                    // answers to leaves the preference where it was rather than saving a
+                    // language the app cannot read. This one is here so the Settings hall can
+                    // write the player-message choice.
+                    //
+                    // The interface language carries lang.set's second guard as well, because
+                    // the two roads have to refuse the same things. A Language saved with no
+                    // pack on disk leaves lang.status answering that language with nowhere to
+                    // read it from, which the page turns into an English window while the globe
+                    // draws that row as the current one. No page road writes it today; it is
+                    // guarded here so none can.
+                    Apply("Language", v =>
+                        prefs.Language = ReadableLanguage(LanguageCodes.Normalize(v.Value<string>())) ?? prefs.Language);
+                    Apply("PlayerMessageLanguage", v =>
+                    {
+                        var asked = v.Value<string>()?.Trim();
+                        if (string.Equals(asked, "same", StringComparison.OrdinalIgnoreCase))
+                        {
+                            prefs.PlayerMessageLanguage = "same";
+                            return;
+                        }
+
+                        prefs.PlayerMessageLanguage = LanguageCodes.Normalize(asked) ?? prefs.PlayerMessageLanguage;
+                    });
                 });
 
                 // Only when the document could not be read at all, which the provider answers with
@@ -3612,6 +3666,14 @@ namespace ValheimBakaLoader.Forms
 
                 // When the "start with Windows" toggle was part of this save, mirror it into the
                 // Windows Run registry key so the choice actually takes effect (mirrors MainWindow).
+                // A save that touched either language preference changes which catalog the
+                // countdown and the Discord post are written from.
+                if (dto.TryGetValue("Language", StringComparison.OrdinalIgnoreCase, out _)
+                    || dto.TryGetValue("PlayerMessageLanguage", StringComparison.OrdinalIgnoreCase, out _))
+                {
+                    RefreshHostCatalog();
+                }
+
                 if (dto.TryGetValue("StartWithWindows", StringComparison.OrdinalIgnoreCase, out _))
                 {
                     try { StartupHelper.ApplyStartupSetting(prefs.StartWithWindows, Logger); }
@@ -3619,6 +3681,149 @@ namespace ValheimBakaLoader.Forms
                 }
 
                 return Task.FromResult<object>(BuildUserPrefsDto());
+            });
+
+            // --- Language ---
+            // The globe menu and the switch behind it. Every answer here is about packs on
+            // disk and the preference that names one of them; the words themselves never come
+            // through the bridge, because the page fetches the catalog off its own origin.
+
+            // Everything the menu draws, in one answer. Reaching the release page from here is
+            // allowed and is the service's decision to make: opening the globe is the host
+            // asking out loud. The switch that governs asking on the app's own account is
+            // reported as checkEnabled so the menu can say what it means for the rows.
+            RegisterRpc("lang.list", async p =>
+            {
+                var prefs = UserPrefsProvider.LoadPreferences();
+                var listing = await LanguagePacks.ListAsync();
+
+                return new
+                {
+                    current = CurrentLanguage(prefs),
+                    appVersion = listing.AppVersion,
+                    checkEnabled = prefs.CheckForUpdates,
+                    busy = LanguagePacks.IsBusy,
+                    languages = (listing.Languages ?? new List<LanguagePackEntry>()).Select(l => new
+                    {
+                        code = l.Code,
+                        nativeName = l.NativeName,
+                        englishName = l.EnglishName,
+                        builtIn = l.BuiltIn,
+                        installed = l.Installed,
+                        installedVersion = l.InstalledVersion,
+                        matchesApp = l.MatchesApp,
+                        available = l.Available,
+                        bytes = l.Bytes,
+                        keys = l.Keys,
+                        translated = l.Translated,
+                        status = l.Status,
+                    }).ToList(),
+                    manifest = new
+                    {
+                        ok = listing.Manifest?.Ok ?? false,
+                        fromCache = listing.Manifest?.FromCache ?? false,
+                        checkedUtc = listing.Manifest?.CheckedUtc,
+                        errorId = listing.Manifest?.ErrorId,
+                    },
+                };
+            });
+
+            // What the page needs on its very first frame: which language is saved, and where
+            // its words are, so a host who reads Russian never sees the window in English
+            // first. Nothing here reaches the network.
+            RegisterRpc("lang.status", p =>
+            {
+                var prefs = UserPrefsProvider.LoadPreferences();
+                var code = CurrentLanguage(prefs);
+                var install = LanguageCodes.IsEnglish(code) ? null : LanguagePacks.InstalledAny(code);
+
+                return Task.FromResult<object>(new
+                {
+                    current = code,
+                    appVersion = AssemblyHelper.GetApplicationVersion(),
+                    installedVersion = install?.Version,
+                    matchesApp = LanguageCodes.IsEnglish(code) || (install?.MatchesApp ?? false),
+                    missingKeys = LanguageMissingKeys(install),
+                    busy = LanguagePacks.IsBusy,
+                    stringsUrl = LanguageStringsUrl(code, install?.Version),
+                    fonts = LanguageFonts(install),
+                    quietFetch = QuietLanguageFetch(prefs, code),
+                });
+            });
+
+            // The whole fetch, awaited, with the bar driven by pushes. Two refusals are the
+            // bridge's own because they are answers rather than endings: another pack is
+            // already coming down, and a code this app has never heard of.
+            RegisterRpc("lang.download", async p =>
+            {
+                var code = LanguageCodes.Normalize(p.Value<string>("code")) ?? throw UnknownLanguage();
+
+                if (LanguagePacks.IsBusy)
+                    throw new HostFacingException("lang.busy", "A language pack is already downloading.");
+
+                // SynchronousProgress, never Progress<T>: a bar that is handed "done" before
+                // "downloading" is worse than a bar that does not move.
+                var progress = new SynchronousProgress<LanguagePackProgress>(pr =>
+                    PostEvent("lang.downloadProgress", new
+                    {
+                        code = pr.Code,
+                        phase = pr.Phase,
+                        percent = pr.Percent,
+                        bytesDone = pr.BytesDone,
+                        bytesTotal = pr.BytesTotal,
+                        messageId = pr.MessageId,
+                        messageParams = pr.MessageParams,
+                    }));
+
+                var result = await LanguagePacks.DownloadAsync(code, progress);
+
+                return new
+                {
+                    ok = result.Ok,
+                    cancelled = result.Cancelled,
+                    code = result.Code,
+                    version = result.AppVersion,
+                    reasonId = result.ReasonId,
+                    reasonParams = result.ReasonParams,
+                };
+            });
+
+            // The service's answer, never a literal true. A cancel that arrives once the pack
+            // has begun moving into place stops nothing, and saying otherwise would be the one
+            // lie a cancel button must never tell.
+            RegisterRpc("lang.cancel", p =>
+                Task.FromResult<object>(new { cancelled = LanguagePacks.Cancel(p.Value<string>("code")) }));
+
+            // The switch itself. English is always available; anything else has to be on disk,
+            // because a page that fetched a catalog that is not there would paint ids.
+            RegisterRpc("lang.set", p =>
+            {
+                var code = LanguageCodes.Normalize(p.Value<string>("code")) ?? throw UnknownLanguage();
+
+                var install = LanguageCodes.IsEnglish(code) ? null : LanguagePacks.InstalledAny(code);
+                if (!LanguageCodes.IsEnglish(code) && install == null)
+                    throw new HostFacingException("lang.notInstalled", "That language is not downloaded yet.");
+
+                // The one legal writer. Mutate loads, edits and writes userprefs.json under the
+                // gate, so a Discord publish or a launch record landing in between is kept.
+                UserPrefsProvider.Mutate(prefs => prefs.Language = code);
+
+                var version = install?.Version ?? AssemblyHelper.GetApplicationVersion();
+
+                // Player messages follow the interface unless the host said otherwise, so the
+                // host catalog is picked again before the event goes out.
+                RefreshHostCatalog();
+                LanguagePacks.NotifyLanguageChanged(code, version);
+
+                return Task.FromResult<object>(new
+                {
+                    ok = true,
+                    code,
+                    version,
+                    stringsUrl = LanguageStringsUrl(code, install?.Version),
+                    fonts = LanguageFonts(install),
+                    missingKeys = LanguageMissingKeys(install),
+                });
             });
 
             // --- Discord (the Herald) ---
@@ -7349,6 +7554,142 @@ namespace ValheimBakaLoader.Forms
             catch { return null; }
         }
 
+        #region Language
+
+        /// <summary>
+        /// Set the first time this window answers lang.status, and never unset: the quiet
+        /// post-update fetch is started once per window, and every later answer reports what
+        /// that one call decided rather than deciding again.
+        /// </summary>
+        private string LanguageQuietFetchAnswer;
+
+        /// <summary>The language the interface is saved in, always a spelling the app knows.</summary>
+        private string CurrentLanguage(UserPreferences prefs) =>
+            LanguageCodes.Normalize(prefs?.Language) ?? LanguageCodes.English;
+
+        /// <summary>
+        /// A spelling this window could actually be read in: English, which ships inside the
+        /// app, or a language with a pack on disk. Null for anything else, which every caller
+        /// reads as "leave the preference where it was".
+        /// <para>
+        /// A service that is not wired yet answers the code back rather than refusing it: the
+        /// guard exists to stop a pack-less language being SAVED, and a window with no pack
+        /// service has no packs to check against and no globe to have asked from.
+        /// </para>
+        /// </summary>
+        private string ReadableLanguage(string normalized)
+        {
+            if (normalized == null || LanguageCodes.IsEnglish(normalized)) return normalized;
+            if (LanguagePacks == null) return normalized;
+
+            return LanguagePacks.InstalledAny(normalized) != null ? normalized : null;
+        }
+
+        /// <summary>
+        /// The pack for the language that is being read, on the page's own origin. Null for
+        /// English, which ships inside the app and is fetched from beside the page.
+        /// </summary>
+        private static string LanguageStringsUrl(string code, string version) =>
+            LanguageCodes.IsEnglish(code) || string.IsNullOrWhiteSpace(version)
+                ? null
+                : LanguageUrlPrefix + code + "/" + version + "/strings.json";
+
+        /// <summary>
+        /// The faces a pack carries, addressed in the shared font store. The page writes one
+        /// @font-face rule per row; the store is content addressed, so two languages that use
+        /// the same face name the same URL and the browser fetches it once.
+        /// </summary>
+        private static List<object> LanguageFonts(LanguagePackInstall install)
+        {
+            var fonts = new List<object>();
+            if (install?.Fonts == null) return fonts;
+
+            foreach (var font in install.Fonts)
+            {
+                if (string.IsNullOrWhiteSpace(font?.File) || string.IsNullOrWhiteSpace(font.Family)) continue;
+
+                fonts.Add(new
+                {
+                    family = font.Family,
+                    url = LanguageUrlPrefix + font.File.Replace('\\', '/').TrimStart('/'),
+                    weight = font.Weight,
+                    style = font.Style,
+                    unicodeRange = font.UnicodeRange,
+                });
+            }
+
+            return fonts;
+        }
+
+        /// <summary>
+        /// How many lines the host is still reading in English. A pack cut for an older
+        /// version carries the lines that existed when it was cut, so what the English catalog
+        /// has gained since is the gap. Zero for English itself and zero when the arithmetic
+        /// would go negative, which a pack cut from a newer catalog than this build ships can
+        /// make it do.
+        /// </summary>
+        private static int LanguageMissingKeys(LanguagePackInstall install)
+        {
+            if (install == null || HostCatalog.EnglishKeyCount <= 0) return 0;
+
+            var covered = install.Translated > 0 ? install.Translated : install.Keys;
+            return Math.Max(0, HostCatalog.EnglishKeyCount - covered);
+        }
+
+        /// <summary>
+        /// The word the page shows beside the status, and, the first time this window asks,
+        /// the fetch itself. It runs on a worker rather than here: this handler answers on the
+        /// UI thread and the page is waiting on it, so a pack fetched at boot must never be
+        /// something the first frame waits for. It is never a splash step for the same reason.
+        /// </summary>
+        private string QuietLanguageFetch(UserPreferences prefs, string code)
+        {
+            if (LanguageQuietFetchAnswer != null) return LanguageQuietFetchAnswer;
+
+            var version = AssemblyHelper.GetApplicationVersion();
+            var decision = LanguagePacks.QuietFetchDecision(prefs?.CheckForUpdates ?? true, code, version);
+            LanguageQuietFetchAnswer = decision;
+
+            if (decision != LanguageQuietFetch.Started) return decision;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await LanguagePacks.EnsureCurrentQuietlyAsync(prefs?.CheckForUpdates ?? true, code, version);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "The language pack for {code} could not be refreshed after the update", code);
+                }
+            });
+
+            return decision;
+        }
+
+        /// <summary>
+        /// Points the host-facing sentences at the right catalog. The people on the server are
+        /// written to in the interface's language unless the host chose another one for them,
+        /// and the pack that answers is whichever version of it is on disk.
+        /// </summary>
+        private void RefreshHostCatalog()
+        {
+            try
+            {
+                var prefs = UserPrefsProvider.LoadPreferences();
+                var code = HostCatalog.EffectiveCode(prefs?.Language, prefs?.PlayerMessageLanguage);
+                var install = LanguageCodes.IsEnglish(code) ? null : LanguagePacks.InstalledAny(code);
+
+                HostCatalog.Use(HostCatalog.Load(GetLanguagesDir(), code, install?.Version));
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning(ex, "The player-message catalog could not be picked");
+            }
+        }
+
+        #endregion
+
         private object BuildUserPrefsDto()
         {
             var prefs = UserPrefsProvider.LoadPreferences();
@@ -7385,6 +7726,8 @@ namespace ValheimBakaLoader.Forms
                 prefs.DiscordSharePassword,
                 prefs.DiscordEventPosts,
                 prefs.CustomJoinDomain,
+                prefs.Language,
+                prefs.PlayerMessageLanguage,
                 HasDiscordStatusMessage = !string.IsNullOrWhiteSpace(prefs.DiscordStatusMessageId),
                 AppVersion = AssemblyHelper.GetApplicationVersion(),
             };
@@ -7407,12 +7750,15 @@ namespace ValheimBakaLoader.Forms
             var prefs = ServerPrefsProvider.LoadPreferences(profile);
 
             var status = server?.Status ?? ServerStatus.Stopped;
+            // The one word in the snapshot that is a word rather than a name or a number, and
+            // it is read in the Discord post rather than in this window, so it is written in
+            // the language the players are written to in.
             var statusText = status switch
             {
-                ServerStatus.Running => "Online",
-                ServerStatus.Starting => "Starting up…",
-                ServerStatus.Stopping => "Shutting down…",
-                _ => "Offline",
+                ServerStatus.Running => HostCatalog.T("host.status.state.online"),
+                ServerStatus.Starting => HostCatalog.T("host.status.state.starting"),
+                ServerStatus.Stopping => HostCatalog.T("host.status.state.stopping"),
+                _ => HostCatalog.T("host.status.state.offline"),
             };
 
             var playersOnline = PlayerDataProvider.Data.Count(pl =>

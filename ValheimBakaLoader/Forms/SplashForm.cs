@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -57,6 +57,7 @@ namespace ValheimBakaLoader.Forms
         private readonly IServerPreferencesProvider ServerPrefsProvider;
         private readonly IPlayerDataRepository PlayerDataRepository;
         private readonly IStartupArgsProvider StartupArgs;
+        private readonly ILanguagePackService LanguagePacks;
         private readonly IApplicationLogger Logger;
 
         public SplashForm(
@@ -69,6 +70,7 @@ namespace ValheimBakaLoader.Forms
             IServerPreferencesProvider serverPrefsProvider,
             IPlayerDataRepository playerDataRepository,
             IStartupArgsProvider startupArgs,
+            ILanguagePackService languagePacks,
             IApplicationLogger logger)
         {
             FormProvider = formProvider;
@@ -80,6 +82,7 @@ namespace ValheimBakaLoader.Forms
             ServerPrefsProvider = serverPrefsProvider;
             PlayerDataRepository = playerDataRepository;
             StartupArgs = startupArgs;
+            LanguagePacks = languagePacks;
             Logger = logger;
 
             // Catch everything from here on; a crash before the main window exists
@@ -335,6 +338,25 @@ namespace ValheimBakaLoader.Forms
                 window.Show();
                 if (startMinimized) window.WindowState = FormWindowState.Minimized;
             }
+
+            // The language folder's housekeeping: the staging folder emptied, the versions
+            // nobody is reading dropped, and the faces no remaining pack names taken out of
+            // the shared store. It runs AFTER the windows are up and on a worker of its own,
+            // never as a launch step: it is deleting folders a host is not waiting for, and a
+            // launch step is a thing the window opens behind. The service stands aside on its
+            // own if a pack is being fetched, so it cannot sweep a download's working folder.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    var removed = LanguagePacks.PruneOnBoot();
+                    if (removed > 0) Logger.Information("Swept {removed} stale language files", removed);
+                }
+                catch (Exception e)
+                {
+                    Logger.Warning(e, "The language folder could not be swept");
+                }
+            });
 
             // The splash form must stay alive (it is the application main form),
             // so it hides instead of closing.

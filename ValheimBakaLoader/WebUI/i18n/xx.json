@@ -850,6 +850,36 @@
       "translation": "[Ẋ Hearth stoked · server restarting Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
       "mark": "ᚱ"
     },
+    "hearth.countdown.restart_in": {
+      "translation": "[Ẋ Restart in {time} Ẋ] ẊẊẊẊ",
+      "params": {
+        "time": "text"
+      }
+    },
+    "hearth.countdown.restart_now": {
+      "translation": "[Ẋ Restarting now Ẋ] ẊẊẊẊẊ"
+    },
+    "hearth.countdown.hours": {
+      "translation": {
+        "one": "[Ẋ {count} hour Ẋ] ẊẊ",
+        "other": "[Ẋ {count} hours Ẋ] ẊẊ"
+      },
+      "plural": "count"
+    },
+    "hearth.countdown.minutes": {
+      "translation": {
+        "one": "[Ẋ {count} minute Ẋ] ẊẊẊ",
+        "other": "[Ẋ {count} minutes Ẋ] ẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "hearth.countdown.seconds": {
+      "translation": {
+        "one": "[Ẋ {count} second Ẋ] ẊẊẊ",
+        "other": "[Ẋ {count} seconds Ẋ] ẊẊẊ"
+      },
+      "plural": "count"
+    },
     "hearth.sail.name.fallback": {
       "translation": "[Ẋ Valheim server Ẋ] ẊẊẊẊẊ"
     },
@@ -4957,6 +4987,377 @@
     },
     "world.priority.fixed.note": {
       "translation": "[Ẋ always AboveNormal, boosted by BakaLoader Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.busy": {
+      "translation": "[Ẋ A language pack is already downloading. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.stalled": {
+      "translation": "[Ẋ The download stopped receiving data. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.cancelled": {
+      "translation": "[Ẋ The download was stopped, so nothing on disk changed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.integrity": {
+      "translation": "[Ẋ The pack did not match its published checksum, so it was not installed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.too_large": {
+      "translation": "[Ẋ The pack is larger than BakaLoader will fetch. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.too_old": {
+      "translation": "[Ẋ This pack needs a newer BakaLoader. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.offline": {
+      "translation": "[Ẋ BakaLoader could not reach the release page. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.no_pack": {
+      "translation": "[Ẋ No pack for {language} is published for this version yet. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "language": "text"
+      }
+    },
+    "lang.reason.unknown_code": {
+      "translation": "[Ẋ BakaLoader has no language by that name. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.built_in": {
+      "translation": "[Ẋ English ships inside BakaLoader and is never downloaded. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.checks_off": {
+      "translation": "[Ẋ Update checking is off, so nothing was fetched. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.contents": {
+      "translation": "[Ẋ What arrived is not a language pack for that language. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.install": {
+      "translation": "[Ẋ The pack checked out and still could not be put in place. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.reason.not_installed": {
+      "translation": "[Ẋ That language is not downloaded yet. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.btn.title": {
+      "translation": "[Ẋ Language Ẋ] ẊẊẊ"
+    },
+    "lang.menu.title": {
+      "translation": "[Ẋ Language Ẋ] ẊẊẊ"
+    },
+    "lang.menu.aria": {
+      "translation": "[Ẋ Choose the language BakaLoader shows itself in Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.menu.loading": {
+      "translation": "[Ẋ Looking for the published packs Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.row.current": {
+      "translation": "[Ẋ Current Ẋ] ẊẊẊ"
+    },
+    "lang.row.built_in": {
+      "translation": "[Ẋ Ships inside BakaLoader Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "lang.row.installed": {
+      "translation": "[Ẋ Downloaded Ẋ] ẊẊẊẊ"
+    },
+    "lang.row.not_installed": {
+      "translation": "[Ẋ Not downloaded, {size} Ẋ] ẊẊẊẊẊ",
+      "params": {
+        "size": "text"
+      }
+    },
+    "lang.row.not_published": {
+      "translation": "[Ẋ No pack published for this version yet Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.row.older_pack": {
+      "translation": "[Ẋ Using the pack from {version} Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "lang.row.machine": {
+      "translation": "[Ẋ Machine translated Ẋ] ẊẊẊẊẊẊ"
+    },
+    "lang.row.offline": {
+      "translation": "[Ẋ Needs a connection to download Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.phase.resolving": {
+      "translation": "[Ẋ Finding the pack Ẋ] ẊẊẊẊẊ"
+    },
+    "lang.phase.downloading": {
+      "translation": "[Ẋ Downloading Ẋ] ẊẊẊẊ"
+    },
+    "lang.phase.verifying": {
+      "translation": "[Ẋ Checking the pack Ẋ] ẊẊẊẊẊẊ"
+    },
+    "lang.phase.installing": {
+      "translation": "[Ẋ Installing Ẋ] ẊẊẊẊ"
+    },
+    "lang.progress.aria": {
+      "translation": "[Ẋ Downloading {language} Ẋ] ẊẊẊẊ",
+      "params": {
+        "language": "text"
+      }
+    },
+    "lang.progress.sized": {
+      "translation": "[Ẋ {done} of {total} Ẋ] ẊẊ",
+      "params": {
+        "done": "text",
+        "total": "text"
+      }
+    },
+    "lang.cancel": {
+      "translation": "[Ẋ Cancel Ẋ] ẊẊ"
+    },
+    "lang.cancel.too_late": {
+      "translation": "[Ẋ This pack is being installed and cannot be stopped now Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.retry": {
+      "translation": "[Ẋ Try again Ẋ] ẊẊẊ"
+    },
+    "lang.toast.switched": {
+      "translation": "[Ẋ Now showing {language} Ẋ] ẊẊẊẊ",
+      "params": {
+        "language": "text"
+      }
+    },
+    "lang.toast.cancelled": {
+      "translation": "[Ẋ Download cancelled. Nothing changed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.toast.too_late": {
+      "translation": "[Ẋ {language} was already being installed, so the download could not be stopped. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "language": "text"
+      }
+    },
+    "lang.toast.failed": {
+      "translation": "[Ẋ {language} could not be downloaded: {reason} Ẋ] ẊẊẊẊẊẊẊẊ",
+      "params": {
+        "language": "text",
+        "reason": "text"
+      }
+    },
+    "lang.note.checks_off": {
+      "translation": "[Ẋ Update checking is off, so packs will not refresh on their own after an update. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "lang.note.partial": {
+      "translation": {
+        "one": "[Ẋ {count} new line is still in English Ẋ] ẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} new lines are still in English Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "lang.note.machine": {
+      "translation": "[Ẋ Machine translated. Corrections are welcome on GitHub. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "settings.player_messages.label": {
+      "translation": "[Ẋ Messages to players Ẋ] ẊẊẊẊẊẊ"
+    },
+    "settings.player_messages.same": {
+      "translation": "[Ẋ Same as the interface Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "settings.player_messages.help": {
+      "translation": "[Ẋ The language of the in-game restart countdown and of the Discord posts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "host.countdown.restart_in": {
+      "translation": "[Ẋ Server restarting in {time}! Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "time": "text"
+      }
+    },
+    "host.countdown.restart_now": {
+      "translation": "[Ẋ Server restarting NOW! Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "host.countdown.cancelled": {
+      "translation": "[Ẋ Server restart cancelled. Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "host.countdown.update_note": {
+      "translation": {
+        "one": "[Ẋ ({count} mod update pending) Ẋ] ẊẊẊẊẊẊẊ",
+        "other": "[Ẋ ({count} mod updates pending) Ẋ] ẊẊẊẊẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "host.time.hours": {
+      "translation": {
+        "one": "[Ẋ {count} hour Ẋ] ẊẊ",
+        "other": "[Ẋ {count} hours Ẋ] ẊẊ"
+      },
+      "plural": "count"
+    },
+    "host.time.minutes": {
+      "translation": {
+        "one": "[Ẋ {count} minute Ẋ] ẊẊẊ",
+        "other": "[Ẋ {count} minutes Ẋ] ẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "host.time.seconds": {
+      "translation": {
+        "one": "[Ẋ {count} second Ẋ] ẊẊẊ",
+        "other": "[Ẋ {count} seconds Ẋ] ẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "host.discord.started.title": {
+      "translation": "[Ẋ Server Started Ẋ] ẊẊẊẊẊ"
+    },
+    "host.discord.started.body": {
+      "translation": "[Ẋ **{server}** is now online. Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "server": "text"
+      }
+    },
+    "host.discord.stopped.title": {
+      "translation": "[Ẋ Server Stopped Ẋ] ẊẊẊẊẊ"
+    },
+    "host.discord.stopped.body": {
+      "translation": "[Ẋ **{server}** has been shut down. Ẋ] ẊẊẊẊẊẊẊẊ",
+      "params": {
+        "server": "text"
+      }
+    },
+    "host.discord.crashed.title": {
+      "translation": "[Ẋ Server Crashed Ẋ] ẊẊẊẊẊ"
+    },
+    "host.discord.crashed.body": {
+      "translation": "[Ẋ **{server}** has crashed! Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "server": "text"
+      }
+    },
+    "host.discord.crashed.body_restarting": {
+      "translation": "[Ẋ **{server}** has crashed! Auto-restarting in {seconds} seconds... Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "server": "text",
+        "seconds": "number"
+      }
+    },
+    "host.discord.joined.title": {
+      "translation": "[Ẋ Player Joined Ẋ] ẊẊẊẊ"
+    },
+    "host.discord.joined.body": {
+      "translation": "[Ẋ **{player}** joined **{server}**. Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "player": "text",
+        "server": "text"
+      }
+    },
+    "host.discord.left.title": {
+      "translation": "[Ẋ Player Left Ẋ] ẊẊẊẊ"
+    },
+    "host.discord.left.body": {
+      "translation": "[Ẋ **{player}** left **{server}**. Ẋ] ẊẊẊẊẊ",
+      "params": {
+        "player": "text",
+        "server": "text"
+      }
+    },
+    "host.discord.held.title": {
+      "translation": "[Ẋ Start Held Ẋ] ẊẊẊẊ"
+    },
+    "host.discord.held.body": {
+      "translation": "[Ẋ **{server}** was not started automatically. {reason} Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "server": "text",
+        "reason": "text"
+      }
+    },
+    "host.discord.updated.title": {
+      "translation": "[Ẋ Server Updated Ẋ] ẊẊẊẊẊ"
+    },
+    "host.discord.updated.body": {
+      "translation": "[Ẋ **{server}** finished updating. Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "server": "text"
+      }
+    },
+    "host.discord.updated.build": {
+      "translation": "[Ẋ It is now on build {build}. Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "build": "text"
+      }
+    },
+    "host.discord.updated.starting": {
+      "translation": "[Ẋ Starting it now. Ẋ] ẊẊẊẊẊ"
+    },
+    "host.discord.updated.when_ready": {
+      "translation": "[Ẋ Start it when you are ready. Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "host.discord.update_failed.title": {
+      "translation": "[Ẋ Server Update Failed Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "host.discord.update_failed.body": {
+      "translation": "[Ẋ **{server}** was not updated. {reason} The server was not started. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "server": "text",
+        "reason": "text"
+      }
+    },
+    "host.discord.legacy_world.title": {
+      "translation": "[Ẋ Old World Format Ẋ] ẊẊẊẊẊ"
+    },
+    "host.discord.legacy_world.body": {
+      "translation": "[Ẋ **{server}** loaded **{world}** in the pre-1.0 save format. The next save converts it, and older servers will not be able to load it afterwards. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "server": "text",
+        "world": "text"
+      }
+    },
+    "host.status.title": {
+      "translation": "[Ẋ Valheim server Ẋ] ẊẊẊẊẊ"
+    },
+    "host.status.footer": {
+      "translation": "[Ẋ Valheim BakaLoader v{version} · this post updates itself Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "host.status.field.status": {
+      "translation": "[Ẋ Status Ẋ] ẊẊ"
+    },
+    "host.status.field.players": {
+      "translation": "[Ẋ Players online Ẋ] ẊẊẊẊẊ"
+    },
+    "host.status.field.world": {
+      "translation": "[Ẋ World Ẋ] ẊẊ"
+    },
+    "host.status.field.address": {
+      "translation": "[Ẋ Join address Ẋ] ẊẊẊẊ"
+    },
+    "host.status.field.mods": {
+      "translation": "[Ẋ Mods Ẋ] ẊẊ"
+    },
+    "host.status.field.last_mod_update": {
+      "translation": "[Ẋ Last mod update Ẋ] ẊẊẊẊẊ"
+    },
+    "host.status.field.next_restart": {
+      "translation": "[Ẋ Next restart Ẋ] ẊẊẊẊ"
+    },
+    "host.status.field.password": {
+      "translation": "[Ẋ Password Ẋ] ẊẊẊ"
+    },
+    "host.status.state.online": {
+      "translation": "[Ẋ Online Ẋ] ẊẊ"
+    },
+    "host.status.state.starting": {
+      "translation": "[Ẋ Starting up… Ẋ] ẊẊẊẊ"
+    },
+    "host.status.state.stopping": {
+      "translation": "[Ẋ Shutting down… Ẋ] ẊẊẊẊẊ"
+    },
+    "host.status.state.offline": {
+      "translation": "[Ẋ Offline Ẋ] ẊẊẊ"
+    },
+    "host.status.value.unknown": {
+      "translation": "[Ẋ Unknown Ẋ] ẊẊẊ"
+    },
+    "host.status.value.mods_installed": {
+      "translation": {
+        "one": "[Ẋ {count} installed Ẋ] ẊẊẊẊ",
+        "other": "[Ẋ {count} installed Ẋ] ẊẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "host.status.value.vanilla": {
+      "translation": "[Ẋ vanilla Ẋ] ẊẊẊ"
+    },
+    "host.status.value.not_scheduled": {
+      "translation": "[Ẋ not scheduled Ẋ] ẊẊẊẊ"
     }
   }
 }

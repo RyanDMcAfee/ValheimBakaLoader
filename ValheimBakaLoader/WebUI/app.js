@@ -127,13 +127,51 @@ const HOST_SENTENCES=[
   {named:"worlds.copyNoSuchWorld",       textId:"world.copy.reason.no_such_world"},
   {named:"worlds.copyUnreadable",        textId:"world.copy.reason.unreadable"},
   {named:"worlds.copyFailed",            textId:"world.copy.reason.failed"},
+  /* The three the language bridge throws. The endings a pack DOWNLOAD can have are not
+     throws at all, so they are a table of their own below. */
+  {named:"lang.busy",         textId:"lang.reason.busy"},
+  {named:"lang.unknownCode",  textId:"lang.reason.unknown_code"},
+  {named:"lang.notInstalled", textId:"lang.reason.not_installed"},
 ];
+/* Every way a language pack download can end, as the pack service names it in the result,
+   beside the catalog entry that words it. This is the same question HOST_SENTENCES answers
+   asked at the END of a download rather than at the start, which is why it is a second
+   table: nothing throws these, so the gate that holds every HOST_SENTENCES row to a real
+   throw stays exactly as strict as it was.
+   The two halves are spelled differently on purpose and are paired rather than derived. An
+   id the host names is lower camel within a segment and a catalog id is lower case, so
+   lang.reason.tooLarge is the ending and lang.reason.too_large is the sentence. An ending
+   this table does not know is not rendered: an id is not copy, and a page that prints one
+   has told the host nothing. */
+const LANG_REASONS=[
+  {named:"lang.reason.busy",       textId:"lang.reason.busy"},
+  {named:"lang.reason.stalled",    textId:"lang.reason.stalled"},
+  {named:"lang.reason.cancelled",  textId:"lang.reason.cancelled"},
+  {named:"lang.reason.integrity",  textId:"lang.reason.integrity"},
+  {named:"lang.reason.tooLarge",   textId:"lang.reason.too_large"},
+  {named:"lang.reason.tooOld",     textId:"lang.reason.too_old"},
+  {named:"lang.reason.offline",    textId:"lang.reason.offline"},
+  {named:"lang.reason.noPack",     textId:"lang.reason.no_pack"},
+  {named:"lang.reason.unknownCode",textId:"lang.reason.unknown_code"},
+  {named:"lang.reason.builtIn",    textId:"lang.reason.built_in"},
+  {named:"lang.reason.checksOff",  textId:"lang.reason.checks_off"},
+  {named:"lang.reason.contents",   textId:"lang.reason.contents"},
+  {named:"lang.reason.install",    textId:"lang.reason.install"},
+];
+/* The sentence for an ending a language pack download named, or null when the id is not one
+   of them. */
+function langReasonText(id,params){
+  if(!id) return null;
+  const row=LANG_REASONS.find(r=>r.named===id);
+  if(!row) return null;
+  try{return T(row.textId,params||{});}catch(_){return null;}
+}
 /* The catalog sentence for a refusal the host named, or null when it named none this
    page owns the words for. */
 function hostSentence(id,params){
   if(!id) return null;
   const row=HOST_SENTENCES.find(r=>r.named===id);
-  if(!row) return null;
+  if(!row) return langReasonText(id,params);
   try{return T(row.textId,params||{});}catch(_){return null;}
 }
 function rpc(method,params){
@@ -411,7 +449,23 @@ const I18N_READY=(function(){
     const url=window.BAKA_ASSET?window.BAKA_ASSET("i18n/en.json"):"i18n/en.json";
     return fetch(url,{cache:"no-cache"})
       .then(r=>r.ok?r.json():Promise.reject(new Error("HTTP "+r.status)))
-      .then(cat=>{window.I18N.load(cat,"en");return walk(true);})
+      /* English first, always, and held: it is the fallback every other catalog is read
+         over, so a pack missing a line still answers in English rather than in an id.
+         Then, and only then, the saved language. The two are in one chain on purpose:
+         the walk below is what paints words over the English index.html carries, and
+         waiting for the pack is what stops this chain painting English over English
+         and then painting a second time.
+         Be exact about what that buys, because the wiki gets written from comments like
+         this one and this one has already been read for more than it says. It is NOT a
+         promise that the first PAINTED frame is the host's language. The page frame is
+         up while these two local files are still being read, showing the English in the
+         markup, and on a headless harness driving the real boot shape that is about 130ms
+         with the language landing four painted frames later. What it IS: no pass over the
+         document is ever made in a catalog the host did not ask for, so nothing is written
+         in English and corrected afterwards. Measured the same way: two passes at boot,
+         this one and the terminology pass initUpkeep makes, and both are the host's. */
+      .then(cat=>{EN_CATALOG=cat;window.I18N.load(cat,"en");return langBootCatalog();})
+      .then(()=>walk(true))
       .catch(e=>{console.warn("[i18n] the English catalog did not load",e);return walk(false);});
   }catch(e){
     console.warn("[i18n] the English catalog did not load",e);
@@ -472,6 +526,8 @@ function repaintBootCopy(){
   try{repaintWorldDialCopy();}catch(_){}  /* the five world dials: options, notes, footnote */
   try{repaintWorldSelectCopy();}catch(_){}  /* the World field: its New world entry and line */
   try{renderWorldDirty();}catch(_){}      /* the unsaved signs, and with them both Directories lines */
+  try{renderPlayerMsgLang();}catch(_){}   /* the Upkeep card's player-message select */
+  try{renderLangDot();}catch(_){}         /* the sidebar's partial-translation mark */
   /* These two are async, so a throw inside them lands on the promise rather than in the
      try around the call, and an unhandled rejection is a console error on every boot. */
   try{renderWorldSeed()?.catch(()=>{});}catch(_){}   /* the seed field's not-created-yet line */
@@ -524,12 +580,578 @@ function applyLanguage(code){
   try{updatePalGating();}catch(_){}         /* the palette's greyed-out reasons */
   try{redrawOpenModal();}catch(_){}         /* a dialog or a wizard pane, from state */
   try{redrawContextMenu();}catch(_){}       /* an open row menu, at the same corner */
+  /* The globe's own menu last, because it is the one surface that can be open WHILE the
+     switch runs: a host picks a row and the menu is still under their pointer when the
+     window comes back in the new language. It draws from LANG, so this is the same
+     redraw every other surface gets. */
+  try{renderLangMenu();}catch(_){}          /* the globe menu, rows, notes and all */
   return tag;
 }
 /* The terminology switch is a language switch with the language left alone: the words
    come out of the same entries, the other register of them. One path, so a surface
    that follows one follows both and neither can quietly grow a hole the other has. */
 function applyTerms(){return applyLanguage();}
+
+/* ---------- THE GLOBE ----------
+   One button in the title bar, one menu under it, and one road from a row to the window
+   being drawn again in another language. Nothing here reloads the page: applyLanguage()
+   above is the whole of the switch, and it keeps the Saga scrollback, both search boxes
+   and whatever is unsaved in the config editor.
+
+   Four things this block is careful about, because each of them is a way to lie to a host:
+
+   1. IT ASKS FOR NOTHING UNTIL THE HOST ASKS. lang.list is allowed to reach the release
+      page, so it is called when the globe is opened and when the Upkeep card that holds
+      the player-message select is expanded, and never on boot. Opening either one is the
+      host asking out loud; a window that simply started has asked nothing.
+   2. THE CANCEL BUTTON NEVER CLAIMS MORE THAN THE HOST DID. lang.cancel answers with the
+      service's own bool. A press that lands once the pack has begun moving into place
+      stops nothing, and the page says so in those words rather than showing a cancelled
+      row over a pack that is still being installed.
+   3. NOTHING IS WRITTEN IN ENGLISH AND THEN REWRITTEN. langBootCatalog() runs inside the
+      same promise that loads the English catalog, between loading it and walking the
+      document, so every pass over the document is made in the catalog the host asked for
+      and none is made in English for a later pass to correct.
+      This used to read "the first frame is never the wrong language", which is more than
+      it can promise and is what the wiki was written from. The page frame is up while
+      these two local files are still being read, showing the English in index.html, and a
+      headless harness driving the real boot shape puts that at about 130ms with the
+      language landing four painted frames later. There is no boot cloak, and the English
+      in the markup is deliberate: scripts/i18n/check_first_frame.py exists to keep it
+      correct, because it is what a failed catalog fetch falls back to.
+   4. THE FACES ARE WRITTEN AT RUNTIME. The font store is content addressed, so the address
+      of a face is a hash the stylesheet cannot know. switchLanguage() owns a
+      <style id="langFonts"> element and replaces it whole on every switch. */
+const LANG={
+  /* The last lang.status answer: which language is saved, where its words are, what its
+     pack is missing, and what the quiet post-update fetch decided. */
+  status:null,
+  /* The last lang.list answer, which is everything the menu draws. Null until the host
+     opens the globe or expands the Upkeep card. */
+  list:null,
+  /* The code being downloaded right now, or null. One at a time, app wide: the service
+     owns that latch and refuses a second with lang.busy. */
+  busyCode:null,
+  /* The last lang.downloadProgress for busyCode. */
+  prog:null,
+  /* The row that keeps a Try again, and the ending that put it there. */
+  failed:null,
+  /* The code a cancel has been asked for and not yet answered. A report landing in that
+     gap redraws the row, and without this the button it redraws would come back live and
+     invite a second press at something already stopping. */
+  cancelling:null,
+  /* True once a lang.list is in flight, so two presses do not make two requests. */
+  asking:false,
+  /* The saved PlayerMessageLanguage: "same" as the interface, or a code of its own. Read
+     off the same userprefs document the Upkeep card is painted from. */
+  playerMessages:"same",
+};
+/* The English catalog, held from boot so switching back to it costs no fetch. The lookup
+   keeps its own English fallback, but there is no API for making the fallback active
+   again, and a second fetch of a file already read is a round trip for nothing. */
+let EN_CATALOG=null;
+
+/* ---- what the menu knows ---- */
+function langRows(){
+  const rows=(LANG.list&&LANG.list.languages)||[];
+  return rows.filter(l=>l&&l.code);
+}
+/* The language the window is reading right now. The list's own answer first, then the
+   status, then the attribute the switch set, so this is right before either RPC lands. */
+function langCurrent(){
+  return (LANG.list&&LANG.list.current)||(LANG.status&&LANG.status.current)||
+    document.documentElement.dataset.lang||"en";
+}
+function langRowFor(code){return langRows().find(l=>l.code===code)||null;}
+/* What a language calls itself, which is what the menu lists and what a toast names. The
+   code itself is the floor: a name nothing has answered for yet is still recognisable. */
+function langNameOf(code){
+  const row=langRowFor(code);
+  return row?(row.nativeName||row.englishName||row.code):String(code==null?"":code);
+}
+/* The one line under a language's own name. Six states, and the order is the order a host
+   reads them in: what they are using, what they have, what it would cost, and why they
+   cannot have it. */
+function langRowLine(l){
+  if(l.code===langCurrent()) return T("lang.row.current");
+  if(l.builtIn) return T("lang.row.built_in");
+  if(l.installed&&l.matchesApp) return T("lang.row.installed");
+  if(l.installed) return T("lang.row.older_pack",{version:l.installedVersion||""});
+  if(l.available) return T("lang.row.not_installed",{size:fmtBytes(l.bytes||0)});
+  if(!(LANG.list&&LANG.list.manifest&&LANG.list.manifest.ok)) return T("lang.row.offline");
+  return T("lang.row.not_published");
+}
+/* A row there is nothing to press. Two of the six states have no pack on disk and none to
+   fetch either: the release page has not published one for this version, or the page could
+   not be reached at all. Both used to be pressable, and both answered a press with a
+   failure toast that said what the row already said. The row keeps its reason and stops
+   claiming to be a control: no menuitem role, no tab stop, no hover. */
+function langRowInert(l){
+  if(!l) return false;
+  return !l.builtIn&&!l.installed&&!l.available&&l.code!==langCurrent();
+}
+/* The word for the phase a download is in. The service names the phase; the page owns the
+   words, because a phase name is not copy. */
+function langPhaseWord(phase){
+  if(phase==="downloading") return T("lang.phase.downloading");
+  if(phase==="verifying") return T("lang.phase.verifying");
+  if(phase==="installing") return T("lang.phase.installing");
+  return T("lang.phase.resolving");
+}
+
+/* ---- the menu ---- */
+/* The progress row, which replaces the status line while a pack is coming down. The bar is
+   determinate the moment the host has reported a byte total and indeterminate before that:
+   a bar that sits at zero while the release page is being resolved reads as stuck, and a
+   sweeping band reads as working. Cancel is live until the pack begins moving into place,
+   and from then it is disabled and says why on its tooltip rather than disappearing. */
+function langProgressHtml(code){
+  const p=LANG.prog||{};
+  const total=Number(p.bytesTotal)||0;
+  const done=Number(p.bytesDone)||0;
+  const pct=total>0?Math.max(0,Math.min(100,Math.round(done/total*100))):0;
+  /* Two reasons the button is not pressable, and only one of them is worth a tooltip: a
+     cancel already asked for is simply on its way, and a pack already being installed is
+     a thing the host needs told. */
+  const tooLate=p.phase==="installing";
+  const asked=LANG.cancelling===code;
+  const bar=total>0
+    ?`<div class="lm-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" `+
+       `aria-label="${esc(T("lang.progress.aria",{language:langNameOf(code)}))}">`+
+       `<div class="lm-fill" style="width:${pct}%"></div></div>`
+    :`<div class="lm-bar indeterminate" role="progressbar" `+
+       `aria-label="${esc(T("lang.progress.aria",{language:langNameOf(code)}))}">`+
+       `<div class="lm-fill"></div></div>`;
+  const line=total>0
+    ?langPhaseWord(p.phase)+" · "+T("lang.progress.sized",{done:fmtBytes(done),total:fmtBytes(total)})
+    :langPhaseWord(p.phase);
+  /* The empty mark column keeps the name on the same left edge as every other row, so a
+     row turning into this one does not appear to jump sideways. */
+  return `<span class="lm-mark"></span>`+
+    `<div class="lm-text"><span class="lm-name">${esc(langNameOf(code))}</span>`+
+    `<span class="lm-sub" data-lang-phase>${esc(line)}</span>${bar}</div>`+
+    `<button class="lm-act" data-lang-cancel="${esc(code)}"${tooLate||asked?" disabled":""}`+
+    `${tooLate?` title="${esc(T("lang.cancel.too_late"))}"`:""}>${esc(T("lang.cancel"))}</button>`;
+}
+/* One row, in whichever of its three shapes applies: coming down, failed and offering
+   another go, or standing there waiting to be picked. */
+function langRowHtml(l){
+  const here=l.code===langCurrent();
+  if(l.code===LANG.busyCode)
+    return `<div class="lm-row busy" data-lang-busy="${esc(l.code)}">${langProgressHtml(l.code)}</div>`;
+
+  const failed=LANG.failed&&LANG.failed.code===l.code?LANG.failed:null;
+  const line=failed
+    ?(langReasonText(failed.reasonId,failed.reasonParams)||T("common.error.unknown"))
+    :langRowLine(l);
+  /* The machine tag stands down while the row is carrying a failure, and only then. A
+     failing row already has a button beside it, and with the tag there too the reason was
+     left about ninety pixels to be read in: the checksum sentence came out six lines deep
+     at three words a line, which is a sentence a host has to work at rather than read.
+     The tag is a standing property of the pack and will be back the moment the row is
+     itself again; the reason is the only thing on that row that is about right now. The
+     note at the foot of the menu still carries the machine sentence for the language
+     actually being read, so nothing is lost by holding it back here. */
+  const machine=(l.status==="machine"&&!l.builtIn&&!failed)
+    ?`<span class="lm-tag">${esc(T("lang.row.machine"))}</span>`:"";
+  const retry=failed
+    ?`<button class="lm-act" data-lang-retry="${esc(l.code)}">${esc(T("lang.retry"))}</button>`:"";
+  /* A row with nothing behind it is a standing reason, not a control. It still carries its
+     code so the menu can be read back, and it carries no role, no tab stop and no press.
+     The tag stands down here for the failing row's reason and one of its own: a language
+     the release page has published no pack for cannot have a machine translated pack, so
+     the tag was saying something about a file that does not exist, and it was saying it in
+     the ninety pixels the longest sentence in this menu needs to stay on one line. */
+  if(!failed&&langRowInert(l))
+    return `<div class="lm-row off" data-lang-inert="${esc(l.code)}">`+
+      `<span class="lm-mark"></span>`+
+      `<span class="lm-text"><span class="lm-name">${esc(l.nativeName||l.code)}</span>`+
+      `<span class="lm-sub">${esc(line)}</span></span></div>`;
+  return `<div class="lm-row${here?" on":""}" role="menuitem" tabindex="0" data-lang-row="${esc(l.code)}">`+
+    `<span class="lm-mark">${here?"ᚠ":""}</span>`+
+    `<span class="lm-text"><span class="lm-name">${esc(l.nativeName||l.code)}</span>`+
+    `<span class="lm-sub">${esc(line)}</span></span>${machine}${retry}</div>`;
+}
+/* The whole menu, drawn from LANG and nothing else, so the language switch redraws it by
+   calling this again. */
+function renderLangMenu(){
+  const menu=$("#langMenu"); if(!menu) return 0;
+  const rows=langRows();
+  let html=`<div class="lm-head">${esc(T("lang.menu.title"))}</div>`;
+  if(!rows.length){
+    html+=`<div class="lm-note">${esc(T("lang.menu.loading"))}</div>`;
+  }else{
+    html+=rows.map(langRowHtml).join("");
+    /* The two standing notes. Neither is ever a toast: a toast is about something that
+       just happened, and both of these are facts about the words on screen right now. */
+    const missing=Number(LANG.status&&LANG.status.missingKeys)||0;
+    if(missing>0) html+=`<div class="lm-note">${esc(T("lang.note.partial",{count:missing}))}</div>`;
+    const cur=langRowFor(langCurrent());
+    if(cur&&cur.status==="machine"&&!cur.builtIn)
+      html+=`<div class="lm-note">${esc(T("lang.note.machine"))}</div>`;
+    if(LANG.list&&LANG.list.checkEnabled===false)
+      html+=`<div class="lm-note warn">${esc(T("lang.note.checks_off"))}</div>`;
+  }
+  menu.innerHTML=html;
+  return rows.length;
+}
+/* Paints the bar in place rather than rebuilding the menu on every report. Rebuilding
+   would restart the sweep animation sixty times over a large pack and throw away the row
+   the pointer is on; this writes the four things that actually changed. */
+function langPaintProgress(){
+  const menu=$("#langMenu");
+  const row=menu?menu.querySelector("[data-lang-busy]"):null;
+  if(!row||row.getAttribute("data-lang-busy")!==LANG.busyCode){renderLangMenu();return false;}
+  row.innerHTML=langProgressHtml(LANG.busyCode);
+  return true;
+}
+function langMenuIsOpen(){return !!$("#langMenu")?.classList.contains("open");}
+function langMenuClose(){
+  const menu=$("#langMenu"), btn=$("#langBtn");
+  if(menu) menu.classList.remove("open");
+  if(btn) btn.setAttribute("aria-expanded","false");
+  return false;
+}
+function langMenuOpen(){
+  const menu=$("#langMenu"), btn=$("#langBtn");
+  if(!menu) return false;
+  renderLangMenu();
+  menu.classList.add("open");
+  if(btn) btn.setAttribute("aria-expanded","true");
+  /* Opening the globe IS the host asking out loud, so this is the one place the page is
+     allowed to make the app reach the release page on its own. */
+  langRefresh();
+  return true;
+}
+function langMenuToggle(){return langMenuIsOpen()?langMenuClose():langMenuOpen();}
+
+/* ---- the host's answers ---- */
+/* Asks for the whole menu once. Quiet: a window with no host behind it (the browser
+   preview) has BakaPreview.langList instead, and a refusal here is a menu that keeps the
+   rows it had rather than a toast about a press the host did not make. */
+async function langRefresh(){
+  if(!Native.available||LANG.asking) return false;
+  LANG.asking=true;
+  const r=await Native.call("lang.list",{}).catch(e=>{
+    console.warn("[lang] the language list could not be read",e);return null;});
+  LANG.asking=false;
+  if(!r) return false;
+  LANG.list=r;
+  renderLangMenu();
+  renderPlayerMsgLang();
+  return true;
+}
+/* The first frame's language. Runs inside the catalog boot, between the English catalog
+   landing and the document being walked, so the walk paints the host's own language once
+   rather than painting English and then painting over it.
+   Everything in here is quiet and nothing in here throws: a window whose pack cannot be
+   read is a window in English, which is exactly what it was before this existed. */
+async function langBootCatalog(){
+  /* The walk seam. A browser has no host to ask, and the one rule worth proving here is
+     an ORDER rather than a value, so a harness seeds the answer lang.status would have
+     given before app.js runs and then counts how many times the document was walked.
+     Nothing in the product ever writes this, and it is read once, here. */
+  const st=Native.available
+    ?await Native.call("lang.status",{}).catch(e=>{
+      console.warn("[lang] the saved language could not be read",e);return null;})
+    :(window.BAKA_LANG_BOOT||null);
+  if(!st) return false;
+  LANG.status=st;
+  if(!st.stringsUrl||st.current==="en") return false;
+  try{
+    const r=await fetch(st.stringsUrl,{cache:"no-cache"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const cat=await r.json();
+    langInjectFonts(st.fonts);
+    setLanguageAttributes(st.current);
+    if(window.I18N) window.I18N.load(cat,st.current);
+    return true;
+  }catch(e){
+    console.warn("[lang] the installed pack did not load, so the window stays in English",e);
+    return false;
+  }
+}
+
+/* ---- the faces ---- */
+/* One @font-face per face the pack carries, written into an element this owns and
+   replaced whole on every switch. The families and the addresses come from pack.json,
+   which the service only writes after the archive matched its published checksum, and
+   the three characters that could end a declaration early are dropped anyway: a
+   stylesheet built from a file is a stylesheet somebody else wrote.
+   Handed nothing, the element goes: an English window declares no pack faces at all. */
+
+/* The format word for a face, read off the address rather than assumed. The store admits
+   five extensions (woff2, woff, ttf, otf, ttc) and names every stored file after one of
+   them, so a pack publishing a .ttf face has to be declared truetype: a src whose declared
+   format does not match the bytes is a src the browser skips, and the face installs, hashes,
+   sniffs clean and then never draws. Anything unrecognised, which the store should not be
+   able to produce, is declared as the one the store assumes when a face carries no
+   extension at all. */
+function langFontFormat(url){
+  const match=/\.([A-Za-z0-9]{1,8})(?:[?#]|$)/.exec(String(url==null?"":url));
+  switch((match&&match[1]||"").toLowerCase()){
+    case "woff": return "woff";
+    case "ttf": return "truetype";
+    case "otf": return "opentype";
+    case "ttc": return "collection";
+    default: return "woff2";
+  }
+}
+
+function langInjectFonts(fonts){
+  const clean=v=>String(v==null?"":v).replace(/[;{}"'<>\\]/g,"").trim();
+  const list=(Array.isArray(fonts)?fonts:[]).filter(f=>f&&f.family&&f.url);
+  let style=document.getElementById("langFonts");
+  if(!list.length){if(style)style.remove();return 0;}
+  if(!style){
+    style=document.createElement("style");
+    style.id="langFonts";
+    document.head.appendChild(style);
+  }
+  style.textContent=list.map(f=>
+    "@font-face{font-family:'"+clean(f.family)+"';"+
+    "font-style:"+(clean(f.style)||"normal")+";"+
+    "font-weight:"+(clean(f.weight)||"400")+";"+
+    "font-display:swap;"+
+    "src:url('"+clean(f.url)+"') format('"+langFontFormat(clean(f.url))+"');"+
+    (f.unicodeRange?"unicode-range:"+clean(f.unicodeRange)+";":"")+
+    "}").join("\n");
+  return list.length;
+}
+
+/* ---- the switch ---- */
+/**
+ * Puts the window into the language lang.set just answered for: the pack's words, its
+ * faces, and one redraw. English is the one case with no fetch at all, because its
+ * catalog was read at boot and is still held.
+ * @param {object} payload what lang.set answered: code, stringsUrl, fonts
+ * @returns {Promise<boolean>} false when the words could not be read, in which case
+ *   nothing on screen changed
+ */
+async function switchLanguage(payload){
+  const p=payload||{};
+  const code=p.code||"en";
+  if(p.stringsUrl){
+    let cat=null;
+    try{
+      const r=await fetch(p.stringsUrl,{cache:"no-cache"});
+      if(r.ok) cat=await r.json();
+    }catch(e){console.warn("[lang] the pack catalog did not load",e);}
+    if(!cat) return false;
+    langInjectFonts(p.fonts);
+    if(window.I18N) window.I18N.load(cat,code);
+  }else{
+    if(!EN_CATALOG) return false;
+    langInjectFonts(null);
+    if(window.I18N) window.I18N.load(EN_CATALOG,"en");
+  }
+  if(LANG.status) LANG.status=Object.assign({},LANG.status,
+    {current:code,missingKeys:Number(p.missingKeys)||0,stringsUrl:p.stringsUrl||null,fonts:p.fonts||[]});
+  if(LANG.list) LANG.list=Object.assign({},LANG.list,{current:code});
+  applyLanguage(code);
+  return true;
+}
+/* A row was picked. English and an installed language are one call; anything else is a
+   download first, and the row turns into the progress row for as long as that takes. */
+async function langPick(code){
+  if(!code) return false;
+  if(code===langCurrent()){langMenuClose();return false;}
+  const row=langRowFor(code);
+  /* Belt and braces for the two rows the menu draws inert: a press that arrives anyway
+     (a keyboard walker, a stale DOM under a redraw) must not start a download that has no
+     pack to fetch and would only come back as a failure. */
+  if(langRowInert(row)) return false;
+  if(row&&!row.installed&&!row.builtIn) return langDownload(code);
+  return langSet(code);
+}
+/* The switch itself, once the words are known to be on disk. */
+async function langSet(code){
+  const r=await rpc("lang.set",{code});
+  if(r===FAIL) return false;
+  const ok=await switchLanguage(r);
+  if(!ok){toast("ᚦ "+T("lang.toast.failed",
+    {language:langNameOf(code),reason:T("lang.reason.contents")}));return false;}
+  langMenuClose();
+  toast("ᚠ "+T("lang.toast.switched",{language:langNameOf(code)}));
+  return true;
+}
+/* The download, start to finish. The RPC is awaited for the whole of it and the bar is
+   driven by the events that arrive meanwhile, which is why the row can show a phase the
+   answer has not reported yet. */
+async function langDownload(code){
+  /* A second pack while one is coming down is refused by the service, and the host has to
+     be told why rather than pressing a row that does nothing. The service's own words,
+     since it is the service's own rule. */
+  if(LANG.busyCode){
+    if(LANG.busyCode!==code) toast("ᚦ "+T("lang.reason.busy"));
+    return false;
+  }
+  LANG.busyCode=code;
+  LANG.cancelling=null;
+  LANG.failed=null;
+  LANG.prog={code,phase:"resolving",percent:-1,bytesDone:0,bytesTotal:0};
+  renderLangMenu();
+  const r=await rpc("lang.download",{code});
+  LANG.busyCode=null;
+  LANG.cancelling=null;
+  LANG.prog=null;
+  if(r===FAIL){renderLangMenu();return false;}
+  if(r.cancelled){
+    renderLangMenu();
+    toast("ᛊ "+T("lang.toast.cancelled"));
+    return false;
+  }
+  if(!r.ok){
+    LANG.failed={code,reasonId:r.reasonId,reasonParams:r.reasonParams};
+    renderLangMenu();
+    toast("ᚦ "+T("lang.toast.failed",{language:langNameOf(code),
+      reason:langReasonText(r.reasonId,r.reasonParams)||T("common.error.unknown")}));
+    return false;
+  }
+  /* The list is stale the moment a pack lands, so it is asked for again before the row is
+     drawn as Downloaded. */
+  await langRefresh();
+  return langSet(code);
+}
+/* The cancel, and the one thing it must never do. The service answers whether the press
+   actually stopped anything; a press that lost the race to the install step is told so in
+   those words, and the row carries on to the end it was already heading for. */
+async function langCancel(code){
+  LANG.cancelling=code;
+  const r=await rpc("lang.cancel",{code});
+  if(r===FAIL){LANG.cancelling=null;return false;}
+  if(!r.cancelled){
+    /* It lost the race, so the row goes back to being a live download heading for the end
+       it was already heading for. Saying anything else would be the one lie a cancel
+       button must never tell. */
+    LANG.cancelling=null;
+    langPaintProgress();
+    toast("ᚦ "+T("lang.toast.too_late",{language:langNameOf(code)}));
+    return false;
+  }
+  return true;
+}
+
+/* ---- the sidebar mark and the player-message select ---- */
+/* The partial-translation mark. A dot rather than a toast, for the same reason the menu
+   note is a note: it is a standing fact about the words on screen. */
+function renderLangDot(){
+  const dot=$("#langDot"); if(!dot) return 0;
+  const missing=Number(LANG.status&&LANG.status.missingKeys)||0;
+  const said=missing>0?T("lang.note.partial",{count:missing}):"";
+  dot.classList.toggle("on",missing>0);
+  dot.title=said;
+  dot.setAttribute("aria-label",said);
+  return missing;
+}
+/* The Upkeep card's "Messages to players" select. Its options are the languages a pack is
+   actually installed for, because a language nobody has downloaded has no words to write
+   a countdown in. Before lang.list has been asked for, the select still carries what is
+   saved, so it never shows a choice the host did not make. */
+function renderPlayerMsgLang(){
+  const sel=$("#selPlayerMsgLang"); if(!sel) return 0;
+  const saved=String(LANG.playerMessages||"same");
+  const rows=langRows().filter(l=>l.installed||l.builtIn);
+  const opts=[{code:"same",name:T("settings.player_messages.same")}];
+  rows.forEach(l=>opts.push({code:l.code,name:l.nativeName||l.englishName||l.code}));
+  if(!opts.some(o=>o.code===saved)) opts.push({code:saved,name:langNameOf(saved)});
+  sel.innerHTML=opts.map(o=>
+    `<option value="${esc(o.code)}"${o.code===saved?" selected":""}>${esc(o.name)}</option>`).join("");
+  sel.value=saved;
+  return opts.length;
+}
+
+/* Both are painted now and again the moment the catalog lands, the same as every other
+   painter repaintBootCopy runs: the select and the dot are on screen from the first frame
+   and would otherwise carry ids until something happened to redraw them. */
+renderPlayerMsgLang();
+renderLangDot();
+
+/* ---- wiring ---- */
+$("#langBtn")?.addEventListener("click",e=>{e.stopPropagation();langMenuToggle();});
+$("#langBtn")?.addEventListener("keydown",e=>{
+  if(e.key!=="Enter"&&e.key!==" ") return;
+  e.preventDefault(); langMenuToggle();
+});
+/* One delegated handler for the whole menu, so a redraw never leaves a dead button
+   behind. Cancel and Try again are inside a row, so both stop the press from reaching the
+   row underneath them: a click on Cancel must not also pick the language. */
+$("#langMenu")?.addEventListener("click",e=>{
+  e.stopPropagation();
+  const t=e.target;
+  if(!t||typeof t.closest!=="function") return;
+  const cancel=t.closest("[data-lang-cancel]");
+  if(cancel){
+    if(cancel.disabled) return;
+    cancel.disabled=true;
+    langCancel(cancel.getAttribute("data-lang-cancel"));
+    return;
+  }
+  const retry=t.closest("[data-lang-retry]");
+  if(retry){langDownload(retry.getAttribute("data-lang-retry"));return;}
+  const row=t.closest("[data-lang-row]");
+  if(row) langPick(row.getAttribute("data-lang-row"));
+});
+$("#langMenu")?.addEventListener("keydown",e=>{
+  if(e.key!=="Enter"&&e.key!==" ") return;
+  const row=e.target&&typeof e.target.closest==="function"?e.target.closest("[data-lang-row]"):null;
+  if(!row) return;
+  e.preventDefault();
+  langPick(row.getAttribute("data-lang-row"));
+});
+document.addEventListener("click",()=>{if(langMenuIsOpen())langMenuClose();});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&langMenuIsOpen())langMenuClose();});
+/* The card that holds the player-message select. Expanding it is the second place the
+   host asks for the list out loud, and it is asked once: langRefresh answers false while
+   one is already in flight and the list is kept afterwards.
+
+   ASKED AFTER THE PRESS HAS BEEN HANDLED, never during it. Two listeners sit on this
+   header and the one that actually opens the card is added LATER than this one, because
+   wireCollapsible("upkeepHead", ...) runs much further down this file. Listeners fire in
+   the order they were added, so reading the class here inside the dispatch reads the
+   state the card is LEAVING rather than the one it is arriving at, and that had the whole
+   thing backwards: expanding the card asked for nothing, and collapsing it reached the
+   release page for a menu the host had just put away. A task queued here runs once the
+   dispatch is finished, whatever order the two listeners were added in.
+
+   Both roads, because the header is operable from the keyboard and that road never
+   produces a click: wireCollapsible's own keydown calls the toggle directly. */
+const langUpkeepAsk=()=>setTimeout(()=>{
+  if($("#upkeepCard")?.classList.contains("open")) langRefresh();
+},0);
+$("#upkeepHead")?.addEventListener("click",langUpkeepAsk);
+$("#upkeepHead")?.addEventListener("keydown",e=>{
+  if(e.key==="Enter"||e.key===" "||e.key==="Spacebar") langUpkeepAsk();
+});
+$("#selPlayerMsgLang")?.addEventListener("change",()=>{
+  const sel=$("#selPlayerMsgLang");
+  const asked=String(sel.value||"same");
+  LANG.playerMessages=asked;
+  if(Native.available) rpc("userprefs.save",{prefs:{PlayerMessageLanguage:asked}});
+});
+
+/* Every report the host pushes while a pack comes down. The bar is painted in place; the
+   ending is the RPC's answer, not an event, so nothing here toasts. */
+Native.on("lang.downloadProgress",d=>{
+  if(!d||!d.code) return;
+  if(LANG.busyCode&&d.code!==LANG.busyCode) return;
+  LANG.prog=d;
+  langPaintProgress();
+});
+/* Another window switched language. Every window on this install follows, because the
+   preference is one document and a second window left in the old language would be
+   showing something that is no longer true. */
+Native.on("lang.changed",d=>{
+  if(!d||!d.code) return;
+  if(d.code===langCurrent()) return;
+  if(!Native.available) return;
+  Native.call("lang.status",{}).then(st=>{
+    if(!st) return;
+    LANG.status=st;
+    return switchLanguage({code:st.current,stringsUrl:st.stringsUrl,
+      fonts:st.fonts,missingKeys:st.missingKeys});
+  }).catch(e=>console.warn("[lang] a switch in another window could not be followed",e));
+});
 
 /* ---------- EMPTY STATES ----------
    One shape for every "there is nothing here yet": a mark, a sentence-case title of
@@ -3895,6 +4517,11 @@ async function initUpkeep(){
        so nothing on disk has to be migrated. */
     setT("tPlainTerms",!up.PlainTerminology);
     PLAIN=!!up.PlainTerminology;
+    /* The player-message choice rides in on this same document. It is read here rather
+       than asked for on its own, and the select is drawn from it before applyTerms draws
+       everything else, so the card never shows a choice the host did not make. */
+    LANG.playerMessages=String(up.PlayerMessageLanguage||"same");
+    renderPlayerMsgLang();
     applyTerms();
     syncUpkeepGates();
     if(up.AppVersion) $("#blVersion").textContent="v"+up.AppVersion;
@@ -4554,6 +5181,31 @@ function renderServerUpdate(){
 }
 /* ---- the three inbound events, as named handlers so the preview harness can drive
        exactly what the native host drives ---- */
+/* ---- the window's own countdown chip ----
+   The host side sends an id and a number, never a sentence. The chip is read by whoever
+   is at this window, in this window's language, while the announcement the same countdown
+   puts in the game chat is written in the players' one: two audiences, two catalogs, and
+   the only side that knows which language this window is in is this one.
+   The tier (hours, minutes, seconds) is decided once on the host side, where the players'
+   announcement decides it, and only the words for it are written here. The raw number
+   rides in pluralValue for the reason atlasAgeSay puts it there: a slot already carrying
+   the number written out in the host's own notation cannot be read back, and ar-EG writes
+   1 as a character Number() answers NaN for. */
+const COUNTDOWN_TIERS={hoursId:"hearth.countdown.hours",minutesId:"hearth.countdown.minutes",
+                       secondsId:"hearth.countdown.seconds"};
+/* COUNTDOWN-CHIP-BEGIN (pure - no DOM; driven by scripts/ui/countdown_chip_probe.js) */
+function countdownChipWords(d){
+  if(!d||!d.id) return "";
+  if(d.id==="restart_now") return T("hearth.countdown.restart_now");
+  if(d.id!=="restart_in") return "";
+  const id=COUNTDOWN_TIERS[String(d.unit||"minutes")+"Id"]||COUNTDOWN_TIERS.minutesId;
+  const n=Number(d.count)||0;
+  const L=intl();
+  const written=L?L.fmtNumber(n,{maximumFractionDigits:0,useGrouping:false}):String(n);
+  return T("hearth.countdown.restart_in",{time:T(id,{count:written,pluralValue:n})});
+}
+/* COUNTDOWN-CHIP-END */
+
 function onUpdateProgress(d){
   if(!d||!isActiveProfile(d.profile)) return;
   SRV_UPDATE=d;
@@ -4698,6 +5350,51 @@ window.BakaPreview={
       band:!!$("#page-world")?.classList.contains("unsaved-room"),
       dirsOpen:!!$("#secDirs")?.classList.contains("open"),
     };
+  },
+  /* The globe's seam. Every row of that menu is an answer from the host about packs on
+     disk, a manifest and a download in flight, and a browser can produce none of those,
+     so a walk hands each one straight in. Nothing here reaches a real pack: langDone is
+     handed the same payload lang.set answers with, and its stringsUrl is whatever the
+     walk wants fetched (i18n/xx.json beside the page, in the harness).
+       langList     the lang.list answer, drawn as-is
+       langProgress one lang.downloadProgress report, exactly as the host posts it
+       langDone     the lang.set answer, which is the switch itself
+       langFailed   an ending, so the row keeps its reason and its Try again
+       langScript   a whole download acted out, one report at a time, so the menu can be
+                    photographed at every phase without a host behind it */
+  langList:o=>{
+    LANG.list=o||null;
+    if(o&&o.current) LANG.status=Object.assign({},LANG.status||{},{current:o.current});
+    renderLangMenu(); renderPlayerMsgLang();
+    return langRows().length;
+  },
+  langStatus:o=>{LANG.status=o||null;renderLangDot();renderLangMenu();return LANG.status;},
+  langOpen:()=>{langMenuOpen();return langMenuIsOpen();},
+  langClose:()=>langMenuClose(),
+  langProgress:d=>{
+    if(!d||!d.code) return false;
+    LANG.busyCode=d.code; LANG.failed=null; LANG.prog=d;
+    langPaintProgress();
+    return true;
+  },
+  langDone:payload=>{
+    LANG.busyCode=null; LANG.prog=null; LANG.failed=null;
+    return switchLanguage(payload);
+  },
+  langFailed:(code,reasonId,reasonParams)=>{
+    LANG.busyCode=null; LANG.prog=null;
+    LANG.failed={code,reasonId,reasonParams:reasonParams||{}};
+    renderLangMenu();
+    return LANG.failed;
+  },
+  /* One scripted download. Each step is a real report through the same painter the host
+     drives, and the pause between them is the walk's to choose. */
+  langScript:async (code,steps,pause)=>{
+    for(const s of (steps||[])){
+      window.BakaPreview.langProgress(Object.assign({code},s));
+      await new Promise(r=>setTimeout(r,Math.max(0,Number(pause)||0)));
+    }
+    return LANG.prog;
   },
   /* Fetches that catalog from beside the page first. Answers false when there is none,
      because a walk that silently proved nothing is worse than one that says so. */
@@ -9262,7 +9959,12 @@ if(Native.available){
      install rather than to any one server on it. */
   Native.on("bepinex.changed",d=>{S.bepinex=d||null;renderMods();});
   Native.on("bepinex.progress",onBepInExProgress);
-  Native.on("server.countdown",d=>{if(d?.message&&isActiveProfile(d?.profile))toast("ᚨ "+d.message);});
+  /* The chip. A tick with no id is the countdown ending and says nothing. */
+  Native.on("server.countdown",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    const said=countdownChipWords(d);
+    if(said) toast("ᚨ "+said);
+  });
   Native.on("player.updated",p=>{
     if(!p) return;
     if(!isActiveProfile(p.serverKey)) return; // another server's viking

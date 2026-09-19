@@ -39,6 +39,19 @@
   <div class="titlebar" id="titlebar">
     <div class="wordmark"><span class="rune">ᛒ</span>BAKALOADER <span class="dot">·</span> <span class="srv" id="tbSrv">BAKA GAIJIN</span></div>
     <div class="tb-spacer"></div>
+    <!-- The globe. .tb-interactive is what keeps a press on it from dragging the window;
+         the menu is a sibling inside the same wrapper so it stays under the button at any
+         window width. Everything inside the menu is written by app.js, because every row
+         of it is an answer from the host (what is on disk, what a pack weighs, whether the
+         release page could be reached), so there is no English here to fall back to. -->
+    <div class="langwrap tb-interactive">
+      <!-- A drawn globe rather than the emoji: U+1F30E arrives as a colour glyph from the
+           system font and puts a blue and green disc in the middle of a bronze title bar.
+           This one is stroked in currentColor, so it lights with the button. -->
+      <div class="langbtn" id="langBtn" role="button" tabindex="0" aria-haspopup="menu" aria-expanded="false"
+           title="Language" data-i18n-title="lang.btn.title" aria-label="Choose the language BakaLoader shows itself in" data-i18n-aria="lang.menu.aria"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.1" fill="none" stroke="currentColor" stroke-width="1.2"/><ellipse cx="8" cy="8" rx="2.6" ry="6.1" fill="none" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="5.7" x2="14" y2="5.7" stroke="currentColor" stroke-width="1.2"/><line x1="2" y1="10.3" x2="14" y2="10.3" stroke="currentColor" stroke-width="1.2"/></svg></div>
+      <div class="langmenu" id="langMenu" role="menu" aria-labelledby="langBtn"></div>
+    </div>
     <div class="cmdchip" id="cmdchip"><span data-i18n="titlebar.cmdchip.label">Command</span><kbd>Ctrl+K</kbd></div>
     <div class="winbtns">
       <div class="winbtn" data-win="minimize" title="Minimize" data-i18n-title="titlebar.win.minimize"><svg viewBox="0 0 11 11"><line x1="1" y1="8.5" x2="10" y2="8.5" stroke="currentColor" stroke-width="1.4"/></svg></div>
@@ -65,7 +78,11 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.0</span></span>
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.0</span><!--
+             The partial-translation mark. A standing fact about the words on screen, so it
+             stands here rather than arriving as a toast; app.js lights it and writes the
+             same sentence the globe menu carries onto its tooltip. -->
+          <span class="langdot" id="langDot" role="img"></span></span>
         <!-- app.js writes the words and lights the embers over them; the English here is
            what the link reads on the frame before the catalog lands. -->
       <a class="mead" id="meadLink" title="Support BakaLoader and pour the skald a horn of mead" data-i18n-title="side.mead.title">ᛥ&nbsp;a horn of mead&nbsp;⚑</a>
@@ -214,6 +231,17 @@
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.share_stats">Share anonymous usage stats</span><span class="toggle" id="tShareStats" data-t></span></div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.norse_names">Show Norse names</span><span class="toggle on" id="tPlainTerms" data-t title="On: every plain label keeps its Norse name as a caption. Off: plain English only." data-i18n-title="hearth.upkeep.norse_names.title"></span></div>
                 <div class="subval" style="margin:2px 0 0" data-i18n="hearth.upkeep.norse_names.note">Keeps Hearth, Vikings and Saga beside their plain names.</div>
+                <!-- Messages to players. It sits beside the Norse-names switch because it is
+                     the same kind of thing: a root user preference about wording, saved
+                     through userprefs.save like every other row in this card. The interface
+                     language is the globe's; this one is the language the people ON the
+                     server are written to in, which is a different audience and a different
+                     choice. app.js fills the options from the packs actually installed. -->
+                <div class="togglerow" style="height:auto;padding:6px 0">
+                  <span class="tl" data-i18n="settings.player_messages.label">Messages to players</span>
+                  <select id="selPlayerMsgLang" style="max-width:190px"></select>
+                </div>
+                <div class="subval" style="margin:2px 0 0" data-i18n="settings.player_messages.help">The language of the in-game restart countdown and of the Discord posts.</div>
               </div>
             </div>
 

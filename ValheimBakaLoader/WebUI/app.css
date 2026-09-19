@@ -9,26 +9,26 @@
 /* ============ FONTS (language packs) ============
    The six faces above are latin and latin-ext only, every range stopping at U+A7FF, so
    a Cyrillic or CJK string today drops straight through to a Windows face mid sentence.
-   A language pack carries the faces that cover it, and the app serves the pack from its
-   own origin: https://app.baka/lang/<code>/<app version>/fonts/<file>.woff2, answered in
-   C# out of the languages folder beside userprefs.
+   A language pack carries the faces that cover it.
 
-   These declarations are lazy. A face is only ever fetched when a character it covers is
-   rendered in a stack that names it, and no stack names one until data-lang is a language
-   whose block below is active. So with no pack installed nothing is requested, and with a
-   pack half installed a missing file is an ordinary fallback to the Windows face rather
-   than an error. Every one carries an explicit unicode-range so that even if a stack is
-   later reordered, Latin can never be served from a CJK file.
+   THERE ARE NO PACK @font-face RULES IN THIS FILE, and that is the whole point. Seven of
+   them used to stand here, each addressing https://app.baka/lang/<code>/<app version>/
+   fonts/<file>.woff2. The font store is content addressed now: a face lives at
+   https://app.baka/lang/_fonts/<sha256>.woff2, shared by every language and every version
+   that carries the same bytes, so the address a stylesheet could write down does not exist
+   any more. A rule written against the old shape would have asked for a file that is not
+   there on every switch, and looked exactly like a font that failed to load.
 
-   The version segment is the app version, which is also how the pack folder is named. It
-   is pinned by a test against the csproj so a release cannot leave it behind. */
-@font-face{font-family:'Forum';font-style:normal;font-weight:400;font-display:swap;src:url('https://app.baka/lang/ru/1.2.0/fonts/Forum-cyrillic.woff2') format('woff2');unicode-range:U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;}
-@font-face{font-family:'Noto Sans JP';font-style:normal;font-weight:400;font-display:swap;src:url('https://app.baka/lang/ja/1.2.0/fonts/NotoSansJP-jp.woff2') format('woff2');unicode-range:U+3000-303F,U+3040-309F,U+30A0-30FF,U+31F0-31FF,U+3200-32FF,U+4E00-9FFF,U+FF00-FFEF;}
-@font-face{font-family:'Noto Serif JP';font-style:normal;font-weight:600;font-display:swap;src:url('https://app.baka/lang/ja/1.2.0/fonts/NotoSerifJP-jp.woff2') format('woff2');unicode-range:U+3000-303F,U+3040-309F,U+30A0-30FF,U+31F0-31FF,U+3200-32FF,U+4E00-9FFF,U+FF00-FFEF;}
-@font-face{font-family:'Noto Sans SC';font-style:normal;font-weight:400;font-display:swap;src:url('https://app.baka/lang/zh-Hans/1.2.0/fonts/NotoSansSC-sc.woff2') format('woff2');unicode-range:U+2E80-2EFF,U+3000-303F,U+3200-32FF,U+4E00-9FFF,U+F900-FAFF,U+FF00-FFEF;}
-@font-face{font-family:'Noto Serif SC';font-style:normal;font-weight:600;font-display:swap;src:url('https://app.baka/lang/zh-Hans/1.2.0/fonts/NotoSerifSC-sc.woff2') format('woff2');unicode-range:U+2E80-2EFF,U+3000-303F,U+3200-32FF,U+4E00-9FFF,U+F900-FAFF,U+FF00-FFEF;}
-@font-face{font-family:'Noto Sans TC';font-style:normal;font-weight:400;font-display:swap;src:url('https://app.baka/lang/zh-Hant/1.2.0/fonts/NotoSansTC-tc.woff2') format('woff2');unicode-range:U+2E80-2EFF,U+3000-303F,U+3200-32FF,U+4E00-9FFF,U+F900-FAFF,U+FF00-FFEF;}
-@font-face{font-family:'Noto Serif TC';font-style:normal;font-weight:600;font-display:swap;src:url('https://app.baka/lang/zh-Hant/1.2.0/fonts/NotoSerifTC-tc.woff2') format('woff2');unicode-range:U+2E80-2EFF,U+3000-303F,U+3200-32FF,U+4E00-9FFF,U+F900-FAFF,U+FF00-FFEF;}
+   So the rules are injected at runtime instead, by switchLanguage() in app.js, into a
+   <style id="langFonts"> element it owns: one @font-face per font the bridge reports for
+   the pack that is actually installed, with font-display:swap and the unicode-range the
+   pack published. Written by the side that knows the hashes, replaced whole on every
+   switch, and absent entirely while the interface is English, which is how an English
+   install still asks for nothing.
+
+   The stacks below name those families. A family with no rule behind it matches nothing
+   and falls through, so a half installed pack degrades to the Windows face rather than to
+   an error, exactly as before. */
 
 /* ============ RESET / TOKENS ============ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -80,31 +80,55 @@
    3. The runes are left alone. Nothing in any of these stacks covers the Runic block, so
       the ten class="rune" spans keep falling through to Segoe UI Historic exactly as they
       do today. */
+/* 4. THE FAMILY NAMES ARE THE MANIFEST'S, not the source font's. The Russian display
+      face was written as 'Forum' here and matched nothing: Forum is a Reserved Font Name
+      under OFL 1.1 clause 3, so the subset the pack carries is renamed to Baka Roman and
+      the manifest publishes it under that name. A stack naming 'Forum' fell through to
+      Georgia, which put the most brand-carrying string in the product (.hstate, in the
+      middle of the Hearth) in a system serif for every Russian reader. All four stacks
+      are restated against the manifest rather than against memory.
+   5. THE `Marks` FAMILY COMES BEFORE Inter, and only in the CJK stacks. U+2026, U+00B7
+      and, in Simplified, U+201C and U+201D are FULL-WIDTH characters of the script whose
+      code points live in Latin-1 and General Punctuation. Inter is declared over
+      U+0000-00FF and U+2000-206F and stands first, and per-character fallback stops at
+      the first family whose range covers the character, so Inter won every one of them
+      and a Chinese progress message rendered two narrow Latin ellipses on the Latin
+      baseline. The pack publishes the same file a second time under `<family> Marks`
+      with a range of exactly those marks, so this stack can put it first. Same URL, one
+      download, no extra bytes. Inter still comes before the full CJK face, so ordinary
+      Latin, digits, paths and version strings are untouched. --serif deliberately gets
+      no Marks family: the display face carries hall names and the Hearth state, which
+      the catalog never punctuates with an ellipsis. */
 html[data-lang="ru"]{
-  /* Cinzel has no Cyrillic at all; Forum is the nearest Trajan-lineage face that does, and
-     it only ever supplies Cyrillic, so Latin stays Cinzel. Inter and JetBrains Mono carry
-     Cyrillic once the pack registers their own faces. */
-  --serif:'Cinzel','Forum',Georgia,'Times New Roman',serif;
+  /* Cinzel has no Cyrillic at all; Baka Roman (the renamed Forum subset) is the nearest
+     Trajan-lineage face that does, and it only ever supplies Cyrillic, so Latin stays
+     Cinzel. Inter and JetBrains Mono carry Cyrillic once the pack registers their faces. */
+  --serif:'Cinzel','Baka Roman',Georgia,'Times New Roman',serif;
   --serif-small:var(--serif);
 }
 html[data-lang="ja"]{
   --serif:'Cinzel','Noto Serif JP','Yu Gothic UI',Georgia,'Times New Roman',serif;
   --serif-small:var(--sans);
-  --sans:'Inter','Noto Sans JP','Yu Gothic UI',system-ui,'Segoe UI',sans-serif;
-  --mono:'JetBrains Mono','Noto Sans JP','Yu Gothic UI',Consolas,'Cascadia Mono',monospace;
+  --sans:'Noto Sans JP Marks','Inter','Noto Sans JP','Yu Gothic UI',system-ui,'Segoe UI',sans-serif;
+  --mono:'Noto Sans JP Marks','JetBrains Mono','Noto Sans JP','Yu Gothic UI',Consolas,'Cascadia Mono',monospace;
 }
 html[data-lang="zh-Hans"]{
   --serif:'Cinzel','Noto Serif SC','Microsoft YaHei UI',Georgia,'Times New Roman',serif;
   --serif-small:var(--sans);
-  --sans:'Inter','Noto Sans SC','Microsoft YaHei UI',system-ui,'Segoe UI',sans-serif;
-  --mono:'JetBrains Mono','Noto Sans SC','Microsoft YaHei UI',Consolas,'Cascadia Mono',monospace;
+  --sans:'Noto Sans SC Marks','Inter','Noto Sans SC','Microsoft YaHei UI',system-ui,'Segoe UI',sans-serif;
+  --mono:'Noto Sans SC Marks','JetBrains Mono','Noto Sans SC','Microsoft YaHei UI',Consolas,'Cascadia Mono',monospace;
 }
 html[data-lang="zh-Hant"]{
   --serif:'Cinzel','Noto Serif TC','Microsoft JhengHei UI',Georgia,'Times New Roman',serif;
   --serif-small:var(--sans);
-  --sans:'Inter','Noto Sans TC','Microsoft JhengHei UI',system-ui,'Segoe UI',sans-serif;
-  --mono:'JetBrains Mono','Noto Sans TC','Microsoft JhengHei UI',Consolas,'Cascadia Mono',monospace;
+  --sans:'Noto Sans TC Marks','Inter','Noto Sans TC','Microsoft JhengHei UI',system-ui,'Segoe UI',sans-serif;
+  --mono:'Noto Sans TC Marks','JetBrains Mono','Noto Sans TC','Microsoft JhengHei UI',Consolas,'Cascadia Mono',monospace;
 }
+
+/* The per-language type rules live at the END of this file, after every rule they
+   are written against. Moving them there rather than here is deliberate: a reader
+   meets the base rule first, and an override that comes later cannot be read as the
+   thing being overridden. */
 html,body{height:100%;overflow:hidden}
 body{
   background:var(--surface-0);
@@ -169,6 +193,89 @@ body{
 .winbtn svg{width:11px;height:11px}
 .winbtn:hover{background:#262A30;color:var(--ember-hi)}
 .winbtn.close:hover{background:var(--blood);color:#fff}
+
+/* ---- THE GLOBE ----
+   Left of the Command chip, the same 26px height, and .tb-interactive so the title bar
+   stops treating it as a drag handle. The menu hangs off the button rather than off the
+   bar, so it stays under the globe whatever the window width is. */
+.langbtn{
+  display:flex;align-items:center;justify-content:center;width:26px;height:26px;
+  background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:6px;
+  color:var(--bone-dim);font-size:13px;cursor:pointer;transition:all .18s var(--ease);
+  position:relative;flex:none;
+}
+.langbtn:hover,.langbtn[aria-expanded="true"]{
+  border-color:var(--ember);color:var(--bone);box-shadow:0 0 14px rgba(255,122,26,.25)
+}
+.langbtn:focus-visible{outline:1px solid var(--ember);outline-offset:1px}
+.langbtn svg{width:14px;height:14px}
+.langwrap{position:relative;display:flex;align-items:center}
+/* Wide enough for the longest status line to sit beside the machine tag on ONE line.
+   At 330px it was not: the tag takes about 130px of the row, which left the status
+   column too narrow for "Not downloaded, 2.2 MB" and broke it between the number and
+   its unit, so a host read a size with the MB on the next line. 380px is measured
+   against that row with the tag beside it, and it still fits the 1024px minimum window
+   width the frame enforces (BlendWindow.DesignMinWidth) with room to spare. */
+.langmenu{
+  position:absolute;top:34px;right:0;width:380px;z-index:96;display:none;
+  background:var(--surface-3);border:1px solid var(--bronze);border-radius:var(--r2);
+  box-shadow:0 18px 40px rgba(0,0,0,.55);padding:6px;
+}
+.langmenu.open{display:block;animation:pageIn .15s var(--ease)}
+.langmenu .lm-head{
+  font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint);
+  padding:5px 10px 6px;
+}
+.lm-row{
+  display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;
+  cursor:pointer;color:var(--bone);transition:background .12s var(--ease);
+}
+.lm-row:hover{background:var(--ember-dim);color:var(--ember-hi)}
+.lm-row:focus-visible{outline:1px solid var(--ember);outline-offset:-1px}
+.lm-row .lm-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.lm-row .lm-name{font-size:12.5px;line-height:1.3}
+.lm-row .lm-sub{font-family:var(--mono);font-size:10px;color:var(--bone-dim);line-height:1.3}
+.lm-row .lm-mark{width:14px;text-align:center;color:var(--ember);font-size:11px;flex:none}
+.lm-row.on{background:rgba(255,122,26,.10)}
+.lm-row.busy{cursor:default}
+.lm-row.busy:hover{background:transparent;color:var(--bone)}
+/* A row with no pack on disk and none to fetch. It is a standing reason rather than a
+   control, so it does not light up under the pointer and does not take the hand cursor.
+   The name dims with it: a language the host cannot have yet should not read as brightly
+   as the four they can. */
+.lm-row.off{cursor:default;color:var(--bone-dim)}
+.lm-row.off:hover{background:transparent;color:var(--bone-dim)}
+.lm-tag{
+  font-size:8.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--bone-faint);
+  border:1px solid var(--bronze);border-radius:4px;padding:1px 5px;flex:none;
+  white-space:nowrap;align-self:center;
+}
+/* The download row. Determinate once the host has reported a byte total; a thin sweeping
+   band while it is still resolving, because a bar that sits at zero reads as stuck. */
+.lm-bar{height:4px;border-radius:2px;background:var(--iron-deeper);overflow:hidden;margin-top:4px}
+.lm-bar .lm-fill{height:100%;background:var(--ember);border-radius:2px;transition:width .2s linear}
+.lm-bar.indeterminate .lm-fill{width:35%;animation:lmSweep 1.1s var(--ease) infinite}
+@keyframes lmSweep{0%{margin-left:-35%}100%{margin-left:100%}}
+.lm-act{
+  font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--bone-dim);
+  background:transparent;border:1px solid var(--bronze);border-radius:4px;padding:3px 8px;
+  cursor:pointer;flex:none;transition:all .15s var(--ease);
+}
+.lm-act:hover:not(:disabled){border-color:var(--ember);color:var(--ember-hi)}
+.lm-act:disabled{opacity:.4;cursor:not-allowed}
+.lm-note{
+  font-family:var(--mono);font-size:10px;line-height:1.4;color:var(--bone-dim);
+  padding:7px 10px 4px;border-top:1px solid rgba(140,109,63,.25);margin-top:5px;
+}
+.lm-note.warn{color:var(--amber)}
+/* The partial-translation mark in the sidebar foot. A dot with the same sentence on it as
+   the menu note, never a toast: it is a standing fact about the words on screen, not
+   something that just happened. */
+.langdot{
+  display:none;width:6px;height:6px;border-radius:50%;background:var(--amber);
+  margin-left:6px;flex:none;box-shadow:0 0 6px rgba(232,169,60,.6);cursor:default;
+}
+.langdot.on{display:inline-block}
 
 /* ============ RESIZE GRIPS (invisible) ============ */
 .grip{position:absolute;z-index:90;background:transparent}
@@ -1475,3 +1582,176 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   letter-spacing:.4px}
 .wgtip .wgt-foot{margin-top:8px;padding-top:7px;border-top:1px solid var(--bronze);
   font-size:10px;color:var(--bone-faint);letter-spacing:.4px}
+
+/* ============ PER-LANGUAGE TYPE RULES ============
+   The stacks above swap a face. These swap the SETTINGS around it, which is a separate
+   decision and one the pack cannot make for itself: a perfect Japanese pack still renders
+   a spaced-out rail, because the tracking that carries the brand on Latin is a rendering
+   fault on Han.
+
+   Three things are going on and they are easy to conflate:
+     1. TRACKING. letter-spacing is applied per glyph. thead th is 10px with 2px of it,
+        which is 20 percent tracking on a Han character. On Latin capitals that reads as
+        inscriptional; on Han it reads as broken. Russian has a milder version of this.
+     2. UPPERCASE. text-transform:uppercase is a no-op on Han and Kana, so on CJK the
+        brand look collapses to the tracking artefact alone, with none of the thing the
+        tracking was there to support.
+     3. SIZE. A Han glyph carries up to twenty strokes in the em box a Latin letter uses
+        for two or three. 12px is the accepted UI floor for CJK; this file has eight tiers
+        below 11px.
+
+   One rule per decision, with the reason above it, and every selector here already exists
+   in this file. Nothing below fires in English: each is keyed on html[data-lang]. */
+
+/* Latin line-height 1.45 leaves a Han line looking cramped, because the CJK em box is
+   fuller. A token, so every hall inherits it in one place. */
+html[data-lang="ja"], html[data-lang="zh-Hans"], html[data-lang="zh-Hant"]{
+  --lh:1.7;
+}
+
+/* The nav rail is 8.5px with 1.2px tracking, uppercased. At 8.5px a Han glyph is
+   unreadable and the tracking makes it worse; uppercase does nothing at all here. The
+   76px box does NOT grow, so the floor is paid for out of tracking: 12px with none is
+   narrower than 8.5px with 1.2px on any label of four characters or more, which is every
+   rail label in the three CJK packs. */
+html[data-lang="ja"] .navitem .lbl,
+html[data-lang="zh-Hans"] .navitem .lbl,
+html[data-lang="zh-Hant"] .navitem .lbl{
+  font-size:12px; letter-spacing:0; text-transform:none; font-weight:500;
+}
+/* The rail steps down at short viewports, to 8px and then 7.5px. Both are below the
+   floor, so the CJK tier holds at 12px and gives up the Norse caption instead, which the
+   short-viewport rules already do. */
+@media (max-height:900px){
+  html[data-lang="ja"] .navitem .lbl,
+  html[data-lang="zh-Hans"] .navitem .lbl,
+  html[data-lang="zh-Hant"] .navitem .lbl{ font-size:12px; letter-spacing:0; }
+}
+@media (max-height:780px){
+  html[data-lang="ja"] .navitem .lbl,
+  html[data-lang="zh-Hans"] .navitem .lbl,
+  html[data-lang="zh-Hant"] .navitem .lbl{ font-size:11.5px; letter-spacing:0; }
+}
+
+/* Every table header: 10px with 2px tracking, uppercased. Twenty percent tracking on a
+   Han character, which is the worst single instance of this class in the product. */
+html[data-lang="ja"] thead th,
+html[data-lang="zh-Hans"] thead th,
+html[data-lang="zh-Hant"] thead th{
+  font-size:12px; letter-spacing:0; text-transform:none; font-weight:600;
+}
+
+/* The section micro-labels: var(--t11) with 2px tracking, uppercased, dozens of them. */
+html[data-lang="ja"] .microlabel,
+html[data-lang="zh-Hans"] .microlabel,
+html[data-lang="zh-Hant"] .microlabel{
+  font-size:12px; letter-spacing:0; text-transform:none; font-weight:600;
+}
+
+/* Buttons: var(--t11) with 1.6px tracking, uppercased. The 32px height stays, so this
+   only changes the type inside it. */
+html[data-lang="ja"] .btn,
+html[data-lang="zh-Hans"] .btn,
+html[data-lang="zh-Hant"] .btn{
+  font-size:12px; letter-spacing:0; text-transform:none; font-weight:600;
+}
+
+/* Pills, chips and filter pills: 8.5px/1.2px/uppercase, 9px/1px and 9.5px/1.6px/uppercase.
+   The tightest boxes in the product, so they get the floor and nothing more. */
+html[data-lang="ja"] .pill, html[data-lang="ja"] .copychip, html[data-lang="ja"] .fpill,
+html[data-lang="zh-Hans"] .pill, html[data-lang="zh-Hans"] .copychip, html[data-lang="zh-Hans"] .fpill,
+html[data-lang="zh-Hant"] .pill, html[data-lang="zh-Hant"] .copychip, html[data-lang="zh-Hant"] .fpill{
+  font-size:11px; letter-spacing:0; text-transform:none;
+}
+
+/* Form field labels: 9.5px with 2.2px tracking, uppercased. */
+html[data-lang="ja"] .field label,
+html[data-lang="zh-Hans"] .field label,
+html[data-lang="zh-Hant"] .field label{
+  font-size:12px; letter-spacing:0; text-transform:none;
+}
+
+/* The Hearth state, the most brand-carrying string in the product: 17px with 3px
+   tracking. 17px is well above the floor so the size stays; the tracking comes down to
+   1px, which keeps some of the inscriptional feel without the 18 percent gap a Han
+   character would show. */
+html[data-lang="ja"] .hstate,
+html[data-lang="zh-Hans"] .hstate,
+html[data-lang="zh-Hant"] .hstate{
+  letter-spacing:1px;
+}
+
+/* The page headings: 19px with 4px tracking, uppercased. */
+html[data-lang="ja"] .pagehead h1,
+html[data-lang="zh-Hans"] .pagehead h1,
+html[data-lang="zh-Hant"] .pagehead h1{
+  letter-spacing:1px; text-transform:none;
+}
+
+/* The context-menu headers: 9px with 2px tracking. */
+html[data-lang="ja"] .ctxhead,
+html[data-lang="zh-Hans"] .ctxhead,
+html[data-lang="zh-Hant"] .ctxhead{
+  font-size:11px; letter-spacing:0; text-transform:none;
+}
+
+/* FIXED ROW HEIGHTS. A CJK fallback face raises the line box, so scrollHeight passes
+   clientHeight on every fixed-height row even where the text is short: .rowmenu 24 into
+   27, .fs-chev 24 into 26. Relaxing height to min-height fixes the class in one rule and
+   changes nothing in English, where the content already fits. */
+html[data-lang="ja"] .rowmenu, html[data-lang="zh-Hans"] .rowmenu, html[data-lang="zh-Hant"] .rowmenu,
+html[data-lang="ja"] .fs-chev, html[data-lang="zh-Hans"] .fs-chev, html[data-lang="zh-Hant"] .fs-chev{
+  height:auto; min-height:24px; line-height:1.4;
+}
+
+/* WORD BREAKING. CJK wraps between characters with no spaces, which the browser does by
+   default, so the only thing needed is to stop it breaking inside the Latin runs a CJK
+   line legitimately contains: BakaLoader, a version number, a path, a server name.
+   word-break:normal with overflow-wrap:anywhere gives exactly that. line-break:strict is
+   the kinsoku rule, which stops a line beginning with a closing mark or ending with an
+   opening one, and it is why this belongs with the Marks families above: the marks have
+   to be in the CJK face for the browser to apply CJK line breaking around them at all. */
+html[data-lang="ja"], html[data-lang="zh-Hans"], html[data-lang="zh-Hant"]{
+  word-break:normal;
+  overflow-wrap:anywhere;
+  line-break:strict;
+}
+/* Nothing that is nowrap by design becomes wrappable. Restated so a later reader does not
+   assume the block above loosened them. */
+html[data-lang="ja"] .navitem .lbl, html[data-lang="zh-Hans"] .navitem .lbl, html[data-lang="zh-Hant"] .navitem .lbl,
+html[data-lang="ja"] .hstate, html[data-lang="zh-Hans"] .hstate, html[data-lang="zh-Hant"] .hstate{
+  white-space:nowrap; overflow-wrap:normal;
+}
+/* The log and the config editor are monospace and are read as lines, so a Latin token
+   there must never be broken mid-word. */
+html[data-lang="ja"] .term, html[data-lang="zh-Hans"] .term, html[data-lang="zh-Hant"] .term,
+html[data-lang="ja"] .cfg-editor, html[data-lang="zh-Hans"] .cfg-editor, html[data-lang="zh-Hant"] .cfg-editor{
+  overflow-wrap:normal; word-break:keep-all;
+}
+
+/* RUSSIAN, milder and for a different reason. Cyrillic tolerates small sizes better than
+   Han and worse than Latin, because its lowercase has fewer distinguishing ascenders and
+   descenders, so the sub-9px tiers come up to 10px and the tracking is left alone:
+   uppercase Cyrillic with tracking is a real typographic register and Baka Roman is an
+   inscriptional-capitals face chosen for it. The tracking DOES come off the two tightest
+   boxes, where it is buying nothing and costing the fit: Russian measures 268px into the
+   239px .hstate and 78px into the 76px rail label, and three pixels of tracking on a
+   twenty-one character Hearth state is 63px of that 268. */
+html[data-lang="ru"] .navitem .lbl{
+  font-size:10px; letter-spacing:.6px;
+}
+@media (max-height:900px){ html[data-lang="ru"] .navitem .lbl{ font-size:9.5px; letter-spacing:.5px; } }
+@media (max-height:780px){ html[data-lang="ru"] .navitem .lbl{ font-size:9px; letter-spacing:.4px; } }
+html[data-lang="ru"] .pill, html[data-lang="ru"] .copychip{
+  font-size:10px; letter-spacing:.6px;
+}
+html[data-lang="ru"] .hstate{
+  letter-spacing:1.5px;
+}
+/* Russian hyphenates poorly without a dictionary and the browser has none for it here, so
+   a long word is kept whole and allowed to break only when there is nowhere left to go. */
+html[data-lang="ru"]{
+  word-break:normal;
+  overflow-wrap:break-word;
+  hyphens:none;
+}

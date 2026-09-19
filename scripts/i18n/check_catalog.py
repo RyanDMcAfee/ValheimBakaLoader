@@ -54,6 +54,22 @@ DEFAULT_I18N = os.path.join(REPO, "ValheimBakaLoader", "WebUI", "i18n.js")
 DEFAULT_DASHES = os.path.join(REPO, "scripts", "copy-gate", "lang_dashes.json")
 DEFAULT_CSPROJ = os.path.join(REPO, "ValheimBakaLoader", "ValheimBakaLoader.csproj")
 
+# The sentences that never reach a page are asked for on the C# side, through
+# HostCatalog.T("host.something"). They are in the same catalog as everything else, so
+# without this the completeness check reads every one of them as a key nobody asks for and
+# says so, and the day somebody believes it the restart countdown loses its words.
+#
+# Whole FOLDERS rather than the three files that happen to call it today. A named-file
+# list is right until somebody adds a HostCatalog.T call to a second window, and then the
+# id it asks for is one this completeness check never sees, so the check calls that id an
+# orphan nobody asks for and somebody eventually believes it.
+DEFAULT_HOST_SOURCES = []
+DEFAULT_HOST_DIRS = [
+    os.path.join(REPO, "ValheimBakaLoader", "Tools"),
+    os.path.join(REPO, "ValheimBakaLoader", "Forms"),
+    os.path.join(REPO, "ValheimBakaLoader", "Game"),
+]
+
 # An id is a stable dotted name in lower case. Never the English text: keying on
 # English orphans every translation the first time somebody edits a sentence.
 ID_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$")
@@ -343,6 +359,37 @@ HTML_ATTR = re.compile(r'data-i18n(?:-title|-placeholder|-aria)?="([^"]*)"')
 # typo in a table is caught rather than rendered.
 TABLE_ID = re.compile(r'(?<![A-Za-z0-9_$])[A-Za-z0-9_$]*Id\s*:\s*' + JS_STRING)
 
+# HostCatalog.T("host.countdown.restart_in", ("time", ...)). The call shape is named rather
+# than every id-shaped literal in the C# tree, because that tree is full of id-shaped
+# literals that are not catalog ids at all: RPC method names, event names, and the id half
+# of every host-facing throw. Only what this lookup is actually handed counts.
+HOST_T_CALL = re.compile(r'HostCatalog\.T\(\s*"([^"]+)"')
+
+
+def host_sources(paths, directories):
+    """Every C# file the host-side lookup could be called from."""
+    found = [p for p in (paths or []) if p and os.path.isfile(p)]
+    wanted = [directories] if isinstance(directories, str) else list(directories or [])
+    for directory in wanted:
+        if not directory or not os.path.isdir(directory):
+            continue
+        for name in sorted(os.listdir(directory)):
+            if name.lower().endswith(".cs"):
+                path = os.path.join(directory, name)
+                if path not in found:
+                    found.append(path)
+    return found
+
+
+def host_ids(paths, directory):
+    """Every catalog id the C# side asks for, with the file that asks."""
+    asked = set()
+    for path in host_sources(paths, directory):
+        source = read_text(path)
+        for match in HOST_T_CALL.finditer(source):
+            asked.add((match.group(1), shown(path)))
+    return asked
+
 
 def table_ids(source):
     """Every catalog id a table names in an *Id property, in the order they appear."""
@@ -383,9 +430,9 @@ def table_english_drift(keys, app_path, findings):
                 % (field, entry_id, english, entry.get("lore"))))
 
 
-def completeness(keys, app_path, html_path, i18n_path, findings):
+def completeness(keys, app_path, html_path, i18n_path, findings, host=None):
     """The catalog and the interface, checked against each other BOTH ways."""
-    asked = set()
+    asked = set(host or ())
 
     for path in [p for p in (app_path, i18n_path) if p and os.path.isfile(p)]:
         source = read_text(path)
@@ -506,6 +553,8 @@ def main(argv):
     dash_path = DEFAULT_DASHES
     norse_path = DEFAULT_NORSE
     csproj = None
+    host_sources_paths = None
+    host_sources_dir = None
     defaults = True
 
     index = 1
@@ -534,6 +583,9 @@ def main(argv):
         elif flag == "--csproj":
             csproj = value
             index += 2
+        elif flag == "--host-dir":
+            host_sources_dir = value
+            index += 2
         else:
             print("unknown argument: %s" % flag)
             return 2
@@ -543,6 +595,8 @@ def main(argv):
         html_path = html_path or DEFAULT_HTML
         i18n_path = i18n_path or DEFAULT_I18N
         csproj = csproj or DEFAULT_CSPROJ
+        host_sources_paths = DEFAULT_HOST_SOURCES
+        host_sources_dir = host_sources_dir or DEFAULT_HOST_DIRS
 
     findings = []
 
@@ -611,7 +665,9 @@ def main(argv):
             norse_register_drift(keys, norse_register(norse_path, findings), findings)
 
         if language == "en" and (app_path or html_path):
-            completeness(keys, app_path, html_path, i18n_path, findings)
+            completeness(
+                keys, app_path, html_path, i18n_path, findings,
+                host=host_ids(host_sources_paths, host_sources_dir))
             table_english_drift(keys, app_path, findings)
 
     for where, what in findings:
