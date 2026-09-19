@@ -1002,6 +1002,37 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         /// <summary>
+        /// The digest is this app's, and the extension beside it is still the pack's, so it is
+        /// kept only while it is plain. A face carried with no extension at all lands under the
+        /// one the store assumes, and a spelling in capitals lands in lower case, so two packs
+        /// carrying the same face cannot write it twice under two names.
+        /// </summary>
+        [Fact]
+        public async Task A_face_keeps_its_extension_only_while_it_is_a_plain_one()
+        {
+            var bare = Filler(1_500, seed: 71);
+            var shouted = Filler(1_600, seed: 72);
+
+            var zip = PackNamingFaces(
+                "ru", AppVersion, 7,
+                ("fonts/Bare", Sha(bare), "fonts/Bare", bare),
+                ("fonts/Shouted.TTF", Sha(shouted), "fonts/Shouted.TTF", shouted));
+
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.True(result.Ok, result.ReasonId);
+            Assert.Contains(Sha(bare) + ".woff2", StoredFonts());
+            Assert.Contains(Sha(shouted) + ".ttf", StoredFonts());
+
+            var pack = JObject.Parse(File.ReadAllText(Path.Combine(result.Folder, "pack.json")));
+            var files = pack["fonts"].Select(f => (string)f["file"]).ToList();
+            Assert.Contains("_fonts/" + Sha(bare) + ".woff2", files);
+            Assert.Contains("_fonts/" + Sha(shouted) + ".ttf", files);
+        }
+
+        /// <summary>
         /// The archive's own entry names are the first source of untrusted paths, and the
         /// refusal is the framework's rather than this app's. It is asserted here anyway: the
         /// day somebody swaps ExtractToDirectory for a loop that writes each entry itself,

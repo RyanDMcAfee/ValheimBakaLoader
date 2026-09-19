@@ -1322,7 +1322,9 @@ namespace ValheimBakaLoader.Tools
         /// The extension a face keeps in the shared store. The name is still the pack's, so
         /// anything but plain letters and digits is dropped rather than carried into a file
         /// name this app composes: a colon on this filesystem writes a second stream on a file
-        /// that already exists, which is a write nobody asked for.
+        /// that already exists, which is a write nobody asked for. Plain means the twenty six
+        /// letters and the ten digits, not what a Unicode table will call a letter, because a
+        /// sanitiser that takes a wider set than the names it is sanitising is not one.
         /// </summary>
         private static string StoreExtension(string path)
         {
@@ -1332,8 +1334,11 @@ namespace ValheimBakaLoader.Tools
             var trimmed = extension.TrimStart('.');
             if (trimmed.Length == 0 || trimmed.Length > 8) return ".woff2";
 
-            return trimmed.All(char.IsLetterOrDigit) ? "." + trimmed.ToLowerInvariant() : ".woff2";
+            return trimmed.All(IsPlainLetterOrDigit) ? "." + trimmed.ToLowerInvariant() : ".woff2";
         }
+
+        private static bool IsPlainLetterOrDigit(char c) =>
+            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
 
         /// <summary>
         /// The move into place. Directory.Move is atomic inside one volume, and the app data
