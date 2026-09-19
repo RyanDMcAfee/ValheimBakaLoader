@@ -61,14 +61,25 @@ namespace ValheimBakaLoader.Tests.Tools
         private static string KillAllSweepSource =>
             Read("ValheimBakaLoader", "Resources", "KillAll", "BakaKillAllSweep.cs");
 
+        /// <summary>
+        /// The one rule that decides whether a conjured object carries the game's cheated mark.
+        /// Same arrangement as the kill-all plan: it lives beside one plugin, it is compiled
+        /// into both plugins that spawn, and it is globbed into BakaLoader itself, which is how
+        /// SpawnMarkTests can call it for real instead of reading it as text.
+        /// </summary>
+        private static string SpawnMarkSource =>
+            Read("ValheimBakaLoader", "Resources", "SpawnHelper", "BakaSpawnMark.cs");
+
         private static string SourceNamed(string file)
         {
             switch (file)
             {
                 case "Commander": return Commander;
                 case "KillAll": return KillAll;
+                case "SpawnHelper": return SpawnHelper;
                 case "Sweep": return KillAllSweepSource;
                 case "Plan": return KillAllPlanSource;
+                case "SpawnMark": return SpawnMarkSource;
                 default: throw new ArgumentOutOfRangeException(nameof(file), file, "no such companion source");
             }
         }
@@ -271,14 +282,20 @@ namespace ValheimBakaLoader.Tests.Tools
             }
         }
 
-        // ---- P9: a conjured object has to be marked the way the game marks its own ----
+        // ---- P9: every conjured object goes through the one bookkeeping call ----
 
+        /// <summary>
+        /// Both writes the game's own spawn command makes have to happen on the object that was
+        /// just made: the ZDO key a creature's drops read, and ItemDrop.OnCreateNew, which also
+        /// records the world level the item was made at. WHAT is written is a separate question,
+        /// answered by SpawnMark and pinned below; that the call happens at all is this one.
+        /// </summary>
         [Theory]
         [InlineData("Commander")]
         [InlineData("SpawnHelper")]
-        public void SpawnCommands_MarkEveryObjectTheWayVanillaSpawnDoes(string plugin)
+        public void SpawnCommands_RunTheSameBookkeepingOnEveryObjectVanillaSpawnRunsItOn(string plugin)
         {
-            var src = plugin == "Commander" ? Commander : SpawnHelper;
+            var src = SourceNamed(plugin);
 
             Assert.Contains("ZDOVars.s_cheated", src);
             Assert.Contains("ItemDrop.OnCreateNew", src);
@@ -289,6 +306,186 @@ namespace ValheimBakaLoader.Tests.Tools
             var mark = src.IndexOf("MarkAsSpawnedIn(obj)", StringComparison.Ordinal);
             Assert.True(instantiate >= 0 && mark > instantiate,
                 "the marking must follow the instantiation of the spawned object");
+
+            // Exactly one call site, so items, stacks, quality-upgraded items, creatures and
+            // levelled creatures all go through it. The loop makes one object per turn and
+            // branches into the item arm or the creature arm AFTER this, which is what makes
+            // one call site cover every spawn path. A second call site would mean a path that
+            // marks twice or a path somebody marked by hand.
+            var code = WithoutComments(src);
+            var callSites = Regex.Matches(code, @"MarkAsSpawnedIn\s*\(\s*obj\s*\)").Count;
+            Assert.Equal(1, callSites);
+
+            var declarations = Regex.Matches(code, @"void MarkAsSpawnedIn\s*\(").Count;
+            Assert.Equal(1, declarations);
+        }
+
+        // ---- THE 2026-09-19 REQUEST: BakaLoader's spawns must not cost anybody achievements ----
+
+        /// <summary>
+        /// Valheim 1.0 stamps everything its own spawn command conjures as summoned through
+        /// cheating: the item's tooltip says so, and a player holding one has their achievement
+        /// progress paused for as long as it sits in their inventory. Both plugins copied that
+        /// verbatim, so a host replacing somebody's lost axe quietly cost them their
+        /// achievements. Neither may hand a hardcoded answer to either write again; the rule is
+        /// SpawnMark.ShouldMark and the host's setting is half of it.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void SpawnCommands_DecideTheCheatedMarkThroughTheSharedRuleAndNeverHardcodeIt(string plugin)
+        {
+            var code = WithoutComments(SourceNamed(plugin));
+
+            // The rule is asked, and both writes are handed its answer rather than their own.
+            Assert.Contains("SpawnMark.ShouldMark(", code);
+            Assert.Contains("ItemDrop.OnCreateNew(obj, mark)", code);
+            Assert.Contains("Set(ZDOVars.s_cheated, mark)", code);
+
+            // What is forbidden is a hardcoded true and the old expression, at either write.
+            // Matched as patterns rather than as exact strings so reformatting cannot let one
+            // back in through a space.
+            foreach (var forbidden in new[]
+                     {
+                         @"OnCreateNew\s*\(\s*obj\s*,\s*true\s*\)",
+                         @"OnCreateNew\s*\(\s*obj\s*,\s*!\s*CheatChecksBypassed",
+                         @"s_cheated\s*,\s*true\s*\)",
+                         @"s_cheated\s*,\s*!\s*CheatChecksBypassed",
+                         @"=\s*!\s*CheatChecksBypassed\s*\(\s*\)\s*;",
+                     })
+                Assert.False(Regex.IsMatch(code, forbidden),
+                    plugin + " still decides the cheated mark itself (" + forbidden + ")");
+
+            // The rule is asked BEFORE either write, not reconciled after one.
+            var rule = code.IndexOf("SpawnMark.ShouldMark(", StringComparison.Ordinal);
+            var zdo = code.IndexOf("Set(ZDOVars.s_cheated, mark)", StringComparison.Ordinal);
+            var create = code.IndexOf("ItemDrop.OnCreateNew(obj, mark)", StringComparison.Ordinal);
+            Assert.True(rule >= 0 && zdo > rule && create > rule,
+                "the rule has to be asked before the mark is written anywhere");
+        }
+
+        /// <summary>
+        /// OnCreateNew does two jobs, and only one of them is the mark: it also records the
+        /// world level the item was made at. Dropping the call to avoid the flag would leave
+        /// every conjured item carrying whatever world level was on the prefab, so the call
+        /// stays on every spawn and the flag is handed to it either way.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void SpawnCommands_StillRecordTheWorldLevelWhateverTheSettingSays(string plugin)
+        {
+            var code = WithoutComments(SourceNamed(plugin));
+
+            // Unconditional: no if, no ternary, no early return between the rule and the call.
+            Assert.Contains("var mark = SpawnMark.ShouldMark(", code);
+            Assert.Contains("ItemDrop.OnCreateNew(obj, mark);", code);
+
+            var rule = code.IndexOf("var mark = SpawnMark.ShouldMark(", StringComparison.Ordinal);
+            var create = code.IndexOf("ItemDrop.OnCreateNew(obj, mark);", StringComparison.Ordinal);
+            var between = code.Substring(rule, create - rule);
+            Assert.DoesNotContain("return", between);
+            Assert.False(Regex.IsMatch(between, @"if\s*\(\s*mark"),
+                plugin + " only runs OnCreateNew when the mark is on, so unmarked spawns lose their world level");
+        }
+
+        /// <summary>
+        /// The host's half of the rule, bound under names neither plugin spells for itself. Two
+        /// plugins binding the same setting under two spellings is two settings, and a host who
+        /// changed the one their server does not use would swear the entry did nothing.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void SpawnCommands_BindTheEntryFromTheSharedNames(string plugin)
+        {
+            var code = WithoutComments(SourceNamed(plugin));
+
+            Assert.Contains("CfgMarkSpawnedAsCheated = Config.Bind(", code);
+            Assert.Contains("SpawnMark.ConfigSection", code);
+            Assert.Contains("SpawnMark.ConfigKey", code);
+            Assert.Contains("SpawnMark.ConfigDefault", code);
+            Assert.Contains("SpawnMark.ConfigDescription", code);
+
+            // Neither plugin may spell the section or the key for itself.
+            Assert.DoesNotContain("\"MarkSpawnedAsCheated\"", code);
+            Assert.False(Regex.IsMatch(code, @"Config\.Bind\s*\(\s*""Spawning"""),
+                plugin + " binds the spawn section by a literal instead of the shared name");
+        }
+
+        /// <summary>
+        /// The key and the default are the two things a host reads in their config file and the
+        /// two things a rename would silently reset for everybody. Pinned as literals here
+        /// because the source is the only place they are written down; SpawnMarkTests calls the
+        /// same constants for real.
+        /// </summary>
+        [Fact]
+        public void SpawnMark_PinsTheConfigKeyTheSectionAndTheDefaultOff()
+        {
+            var src = SpawnMarkSource;
+
+            Assert.Contains("ConfigSection = \"Spawning\"", src);
+            Assert.Contains("ConfigKey = \"MarkSpawnedAsCheated\"", src);
+            Assert.Contains("ConfigDefault = false", src);
+        }
+
+        /// <summary>
+        /// And the rule must stay pure, because the app project compiles it for real. One using
+        /// of UnityEngine here and BakaLoader itself stops building, with the failure landing on
+        /// whoever next touches the app rather than on whoever wrote the line.
+        /// </summary>
+        [Fact]
+        public void SpawnMark_ThePureRuleNamesNoGameType()
+        {
+            var src = SpawnMarkSource;
+
+            Assert.DoesNotContain("#if", src);
+
+            foreach (var forbidden in new[]
+                     {
+                         "using UnityEngine", "using BepInEx", "using HarmonyLib",
+                         "ItemDrop", "ZDOVars", "ZDO", "ZNet", "GameObject", "PlayerProfile",
+                     })
+                Assert.False(WithoutComments(src).Contains(forbidden),
+                    "BakaSpawnMark.cs names " + forbidden + ", which the app project cannot compile");
+        }
+
+        /// <summary>
+        /// Both plugins that serve baka_spawn are built from the one rule file, the same way
+        /// both plugins that serve baka_killall are built from the one sweep. Left out of one
+        /// of the two, that plugin does not compile at all, but the list is what says so before
+        /// a host finds out.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("SpawnHelper")]
+        public void Spawn_BothPluginsAreBuiltFromTheOneRule(string plugin)
+        {
+            var script = BuildScript;
+            var entry = script.IndexOf("Dir = \"" + plugin + "\"", StringComparison.Ordinal);
+            Assert.True(entry >= 0, "build-plugins.ps1 no longer builds " + plugin);
+
+            var next = script.IndexOf("Dir = \"", entry + 8, StringComparison.Ordinal);
+            var block = next > entry ? script.Substring(entry, next - entry) : script.Substring(entry);
+
+            Assert.Contains("BakaSpawnMark.cs", block);
+        }
+
+        /// <summary>
+        /// A plugin that stops marking its spawns and ships under the old version number is a
+        /// plugin nobody replaces, and the host reads the old behaviour's number in their log.
+        /// A floor, for the reason the kill-all check above gives.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander", "1.6.0")]
+        [InlineData("SpawnHelper", "1.5.0")]
+        public void Spawn_BothPluginsAnnounceTheirNewVersion(string plugin, string floor)
+        {
+            var published = PluginVersionOf(SourceNamed(plugin));
+
+            Assert.True(published >= new Version(floor),
+                plugin + " is published as " + published + ", below the " + floor +
+                " the unmarked spawn shipped in");
         }
 
         // ---- 1.0.9: the game turned a field into a property and took spawning with it ----

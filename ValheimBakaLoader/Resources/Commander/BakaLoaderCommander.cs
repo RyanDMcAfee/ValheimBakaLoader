@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.5.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.6.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -44,6 +44,17 @@
 //                                      so either plugin serves the command alone.
 //   anything else                    - forwarded to the in-game console if present
 //
+// CHEATED MARK (v1.6.0):
+// Valheim 1.0 shows "This item was summoned through cheating means." on anything its own
+// spawn command conjured, and pauses a player's achievement progress while such an item
+// sits in their inventory. baka_spawn does NOT mark its spawns any more. The behaviour is
+// one config entry, Spawning/MarkSpawnedAsCheated, default false, and the rule behind it
+// lives in ..\SpawnHelper\BakaSpawnMark.cs, compiled into this DLL and into the Spawn
+// Helper so the two can never drift into marking spawns differently.
+// BakaLoader rewrites com.baka.commander.cfg from the server profile on every start and
+// keeps only BindAddress, so a host who wants the mark ON has to set it in the Spawn
+// Helper's own config, or set it here again after each start.
+//
 // All game work is dispatched to the Unity main thread via a queue drained in
 // Update() - Object.Instantiate()/game API calls from the socket thread crash
 // headless servers ("Graphics device is null").
@@ -61,6 +72,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using BakaLoaderKillAll;
+using BakaLoaderSpawn;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -73,7 +85,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.5.0";
+        private const string PluginVersion = "1.6.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -98,6 +110,12 @@ namespace BakaLoaderCommander
         private ConfigEntry<int> CfgPort;
         private ConfigEntry<string> CfgPassword;
         private ConfigEntry<string> CfgBindAddress;
+
+        // Bound in Awake, read from MarkAsSpawnedIn, which is static because the spawn loop
+        // that calls it is. Held as the entry rather than as a copied bool so a host who edits
+        // the .cfg while the server runs is obeyed on the next spawn: BepInEx watches the file
+        // and updates the entry in place.
+        private static ConfigEntry<bool> CfgMarkSpawnedAsCheated;
 
         private TcpListener _listener;
         private Thread _acceptThread;
@@ -128,6 +146,17 @@ namespace BakaLoaderCommander
                 "RCON password. Only gates the AUTH handshake (see plugin header); keep the bind address on loopback.");
             CfgBindAddress = Config.Bind("Server", "BindAddress", "127.0.0.1",
                 "Address to listen on. 127.0.0.1 (default) = local only; 0.0.0.0 = all interfaces (NOT recommended).");
+
+            // The section, the key, the default and the wording all come from SpawnMark so the
+            // two plugins that serve baka_spawn cannot bind the same setting under different
+            // names, and so the suite can pin all four without a dedicated server to run. Bound
+            // BEFORE the disabled-plugin return below: a host who turned the RCON listener off
+            // should still find the entry written out with its default in the config file.
+            CfgMarkSpawnedAsCheated = Config.Bind(
+                SpawnMark.ConfigSection,
+                SpawnMark.ConfigKey,
+                SpawnMark.ConfigDefault,
+                SpawnMark.ConfigDescription);
 
             if (!CfgEnabled.Value)
             {
@@ -844,25 +873,39 @@ namespace BakaLoaderCommander
         }
 
         /// <summary>
-        /// Applies the same per-object bookkeeping the game's own "spawn" command applies.
-        /// Vanilla stamps every object it conjures with the cheated flag on its ZDO and runs
-        /// ItemDrop.OnCreateNew, which also records the world level the item was made at.
-        /// Without it a conjured object looks legitimately earned to every system that reads
-        /// the flag, and an item drop carries whatever world level happened to be on the
-        /// prefab. Whether the console command itself is cheat-flagged is a separate thing;
-        /// this marks the objects, not the console.
+        /// Applies the per-object bookkeeping the game's own "spawn" command applies, minus the
+        /// one part of it a host asked not to have.
+        /// <para>
+        /// ItemDrop.OnCreateNew runs on every spawn whatever the setting says, because it does
+        /// two jobs: it records the world level the item was made at, and it writes the cheated
+        /// flag. Skipping the call to avoid the flag would leave every conjured item carrying
+        /// whatever world level happened to be on the prefab. So the call stays and the flag is
+        /// handed to it, true or false, exactly as SpawnMark.ShouldMark decides.
+        /// </para>
+        /// <para>
+        /// The ZDO key is written either way for the same reason: a creature's drops read
+        /// ZDOVars.s_cheated off its record, and an explicit false is the only thing that says
+        /// "not cheated" rather than "nobody looked". Whether the console command itself is
+        /// cheat-flagged is a separate thing; this marks the objects, not the console.
+        /// </para>
         /// </summary>
         private static void MarkAsSpawnedIn(GameObject obj)
         {
             try
             {
-                var cheated = !CheatChecksBypassed();
+                // Read through the entry rather than a copied bool so a host who edits the .cfg
+                // between spawns is obeyed. Null only while Awake has not run, which a queued
+                // spawn cannot outrun, and the default answers for it if it ever did.
+                var wanted = CfgMarkSpawnedAsCheated != null
+                    ? CfgMarkSpawnedAsCheated.Value
+                    : SpawnMark.ConfigDefault;
+                var mark = SpawnMark.ShouldMark(wanted, CheatChecksBypassed());
 
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
-                    view.GetZDO().Set(ZDOVars.s_cheated, cheated);
+                    view.GetZDO().Set(ZDOVars.s_cheated, mark);
 
-                ItemDrop.OnCreateNew(obj, cheated);
+                ItemDrop.OnCreateNew(obj, mark);
             }
             catch (Exception ex)
             {
@@ -885,7 +928,8 @@ namespace BakaLoaderCommander
         /// <summary>
         /// Reads PlayerProfile.s_bypassCheatChecks without compiling a reference to it.
         /// Property first, then field, looked up once and cached. False when it is neither,
-        /// which marks the object cheated - exactly what vanilla does when the bypass is off.
+        /// which reads as "the bypass is off" and leaves the decision entirely with the host's
+        /// setting, the same way vanilla treats a server running without the bypass.
         /// </summary>
         private static bool CheatChecksBypassed()
         {

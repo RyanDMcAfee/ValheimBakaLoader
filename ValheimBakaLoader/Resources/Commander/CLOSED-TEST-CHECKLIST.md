@@ -125,10 +125,12 @@ Run this on a closed 1.0 server after the rebuild.
 
 - [ ] Start the server, then read `BepInEx/LogOutput.log` end to end. There must be no
       MissingMethodException and no MissingFieldException anywhere in it.
-- [ ] The same log shows `BakaLoader Commander v1.5.0` and its listening line,
-      `BakaLoader Spawn Helper v1.2.0 loaded - 'baka_spawn' command registered.` and
+- [ ] The same log shows `BakaLoader Commander v1.6.0` and its listening line,
+      `BakaLoader Spawn Helper v1.5.0 loaded - 'baka_spawn' command registered.` and
       `BakaLoader KillAll v1.7.0 loaded. 'baka_killall' command registered.`
       A missing registration line is the tell that the constructor threw again.
+      Read the version numbers, not just the presence of the lines: an old DLL left in
+      `BepInEx/plugins` announces the old number and behaves the old way.
 - [ ] `broadcast center hello` puts the message on a joined player's screen and replies
       "Broadcasting message: hello". This is the one that used to throw, and it threw on
       first use rather than at load, so it has to be actually run.
@@ -205,6 +207,56 @@ long the sweep takes.
 - [ ] No sweep ever answers "Error: command timed out" again. If one does, the snapshot
       pass itself is what ran long, and that is worth a line in the report with the world's
       size.
+
+## Spawned things no longer count as cheating
+
+Valheim 1.0 stamps everything its own `spawn` command conjures as summoned through
+cheating. An item carrying that stamp says "This item was summoned through cheating
+means." in its tooltip, and while one sits in a player's inventory that player's
+achievement progress is paused. A creature carrying it hands the stamp on to whatever it
+drops when it dies. Both BakaLoader plugins copied that behaviour verbatim, so a host
+replacing somebody's lost axe quietly cost that player their achievements.
+
+From Commander 1.6.0 and Spawn Helper 1.5.0 nothing BakaLoader spawns is stamped. It is one
+config entry per plugin, `[Spawning] MarkSpawnedAsCheated`, default `false`, in
+`BepInEx/config/com.baka.commander.cfg` and `BepInEx/config/com.baka.spawnhelper.cfg`.
+
+**Items and creatures spawned before this version keep their mark.** The flag lives inside
+each object, in the item's own saved data and on the creature's world record, not in this
+setting, so turning the entry off cannot reach back and clear anything already handed out.
+A player who still has achievements paused has to drop and destroy the old item.
+
+### Entry off (the default, so leave both .cfg files alone for this pass)
+
+- [ ] `baka_spawn SwordIron <x,z,y>` from the app. Pick the sword up and read its tooltip:
+      there must be **no** "summoned through cheating means" line on it.
+- [ ] With that sword in the inventory, open the achievements screen. Progress must be
+      **running**, not paused, and no cheated-item popup may appear.
+- [ ] `baka_spawn Wood <x,z,y> 150` (three stacks of 50) and
+      `baka_spawn PickaxeBronze <x,z,y> 1 3` (a quality 3 tool). Same check on each: no
+      cheated line, on the stack and on the upgraded tool alike.
+- [ ] `baka_spawn Boar <x,z,y>`, then kill it. The meat and hide it drops carry **no**
+      cheated line either. This is the path the ZDO key drives, so it is the one that
+      proves the creature arm and not just the item arm.
+- [ ] `baka_spawn Lox <x,z,y> 1 2` (a two star creature), kill it, same check on its drops.
+- [ ] Type `baka_spawn Coins <x,z,y> 100` at the server console window rather than through
+      the app, so the Spawn Helper's own command is walked and not only Commander's.
+
+### Entry on, then restart
+
+- [ ] Stop the server. Set `MarkSpawnedAsCheated = true` under `[Spawning]` in
+      **`com.baka.spawnhelper.cfg`**, start the server, `baka_spawn SwordIron <x,z,y>` at the
+      server console. The tooltip **must** carry the cheated line now, and holding it must
+      pause achievement progress. That is the escape hatch working.
+- [ ] Same in **`com.baka.commander.cfg`**, spawn through the app this time, same result.
+- [ ] **Expect Commander's entry to be gone after the next start.** BakaLoader rewrites
+      `com.baka.commander.cfg` from the server profile on every launch and keeps only
+      `BindAddress`, so a `[Spawning]` section set by hand there is wiped and the plugin
+      re-binds it at `false`. The Spawn Helper's own .cfg is not touched by BakaLoader and
+      holds its value. Note whichever behaviour you see; the Commander half is a known gap
+      in `Tools/CommanderInstaller.cs`, not a plugin fault.
+- [ ] Set both back to `false` and restart before signing off, so the live server ends the
+      pass on the default.
 
 ## Sign-off
 

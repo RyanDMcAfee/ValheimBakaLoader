@@ -56,19 +56,22 @@ $refs += Get-ChildItem -LiteralPath $ManagedDir -Filter *.dll | ForEach-Object {
 $refs += (Join-Path $CoreDir "BepInEx.dll")
 $refs += (Join-Path $CoreDir "0Harmony.dll")
 
-# Source is a LIST, because baka_killall is served by two plugins and there is one sweep
-# behind it. BakaKillAllPlan.cs and BakaKillAllSweep.cs are compiled into Commander as well
-# as into KillAll, so whichever of the two a host has installed answers the command the same
-# way, and neither needs the other to be there. A shared file can never be left out of one
-# of the two without this list saying so.
+# Source is a LIST, because two commands are each served by two plugins and there is one
+# shared file behind each. BakaKillAllPlan.cs and BakaKillAllSweep.cs are compiled into
+# Commander as well as into KillAll, and BakaSpawnMark.cs into Commander as well as into
+# SpawnHelper, so whichever of a pair a host has installed answers the command the same way
+# and neither needs the other to be there. A shared file can never be left out of one of a
+# pair without this list saying so.
 $plugins = @(
     @{ Dir = "Commander";   Source = @("BakaLoaderCommander.cs",
                                        "..\KillAll\BakaKillAllPlan.cs",
-                                       "..\KillAll\BakaKillAllSweep.cs"); Out = "BakaLoaderCommander.dll" },
+                                       "..\KillAll\BakaKillAllSweep.cs",
+                                       "..\SpawnHelper\BakaSpawnMark.cs"); Out = "BakaLoaderCommander.dll" },
     @{ Dir = "KillAll";     Source = @("BakaKillAll.cs",
                                        "BakaKillAllPlan.cs",
                                        "BakaKillAllSweep.cs");            Out = "BakaKillAll.dll" },
-    @{ Dir = "SpawnHelper"; Source = @("BakaLoaderSpawnHelper.cs");       Out = "BakaLoaderSpawnHelper.dll" },
+    @{ Dir = "SpawnHelper"; Source = @("BakaLoaderSpawnHelper.cs",
+                                       "BakaSpawnMark.cs");               Out = "BakaLoaderSpawnHelper.dll" },
     @{ Dir = "MaxPlayers";  Source = @("BakaLoaderMaxPlayers.cs");        Out = "BakaLoaderMaxPlayers.dll" }
 )
 

@@ -1,4 +1,4 @@
-// BakaLoader Spawn Helper v1.4.0 - headless-server-safe spawn via main-thread dispatch.
+// BakaLoader Spawn Helper v1.5.0 - headless-server-safe spawn via main-thread dispatch.
 //
 // WHY THIS EXISTS:
 // WEC's "spawn_object" crashes dedicated servers because RCON commands execute on a
@@ -27,12 +27,21 @@
 //   baka_spawn Boar 123.4,567.8,90.1
 //   baka_spawn Lox 200,100,50 3 2
 //   baka_spawn PickaxeBronze 200,100,50 1 3
+//
+// CHEATED MARK (v1.5.0):
+// Valheim 1.0 shows "This item was summoned through cheating means." on anything its own
+// spawn command conjured, and pauses a player's achievement progress while such an item
+// sits in their inventory. This plugin does NOT mark its spawns any more. The behaviour is
+// one config entry, Spawning/MarkSpawnedAsCheated, default false, and the rule behind it
+// lives in BakaSpawnMark.cs so the suite can hold it to account without a game installed.
 
 using System;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Reflection;
+using BakaLoaderSpawn;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using UnityEngine;
 
@@ -43,9 +52,15 @@ namespace BakaLoaderSpawnHelper
     {
         private const string PluginGuid = "com.baka.spawnhelper";
         private const string PluginName = "BakaLoader Spawn Helper";
-        private const string PluginVersion = "1.4.0";
+        private const string PluginVersion = "1.5.0";
 
         private static ManualLogSource Log;
+
+        // Bound in Awake, read from MarkAsSpawnedIn, which is static because the spawn loop
+        // that calls it is. Held as the entry rather than as a copied bool so a host who
+        // edits the .cfg while the server runs is obeyed on the next spawn: BepInEx watches
+        // the file and updates the entry in place.
+        private static ConfigEntry<bool> CfgMarkSpawnedAsCheated;
 
         private struct SpawnRequest
         {
@@ -62,6 +77,15 @@ namespace BakaLoaderSpawnHelper
         private void Awake()
         {
             Log = Logger;
+
+            // The section, the key, the default and the wording all come from SpawnMark so the
+            // two plugins that serve baka_spawn cannot bind the same setting under different
+            // names, and so the suite can pin all four without a dedicated server to run.
+            CfgMarkSpawnedAsCheated = Config.Bind(
+                SpawnMark.ConfigSection,
+                SpawnMark.ConfigKey,
+                SpawnMark.ConfigDefault,
+                SpawnMark.ConfigDescription);
 
             new Terminal.ConsoleCommand(
                 "baka_spawn",
@@ -343,25 +367,40 @@ namespace BakaLoaderSpawnHelper
         }
 
         /// <summary>
-        /// Applies the same per-object bookkeeping the game's own "spawn" command applies.
-        /// Vanilla stamps every object it conjures with the cheated flag on its ZDO and runs
-        /// ItemDrop.OnCreateNew, which also records the world level the item was made at.
-        /// Without it a conjured object looks legitimately earned to every system that reads
-        /// the flag, and an item drop carries whatever world level happened to be on the
-        /// prefab. The command itself stays uncheat-flagged; that is a separate thing, and
-        /// this marks the objects, not the console.
+        /// Applies the per-object bookkeeping the game's own "spawn" command applies, minus the
+        /// one part of it a host asked not to have.
+        /// <para>
+        /// ItemDrop.OnCreateNew runs on every spawn whatever the setting says, because it does
+        /// two jobs: it records the world level the item was made at, and it writes the cheated
+        /// flag. Skipping the call to avoid the flag would leave every conjured item carrying
+        /// whatever world level happened to be on the prefab. So the call stays and the flag is
+        /// handed to it, true or false, exactly as SpawnMark.ShouldMark decides.
+        /// </para>
+        /// <para>
+        /// The ZDO key is written either way for the same reason: a creature's drops read
+        /// ZDOVars.s_cheated off its record, and an explicit false is the only thing that says
+        /// "not cheated" rather than "nobody looked". The console command itself stays
+        /// uncheat-flagged; that is a separate thing, and this marks the objects, not the
+        /// console.
+        /// </para>
         /// </summary>
         private static void MarkAsSpawnedIn(GameObject obj)
         {
             try
             {
-                var cheated = !CheatChecksBypassed();
+                // Read through the entry rather than a copied bool so a host who edits the .cfg
+                // between spawns is obeyed. Null only while Awake has not run, which a queued
+                // spawn cannot outrun, and the default answers for it if it ever did.
+                var wanted = CfgMarkSpawnedAsCheated != null
+                    ? CfgMarkSpawnedAsCheated.Value
+                    : SpawnMark.ConfigDefault;
+                var mark = SpawnMark.ShouldMark(wanted, CheatChecksBypassed());
 
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
-                    view.GetZDO().Set(ZDOVars.s_cheated, cheated);
+                    view.GetZDO().Set(ZDOVars.s_cheated, mark);
 
-                ItemDrop.OnCreateNew(obj, cheated);
+                ItemDrop.OnCreateNew(obj, mark);
             }
             catch (Exception ex)
             {
@@ -384,7 +423,8 @@ namespace BakaLoaderSpawnHelper
         /// <summary>
         /// Reads PlayerProfile.s_bypassCheatChecks without compiling a reference to it.
         /// Property first, then field, looked up once and cached. False when it is neither,
-        /// which marks the object cheated - exactly what vanilla does when the bypass is off.
+        /// which reads as "the bypass is off" and leaves the decision entirely with the host's
+        /// setting, the same way vanilla treats a server running without the bypass.
         /// </summary>
         private static bool CheatChecksBypassed()
         {
