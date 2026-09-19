@@ -49,6 +49,10 @@ namespace ValheimBakaLoader.Tests.Tools
         private const string RuPackUrl = "https://objects.example.invalid/held/7f3c/ru-pack-bytes?token=def";
         private const string JaPackUrl = "https://objects.example.invalid/held/91aa/ja-pack-bytes?token=ghi";
 
+        // The same address without the s. A manifest may publish a pack anywhere, and this is
+        // the one kind of anywhere the app will not go.
+        private const string PlainPackUrl = "http://objects.example.invalid/held/7f3c/ru-pack-bytes?token=def";
+
         private readonly string Root =
             Path.Combine(Path.GetTempPath(), "bakaloader-langpack-" + Guid.NewGuid().ToString("N"));
 
@@ -330,6 +334,53 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
             Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
             Assert.True(File.Exists(Path.Combine(held, "keepme.txt")));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// A check that only runs when the thing being checked chose to publish a value is not
+        /// a check. The manifest is the untrusted side of this exchange, so an entry that
+        /// carries no checksum is refused outright rather than installed unverified, and it is
+        /// refused early enough that not one byte of the pack is asked for.
+        /// </summary>
+        [Fact]
+        public async Task A_manifest_entry_with_no_checksum_is_refused_before_a_byte_is_asked_for()
+        {
+            var held = PlaceInstalled("ru", "1.1.0", catalog: 6);
+            var zip = PackZip("ru", AppVersion, 7);
+
+            var manifest = ManifestJson(Entry("ru", RuPackUrl, zip, 7, sha: ""));
+            var (service, handler) = Build(Serving(manifest, (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.DoesNotContain(RuPackUrl, handler.Requests);
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+            Assert.True(File.Exists(Path.Combine(held, "keepme.txt")));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// The address is used as published, and that is the point at which the one thing the
+        /// app does insist on has to be insisted on: the bytes come over a connection nobody
+        /// on the way can rewrite. A plain http pack is refused without being asked for.
+        /// </summary>
+        [Fact]
+        public async Task A_pack_published_over_plain_http_is_refused_before_a_byte_is_asked_for()
+        {
+            var zip = PackZip("ru", AppVersion, 7);
+
+            var manifest = ManifestJson(Entry("ru", PlainPackUrl, zip, 7));
+            var (service, handler) = Build(Serving(manifest, (PlainPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.DoesNotContain(PlainPackUrl, handler.Requests);
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
             AssertStagingIsEmpty();
         }
 
@@ -789,6 +840,203 @@ namespace ValheimBakaLoader.Tests.Tools
             return buffer.ToArray();
         }
 
+        /// <summary>
+        /// A pack whose pack.json says exactly what the test wants it to say about its faces,
+        /// including the things a pack cut by pack_tools never would: a name that points
+        /// somewhere else on the disk, or a face with no digest published for it. A face whose
+        /// entry name is null is named in pack.json and not carried in the zip.
+        /// </summary>
+        private static byte[] PackNamingFaces(
+            string code,
+            string version,
+            int catalog,
+            params (string Named, string Sha, string EntryName, byte[] Bytes)[] faces)
+        {
+            var pack = JsonConvert.SerializeObject(new
+            {
+                schema = 1,
+                code,
+                appVersion = version,
+                catalog,
+                keys = 2,
+                translated = 2,
+                status = "machine",
+                fonts = faces.Select(f => new
+                {
+                    file = f.Named,
+                    family = "Face",
+                    weight = "400",
+                    style = "normal",
+                    sha256 = f.Sha,
+                }),
+            });
+
+            using var buffer = new MemoryStream();
+            using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                Write(zip, "pack.json", Encoding.UTF8.GetBytes(pack));
+                Write(zip, "strings.json", Encoding.UTF8.GetBytes(CatalogJson(code, version, catalog)));
+
+                foreach (var (_, _, entryName, bytes) in faces)
+                {
+                    if (entryName != null) Write(zip, entryName, bytes);
+                }
+            }
+
+            return buffer.ToArray();
+        }
+
+        /// <summary>Every file in the shared font store, or an empty list when there is no store.</summary>
+        private List<string> StoredFonts()
+        {
+            var store = Path.Combine(Root, "_fonts");
+            return Directory.Exists(store)
+                ? Directory.EnumerateFiles(store).Select(Path.GetFileName).ToList()
+                : new List<string>();
+        }
+
+        /// <summary>
+        /// pack.json is the second source of untrusted paths in a pack, and the unpack step
+        /// guards only the first: ExtractToDirectory refuses an archive entry that lands
+        /// outside the destination and knows nothing about a path written inside a file it
+        /// extracted. A face named by an absolute path is a file move out of any folder this
+        /// process can reach, so the digest here is the real digest of the file being pointed
+        /// at: nothing but the confinement check can be what refuses this.
+        /// </summary>
+        [Fact]
+        public async Task A_face_named_by_an_absolute_path_moves_nothing_and_is_refused()
+        {
+            var elsewhere = Path.Combine(Root, "elsewhere");
+            Directory.CreateDirectory(elsewhere);
+
+            var victimPath = Path.Combine(elsewhere, "important.txt");
+            var victim = Encoding.UTF8.GetBytes("a file that has nothing to do with language packs");
+            File.WriteAllBytes(victimPath, victim);
+
+            var zip = PackNamingFaces("ru", AppVersion, 7, (victimPath, Sha(victim), null, null));
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Contents, result.ReasonId);
+
+            Assert.True(File.Exists(victimPath), "the file the pack pointed at was moved out of its folder");
+            Assert.Equal(victim, File.ReadAllBytes(victimPath));
+            Assert.DoesNotContain(StoredFonts(), f => f.StartsWith(Sha(victim), StringComparison.Ordinal));
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// The same hole in its plain relative form. Three levels up from the unpacked folder
+        /// is the languages folder itself, which is where the app's own files live.
+        /// </summary>
+        [Fact]
+        public async Task A_face_named_by_climbing_out_of_the_pack_moves_nothing_and_is_refused()
+        {
+            var victimPath = Path.Combine(Root, "borrowed.json");
+            var victim = Encoding.UTF8.GetBytes("{\"held\":\"a file of the app's own\"}");
+            File.WriteAllBytes(victimPath, victim);
+
+            var zip = PackNamingFaces("ru", AppVersion, 7, ("../../../borrowed.json", Sha(victim), null, null));
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Contents, result.ReasonId);
+
+            Assert.True(File.Exists(victimPath), "the file the pack climbed out to was moved into the font store");
+            Assert.Equal(victim, File.ReadAllBytes(victimPath));
+            Assert.DoesNotContain(StoredFonts(), f => f.StartsWith(Sha(victim), StringComparison.Ordinal));
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// A face with no digest published for it used to skip its check, which handed the
+        /// pack the choice of whether to be checked at all.
+        /// </summary>
+        [Fact]
+        public async Task A_face_with_no_digest_published_for_it_is_refused()
+        {
+            var face = Filler(3_000, seed: 51);
+            var zip = PackNamingFaces("ru", AppVersion, 7, ("fonts/Face.woff2", "", "fonts/Face.woff2", face));
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.Empty(StoredFonts());
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// The faces go into the shared store one at a time, so a pack refused on its second
+        /// face has already moved its first. Nothing placed means nothing placed: what this
+        /// run moved in comes back out.
+        /// </summary>
+        [Fact]
+        public async Task A_refusal_on_a_later_face_takes_the_earlier_ones_back_out_of_the_store()
+        {
+            var good = Filler(3_500, seed: 61);
+            var bad = Filler(2_500, seed: 62);
+
+            var zip = PackNamingFaces(
+                "ru", AppVersion, 7,
+                ("fonts/Good.woff2", Sha(good), "fonts/Good.woff2", good),
+                ("fonts/Bad.woff2", new string('c', 64), "fonts/Bad.woff2", bad));
+
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.Empty(StoredFonts());
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// The archive's own entry names are the first source of untrusted paths, and the
+        /// refusal is the framework's rather than this app's. It is asserted here anyway: the
+        /// day somebody swaps ExtractToDirectory for a loop that writes each entry itself,
+        /// this is the test that goes red instead of the hole opening quietly.
+        /// </summary>
+        [Fact]
+        public async Task A_zip_entry_that_climbs_out_of_the_staging_folder_writes_nothing_outside_it()
+        {
+            var escaped = Path.Combine(Root, "escaped-by-the-zip.txt");
+
+            byte[] zip;
+            using (var buffer = new MemoryStream())
+            {
+                using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+                {
+                    Write(archive, "pack.json", Encoding.UTF8.GetBytes(
+                        JsonConvert.SerializeObject(new { schema = 1, code = "ru", appVersion = AppVersion, catalog = 7 })));
+                    Write(archive, "strings.json", Encoding.UTF8.GetBytes(CatalogJson("ru", AppVersion, 7)));
+                    Write(archive, "../../../escaped-by-the-zip.txt", Encoding.UTF8.GetBytes("out of the folder"));
+                }
+
+                zip = buffer.ToArray();
+            }
+
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Contents, result.ReasonId);
+            Assert.False(File.Exists(escaped), "a zip entry wrote a file outside the staging folder");
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+            AssertStagingIsEmpty();
+        }
+
         // ------------------------------------------------------------------ 16. the boot sweep
 
         [Fact]
@@ -823,6 +1071,38 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(Root, ".staging")));
             Assert.True(File.Exists(Path.Combine(Root, "_fonts", kept + ".woff2")));
             Assert.False(File.Exists(Path.Combine(Root, "_fonts", "orphan.woff2")));
+        }
+
+        /// <summary>
+        /// The sweep empties the staging folder outright and drops every face no pack on disk
+        /// names, which is exactly the shape of a download that is halfway through. So it
+        /// stands aside while one is running, and the next boot is soon enough.
+        /// </summary>
+        [Fact]
+        public async Task The_sweep_stands_aside_while_a_pack_is_being_fetched()
+        {
+            var leftover = Path.Combine(Root, ".staging", "ru-1.1.0-leftover");
+            Directory.CreateDirectory(leftover);
+            File.WriteAllText(Path.Combine(leftover, "pack.zip"), "half a download from last time");
+
+            var zip = PackZip("ru", AppVersion, 7);
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var sweptDuring = (int?)null;
+            service.BeforePlacing = _ => sweptDuring = service.PruneOnBoot();
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.Equal(0, sweptDuring);
+            Assert.True(result.Ok, result.ReasonId);
+            Assert.True(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+
+            // Nothing was swept, so what the last run left behind is still there to sweep.
+            Assert.True(Directory.Exists(leftover));
+
+            // And with nothing running, the same call does the job it was standing aside from.
+            Assert.True(service.PruneOnBoot() > 0);
+            Assert.False(Directory.Exists(leftover));
         }
 
         // ------------------------------------------------------------------ refusals and the menu

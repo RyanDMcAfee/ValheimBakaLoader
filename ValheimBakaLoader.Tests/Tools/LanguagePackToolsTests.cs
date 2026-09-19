@@ -114,6 +114,32 @@ namespace ValheimBakaLoader.Tests.Tools
 
         // ------------------------------------------------------------------ the script on its own
 
+        /// <summary>
+        /// The installer fetches a pack over https and refuses anything else, so a base url
+        /// typed without the s would cut a whole manifest of packs that are dead on arrival,
+        /// and the first anybody would hear of it is a host picking a language and being told
+        /// no. The script refuses it at cutting time instead, which is the half of the pair
+        /// that can still be fixed cheaply.
+        /// </summary>
+        [Fact]
+        public void The_script_will_not_cut_a_pack_published_at_an_address_the_installer_refuses()
+        {
+            var fixture = Fixture("ru");
+            var outDir = Path.Combine(Work, "out-plain");
+
+            var built = RepoScript.Run(
+                RepoScript.Python(), Script(), "build-pack",
+                "--code", "ru",
+                "--strings", fixture.Strings,
+                "--fonts", fixture.Fonts,
+                "--app-version", AppVersion,
+                "--out", outDir,
+                "--base-url", "http://objects.example.invalid/packs/7f3c");
+
+            Assert.False(built.Ok, "a plain http base url was accepted: " + built);
+            Assert.Contains("https", built.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+
         [Fact]
         public void A_pack_the_script_built_reads_back_the_way_the_installer_reads_it()
         {

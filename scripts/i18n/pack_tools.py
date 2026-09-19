@@ -172,12 +172,30 @@ def _write_zip(zip_path, files):
             zip_file.writestr(info, data)
 
 
+def _checked_base_url(base_url):
+    """
+    The address every entry is built from, refused here when the app would refuse it
+    there. The installer fetches a pack over https and nothing else, so a base url
+    typed without the s cuts a manifest whose every pack is dead on arrival, and the
+    first anyone hears of it is a host picking a language and being told no. Cutting
+    time is the cheap place to find that out.
+    """
+    if base_url and not base_url.lower().startswith("https://"):
+        raise ValueError(
+            "the base url has to be https, because the installer will not fetch a pack "
+            "from anywhere else. Got: %s" % base_url)
+
+    return base_url
+
+
 def build_pack(code, strings_json, fonts_dir, app_version, out_dir,
                status="machine", base_url=None, min_app_version=None,
                native_name=None, english_name=None):
     """Builds one pack zip and answers the manifest entry that describes it."""
     if status not in STATUSES:
         raise ValueError("status has to be one of %s" % ", ".join(STATUSES))
+
+    base_url = _checked_base_url(base_url)
 
     catalog = _read_json(strings_json)
     meta = catalog.get("_meta")
@@ -240,6 +258,7 @@ def build_pack(code, strings_json, fonts_dir, app_version, out_dir,
 
 def build_manifest(entries, app_version, base_url):
     """Gathers the entries into the one small file a release publishes."""
+    base_url = _checked_base_url(base_url)
     languages = []
     for entry in entries:
         row = dict(entry)

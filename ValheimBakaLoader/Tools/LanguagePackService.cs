@@ -48,7 +48,11 @@ namespace ValheimBakaLoader.Tools
         /// <summary>The host stopped it, and nothing on disk changed.</summary>
         public const string Cancelled = "lang.reason.cancelled";
 
-        /// <summary>The bytes did not weigh or hash what the manifest published.</summary>
+        /// <summary>
+        /// The bytes could not be taken at their word. Either they did not weigh or hash what
+        /// was published for them, or nothing was published to check them against, or the
+        /// address they were to come from was not one this app will trust.
+        /// </summary>
         public const string Integrity = "lang.reason.integrity";
 
         /// <summary>The pack is bigger than this app will fetch.</summary>
@@ -422,7 +426,8 @@ namespace ValheimBakaLoader.Tools
         /// <summary>
         /// Empties the staging folder, keeps the newest two versions of each language plus the
         /// one the app is running, and drops font files no remaining pack names. Answers how
-        /// many things were removed. Never throws.
+        /// many things were removed. Does nothing and answers zero while a download is running,
+        /// because those are the very folders it would be sweeping. Never throws.
         /// </summary>
         int PruneOnBoot();
 
@@ -627,6 +632,12 @@ namespace ValheimBakaLoader.Tools
 
             try
             {
+                // The switch that governs reaching out is not consulted here, and that is a
+                // decision rather than an oversight. Opening the globe menu is the host asking
+                // out loud, the same as pressing check for updates, and the switch governs what
+                // the app does on its own account. The held manifest answers most of these
+                // without a request at all, and nothing is fetched to draw the menu. The
+                // unattended path is the one that asks: see DownloadAsync and QuietFetchDecision.
                 var resolved = await ResolveManifestAsync(allowNetwork: true, ct);
                 state = resolved.State;
                 manifest = resolved.Manifest;
@@ -761,18 +772,24 @@ namespace ValheimBakaLoader.Tools
             if (!userInitiated && !ChecksAllowed())
                 return Refuse(normalized, LanguagePackReasons.ChecksOff, progress);
 
-            Run run;
+            Run run = null;
             lock (Gate)
             {
-                if (Current != null) return Refuse(normalized, LanguagePackReasons.Busy, progress);
-
-                run = new Run
+                if (Current == null)
                 {
-                    Code = normalized,
-                    Cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct),
-                };
-                Current = run;
+                    run = new Run
+                    {
+                        Code = normalized,
+                        Cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct),
+                    };
+                    Current = run;
+                }
             }
+
+            // Worked out under the lock and said outside it. Reporting calls the caller's
+            // handler on this thread, house style being a progress that does not reorder, and
+            // a handler that waits on anything wanting the same lock would wait for good.
+            if (run == null) return Refuse(normalized, LanguagePackReasons.Busy, progress);
 
             try
             {
@@ -836,6 +853,28 @@ namespace ValheimBakaLoader.Tools
 
                 if (string.IsNullOrWhiteSpace(entry.Url)) return Fail(code, LanguagePackReasons.NoPack, progress);
 
+                // From here bytes are going to be fetched, so the two things that make those
+                // bytes checkable are required rather than honoured when present. A manifest
+                // entry that publishes no digest would otherwise turn verification off by
+                // leaving a field out, which is not a floor at all. Both sit after the
+                // unchanged-catalogue shortcut on purpose: that path asks nobody for a byte
+                // and installs a folder this machine already verified once.
+                if (!IsTrustedPackAddress(entry.Url))
+                {
+                    Logger.Warning(
+                        "The {0} pack is published at an address this app will not fetch from, so nothing was asked for.",
+                        code);
+                    return Fail(code, LanguagePackReasons.Integrity, progress);
+                }
+
+                if (string.IsNullOrWhiteSpace(entry.Sha256))
+                {
+                    Logger.Warning(
+                        "The manifest publishes no checksum for the {0} pack, so there is nothing to check it against.",
+                        code);
+                    return Fail(code, LanguagePackReasons.Integrity, progress);
+                }
+
                 Directory.CreateDirectory(StagingRoot);
                 staging = Path.Combine(StagingRoot, $"{code}-{version}-{Guid.NewGuid():N}");
                 Directory.CreateDirectory(staging);
@@ -847,7 +886,11 @@ namespace ValheimBakaLoader.Tools
                 Report(progress, code, LanguagePackPhases.Verifying, 100, downloaded.Bytes, downloaded.Bytes);
 
                 // Nothing on disk that the app reads has been touched yet, and nothing will be
-                // until both of these hold.
+                // until both of these hold. The published weight is the courtesy check and is
+                // only made when there is one to make, because the cap already put a ceiling on
+                // the bytes and the digest below covers every one of them. The digest is the
+                // floor: it is checked always, because a blank one was refused before the first
+                // byte was asked for.
                 if (entry.Bytes > 0 && downloaded.Bytes != entry.Bytes)
                 {
                     Logger.Warning(
@@ -856,8 +899,7 @@ namespace ValheimBakaLoader.Tools
                     return Fail(code, LanguagePackReasons.Integrity, progress);
                 }
 
-                if (!string.IsNullOrWhiteSpace(entry.Sha256) &&
-                    !string.Equals(downloaded.Sha256, entry.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(downloaded.Sha256, entry.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
                 {
                     Logger.Warning("The {0} pack did not match its published checksum, so it was not installed.", code);
                     return Fail(code, LanguagePackReasons.Integrity, progress);
@@ -869,7 +911,10 @@ namespace ValheimBakaLoader.Tools
                 try
                 {
                     // ExtractToDirectory refuses an entry that resolves outside the destination,
-                    // which is the zip slip defence the mod installer leans on too.
+                    // which is the zip slip defence the mod installer leans on too. It covers
+                    // the archive's own entry names and nothing else: a path written inside a
+                    // file it extracted is a second, separate source of untrusted paths, and
+                    // StoreFonts is where that one is dealt with.
                     ZipFile.ExtractToDirectory(zipPath, unpacked);
                 }
                 catch (Exception e)
@@ -1147,6 +1192,14 @@ namespace ValheimBakaLoader.Tools
         /// point there. Two languages that use the same face then keep one copy of it, and a
         /// pack that is reinstalled writes no font bytes at all. Answers a reason id on a
         /// mismatch, otherwise null.
+        /// <para>
+        /// pack.json is the second source of untrusted paths in a pack, and the first one is
+        /// the only one the unpack step guards: ExtractToDirectory refuses an archive entry
+        /// that resolves outside the destination, and knows nothing about a file name written
+        /// inside a file it extracted. So every path read out of pack.json is resolved against
+        /// the staging folder and refused when it lands anywhere else. Without that, one line
+        /// in a manifest's pack moves any file this process can reach into the font store.
+        /// </para>
         /// </summary>
         private string StoreFonts(string code, string folder, LanguagePackFile pack)
         {
@@ -1154,38 +1207,63 @@ namespace ValheimBakaLoader.Tools
 
             Directory.CreateDirectory(FontsRoot);
 
+            // What this run moved in, so a refusal on the third face does not leave the first
+            // two sitting in the shared store as the remains of a pack that never installed.
+            var moved = new List<string>();
+
             foreach (var font in pack.Fonts)
             {
-                if (string.IsNullOrWhiteSpace(font?.File)) return LanguagePackReasons.Contents;
+                if (string.IsNullOrWhiteSpace(font?.File)) return Unwind(moved, LanguagePackReasons.Contents);
 
-                var relative = font.File.Replace('/', Path.DirectorySeparatorChar);
-                var staged = Path.Combine(folder, relative);
+                var staged = ResolveInside(folder, font.File);
+                if (staged == null)
+                {
+                    Logger.Warning(
+                        "The {0} pack names {1}, which is not inside the pack, so it was not installed.",
+                        code, font.File);
+                    return Unwind(moved, LanguagePackReasons.Contents);
+                }
+
                 if (!File.Exists(staged))
                 {
                     Logger.Warning("The {0} pack names {1} and does not carry it.", code, font.File);
-                    return LanguagePackReasons.Contents;
+                    return Unwind(moved, LanguagePackReasons.Contents);
+                }
+
+                // A face that publishes no digest is not a face that checked out. Skipping the
+                // check for whoever leaves the field empty is the same as having no check, and
+                // it is the field an attacker controls.
+                if (string.IsNullOrWhiteSpace(font.Sha256))
+                {
+                    Logger.Warning("A font in the {0} pack publishes no digest, so there is nothing to check it against.", code);
+                    return Unwind(moved, LanguagePackReasons.Integrity);
                 }
 
                 var digest = FileDigest(staged);
-                if (!string.IsNullOrWhiteSpace(font.Sha256) &&
-                    !string.Equals(digest, font.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(digest, font.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
                 {
                     Logger.Warning("A font in the {0} pack did not match the digest the pack published.", code);
-                    return LanguagePackReasons.Integrity;
+                    return Unwind(moved, LanguagePackReasons.Integrity);
                 }
 
-                var extension = Path.GetExtension(staged);
-                if (string.IsNullOrEmpty(extension)) extension = ".woff2";
-
-                var stored = Path.Combine(FontsRoot, digest + extension);
-                if (File.Exists(stored)) TryDelete(staged);
-                else File.Move(staged, stored);
+                var stored = Path.Combine(FontsRoot, digest + StoreExtension(staged));
+                if (File.Exists(stored))
+                {
+                    TryDelete(staged);
+                }
+                else
+                {
+                    File.Move(staged, stored);
+                    moved.Add(stored);
+                }
 
                 font.Sha256 = digest;
-                font.File = FontsFolderName + "/" + digest + extension;
+                font.File = FontsFolderName + "/" + Path.GetFileName(stored);
             }
 
             // The licence travels with the fonts, under its own digest so one text is kept once.
+            // These names come off the disk rather than out of pack.json, so they are already
+            // inside the folder by the time they are read.
             var licences = new List<string>();
             var fontsDir = Path.Combine(folder, "fonts");
             if (Directory.Exists(fontsDir))
@@ -1205,6 +1283,56 @@ namespace ValheimBakaLoader.Tools
 
             if (licences.Count > 0) pack.Licenses = licences;
             return null;
+        }
+
+        /// <summary>
+        /// Takes back out of the shared store everything this run put into it, and hands back
+        /// the reason the run is ending so the caller reads as one line. A face already in the
+        /// store when the run began was left where it was, so it is not in this list.
+        /// </summary>
+        private string Unwind(List<string> moved, string reasonId)
+        {
+            foreach (var path in moved) TryDelete(path);
+            return reasonId;
+        }
+
+        /// <summary>
+        /// A path a pack named, resolved inside the folder the pack was unpacked into, or null
+        /// when it points anywhere else. An absolute path, a rooted one, and any chain that
+        /// climbs a level all come back null, and so does a name holding characters no path
+        /// may hold.
+        /// </summary>
+        private static string ResolveInside(string folder, string named)
+        {
+            try
+            {
+                var root = Path.GetFullPath(folder);
+                if (!root.EndsWith(Path.DirectorySeparatorChar)) root += Path.DirectorySeparatorChar;
+
+                var resolved = Path.GetFullPath(Path.Combine(root, named.Replace('/', Path.DirectorySeparatorChar)));
+                return resolved.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? resolved : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The extension a face keeps in the shared store. The name is still the pack's, so
+        /// anything but plain letters and digits is dropped rather than carried into a file
+        /// name this app composes: a colon on this filesystem writes a second stream on a file
+        /// that already exists, which is a write nobody asked for.
+        /// </summary>
+        private static string StoreExtension(string path)
+        {
+            var extension = Path.GetExtension(path);
+            if (string.IsNullOrEmpty(extension)) return ".woff2";
+
+            var trimmed = extension.TrimStart('.');
+            if (trimmed.Length == 0 || trimmed.Length > 8) return ".woff2";
+
+            return trimmed.All(char.IsLetterOrDigit) ? "." + trimmed.ToLowerInvariant() : ".woff2";
         }
 
         /// <summary>
@@ -1507,6 +1635,17 @@ namespace ValheimBakaLoader.Tools
 
         public int PruneOnBoot()
         {
+            // The sweep and a download share the staging folder and the font store, and the
+            // sweep is the one that can stand aside: it empties staging outright and drops
+            // every face no pack on disk names yet, which is exactly the shape of a run that
+            // is halfway through. Housekeeping can wait for the next boot; a download that has
+            // its working folder deleted under it cannot.
+            if (IsBusy)
+            {
+                Logger.Information("A language pack is being fetched, so the language folder was left alone.");
+                return 0;
+            }
+
             var removed = 0;
 
             try
@@ -1702,6 +1841,17 @@ namespace ValheimBakaLoader.Tools
                 MessageParams = messageParams,
             });
         }
+
+        /// <summary>
+        /// Whether this app will fetch a pack from this address. The manifest itself is read
+        /// off a release over https and is what names where the bytes live, so a pack address
+        /// that is not https is either a mistake or somebody who has got at the manifest, and
+        /// neither is worth the bytes. A local path is refused by the same rule, because this
+        /// app does not install language packs out of the filesystem.
+        /// </summary>
+        private static bool IsTrustedPackAddress(string url) =>
+            Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var parsed) &&
+            string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
         private static string FirstNotBlank(params string[] values) =>
             values?.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
