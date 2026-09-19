@@ -53,6 +53,10 @@ namespace ValheimBakaLoader.Tests.Tools
         // the one kind of anywhere the app will not go.
         private const string PlainPackUrl = "http://objects.example.invalid/held/7f3c/ru-pack-bytes?token=def";
 
+        // And the manifest's own address without the s, which is the address every other check
+        // is read from.
+        private const string PlainManifestUrl = "http://objects.example.invalid/held/7f3c/lang-manifest.json?token=abc";
+
         private readonly string Root =
             Path.Combine(Path.GetTempPath(), "bakaloader-langpack-" + Guid.NewGuid().ToString("N"));
 
@@ -152,7 +156,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
         private static object Entry(
             string code, string url, byte[] zip, int catalog, long? bytes = null, string sha = null,
-            string minAppVersion = null) => new
+            string minAppVersion = null, string appVersion = null) => new
             {
                 code,
                 asset = $"lang-{code.ToLowerInvariant()}-{AppVersion}.zip",
@@ -166,7 +170,10 @@ namespace ValheimBakaLoader.Tests.Tools
                 translated = 2,
                 status = "machine",
                 minAppVersion = minAppVersion ?? "1.0.0",
-                appVersion = AppVersion,
+
+                // The version an entry publishes for itself is what becomes a folder name, so
+                // the tests that go at that need to be able to say something that is not one.
+                appVersion = appVersion ?? AppVersion,
             };
 
         private static string ManifestJson(params object[] entries) =>
@@ -179,7 +186,7 @@ namespace ValheimBakaLoader.Tests.Tools
                 languages = entries,
             });
 
-        private static string ReleaseJson() =>
+        private static string ReleaseJson(string manifestUrl = ManifestUrl) =>
             JsonConvert.SerializeObject(new
             {
                 tag_name = "v" + AppVersion,
@@ -192,7 +199,7 @@ namespace ValheimBakaLoader.Tests.Tools
                     new
                     {
                         name = LanguagePackService.ManifestAssetName,
-                        browser_download_url = ManifestUrl,
+                        browser_download_url = manifestUrl,
                         size = 512,
                     },
                 },
@@ -1536,6 +1543,263 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal("1.1.9", install.Version);
             Assert.False(install.MatchesApp);
             Assert.Contains(ReleasesUrl, handler.Requests);
+        }
+
+        // ------------------------------------------------------------------ the version as a path
+
+        /// <summary>
+        /// A folder holding files that say whether it survived, one level above the language
+        /// folder, which is where "../" from inside it lands.
+        /// </summary>
+        private string PlaceFolderInTheWay(string name)
+        {
+            var folder = Path.Combine(Root, name);
+            Directory.CreateDirectory(Path.Combine(folder, "inner"));
+            File.WriteAllText(Path.Combine(folder, "keepme.txt"), "a folder with nothing to do with language packs");
+            File.WriteAllText(Path.Combine(folder, "inner", "deep.txt"), "and the file below it");
+            return folder;
+        }
+
+        private static void AssertUntouched(string folder)
+        {
+            Assert.True(File.Exists(Path.Combine(folder, "keepme.txt")),
+                "the folder the version pointed at was taken away");
+            Assert.True(File.Exists(Path.Combine(folder, "inner", "deep.txt")),
+                "the folder the version pointed at was emptied");
+            Assert.False(File.Exists(Path.Combine(folder, "pack.json")),
+                "a pack was written into the folder the version pointed at");
+            Assert.False(File.Exists(Path.Combine(folder, "strings.json")),
+                "a pack was written into the folder the version pointed at");
+        }
+
+        /// <summary>
+        /// The third source of untrusted paths in a pack, after the archive's entry names and
+        /// the paths written inside pack.json, and the worst of the three. The version comes
+        /// off the manifest and becomes a folder name, and the folder it names is moved aside
+        /// and then deleted to make room for the pack. So a version that climbs picks a folder
+        /// of the host's own, takes it away, and leaves the pack's own files standing in it
+        /// while the service answers that it installed a language.
+        /// <para>
+        /// The refusal has to come before the address is asked for, because the staging folder
+        /// is composed from the same string: nothing else in the run may be what turned this
+        /// back.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_version_that_climbs_out_of_the_language_folder_takes_nothing_with_it()
+        {
+            var inTheWay = PlaceFolderInTheWay("seized");
+
+            var zip = PackZip("ru", AppVersion, 7);
+            var manifest = ManifestJson(Entry("ru", RuPackUrl, zip, 7, appVersion: "../seized"));
+            var (service, handler) = Build(Serving(manifest, (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.DoesNotContain(RuPackUrl, handler.Requests);
+
+            AssertUntouched(inTheWay);
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// The same hole in its other form: a version that is not a climb but a whole path of
+        /// its own, which Path.Combine answers by throwing away everything to its left.
+        /// </summary>
+        [Fact]
+        public async Task A_version_given_as_a_path_of_its_own_puts_nothing_there()
+        {
+            var elsewhere = Path.Combine(Root, "elsewhere");
+
+            var zip = PackZip("ru", AppVersion, 7);
+            var manifest = ManifestJson(Entry("ru", RuPackUrl, zip, 7, appVersion: elsewhere));
+            var (service, handler) = Build(Serving(manifest, (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.DoesNotContain(RuPackUrl, handler.Requests);
+
+            Assert.False(Directory.Exists(elsewhere), "the pack made itself a folder outside the languages folder");
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// And the same thing down the path that asks nobody for a byte. The unchanged
+        /// catalogue shortcut installs by copying the pack already on disk, so it never
+        /// reaches any of the checks the download makes, and it ends at the same move.
+        /// </summary>
+        [Fact]
+        public async Task The_unchanged_catalogue_shortcut_will_not_copy_a_pack_out_of_the_language_folder()
+        {
+            var inTheWay = PlaceFolderInTheWay("seized");
+            PlaceInstalled("ru", "1.1.0", catalog: 7);
+
+            var zip = PackZip("ru", AppVersion, 7);
+            var manifest = ManifestJson(Entry("ru", RuPackUrl, zip, 7, appVersion: "../seized"));
+            var (service, handler) = Build(Serving(manifest, (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.DoesNotContain(RuPackUrl, handler.Requests);
+
+            AssertUntouched(inTheWay);
+
+            // The pack that was already here is still the one that is here.
+            Assert.Equal("1.1.0", service.InstalledAny("ru").Version);
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// A version the app would have made a folder from happily enough, and the ordinary
+        /// case standing beside the two refusals so the floor cannot be a blanket one. A pack
+        /// cut for a prerelease tag has to still install.
+        /// </summary>
+        [Fact]
+        public async Task A_version_spelled_the_way_a_version_is_spelled_still_installs()
+        {
+            var zip = PackZip("ru", "1.2.0-beta.1+7", 7);
+            var manifest = ManifestJson(Entry("ru", RuPackUrl, zip, 7, appVersion: "1.2.0-beta.1+7"));
+            var (service, _) = Build(Serving(manifest, (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.True(result.Ok, result.ReasonId);
+            Assert.Equal(Path.Combine(Root, "ru", "1.2.0-beta.1+7"), result.Folder);
+            Assert.True(File.Exists(Path.Combine(result.Folder, "strings.json")));
+            AssertStagingIsEmpty();
+        }
+
+        // ------------------------------------------------------------------ the manifest's own address
+
+        /// <summary>
+        /// The manifest is the thing every other check is derived from: it publishes the
+        /// digests, the weights, the addresses and the version that becomes a folder name. A
+        /// pack's address is held to https for the plain reason that the address is used
+        /// exactly as it stands, and the manifest's own address is used exactly as it stands
+        /// too, so it is held to the same floor rather than being the one that is taken on
+        /// trust.
+        /// </summary>
+        [Fact]
+        public async Task A_manifest_published_over_plain_http_is_not_asked_for()
+        {
+            var zip = PackZip("ru", AppVersion, 7);
+            var manifest = ManifestJson(Entry("ru", RuPackUrl, zip, 7));
+
+            var (service, handler) = Build(request =>
+            {
+                var url = request.RequestUri?.ToString() ?? "";
+                if (url == TagsUrl) return Json(ReleaseJson(PlainManifestUrl));
+                if (url == PlainManifestUrl) return Json(manifest);
+                if (url == RuPackUrl) return Bytes(zip);
+                return Missing();
+            });
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.DoesNotContain(PlainManifestUrl, handler.Requests);
+            Assert.DoesNotContain(RuPackUrl, handler.Requests);
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+            AssertStagingIsEmpty();
+        }
+
+        // ------------------------------------------------------------------ the licence list
+
+        /// <summary>
+        /// A pack that declares a licence list of its own, which is not a thing pack_tools
+        /// cuts: the installed list is meant to be rebuilt from the .txt files found beside
+        /// the faces. A face whose bytes are null means the pack carries no faces at all.
+        /// </summary>
+        private static byte[] PackDeclaringLicences(
+            string code, string version, int catalog, string[] declared, byte[] face)
+        {
+            var pack = JsonConvert.SerializeObject(new
+            {
+                schema = 1,
+                code,
+                appVersion = version,
+                catalog,
+                keys = 2,
+                translated = 2,
+                status = "machine",
+                licenses = declared,
+                fonts = face == null
+                    ? Array.Empty<object>()
+                    : new object[]
+                    {
+                        new { file = "fonts/Face.woff2", family = "Face", weight = "400", style = "normal", sha256 = Sha(face) },
+                    },
+            });
+
+            using var buffer = new MemoryStream();
+            using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                Write(zip, "pack.json", Encoding.UTF8.GetBytes(pack));
+                Write(zip, "strings.json", Encoding.UTF8.GetBytes(CatalogJson(code, version, catalog)));
+
+                if (face != null)
+                {
+                    Write(zip, "fonts/Face.woff2", face);
+                    Write(zip, "fonts/OFL.txt", Encoding.UTF8.GetBytes("SIL Open Font License"));
+                }
+            }
+
+            return buffer.ToArray();
+        }
+
+        /// <summary>
+        /// Every font path in an installed pack.json is worked out again from what landed on
+        /// disk, and the licence list was the one path still being kept from what the pack
+        /// itself said. It is contained today, because the page resolves a resource path
+        /// safely and the sweep reads only the file name off the end of one, but a list the
+        /// pack wrote is a list the pack wrote, and it sits in a file the app reads as its own.
+        /// </summary>
+        [Fact]
+        public async Task The_licence_list_installed_is_the_one_found_beside_the_faces()
+        {
+            var face = Filler(3_000, seed: 71);
+            var zip = PackDeclaringLicences("ru", AppVersion, 7, new[] { "../../../borrowed/OFL.txt" }, face);
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.True(result.Ok, result.ReasonId);
+
+            var pack = JObject.Parse(File.ReadAllText(Path.Combine(result.Folder, "pack.json")));
+            var licences = pack["licenses"].Select(l => (string)l).ToList();
+
+            Assert.DoesNotContain("../../../borrowed/OFL.txt", licences);
+            Assert.All(licences, l => Assert.StartsWith("_fonts/OFL-", l, StringComparison.Ordinal));
+            Assert.All(licences, l => Assert.True(
+                File.Exists(Path.Combine(Root, l.Replace('/', Path.DirectorySeparatorChar))),
+                "the installed pack names a licence that is not in the store"));
+        }
+
+        /// <summary>
+        /// And the half of the same thing that is easy to miss: a pack carrying no faces never
+        /// reaches the code that rebuilds the list, so it used to keep whatever it declared
+        /// without a single font being involved.
+        /// </summary>
+        [Fact]
+        public async Task A_pack_that_carries_no_faces_installs_no_licence_list_at_all()
+        {
+            var zip = PackDeclaringLicences("ru", AppVersion, 7, new[] { "../../../borrowed/OFL.txt" }, face: null);
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.True(result.Ok, result.ReasonId);
+
+            var pack = JObject.Parse(File.ReadAllText(Path.Combine(result.Folder, "pack.json")));
+            Assert.Null(pack["licenses"]);
         }
     }
 }

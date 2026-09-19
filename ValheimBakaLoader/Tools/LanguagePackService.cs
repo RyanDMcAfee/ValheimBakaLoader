@@ -49,9 +49,10 @@ namespace ValheimBakaLoader.Tools
         public const string Cancelled = "lang.reason.cancelled";
 
         /// <summary>
-        /// The bytes could not be taken at their word. Either they did not weigh or hash what
-        /// was published for them, or nothing was published to check them against, or the
-        /// address they were to come from was not one this app will trust.
+        /// The manifest could not be taken at its word. Either the bytes did not weigh or hash
+        /// what was published for them, or nothing was published to check them against, or an
+        /// address they were to come from was not one this app will trust, or the version the
+        /// pack was published under is not a version and so is not a folder name either.
         /// </summary>
         public const string Integrity = "lang.reason.integrity";
 
@@ -370,7 +371,10 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         long MaxLanguagePackBytes { get; set; }
 
-        /// <summary>True while a pack is being fetched. One at a time, across the whole app.</summary>
+        /// <summary>
+        /// True while a pack is being fetched, and while the boot sweep is emptying the folders
+        /// a fetch works in. One at a time, across the whole app.
+        /// </summary>
         bool IsBusy { get; }
 
         /// <summary>Raised after a language actually changed, for every window to follow.</summary>
@@ -465,6 +469,13 @@ namespace ValheimBakaLoader.Tools
         private const int CopyBufferBytes = 81920;
         private const long ReportEveryBytes = 65536;
 
+        /// <summary>
+        /// The most characters a version may hold before it stops being a version. Nothing this
+        /// app publishes comes near it; it is here so a manifest cannot hand the filesystem a
+        /// name it has to have an opinion about.
+        /// </summary>
+        private const int MaxVersionChars = 64;
+
         private readonly IGitHubClient GitHub;
         private readonly IHttpClientProvider HttpClientProvider;
         private readonly IUserPreferencesProvider Prefs;
@@ -473,6 +484,13 @@ namespace ValheimBakaLoader.Tools
 
         private readonly object Gate = new();
         private Run Current;
+
+        /// <summary>
+        /// True while the boot sweep is running. It shares the gate with the download rather
+        /// than having one of its own, because the two of them are deciding about the same two
+        /// folders and a decision each is how they both go ahead.
+        /// </summary>
+        private bool Sweeping;
 
         public LanguagePackService(
             IGitHubClient gitHub,
@@ -534,7 +552,7 @@ namespace ValheimBakaLoader.Tools
 
         public bool IsBusy
         {
-            get { lock (Gate) return Current != null; }
+            get { lock (Gate) return Current != null || Sweeping; }
         }
 
         private string StagingRoot => Path.Combine(RootFolder, StagingFolderName);
@@ -775,7 +793,9 @@ namespace ValheimBakaLoader.Tools
             Run run = null;
             lock (Gate)
             {
-                if (Current == null)
+                // The sweep counts as somebody being in the folders, so a fetch that arrives
+                // while it runs is turned away rather than racing it for the staging folder.
+                if (Current == null && !Sweeping)
                 {
                     run = new Run
                     {
@@ -830,6 +850,20 @@ namespace ValheimBakaLoader.Tools
 
                 var version = FirstNotBlank(entry.AppVersion, resolved.Manifest.AppVersion);
                 if (string.IsNullOrWhiteSpace(version)) return Fail(code, LanguagePackReasons.NoPack, progress);
+
+                // The manifest names the version, and the version becomes a folder name twice
+                // over: the staging folder further down, and the folder the pack is moved into,
+                // which is a move that takes away whatever was sitting there. So it is held to
+                // being a version here, ahead of the staging folder, ahead of the unchanged
+                // catalogue shortcut and ahead of the first byte being asked for, rather than
+                // at the move where the damage is already chosen.
+                if (VersionFolder(code, version) == null)
+                {
+                    Logger.Warning(
+                        "The manifest gives {0} as the app version for the {1} pack, which is not a version this app will make a folder from.",
+                        version, code);
+                    return Fail(code, LanguagePackReasons.Integrity, progress);
+                }
 
                 // A pack that needs a newer app than this one is refused before a byte is
                 // asked for, and by comparing versions rather than text.
@@ -934,6 +968,12 @@ namespace ValheimBakaLoader.Tools
                 if (fonts != null) return Fail(code, fonts, progress);
 
                 WritePackFile(Path.Combine(unpacked, PackFileName), checkedPack.Pack);
+
+                // The last look before the door shuts. Storing the faces and writing pack.json
+                // take long enough for a host to press the button inside them, and a cancel
+                // that arrives in that gap would be told true by Cancel and then stop nothing,
+                // which is the one answer this service is not allowed to give.
+                token.ThrowIfCancellationRequested();
 
                 // From here the cancel would be a lie, so it stops being offered first and the
                 // move happens second.
@@ -1203,6 +1243,13 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         private string StoreFonts(string code, string folder, LanguagePackFile pack)
         {
+            // Every font path in the installed pack.json is worked out again from what is on
+            // disk rather than kept from what the pack said, and the licence list is the one
+            // path that was still being kept. It is rebuilt below out of the .txt files found
+            // beside the faces, so whatever the pack declared goes now: a pack with no faces
+            // has no font licences to name, and a pack with faces gets the list that was found.
+            pack.Licenses = null;
+
             if (pack.Fonts == null || pack.Fonts.Count == 0) return null;
 
             Directory.CreateDirectory(FontsRoot);
@@ -1281,7 +1328,7 @@ namespace ValheimBakaLoader.Tools
                 TryDeleteDirectory(fontsDir);
             }
 
-            if (licences.Count > 0) pack.Licenses = licences;
+            pack.Licenses = licences.Count > 0 ? licences : null;
             return null;
         }
 
@@ -1319,6 +1366,49 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
+        /// The folder a version's pack belongs in, or null when that version could never be a
+        /// folder name. Every caller that composes a path out of a version goes through here.
+        /// <para>
+        /// The version is the manifest's word, which makes it the third source of untrusted
+        /// paths in a pack after the archive's entry names and pack.json's own. It is the one
+        /// that matters most: it names a folder rather than a file, and the folder it names is
+        /// moved aside and then deleted to make room. A version holding a climb would pick any
+        /// folder this process can reach, take it away and leave the pack's files in its place.
+        /// </para>
+        /// <para>
+        /// Two floors, because either one alone reads as enough and is not. The first is the
+        /// shape: a version is the twenty six letters, the ten digits and the four marks a
+        /// version is spelled with, which is the allowlist GetReleaseByTagAsync holds a tag to
+        /// and for the same reason. That holds no separator, so a version cannot name a folder
+        /// further down. The second is where it lands, resolved and refused unless it is
+        /// directly inside this language's folder, which is what the shape alone cannot see:
+        /// ".." is spelled entirely in characters the first floor allows.
+        /// </para>
+        /// </summary>
+        private string VersionFolder(string code, string version)
+        {
+            if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(version)) return null;
+            if (version.Length > MaxVersionChars) return null;
+            if (!version.All(IsVersionChar)) return null;
+
+            try
+            {
+                var languageRoot = Path.GetFullPath(Path.Combine(RootFolder, code));
+                if (!languageRoot.EndsWith(Path.DirectorySeparatorChar))
+                    languageRoot += Path.DirectorySeparatorChar;
+
+                var target = Path.GetFullPath(Path.Combine(languageRoot, version));
+                return target.StartsWith(languageRoot, StringComparison.OrdinalIgnoreCase) ? target : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private static bool IsVersionChar(char c) => IsPlainLetterOrDigit(c) || c is '.' or '-' or '_' or '+';
+
+        /// <summary>
         /// The extension a face keeps in the shared store. The name is still the pack's, so
         /// anything but plain letters and digits is dropped rather than carried into a file
         /// name this app composes: a colon on this filesystem writes a second stream on a file
@@ -1345,10 +1435,24 @@ namespace ValheimBakaLoader.Tools
         /// folder is one volume, so the version either exists whole or does not exist. A folder
         /// already sitting there is moved aside first and deleted afterwards, and a delete that
         /// fails is survivable: the pack works and the boot sweep will get it.
+        /// <para>
+        /// This is the move that deletes, so it works out its own target rather than taking one
+        /// on trust. Both callers have already turned away a version that is not a version, and
+        /// this is the line that would have to be got past for that refusal to matter, so it
+        /// asks the same question again at the point of the damage.
+        /// </para>
         /// </summary>
         private string Place(string code, string version, string source)
         {
-            var target = Path.Combine(RootFolder, code, version);
+            var target = VersionFolder(code, version);
+            if (target == null)
+            {
+                Logger.Error(
+                    "The {0} pack gives {1} as its version, which is not a folder this app will write, so nothing was put in place.",
+                    code, version);
+                return null;
+            }
+
             string aside = null;
 
             try
@@ -1478,6 +1582,23 @@ namespace ValheimBakaLoader.Tools
                 return new Resolution
                 {
                     State = new LanguageManifestState { Ok = false, ErrorId = LanguagePackReasons.NoPack },
+                };
+            }
+
+            // A pack's address is held to https because the address is used exactly as it
+            // stands, and this one is used exactly as it stands too. The manifest is the thing
+            // every other check is derived from: it names the digests, the weights and the
+            // version that becomes a folder name, so it earns the floor it imposes on the packs
+            // it names rather than being the one address that is taken on trust.
+            if (!IsTrustedPackAddress(url))
+            {
+                Logger.Warning(
+                    "The manifest on release {0} is published at an address this app will not fetch from.",
+                    release.TagName);
+
+                return new Resolution
+                {
+                    State = new LanguageManifestState { Ok = false, ErrorId = LanguagePackReasons.Integrity },
                 };
             }
 
@@ -1645,10 +1766,20 @@ namespace ValheimBakaLoader.Tools
             // every face no pack on disk names yet, which is exactly the shape of a run that
             // is halfway through. Housekeeping can wait for the next boot; a download that has
             // its working folder deleted under it cannot.
-            if (IsBusy)
+            //
+            // Standing aside and then taking the folders is one decision, so it is made once,
+            // under the gate. Asking IsBusy and then sweeping is two, and a fetch that starts
+            // between them is a fetch whose working folder is emptied under it. Boot is the
+            // only caller and the quiet fetch after an update is the other thing boot does.
+            lock (Gate)
             {
-                Logger.Information("A language pack is being fetched, so the language folder was left alone.");
-                return 0;
+                if (Current != null || Sweeping)
+                {
+                    Logger.Information("A language pack is being fetched, so the language folder was left alone.");
+                    return 0;
+                }
+
+                Sweeping = true;
             }
 
             var removed = 0;
@@ -1688,6 +1819,12 @@ namespace ValheimBakaLoader.Tools
             {
                 // A sweep is housekeeping. It never gets in the way of the app starting.
                 Logger.Warning("The language folder could not be swept: {0}", e.Message);
+            }
+            finally
+            {
+                // However it ended, the folders are free again. A sweep that left this set
+                // would turn away every fetch for as long as the app is open.
+                lock (Gate) Sweeping = false;
             }
 
             return removed;
