@@ -36,9 +36,43 @@
 // It is counted as out of reach and left alone. It is NOT destroyed: destroying a boss ZDO
 // would leave the world's active-boss counter stuck and drop nothing, and destroying
 // anything else robs the players of the drop they were owed.
+//
+// WHY THE SWEEP ANSWERS BEFORE IT FINISHES
+// The first version ran the whole walk inside the one call that produced the RCON reply.
+// Commander stops waiting for a command at CommandTimeoutMs (4500, under BakaLoader's own
+// five second client give-up) and answers "Error: command timed out (server main thread
+// busy)", but the queued work carries straight on in Update() and does every bit of its
+// job. So the one outcome that command could produce was a LIE: the host reads that it
+// failed, and meanwhile every hostile on the server dies. On a world with several hundred
+// thousand records the walk is not the only thing in that budget either; a save, a zone
+// generation or a queue of earlier commands all spend the same 4500ms.
+//
+// There were two ways out and only one of them is honest.
+//
+// Slicing the walk across frames on its own makes it WORSE. It bounds how long the main
+// thread is held at a time, which is the right thing for the server, but the reply is
+// waiting on wall clock, and spreading the same work over a hundred frames multiplies the
+// wall clock by however long a frame is. A walk that took 400ms in one go and beat the
+// timeout comes back seconds later in slices and does not.
+//
+// So the sweep answers first. Start() resolves everything a typo could get wrong, takes the
+// snapshot, and then runs ONE slice inline: a world small enough to finish inside a few
+// milliseconds still answers with its whole "KillAll complete" line over RCON, which is
+// every world a closed test will ever run on. Anything bigger answers "KillAll started: N
+// candidates" straight away, which is true when it is said, and Pump() carries the walk on
+// at a few milliseconds a frame until the real result line reaches the server log. Only
+// once the reply stopped waiting on the walk was slicing free to do its own job, which is
+// keeping the main thread responsive, and that is why both are here rather than one.
+//
+// The one piece that cannot be sliced is taking the snapshot, because a snapshot taken over
+// several frames is not a snapshot: the index would be free to change under the walk, and
+// enumerating a dictionary that is being written to throws. It is one pass over the world's
+// records and it keeps only the ones inside the scope the host asked for, so what it leaves
+// behind is a few hundred entries rather than a copy of the world.
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
@@ -52,6 +86,15 @@ namespace BakaLoaderKillAll
     /// </summary>
     internal static class KillAllSweep
     {
+        /// <summary>
+        /// How much of a frame one slice of a sweep may spend. The clock is read after each
+        /// candidate rather than before, so a slice always makes at least one candidate's
+        /// worth of progress and a sweep can never stall. It is a floor on progress and not a
+        /// ceiling on time: one candidate whose death spawns a pile of loot takes what it
+        /// takes, and the slice is over as soon as it returns.
+        /// </summary>
+        private const long SliceMilliseconds = 3;
+
         /// <summary>What a prefab is, worked out once and remembered for the session.</summary>
         private struct PrefabFacts
         {
@@ -63,24 +106,81 @@ namespace BakaLoaderKillAll
         private static readonly Dictionary<int, PrefabFacts> Facts = new Dictionary<int, PrefabFacts>();
 
         /// <summary>
-        /// Reused between sweeps so a world with hundreds of thousands of objects does not hand
-        /// the garbage collector a fresh list every time somebody clears the map.
+        /// The candidates of the sweep in flight, and nothing else.
+        /// <para>
+        /// It holds only creature records inside the scope the host asked for, never a copy of
+        /// the whole world: that is what makes "N candidates" a number a host can read, what
+        /// keeps a list that outlives the frame small, and what leaves the sliced half with
+        /// only the expensive work in it.
+        /// </para>
+        /// <para>
+        /// It is non empty only while <see cref="_running"/> is set, and every path that ends
+        /// a sweep clears it in a finally. A throw inside the walk used to leave it holding a
+        /// reference to every matching record for the life of the process.
+        /// </para>
         /// </summary>
         private static readonly List<ZDO> Snapshot = new List<ZDO>();
+
+        /// <summary>The sweep in flight, or null when nothing is running.</summary>
+        private static Run _running;
 
         private static bool _indexProbed;
         private static FieldInfo _indexField;
 
+        /// <summary>One sweep, from the moment its snapshot is taken to its result line.</summary>
+        private sealed class Run
+        {
+            public KillAllScope Scope;
+            public string Subject = "";
+            public long Session;
+
+            /// <summary>How far along <see cref="Snapshot"/> the walk has got.</summary>
+            public int Index;
+
+            /// <summary>How many candidates the snapshot held when it was taken.</summary>
+            public int Matched;
+
+            public int Slain;
+            public int Unreachable;
+            public int Spared;
+            public int UnknownFactions;
+
+            /// <summary>Handed a diagnostic. May be null.</summary>
+            public Action<string> Warn;
+
+            /// <summary>Handed the result line when the sweep outlives its reply. May be null.</summary>
+            public Action<string> Report;
+
+            public int Remaining
+            {
+                get { return Snapshot.Count - Index; }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        //  Starting one
+        // ------------------------------------------------------------------
+
         /// <summary>
-        /// Runs one baka_killall and returns the whole reply. Must be called on the Unity main
-        /// thread: both callers queue the line and drain the queue in Update() for that reason.
+        /// Runs everything a baka_killall can get wrong, takes the snapshot and walks as much
+        /// of it as one slice allows. Returns the whole "KillAll complete" line when the sweep
+        /// finished inside that slice, and the "KillAll started" line when it did not, in
+        /// which case <paramref name="report"/> is handed the result line later by
+        /// <see cref="Pump"/>. Must be called on the Unity main thread: both callers queue the
+        /// line and drain the queue in Update() for that reason.
+        /// <para>
         /// <paramref name="warn"/> may be null; it is only ever handed a diagnostic.
+        /// </para>
         /// </summary>
-        internal static string Run(string[] tokens, Action<string> warn)
+        internal static string Start(string[] tokens, Action<string> warn, Action<string> report)
         {
             if (ZNet.instance == null || ZRoutedRpc.instance == null ||
                 ZNetScene.instance == null || ZDOMan.instance == null)
                 return "Error: server not ready (world still loading)";
+
+            // A second sweep would walk a snapshot the first one is holding, double every
+            // count and strike half the world twice.
+            if (_running != null) return KillAllPlan.AlreadyRunning(_running.Remaining);
 
             var request = KillAllPlan.Parse(tokens);
             if (!request.IsValid) return request.Error;
@@ -119,55 +219,154 @@ namespace BakaLoaderKillAll
                     return KillAllPlan.Reply(0, 0, 0, KillAllNote.PrefabIsNotHostile, subject, 0);
             }
 
-            string error;
-            if (!TryCollect(Snapshot, out error)) return error;
-
-            var session = ZDOMan.GetSessionID();
-            var slain = 0;
-            var unreachable = 0;
-            var spared = 0;
-            var matched = 0;
-            var unknownFactions = 0;
-
-            for (var i = 0; i < Snapshot.Count; i++)
+            // Built BEFORE the snapshot is taken, on purpose. Everything between a successful
+            // collect and _running being set has to be incapable of throwing: a throw in
+            // there would leave a full snapshot behind with no sweep to own it or free it,
+            // which is the very leak the finally below exists to prevent.
+            var run = new Run
             {
-                var zdo = Snapshot[i];
-                if (zdo == null || !zdo.IsValid()) continue;
+                Scope = request.Scope,
+                Subject = subject,
+                Session = ZDOMan.GetSessionID(),
+                Warn = warn,
+                Report = report,
+            };
 
-                var hash = zdo.GetPrefab();
-                if (request.Scope == KillAllScope.OnePrefab && hash != wantedHash) continue;
+            var collected = false;
+            try
+            {
+                string error;
+                if (!Collect(request.Scope, wantedHash, centre, radiusSquared, warn, out error))
+                    return error;
 
-                var facts = FactsFor(hash, warn);
-                if (!facts.IsCharacter) continue;
-
-                if (request.Scope == KillAllScope.NearPlayer &&
-                    (zdo.GetPosition() - centre).sqrMagnitude > radiusSquared) continue;
-
-                matched++;
-
-                // A player ZDO is never asked anything else and never touched. Everything
-                // else is asked whether it was tamed, which is a fact of the creature rather
-                // than of its prefab: a tamed wolf is still a ForestMonsters wolf.
-                var tamed = !facts.IsPlayer && ReadTamed(zdo);
-
-                if (KillAllPlan.ShouldSpare(facts.IsPlayer, tamed, facts.Faction))
-                {
-                    spared++;
-                    if (facts.Faction == KillAllFaction.Unknown) unknownFactions++;
-                    continue;
-                }
-
-                if (Strike(zdo, session, warn)) slain++;
-                else unreachable++;
+                collected = true;
+            }
+            catch (Exception ex)
+            {
+                return "Error: the world's object index could not be read (" + ex.Message +
+                       "), so nothing was touched.";
+            }
+            finally
+            {
+                // A collect that did not finish must not leave records behind it.
+                if (!collected) Snapshot.Clear();
             }
 
-            Snapshot.Clear();
+            run.Matched = Snapshot.Count;
+            _running = run;
 
-            var note = KillAllNote.None;
-            if (request.Scope == KillAllScope.OnePrefab && matched == 0) note = KillAllNote.NoneInWorld;
-            else if (request.Scope == KillAllScope.NearPlayer && slain + unreachable == 0) note = KillAllNote.NoneInRange;
+            // The first slice runs here rather than next frame, so a world small enough to
+            // finish inside it answers with its whole result line instead of a promise. An
+            // empty snapshot lands here too and finishes at once, which is how "No Fenring is
+            // in the world right now" stays a complete answer.
+            var finished = Advance(run);
+            return finished ?? KillAllPlan.Started(run.Matched);
+        }
 
-            return KillAllPlan.Reply(slain, unreachable, spared, note, subject, unknownFactions);
+        /// <summary>
+        /// Carries the sweep in flight forward by one slice, and hands its report the result
+        /// line when it lands. Both plugins call this from Update() every frame; it returns
+        /// immediately when nothing is running.
+        /// </summary>
+        internal static void Pump()
+        {
+            var run = _running;
+            if (run == null) return;
+
+            // Advance clears _running when the sweep ends, so the report is taken first.
+            var report = run.Report;
+
+            var reply = Advance(run);
+            if (reply == null || report == null) return;
+
+            try
+            {
+                report(reply);
+            }
+            catch
+            {
+                // The sweep already happened. Losing the line that says so must not also
+                // throw out of Update(), where Unity would log it on every frame afterwards.
+            }
+        }
+
+        /// <summary>
+        /// One slice of the walk. Returns null while there is more to do, and the line to send
+        /// when the sweep is over, however it ended.
+        /// </summary>
+        private static string Advance(Run run)
+        {
+            var clock = Stopwatch.StartNew();
+            var over = false;
+
+            try
+            {
+                while (run.Index < Snapshot.Count)
+                {
+                    Step(run, Snapshot[run.Index]);
+                    run.Index++;
+
+                    if (clock.ElapsedMilliseconds >= SliceMilliseconds) break;
+                }
+
+                if (run.Index < Snapshot.Count) return null;
+
+                over = true;
+                return KillAllPlan.Reply(run.Slain, run.Unreachable, run.Spared,
+                    NoteFor(run), run.Subject, run.UnknownFactions);
+            }
+            catch (Exception ex)
+            {
+                // Whatever it managed before the throw is real work that really happened, so
+                // it is reported rather than swallowed.
+                over = true;
+                return KillAllPlan.StoppedEarly(run.Slain, run.Unreachable, run.Spared, ex.Message);
+            }
+            finally
+            {
+                // EVERY path that ends a sweep frees the snapshot, the throwing one included.
+                // A list of live records that outlives the sweep keeps every one of them
+                // reachable for the life of the process, and on a big world that is a lot of
+                // memory held for no reason at all.
+                if (over)
+                {
+                    Snapshot.Clear();
+                    _running = null;
+                }
+            }
+        }
+
+        /// <summary>One candidate: spare it, or send it the hit and say whether it landed.</summary>
+        private static void Step(Run run, ZDO zdo)
+        {
+            // A record can die between the snapshot and its turn, which is ordinary: the
+            // sweep's own kills take records out of the world while the walk is still going.
+            if (zdo == null || !zdo.IsValid()) return;
+
+            var facts = FactsFor(zdo.GetPrefab(), run.Warn);
+
+            // A player ZDO is never asked anything else and never touched. Everything else is
+            // asked whether it was tamed, which is a fact of the creature rather than of its
+            // prefab: a tamed wolf is still a ForestMonsters wolf.
+            var tamed = !facts.IsPlayer && ReadTamed(zdo);
+
+            if (KillAllPlan.ShouldSpare(facts.IsPlayer, tamed, facts.Faction))
+            {
+                run.Spared++;
+                if (facts.Faction == KillAllFaction.Unknown) run.UnknownFactions++;
+                return;
+            }
+
+            if (Strike(zdo, run.Session, run.Warn)) run.Slain++;
+            else run.Unreachable++;
+        }
+
+        /// <summary>The one extra sentence the result line carries, when the counts would mislead.</summary>
+        private static KillAllNote NoteFor(Run run)
+        {
+            if (run.Scope == KillAllScope.OnePrefab && run.Matched == 0) return KillAllNote.NoneInWorld;
+            if (run.Scope == KillAllScope.NearPlayer && run.Slain + run.Unreachable == 0) return KillAllNote.NoneInRange;
+            return KillAllNote.None;
         }
 
         // ------------------------------------------------------------------
@@ -175,10 +374,17 @@ namespace BakaLoaderKillAll
         // ------------------------------------------------------------------
 
         /// <summary>
-        /// Every ZDO the server holds, copied into a list of our own before a single one is
-        /// touched. The copy is the point: damaging a creature the server itself owns runs
-        /// the kill inside this same call, and a death can take its object out of the world
-        /// while the walk is still going. A snapshot cannot be invalidated underneath us.
+        /// Every ZDO the server holds that the sweep is actually going to act on, copied into a
+        /// list of our own before a single one is touched. The copy is the point: damaging a
+        /// creature the server itself owns runs the kill inside this same call, and a death can
+        /// take its object out of the world while the walk is still going. A snapshot cannot be
+        /// invalidated underneath us.
+        /// <para>
+        /// The scope is applied HERE rather than in the walk, which is what lets a host be told
+        /// how many candidates a sweep has in front of it before it starts, and what keeps the
+        /// list that outlives the frame down to the creatures in scope rather than every record
+        /// in the world.
+        /// </para>
         /// <para>
         /// ZDOMan keeps that record in a private field, so it is reached by name through
         /// Harmony's AccessTools rather than compiled in. That is deliberate: a name looked
@@ -187,9 +393,10 @@ namespace BakaLoaderKillAll
         /// into a sweep that silently finds nothing.
         /// </para>
         /// </summary>
-        private static bool TryCollect(List<ZDO> into, out string error)
+        private static bool Collect(KillAllScope scope, int wantedHash, Vector3 centre,
+            float radiusSquared, Action<string> warn, out string error)
         {
-            into.Clear();
+            Snapshot.Clear();
 
             if (!_indexProbed)
             {
@@ -214,7 +421,17 @@ namespace BakaLoaderKillAll
             foreach (var value in index.Values)
             {
                 var zdo = value as ZDO;
-                if (zdo != null) into.Add(zdo);
+                if (zdo == null || !zdo.IsValid()) continue;
+
+                var hash = zdo.GetPrefab();
+                if (scope == KillAllScope.OnePrefab && hash != wantedHash) continue;
+
+                if (!FactsFor(hash, warn).IsCharacter) continue;
+
+                if (scope == KillAllScope.NearPlayer &&
+                    (zdo.GetPosition() - centre).sqrMagnitude > radiusSquared) continue;
+
+                Snapshot.Add(zdo);
             }
 
             error = null;
@@ -371,7 +588,19 @@ namespace BakaLoaderKillAll
         //  Looking things up by the name a host typed
         // ------------------------------------------------------------------
 
-        /// <summary>A connected player by name, exact first and then ignoring case.</summary>
+        /// <summary>
+        /// A connected player by name, exact first and then ignoring case.
+        /// <para>
+        /// Both halves require the peer to be READY, which is what the game's own
+        /// ZNet.GetPeerByPlayerName requires of every peer it walks past. The fallback did not,
+        /// and a lookup that answers where the game's own refuses is a lookup that hands back a
+        /// peer the game does not consider to be in the world yet. ZNetPeer.IsReady() is
+        /// m_uid != 0, and m_uid, m_playerName and m_refPos are all written together at the end
+        /// of the PeerInfo handshake: until then m_refPos is Vector3.zero, so a sweep centred on
+        /// such a peer clears a radius around the WORLD ORIGIN rather than around the player the
+        /// host named, and it does it without a word of complaint because a peer was found.
+        /// </para>
+        /// </summary>
         private static ZNetPeer FindPeer(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
@@ -381,7 +610,8 @@ namespace BakaLoaderKillAll
 
             foreach (var p in ZNet.instance.GetPeers())
             {
-                if (p != null && string.Equals(p.m_playerName, name, StringComparison.OrdinalIgnoreCase))
+                if (p != null && p.IsReady() &&
+                    string.Equals(p.m_playerName, name, StringComparison.OrdinalIgnoreCase))
                     return p;
             }
 

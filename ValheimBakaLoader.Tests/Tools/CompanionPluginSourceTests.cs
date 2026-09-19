@@ -522,7 +522,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
             Assert.DoesNotContain("DestroyZDO", code);
             Assert.DoesNotContain(".Destroy(", code);
-            Assert.Contains("unreachable++", code);
+            Assert.Contains("run.Unreachable++", code);
         }
 
         /// <summary>
@@ -587,13 +587,181 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Contains("\" spared (players, pets & allies)\"", plan);
         }
 
-        /// <summary>A rewritten plugin that ships under the old version number is a plugin nobody replaces.</summary>
+        /// <summary>
+        /// A rewritten plugin that ships under the old version number is a plugin nobody
+        /// replaces. Pinned as a FLOOR and not as an exact string, for the reason the UTF-8
+        /// check below already gives: the ZDO sweep took these to 1.4.0 and 1.6.0, the sweep
+        /// that answers before it finishes took them to 1.5.0 and 1.7.0, and an exact pin
+        /// turns every honest bump into a red build while proving nothing an inequality does
+        /// not prove.
+        /// </summary>
         [Theory]
-        [InlineData("Commander", "1.4.0")]
-        [InlineData("KillAll", "1.6.0")]
-        public void KillAll_BothPluginsAnnounceTheirNewVersion(string plugin, string version)
+        [InlineData("Commander", "1.5.0")]
+        [InlineData("KillAll", "1.7.0")]
+        public void KillAll_BothPluginsAnnounceTheirNewVersion(string plugin, string floor)
         {
-            Assert.Contains("PluginVersion = \"" + version + "\"", SourceNamed(plugin));
+            var published = PluginVersionOf(SourceNamed(plugin));
+
+            Assert.True(published >= new Version(floor),
+                plugin + " is published as " + published + ", below the " + floor +
+                " the sweep rewrite shipped in");
+        }
+
+        // ---- the sweep must not outlast the answer it gave ----
+
+        /// <summary>
+        /// THE 4500ms BUG. Commander's DispatchToMainThread stops waiting at CommandTimeoutMs
+        /// and answers "Error: command timed out (server main thread busy)", and it has no way
+        /// to call the queued work back: Update() carries on and finishes the sweep. So the one
+        /// thing a long sweep could tell a host was that it had failed, while every hostile on
+        /// the server died. The walk is in slices with a per frame budget now, and the answer
+        /// goes out as soon as the snapshot is taken instead of waiting for the walk.
+        /// <para>
+        /// Slicing alone would have made it WORSE, which is why both halves have to stay: the
+        /// reply waits on wall clock, and the same work spread over a hundred frames takes a
+        /// hundred frames of wall clock to finish.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void KillAll_TheAnswerGoesOutBeforeTheWalkAndTheWalkIsSliced()
+        {
+            var code = WithoutComments(KillAllSweepSource);
+
+            Assert.Contains("internal static string Start(", code);
+            Assert.Contains("internal static void Pump()", code);
+            Assert.Contains("KillAllPlan.Started(", code);
+            Assert.Contains("KillAllPlan.AlreadyRunning(", code);
+
+            // The budget, and a clock that is actually read against it.
+            Assert.Contains("SliceMilliseconds = ", code);
+            Assert.Contains("clock.ElapsedMilliseconds >= SliceMilliseconds", code);
+
+            // Read AFTER a candidate rather than before one, so a slice always makes at least
+            // one candidate's progress and a sweep can never stall on a slow frame.
+            var step = code.IndexOf("Step(run, Snapshot[run.Index]);", StringComparison.Ordinal);
+            var budget = code.IndexOf("clock.ElapsedMilliseconds >= SliceMilliseconds", StringComparison.Ordinal);
+            Assert.True(step > 0 && budget > step,
+                "the budget is checked before any work is done, so a busy frame stalls the sweep forever");
+        }
+
+        /// <summary>
+        /// The result line is only any use if something drives the rest of the walk. Both
+        /// plugins have to pump it from Update(), and neither may go back to the old call that
+        /// did the whole sweep inline.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("KillAll")]
+        public void KillAll_BothPluginsDriveTheSweepFromUpdate(string plugin)
+        {
+            var code = WithoutComments(SourceNamed(plugin));
+
+            Assert.Contains("KillAllSweep.Start(", code);
+            Assert.Contains("KillAllSweep.Pump();", code);
+            Assert.DoesNotContain("KillAllSweep.Run(", code);
+
+            var update = code.IndexOf("private void Update()", StringComparison.Ordinal);
+            var pump = code.IndexOf("KillAllSweep.Pump();", StringComparison.Ordinal);
+            Assert.True(update > 0 && pump > update,
+                "the pump has to run from Update(), or a sweep that outlived its answer never finishes");
+        }
+
+        /// <summary>
+        /// And Commander's pump has to sit AFTER the drain loop rather than inside it. The
+        /// drain is what the RCON thread is blocked on; pumping a whole sweep inside it would
+        /// hold every other command behind the very timeout this arrangement exists to cure.
+        /// </summary>
+        [Fact]
+        public void Commander_PumpsTheSweepOutsideTheQueueDrain()
+        {
+            var code = WithoutComments(Commander);
+
+            var done = code.IndexOf("cmd.Done.Set();", StringComparison.Ordinal);
+            var pump = code.IndexOf("KillAllSweep.Pump();", StringComparison.Ordinal);
+
+            Assert.True(done > 0, "the command drain is gone");
+            Assert.True(pump > done,
+                "the pump runs before the queued command is released, so the RCON thread waits on the sweep");
+        }
+
+        /// <summary>
+        /// The snapshot is a static list, and a sweep now spans frames, so it outlives the call
+        /// that filled it on purpose. What must never outlive the sweep is the list: a throw
+        /// inside the walk used to leave every record it held reachable for the life of the
+        /// process. Every path that ends a sweep frees it, and it is done in a finally so the
+        /// throwing path is covered by construction rather than by remembering.
+        /// </summary>
+        [Fact]
+        public void KillAll_TheSnapshotIsFreedOnEveryPathThatEndsASweep()
+        {
+            var code = WithoutComments(KillAllSweepSource);
+
+            var advance = code.IndexOf("private static string Advance(Run run)", StringComparison.Ordinal);
+            Assert.True(advance > 0, "the sliced walk is gone");
+
+            var body = code.Substring(advance);
+            var end = body.IndexOf("private static void Step(", StringComparison.Ordinal);
+            Assert.True(end > 0, "could not find the end of the sliced walk");
+            body = body.Substring(0, end);
+
+            var tryAt = body.IndexOf("try", StringComparison.Ordinal);
+            var catchAt = body.IndexOf("catch (Exception", StringComparison.Ordinal);
+            var finallyAt = body.IndexOf("finally", StringComparison.Ordinal);
+
+            Assert.True(tryAt > 0, "the walk no longer runs inside a try");
+            Assert.True(catchAt > tryAt, "a throw inside the walk escapes into Update()");
+            Assert.True(finallyAt > catchAt, "there is no finally to free the snapshot on the throwing path");
+
+            var tail = body.Substring(finallyAt);
+            Assert.Contains("Snapshot.Clear();", tail);
+            Assert.Contains("_running = null;", tail);
+
+            // And nothing frees it anywhere else in the walk, which would be a second rule to
+            // keep in step with this one.
+            Assert.DoesNotContain("Snapshot.Clear();", body.Substring(0, finallyAt));
+
+            // The other way out: a collect that threw part way through must not leave the
+            // records it did copy behind it either.
+            var start = code.IndexOf("internal static string Start(", StringComparison.Ordinal);
+            var collect = code.IndexOf("if (!Collect(", start, StringComparison.Ordinal);
+            var guard = code.IndexOf("if (!collected) Snapshot.Clear();", start, StringComparison.Ordinal);
+            Assert.True(collect > start, "Start no longer takes a snapshot");
+            Assert.True(guard > collect, "a collect that threw leaves its records behind");
+        }
+
+        /// <summary>
+        /// A NAME LOOKUP MUST NOT ANSWER WHERE THE GAME'S OWN REFUSES. Both plugins fall back
+        /// to a case-insensitive walk of ZNet.GetPeers() when the game's exact-spelling lookup
+        /// finds nothing, and neither fallback asked whether the peer was READY, which is the
+        /// one thing ZNet.GetPeerByPlayerName asks of every peer it walks past. IsReady() is
+        /// m_uid != 0, and m_uid, m_playerName and m_refPos are all written together at the end
+        /// of the PeerInfo handshake: until then m_refPos is Vector3.zero, so a kill radius
+        /// lands on the WORLD ORIGIN, and m_uid is 0, which is ZRoutedRpc.Everybody, so a dmg
+        /// or a tp aimed at that peer goes to every client on the server.
+        /// </summary>
+        [Theory]
+        [InlineData("Commander")]
+        [InlineData("Sweep")]
+        public void KillAll_TheCaseInsensitivePeerLookupRefusesAPeerTheGameCallsNotReady(string file)
+        {
+            var code = WithoutComments(SourceNamed(file));
+
+            var at = code.IndexOf("private static ZNetPeer FindPeer(string name)", StringComparison.Ordinal);
+            Assert.True(at > 0, "FindPeer is gone from " + file);
+
+            var body = code.Substring(at, Math.Min(900, code.Length - at));
+
+            Assert.Contains("ZNet.instance.GetPeerByPlayerName(name)", body);
+
+            var walk = body.IndexOf("ZNet.instance.GetPeers()", StringComparison.Ordinal);
+            var ready = body.IndexOf("p.IsReady()", StringComparison.Ordinal);
+            var compare = body.IndexOf("string.Equals(p.m_playerName", StringComparison.Ordinal);
+
+            Assert.True(walk > 0, "the case-insensitive fallback is gone from " + file);
+            Assert.True(compare > walk, "the fallback no longer compares a name");
+            Assert.True(ready > walk && ready < compare,
+                file + " matches a name on a peer the game's own GetPeerByPlayerName would " +
+                "have walked straight past, because it is not ready");
         }
 
         // ---- P11: a trinket is equipment, and equipment is what keeps its quality ----

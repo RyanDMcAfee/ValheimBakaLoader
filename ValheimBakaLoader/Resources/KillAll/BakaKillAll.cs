@@ -1,4 +1,4 @@
-// BakaLoader KillAll v1.6.0 - compiled against SERVER assembly_valheim
+// BakaLoader KillAll v1.7.0 - compiled against SERVER assembly_valheim
 //
 // Registers "baka_killall" as an in-game console command, so a host standing at the
 // server's own console window can clear hostiles without going anywhere near RCON.
@@ -13,6 +13,13 @@
 // was full of monsters. The sweep now walks the world's own object records instead and
 // sends the damage to whoever owns each creature. See BakaKillAllSweep.cs for the whole of
 // it.
+//
+// From 1.7.0 the sweep answers before it finishes. A world small enough to walk inside one
+// slice still prints its whole "KillAll complete" line at once; a bigger one prints
+// "KillAll started: N candidates" and the result follows when the walk lands, because a
+// sweep that outran Commander's RCON timeout used to be reported as a failure while it
+// went on and killed everything. Update() drives the rest of the walk a few milliseconds
+// at a time.
 using System;
 using System.Collections.Concurrent;
 using BepInEx;
@@ -23,7 +30,7 @@ namespace BakaLoaderKillAll
     [BepInPlugin("com.baka.killall", "BakaLoader KillAll", PluginVersion)]
     public class KillAllPlugin : BaseUnityPlugin
     {
-        private const string PluginVersion = "1.6.0";
+        private const string PluginVersion = "1.7.0";
 
         private static ManualLogSource Log;
 
@@ -81,10 +88,18 @@ namespace BakaLoaderKillAll
             PendingSweep sweep;
             while (Pending.TryDequeue(out sweep))
             {
+                // Held in a local of its own so the closure below captures THIS line's
+                // console rather than whatever the loop variable holds when the sweep lands,
+                // which may be several frames later and several commands on.
+                var context = sweep.Context;
+
                 string reply;
                 try
                 {
-                    reply = KillAllSweep.Run(sweep.Tokens, delegate(string message) { Log.LogWarning(message); });
+                    reply = KillAllSweep.Start(
+                        sweep.Tokens,
+                        delegate(string message) { Log.LogWarning(message); },
+                        delegate(string line) { Announce(line, context); });
                 }
                 catch (Exception ex)
                 {
@@ -92,18 +107,30 @@ namespace BakaLoaderKillAll
                     Log.LogError("KillAll failed: " + ex.Message + "\n" + ex.StackTrace);
                 }
 
-                Log.LogInfo(reply);
+                Announce(reply, context);
+            }
 
-                // The console the host typed at, when it is still there to answer to. The
-                // sweep already happened either way, so this can never be what fails it.
-                try
-                {
-                    if (sweep.Context != null) sweep.Context.AddString(reply);
-                }
-                catch (Exception ex)
-                {
-                    Log.LogDebug("Could not print the KillAll reply to the console: " + ex.Message);
-                }
+            // A sweep too big to finish inside its answer carries on here, a few
+            // milliseconds a frame, and announces its result line when it lands.
+            KillAllSweep.Pump();
+        }
+
+        /// <summary>
+        /// Puts a line in the server log, and in the console the host typed at when it is
+        /// still there to answer to. The sweep already happened either way, so neither of
+        /// these can ever be what fails it.
+        /// </summary>
+        private static void Announce(string line, Terminal context)
+        {
+            Log.LogInfo(line);
+
+            try
+            {
+                if (context != null) context.AddString(line);
+            }
+            catch (Exception ex)
+            {
+                Log.LogDebug("Could not print the KillAll reply to the console: " + ex.Message);
             }
         }
 

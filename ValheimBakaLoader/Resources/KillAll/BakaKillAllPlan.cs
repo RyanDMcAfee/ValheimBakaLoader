@@ -224,10 +224,7 @@ namespace BakaLoaderKillAll
         internal static string Reply(int slain, int unreachable, int spared,
             KillAllNote note, string subject, int unknownFactions)
         {
-            var text = new StringBuilder("KillAll complete: ");
-            text.Append(slain).Append(slain == 1 ? " hostile slain, " : " hostiles slain, ");
-            text.Append(unreachable).Append(" out of reach, ");
-            text.Append(spared).Append(" spared (players, pets & allies)");
+            var text = new StringBuilder("KillAll complete: ").Append(Counts(slain, unreachable, spared));
 
             var sentence = NoteSentence(note, subject);
             if (sentence.Length > 0) text.Append(". ").Append(sentence);
@@ -236,6 +233,63 @@ namespace BakaLoaderKillAll
             if (unknown.Length > 0) text.Append(". ").Append(unknown);
 
             return text.ToString();
+        }
+
+        /// <summary>
+        /// The three outcomes, written once and used by both the line a finished sweep sends
+        /// and the line one that fell over sends. Spelling them twice is how the two drift, and
+        /// the drift a host notices first is the one that reads "1 hostiles slain".
+        /// </summary>
+        internal static string Counts(int slain, int unreachable, int spared)
+        {
+            var text = new StringBuilder();
+            text.Append(slain).Append(slain == 1 ? " hostile slain, " : " hostiles slain, ");
+            text.Append(unreachable).Append(" out of reach, ");
+            text.Append(spared).Append(" spared (players, pets & allies)");
+            return text.ToString();
+        }
+
+        /// <summary>
+        /// What a sweep says the moment it starts, when it is too big to finish inside the
+        /// answer.
+        /// <para>
+        /// RCON is why this line exists. BakaLoader's client gives up at five seconds and
+        /// Commander stops waiting at four and a half, and until this was written a sweep that
+        /// ran past that answered "Error: command timed out" while the sweep itself carried on
+        /// and did every bit of its work. A host was told the command had failed when it had
+        /// not. The sweep now answers the moment it knows what it is about to walk, and the
+        /// result line follows in the server log. A candidate is one creature record inside the
+        /// scope the host asked for, which is the number that decides how long the walk takes.
+        /// </para>
+        /// </summary>
+        internal static string Started(int candidates)
+        {
+            return "KillAll started: " + candidates + (candidates == 1 ? " candidate" : " candidates") +
+                   ". The result line follows in the server log when the sweep finishes.";
+        }
+
+        /// <summary>
+        /// The answer to a second baka_killall while the first is still walking. Starting a
+        /// second sweep over the same snapshot would double every count and strike half the
+        /// world twice, so the second command is refused and says how far the first has to go.
+        /// </summary>
+        internal static string AlreadyRunning(int remaining)
+        {
+            return "KillAll is already running: " + remaining +
+                   (remaining == 1 ? " candidate" : " candidates") +
+                   " still to go. Wait for its result line before starting another.";
+        }
+
+        /// <summary>
+        /// What a sweep says when something threw part way through the walk. The counts it had
+        /// reached are real work that really happened, so they are reported rather than thrown
+        /// away, and the line does NOT open with "KillAll complete" because it is not one.
+        /// </summary>
+        internal static string StoppedEarly(int slain, int unreachable, int spared, string fault)
+        {
+            var reason = string.IsNullOrEmpty(fault) ? "no reason given" : fault;
+            return "KillAll stopped early: " + reason + ". Up to that point: " +
+                   Counts(slain, unreachable, spared) + ".";
         }
 
         /// <summary>The sentence for a note, or an empty string when the counts say it all.</summary>

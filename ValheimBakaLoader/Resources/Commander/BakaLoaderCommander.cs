@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.4.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.5.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -73,7 +73,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.4.0";
+        private const string PluginVersion = "1.5.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -403,6 +403,13 @@ namespace BakaLoaderCommander
                     cmd.Done.Set();
                 }
             }
+
+            // A kill-all too big to finish inside its own answer carries on here, a few
+            // milliseconds a frame, and posts its result line to the server log when it
+            // lands. It has to sit outside the drain loop above: the drain is what the RCON
+            // thread is waiting on, and holding it open for the rest of a sweep would put
+            // every other command behind the very timeout this arrangement exists to cure.
+            KillAllSweep.Pump();
         }
 
         private string ExecuteCommand(string text)
@@ -437,6 +444,21 @@ namespace BakaLoaderCommander
             return true;
         }
 
+        /// <summary>
+        /// A connected player by name, exact first and then ignoring case, because the game's
+        /// own lookup hashes the exact spelling.
+        /// <para>
+        /// BOTH halves require the peer to be READY, which is exactly what the game's own
+        /// ZNet.GetPeerByPlayerName requires of every peer it walks past. The fallback did not,
+        /// so it could answer where the game's own lookup refuses, and what it handed back was a
+        /// peer the game does not consider to be in the world yet. ZNetPeer.IsReady() is
+        /// m_uid != 0, and m_uid, m_playerName and m_refPos are all written together at the end
+        /// of the PeerInfo handshake. Until then m_uid is 0, and 0 is ZRoutedRpc.Everybody: a
+        /// dmg or a tp routed at such a peer goes to EVERY CLIENT ON THE SERVER rather than to
+        /// the one the host named. m_refPos is Vector3.zero for the same stretch, which is what
+        /// put a kill radius on the world origin.
+        /// </para>
+        /// </summary>
         private static ZNetPeer FindPeer(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
@@ -444,10 +466,10 @@ namespace BakaLoaderCommander
             var peer = ZNet.instance.GetPeerByPlayerName(name);
             if (peer != null) return peer;
 
-            // Case-insensitive fallback (exact-match API is case-sensitive)
             foreach (var p in ZNet.instance.GetPeers())
             {
-                if (p != null && string.Equals(p.m_playerName, name, StringComparison.OrdinalIgnoreCase))
+                if (p != null && p.IsReady() &&
+                    string.Equals(p.m_playerName, name, StringComparison.OrdinalIgnoreCase))
                     return p;
             }
             return null;
@@ -908,10 +930,22 @@ namespace BakaLoaderCommander
         // none of them on a dedicated one, because creatures around players are
         // instantiated and owned by those players' clients. The sweep walks the world's
         // own object records now and sends the damage to each creature's owner.
+        //
+        // THE ANSWER NEVER WAITS FOR THE WHOLE WALK. DispatchToMainThread gives up at
+        // CommandTimeoutMs and answers "Error: command timed out", and it has no way to
+        // call the work back: Update() goes right on and finishes the sweep. So a sweep
+        // that ran long told the host it had failed while it killed everything on the
+        // server. Start() answers with the whole result line when the walk fits inside one
+        // slice, which is every world a closed test will run on, and with "KillAll started:
+        // N candidates" when it does not. Pump(), at the bottom of Update(), carries the
+        // rest and puts the real "KillAll complete" line in the server log.
 
         private static string CmdKillAll(string[] tokens)
         {
-            return KillAllSweep.Run(tokens, delegate(string message) { Log.LogWarning(message); });
+            return KillAllSweep.Start(
+                tokens,
+                delegate(string message) { Log.LogWarning(message); },
+                delegate(string line) { Log.LogInfo(line); });
         }
 
         // ---- fallback: forward unknown commands to the in-game console --------

@@ -49,9 +49,30 @@ against a running server. Run this checklist on a **closed test server**
 | 20 | `baka_killall near <player> soon` / `baka_killall near <player> 0` | "Error: the radius has to be a number of metres above zero, like 50." Nothing dies |
 | 21 | `baka_killall Boar extra` | The usage line. Nothing dies |
 | 22 | A boss summoned and killed by `baka_killall` | The boss dies **the ordinary way**: it drops its trophy, the power stone lights up, and the world's boss counter moves. Nothing is deleted outright |
+| 23 | **Tame a boar and run `baka_killall` within two seconds** | The boar **survives**. Tamed is read off the server's copy of the world record, and that copy is written by the owning client, so a tame that has only just happened is the one moment the flag might not have arrived yet. A boar that dies here is a replication race, not a faction mistake: report how many seconds it took and whether the taming effect was still playing |
+| 24 | Two `baka_killall` in a row, the second sent before the first answers | The second is refused with "KillAll is already running: N candidates still to go", and the counts in the first one's result line are its own. Two sweeps over one snapshot would double every count and strike half the world twice |
 
 Also test a spawn with a **modded prefab** from the item picker (verifies
 ZNetScene hash lookup against the modded ObjectDB).
+
+### Hostile dvergr are spared too, and that is on purpose
+
+The spare rule reads a creature's faction and whether it was tamed, and the whole `Dverger`
+faction is spared. The game does not make a dvergr hostile by changing its faction: in
+`Character.IsEnemy` a dvergr and a player are not enemies either way round, and the hostile
+ones turn on you through `BaseAI.IsAggravated()`, which is a flag on the live instance and
+not a fact the world record carries. So the **dvergr rogues and mages in a Mistlands
+infested mine survive a sweep**, exactly like the friendly dvergr standing outside it.
+
+That is the deliberate cost of never killing a dvergr ally, and it is the one place the
+command knowingly leaves a hostile standing. Do not report it as a bug on the closed
+server. Naming the prefab does not get round it either: the named form asks the same spare
+rule of the prefab before it starts, so it answers "... is not a hostile creature, so
+KillAll leaves it where it stands" and nothing dies. An infested mine is cleared by hand.
+
+- [ ] Confirm it, so nobody rediscovers it on the live server: stand in an infested mine
+      with the rogues awake, run `baka_killall`, and check they are alive afterwards and
+      counted among the spared.
 
 ## Edge cases
 
@@ -104,9 +125,9 @@ Run this on a closed 1.0 server after the rebuild.
 
 - [ ] Start the server, then read `BepInEx/LogOutput.log` end to end. There must be no
       MissingMethodException and no MissingFieldException anywhere in it.
-- [ ] The same log shows `BakaLoader Commander v1.4.0` and its listening line,
+- [ ] The same log shows `BakaLoader Commander v1.5.0` and its listening line,
       `BakaLoader Spawn Helper v1.2.0 loaded - 'baka_spawn' command registered.` and
-      `BakaLoader KillAll v1.6.0 loaded. 'baka_killall' command registered.`
+      `BakaLoader KillAll v1.7.0 loaded. 'baka_killall' command registered.`
       A missing registration line is the tell that the constructor threw again.
 - [ ] `broadcast center hello` puts the message on a joined player's screen and replies
       "Broadcasting message: hello". This is the one that used to throw, and it threw on
@@ -150,6 +171,40 @@ server:
       reply carries no such sentence.** If it does, Valheim has grown a faction the plugin
       has not met. Those are SPARED on purpose rather than killed, so the sweep is safe but
       incomplete until the new faction is named in `BakaKillAllSweep.Mirror`.
+
+## The sweep no longer outlasts its own answer
+
+Commander stops waiting for a command at 4500ms, under BakaLoader's own five second client
+give-up, and then answers "Error: command timed out (server main thread busy)". It has no
+way to call the work back: `Update()` carries straight on and finishes the sweep. So the
+one thing a long sweep could tell a host was a lie, that it had failed, while every hostile
+on the server died.
+
+The sweep answers first now. It resolves everything a typo could get wrong, takes its
+snapshot, and walks as much of it as three milliseconds allow before it replies:
+
+- A world small enough to finish inside that slice answers with its whole
+  **"KillAll complete: ..."** line, which is what every row of the table above expects and
+  what any closed test world will do.
+- A world too big answers **"KillAll started: N candidates"**, and the real
+  "KillAll complete" line reaches the **BepInEx server log** (and the server console, when
+  the command was typed there) when the walk lands. The rest of the walk runs a few
+  milliseconds a frame, so the server keeps ticking while it happens.
+
+A candidate is one creature record inside the scope that was asked for. It is not the
+number of records in the world: the snapshot keeps only creatures, and only the ones inside
+the named prefab or the radius, so the number a host reads is the number that decides how
+long the sweep takes.
+
+- [ ] "KillAll started" is **not** a failure. Read it once on the closed server if you can
+      make a world big enough, and confirm the "KillAll complete" line turns up in
+      `BepInEx/LogOutput.log` afterwards with counts that add up.
+- [ ] Watch the server tick rate while a sweep runs. It must not freeze. One long frame
+      when the snapshot is taken is expected and cannot be avoided; a stall for the length
+      of the whole walk is a defect.
+- [ ] No sweep ever answers "Error: command timed out" again. If one does, the snapshot
+      pass itself is what ran long, and that is worth a line in the report with the world's
+      size.
 
 ## Sign-off
 

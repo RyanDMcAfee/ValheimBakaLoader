@@ -363,6 +363,13 @@ namespace ValheimBakaLoader.Tests.Tools
                 KillAllPlan.BadRadius,
                 KillAllPlan.UnknownFactionSentence(1),
                 KillAllPlan.UnknownFactionSentence(4),
+                KillAllPlan.Counts(1, 1, 1),
+                KillAllPlan.Started(1),
+                KillAllPlan.Started(9),
+                KillAllPlan.AlreadyRunning(1),
+                KillAllPlan.AlreadyRunning(9),
+                KillAllPlan.StoppedEarly(1, 1, 1, "the index went away"),
+                KillAllPlan.StoppedEarly(0, 0, 0, null),
             };
 
             foreach (KillAllNote note in Enum.GetValues(typeof(KillAllNote)))
@@ -397,6 +404,94 @@ namespace ValheimBakaLoader.Tests.Tools
                 Assert.DoesNotContain("  ", sentence);
                 if (note != KillAllNote.None) Assert.EndsWith(".", sentence, StringComparison.Ordinal);
             }
+        }
+
+        // ------------------------------------------------------------------
+        //  The lines a sweep sends before it has finished
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// THE 4500ms BUG. Commander gives up waiting at CommandTimeoutMs and answers
+        /// "Error: command timed out (server main thread busy)" while Update() carries
+        /// straight on and finishes the sweep, so the one outcome a long sweep could report
+        /// was that it had failed, while every hostile on the server died. The sweep answers
+        /// the moment it knows what it is about to walk now, and the result line follows in
+        /// the server log. These two lines must never be mistaken for one another: only the
+        /// finished one opens with "KillAll complete".
+        /// </summary>
+        [Fact]
+        public void AStartedSweepSaysSoAndSaysHowMuchIsInFrontOfIt()
+        {
+            var line = KillAllPlan.Started(412);
+
+            Assert.StartsWith("KillAll started: 412 candidates", line, StringComparison.Ordinal);
+            Assert.DoesNotContain("KillAll complete", line);
+        }
+
+        [Fact]
+        public void OneCandidateReadsAsOne()
+        {
+            Assert.StartsWith("KillAll started: 1 candidate.", KillAllPlan.Started(1), StringComparison.Ordinal);
+            Assert.DoesNotContain("2 candidate.", KillAllPlan.Started(2));
+        }
+
+        /// <summary>
+        /// A second sweep would walk the snapshot the first one is holding, double every count
+        /// and strike half the world twice, so it is refused and says how far the first has
+        /// left to go rather than silently doing nothing.
+        /// </summary>
+        [Theory]
+        [InlineData(1, "KillAll is already running: 1 candidate still to go.")]
+        [InlineData(412, "KillAll is already running: 412 candidates still to go.")]
+        public void ASecondSweepIsRefusedAndSaysHowFarTheFirstHasToGo(int remaining, string expected)
+        {
+            var line = KillAllPlan.AlreadyRunning(remaining);
+
+            Assert.StartsWith(expected, line, StringComparison.Ordinal);
+            Assert.DoesNotContain("KillAll complete", line);
+        }
+
+        /// <summary>
+        /// A sweep that threw part way through did real work before it fell over, and its
+        /// counts are the only record of what died. They are reported rather than swallowed,
+        /// and the line does not open with "KillAll complete", because nothing completed.
+        /// </summary>
+        [Fact]
+        public void ASweepThatFellOverReportsWhatItManagedAndDoesNotClaimToHaveFinished()
+        {
+            var line = KillAllPlan.StoppedEarly(3, 1, 12, "the world's object index went away");
+
+            Assert.StartsWith("KillAll stopped early: the world's object index went away.",
+                line, StringComparison.Ordinal);
+            Assert.Contains("3 hostiles slain, 1 out of reach, 12 spared (players, pets & allies)", line);
+            Assert.DoesNotContain("KillAll complete", line);
+        }
+
+        /// <summary>An exception with no message must not leave a colon staring at a full stop.</summary>
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        public void ASweepThatFellOverWithNothingToSayStillReadsAsASentence(string fault)
+        {
+            var line = KillAllPlan.StoppedEarly(0, 0, 0, fault);
+
+            Assert.DoesNotContain(": .", line);
+            Assert.DoesNotContain("  ", line);
+            Assert.EndsWith(".", line, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// The three counts are written once and used by both lines. Spelling them twice is how
+        /// the two drift, and the drift a host notices first reads "1 hostiles slain".
+        /// </summary>
+        [Fact]
+        public void BothLinesCountTheSameWay()
+        {
+            var counts = KillAllPlan.Counts(1, 0, 5);
+
+            Assert.Equal("1 hostile slain, 0 out of reach, 5 spared (players, pets & allies)", counts);
+            Assert.Contains(counts, KillAllPlan.Reply(1, 0, 5, KillAllNote.None, "", 0));
+            Assert.Contains(counts, KillAllPlan.StoppedEarly(1, 0, 5, "something gave way"));
         }
     }
 }
