@@ -9,6 +9,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -1028,6 +1029,73 @@ namespace ValheimBakaLoader.Tests.Tools
             await service.ListAsync();
 
             Assert.True(handler.Requests.Count > asked);
+        }
+
+        /// <summary>
+        /// The held copy keeps the tag the release answered with, and the next question
+        /// outside the window carries that tag rather than asking for the whole file again.
+        /// A manifest changes on release day and on no other day, unauthenticated calls are
+        /// counted per address, and this app sits on a server box for weeks, so the ordinary
+        /// answer to that question is "nothing has changed" and it should cost nothing.
+        /// </summary>
+        [Fact]
+        public async Task A_held_manifest_is_asked_about_with_the_tag_it_came_with()
+        {
+            const string Tag = "\"7f3c-manifest\"";
+
+            var zip = PackZip("ja", AppVersion, 7);
+            var manifest = ManifestJson(Entry("ja", JaPackUrl, zip, 7));
+
+            var conditional = new List<string>();
+            var (service, handler) = Build(request =>
+            {
+                var url = request.RequestUri?.ToString() ?? "";
+                if (url == TagsUrl) return Json(ReleaseJson());
+                if (url == ManifestUrl)
+                {
+                    var asked = request.Headers.IfNoneMatch.FirstOrDefault()?.ToString();
+                    if (asked != null)
+                    {
+                        conditional.Add(asked);
+                        return new HttpResponseMessage(HttpStatusCode.NotModified);
+                    }
+
+                    var answer = Json(manifest);
+                    answer.Headers.ETag = new EntityTagHeaderValue(Tag);
+                    return answer;
+                }
+
+                return Missing();
+            });
+
+            var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+            service.UtcNow = () => now;
+
+            var first = await service.ListAsync();
+
+            Assert.True(first.Manifest.Ok);
+            Assert.False(first.Manifest.FromCache);
+            // Held under its own key, rather than happening to appear somewhere in the file.
+            var held = JObject.Parse(File.ReadAllText(Path.Combine(Root, "manifest-cache.json")));
+            Assert.Equal(Tag, (string)held["etag"]);
+
+            // Past the window, so the release page is asked again, and this is the question
+            // it is asked with.
+            now = now.AddHours(7);
+            var second = await service.ListAsync();
+
+            Assert.Equal(new[] { Tag }, conditional);
+
+            // "Nothing has changed" is an answer rather than a failure: the menu still carries
+            // everything the manifest said the first time, and no pack was fetched to get it.
+            Assert.True(second.Manifest.Ok);
+            Assert.True(second.Manifest.FromCache);
+            Assert.Equal(now, second.Manifest.CheckedUtc);
+
+            var japanese = second.Languages.Single(l => l.Code == "ja");
+            Assert.True(japanese.Available);
+            Assert.Equal(zip.Length, japanese.Bytes);
+            Assert.DoesNotContain(JaPackUrl, handler.Requests);
         }
 
         [Fact]

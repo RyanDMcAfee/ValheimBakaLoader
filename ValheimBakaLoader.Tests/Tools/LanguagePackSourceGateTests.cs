@@ -128,6 +128,27 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         /// <summary>
+        /// One service for the whole app, registered once.
+        /// <para>
+        /// The latch that keeps a quiet post-update fetch from colliding with a host who has
+        /// just picked a language lives in the service, and so does the event every open
+        /// window follows. A window is transient and there is one per profile, so registering
+        /// the service the same way would hand each window its own latch and its own silence:
+        /// two downloads at once, and a language that changes in one window only. It compiles,
+        /// every other test passes, and nothing at all says so.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_service_is_registered_once_for_the_whole_app()
+        {
+            var program = AppSourceTree.Files()["Program.cs"];
+
+            Assert.Contains("services.AddSingleton<ILanguagePackService, LanguagePackService>();", program);
+            Assert.DoesNotContain("AddTransient<ILanguagePackService", program);
+            Assert.DoesNotContain("AddScoped<ILanguagePackService", program);
+        }
+
+        /// <summary>
         /// Where the packs live is one constant in one place. A second spelling of that path
         /// is how a folder the page serves and a folder the service writes drift apart.
         /// </summary>
