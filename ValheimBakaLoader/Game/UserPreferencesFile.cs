@@ -35,6 +35,12 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("plainTerminology")] public bool? PlainTerminology { get; set; }
         [JsonProperty("setupCompleted")] public bool? SetupCompleted { get; set; }
 
+        // -- Language --
+        // The interface language, and the language of the words players read. See
+        // UserPreferences.Language and UserPreferences.PlayerMessageLanguage.
+        [JsonProperty("language")] public string Language { get; set; }
+        [JsonProperty("playerMessageLanguage")] public string PlayerMessageLanguage { get; set; }
+
         // -- Window --
         // "WIDTHxHEIGHT" in device-independent pixels (96 dpi); see UserPreferences.WindowBounds.
         [JsonProperty("windowBounds")] public string WindowBounds { get; set; }

@@ -25,11 +25,24 @@ namespace ValheimBakaLoader.Tools
         /// Compares a version string against the running build.
         /// 1 = newer than this build, 0 = same, -1 = older, -2 = unparseable.
         /// </summary>
-        public static int CompareVersion(string version)
+        public static int CompareVersion(string version) => CompareVersion(version, GetApplicationVersion());
+
+        /// <summary>
+        /// Compares two version strings the same way, without either of them having to be the
+        /// running build. 1 = <paramref name="version"/> is newer, 0 = the same, -1 = older,
+        /// -2 = one of them could not be read.
+        /// <para>
+        /// A language pack names the oldest app it will install into, and the version it is
+        /// held against is injectable so the suite can prove the refusal without shipping a
+        /// build for every case. Both sides are parsed rather than compared as text, because
+        /// "1.10.0" sorts before "1.9.0" as text and after it as a version.
+        /// </para>
+        /// </summary>
+        public static int CompareVersion(string version, string against)
         {
             try
             {
-                var mine = SemVersion.Parse(GetApplicationVersion(), SemVersionStyles.Any);
+                var mine = SemVersion.Parse(against, SemVersionStyles.Any);
                 var theirs = SemVersion.Parse(version, SemVersionStyles.Any);
                 return SemVersion.CompareSortOrder(theirs, mine);
             }

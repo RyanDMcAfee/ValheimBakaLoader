@@ -19,7 +19,7 @@ namespace ValheimBakaLoader.Tools
         [JsonProperty("t")]
         public DateTime TimeUtc { get; set; }
 
-        /// <summary>start | stop | crash | join | leave | death | modup | modin</summary>
+        /// <summary>start | stop | crash | join | leave | death | modup | modin | lang</summary>
         [JsonProperty("k")]
         public string Kind { get; set; }
 

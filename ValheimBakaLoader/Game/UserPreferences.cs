@@ -61,6 +61,20 @@ namespace ValheimBakaLoader.Game
         // Swaps the Norse-lore UI terminology for plain English (off by default).
         public bool PlainTerminology { get; set; }
 
+        // The language the interface is shown in: "en", or the code of an installed pack
+        // ("ru", "ja", "zh-Hans", "zh-Hant"). English ships inside the app, so the default
+        // needs nothing on disk. A saved code whose pack is missing is left exactly as it is:
+        // the app opens in English and the globe menu offers the download, so a host who
+        // reconnects gets their language back without picking it again.
+        public string Language { get; set; } = "en";
+
+        // The language of the words the server sends to players: the restart countdown, kick
+        // reasons, broadcasts and Discord posts. "same" follows the interface language, "en"
+        // pins it to English, and a language code pins it to that language. It is separate
+        // from Language because the host and the people on their server are not always
+        // reading the same one.
+        public string PlayerMessageLanguage { get; set; } = "same";
+
         // True once the first-launch setup wizard has been finished (or skipped).
         public bool SetupCompleted { get; set; }
 
@@ -130,6 +144,8 @@ namespace ValheimBakaLoader.Game
                 EnablePasswordValidation = file.EnablePasswordValidation ?? defaults.EnablePasswordValidation,
                 DarkMode = file.DarkMode ?? defaults.DarkMode,
                 PlainTerminology = file.PlainTerminology ?? defaults.PlainTerminology,
+                Language = file.Language ?? defaults.Language,
+                PlayerMessageLanguage = file.PlayerMessageLanguage ?? defaults.PlayerMessageLanguage,
                 SetupCompleted = file.SetupCompleted ?? defaults.SetupCompleted,
                 WindowBounds = file.WindowBounds ?? defaults.WindowBounds,
                 WindowMaximized = file.WindowMaximized ?? defaults.WindowMaximized,
@@ -179,6 +195,8 @@ namespace ValheimBakaLoader.Game
             EnablePasswordValidation = EnablePasswordValidation,
             DarkMode = DarkMode,
             PlainTerminology = PlainTerminology,
+            Language = Language,
+            PlayerMessageLanguage = PlayerMessageLanguage,
             SetupCompleted = SetupCompleted,
             WindowBounds = WindowBounds,
             WindowMaximized = WindowMaximized,
