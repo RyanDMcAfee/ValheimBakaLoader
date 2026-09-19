@@ -477,6 +477,12 @@ namespace ValheimBakaLoader.Tests.Forms
             public StubGitHub(GitHubRelease release) => Release = release;
 
             public Task<GitHubRelease> GetLatestReleaseAsync() => Task.FromResult(Release);
+
+            public Task<GitHubRelease[]> GetReleasesAsync() =>
+                Task.FromResult(Release == null ? System.Array.Empty<GitHubRelease>() : new[] { Release });
+
+            public Task<GitHubRelease> GetReleaseByTagAsync(string tag) =>
+                Task.FromResult(Release?.TagName == tag ? Release : null);
         }
     }
 }

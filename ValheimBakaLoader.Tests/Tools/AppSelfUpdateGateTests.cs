@@ -223,12 +223,24 @@ namespace ValheimBakaLoader.Tests.Tools
             public StubGitHub(GitHubRelease release) => Release = release;
 
             public Task<GitHubRelease> GetLatestReleaseAsync() => Task.FromResult(Release);
+
+            public Task<GitHubRelease[]> GetReleasesAsync() =>
+                Task.FromResult(Release == null ? System.Array.Empty<GitHubRelease>() : new[] { Release });
+
+            public Task<GitHubRelease> GetReleaseByTagAsync(string tag) =>
+                Task.FromResult(Release?.TagName == tag ? Release : null);
         }
 
         /// <summary>A machine with no way out: the client throws rather than answering.</summary>
         private sealed class ThrowingGitHub : IGitHubClient
         {
             public Task<GitHubRelease> GetLatestReleaseAsync()
+                => throw new System.Net.Http.HttpRequestException("no such host is known");
+
+            public Task<GitHubRelease[]> GetReleasesAsync()
+                => throw new System.Net.Http.HttpRequestException("no such host is known");
+
+            public Task<GitHubRelease> GetReleaseByTagAsync(string tag)
                 => throw new System.Net.Http.HttpRequestException("no such host is known");
         }
 
@@ -237,6 +249,18 @@ namespace ValheimBakaLoader.Tests.Tools
             public int Calls { get; private set; }
 
             public Task<GitHubRelease> GetLatestReleaseAsync()
+            {
+                Calls++;
+                return Task.FromResult<GitHubRelease>(null);
+            }
+
+            public Task<GitHubRelease[]> GetReleasesAsync()
+            {
+                Calls++;
+                return Task.FromResult<GitHubRelease[]>(null);
+            }
+
+            public Task<GitHubRelease> GetReleaseByTagAsync(string tag)
             {
                 Calls++;
                 return Task.FromResult<GitHubRelease>(null);

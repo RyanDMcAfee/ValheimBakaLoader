@@ -102,6 +102,11 @@ namespace ValheimBakaLoader
             services.AddSingleton<IHeartbeatService, HeartbeatService>();
             services.AddSingleton<IAnalyticsService, AnalyticsService>();
             services.AddSingleton<ISoftwareUpdateProvider, SoftwareUpdateProvider>();
+
+            // One language pack download at a time, across every window: the service owns that
+            // latch, so a quiet post-update fetch with no page involved cannot collide with a
+            // host who just picked a language from the globe menu.
+            services.AddSingleton<ILanguagePackService, LanguagePackService>();
             services.AddSingleton<IRemoteApiClient, RemoteApiClient>();
             services.AddSingleton<IDiscordWebhookService, DiscordWebhookService>();
             services.AddSingleton<IDiscordStatusService, DiscordStatusService>();

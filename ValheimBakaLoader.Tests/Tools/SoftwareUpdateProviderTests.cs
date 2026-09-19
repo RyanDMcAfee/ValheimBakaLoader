@@ -186,6 +186,12 @@ namespace ValheimBakaLoader.Tests.Tools
             public StubGitHub(GitHubRelease release) => Release = release;
 
             public Task<GitHubRelease> GetLatestReleaseAsync() => Task.FromResult(Release);
+
+            public Task<GitHubRelease[]> GetReleasesAsync() =>
+                Task.FromResult(Release == null ? System.Array.Empty<GitHubRelease>() : new[] { Release });
+
+            public Task<GitHubRelease> GetReleaseByTagAsync(string tag) =>
+                Task.FromResult(Release?.TagName == tag ? Release : null);
         }
 
         /// <summary>The same stub again, with a connection that comes and goes.</summary>
@@ -201,6 +207,16 @@ namespace ValheimBakaLoader.Tests.Tools
                 => Throws
                     ? throw new System.Net.Http.HttpRequestException("no such host is known")
                     : Task.FromResult(Release);
+
+            public Task<GitHubRelease[]> GetReleasesAsync()
+                => Throws
+                    ? throw new System.Net.Http.HttpRequestException("no such host is known")
+                    : Task.FromResult(Release == null ? System.Array.Empty<GitHubRelease>() : new[] { Release });
+
+            public Task<GitHubRelease> GetReleaseByTagAsync(string tag)
+                => Throws
+                    ? throw new System.Net.Http.HttpRequestException("no such host is known")
+                    : Task.FromResult(Release?.TagName == tag ? Release : null);
         }
 
         /// <summary>The same stub, with the release swapped between checks the way GitHub does.</summary>
@@ -211,6 +227,12 @@ namespace ValheimBakaLoader.Tests.Tools
             public GitHubRelease Release { get; set; }
 
             public Task<GitHubRelease> GetLatestReleaseAsync() => Task.FromResult(Release);
+
+            public Task<GitHubRelease[]> GetReleasesAsync() =>
+                Task.FromResult(Release == null ? System.Array.Empty<GitHubRelease>() : new[] { Release });
+
+            public Task<GitHubRelease> GetReleaseByTagAsync(string tag) =>
+                Task.FromResult(Release?.TagName == tag ? Release : null);
         }
     }
 }
