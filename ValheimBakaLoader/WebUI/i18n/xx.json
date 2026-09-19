@@ -4709,6 +4709,54 @@
     "atlas.wx.biome.ocean": {
       "translation": "[Ẋ Ocean Ẋ] ẊẊ"
     },
+    "atlas.compass.n": {
+      "translation": "[Ẋ N Ẋ] Ẋ"
+    },
+    "atlas.compass.nne": {
+      "translation": "[Ẋ NNE Ẋ] Ẋ"
+    },
+    "atlas.compass.ne": {
+      "translation": "[Ẋ NE Ẋ] Ẋ"
+    },
+    "atlas.compass.ene": {
+      "translation": "[Ẋ ENE Ẋ] Ẋ"
+    },
+    "atlas.compass.e": {
+      "translation": "[Ẋ E Ẋ] Ẋ"
+    },
+    "atlas.compass.ese": {
+      "translation": "[Ẋ ESE Ẋ] Ẋ"
+    },
+    "atlas.compass.se": {
+      "translation": "[Ẋ SE Ẋ] Ẋ"
+    },
+    "atlas.compass.sse": {
+      "translation": "[Ẋ SSE Ẋ] Ẋ"
+    },
+    "atlas.compass.s": {
+      "translation": "[Ẋ S Ẋ] Ẋ"
+    },
+    "atlas.compass.ssw": {
+      "translation": "[Ẋ SSW Ẋ] Ẋ"
+    },
+    "atlas.compass.sw": {
+      "translation": "[Ẋ SW Ẋ] Ẋ"
+    },
+    "atlas.compass.wsw": {
+      "translation": "[Ẋ WSW Ẋ] Ẋ"
+    },
+    "atlas.compass.w": {
+      "translation": "[Ẋ W Ẋ] Ẋ"
+    },
+    "atlas.compass.wnw": {
+      "translation": "[Ẋ WNW Ẋ] Ẋ"
+    },
+    "atlas.compass.nw": {
+      "translation": "[Ẋ NW Ẋ] Ẋ"
+    },
+    "atlas.compass.nnw": {
+      "translation": "[Ẋ NNW Ẋ] Ẋ"
+    },
     "world.wg.combat.label": {
       "translation": "[Ẋ Combat Ẋ] ẊẊ"
     },

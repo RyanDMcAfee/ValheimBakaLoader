@@ -2599,10 +2599,20 @@ namespace ValheimBakaLoader.Game
 
             // Group 2 is the session-scoped ZDOID; group 3 trails it and has no known use.
             // A ZDOID of "0:0" means the character just DIED (the game clears their id),
-            // not that they spawned - surface that as a death instead.
+            // not that they spawned: surface that as a death and STOP there.
+            //
+            // Falling through was the bug. A death went on to SetPlayerOnline with the
+            // cleared id, so the record was re-marked online carrying ZdoId "0", which is
+            // the id of nobody. Anyone still connecting was flipped to Online by a line
+            // that says the opposite, and every later lookup by zdo (Closing socket, the
+            // abandoned-zdo line) then matched a player whose id the game had thrown away.
+            // The player is already online at this point anyway: the game cannot clear an
+            // id it never handed out, so the spawn line that DID carry the real id has
+            // been through here before this one.
             if (match.Groups[2].Value == "0" && match.Groups[3].Value == "0")
             {
                 PlayerDied?.Invoke(this, characterName);
+                return;
             }
 
             PlayerDataRepository.SetPlayerOnline(characterName, match.Groups[2].Value, ServerKey);

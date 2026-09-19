@@ -4125,10 +4125,11 @@ const modalBg=$("#modalBg");
    A flow that reads before it draws reads AGAIN when this fires. Every one of them is
    a read, so that costs a round trip and nothing else; a read that fails closes the
    dialog with the same toast it would have shown the first time.
-   The spawn picker is the one that loses something real: it reopens with the player it
-   was aimed at and an empty search, because the item it had picked lived in the
-   closure that is being replaced. A language switch is a deliberate act and a rare
-   one, and a dialog frozen in the language before it would be worse. */
+   The spawn picker used to be the one that lost something real: it reopened with the
+   player it was aimed at and nothing else, because the search text and the item it had
+   picked lived in the closure that is being replaced. They live beside the rebuilder
+   now, the way promptModal keeps what was typed, so the switch costs it the same round
+   trip it costs everything else and nothing more. */
 let MODAL_REDRAW=null;
 /* True while a dialog is on screen. */
 function modalIsOpen(){return modalBg.classList.contains("open");}
@@ -6187,77 +6188,118 @@ async function doBan(p,unban,tgt){
 /* spawn-item picker (items.search) */
 function openSpawnModal(p){
   const tgt=playerTarget(p);
-  const m=modalOpen(
-    `<div class="mtitle">${esc(T("vikings.spawn.title",{name:tgt}))}</div>`+
-    `<input type="text" id="spQ" placeholder="${esc(T("vikings.spawn.search.placeholder"))}" spellcheck="false" autocomplete="off">`+
-    `<div class="pick-list" id="spList"></div>`+
-    `<div class="mrow"><label>${esc(T("vikings.spawn.amount.label"))}</label><input type="number" id="spAmt" value="1" min="1" max="9999">`+
-    `<label id="spLqLbl">${esc(T("vikings.spawn.level.label"))}</label><input type="number" id="spLq" value="0" min="0" max="5" disabled></div>`+
-    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk" disabled>${esc(T("vikings.spawn.ok"))}</button></div>`,()=>openSpawnModal(p));
-  const list=m.querySelector("#spList"), q=m.querySelector("#spQ"),
-        amt=m.querySelector("#spAmt"), lq=m.querySelector("#spLq"),
-        lqLbl=m.querySelector("#spLqLbl"), okB=m.querySelector("#mOk");
-  let sel=null, searchSeq=0;
-  async function search(){
-    const my=++searchSeq;
-    const r=await rpc("items.search",{query:q.value.trim(),limit:100});
-    if(r===FAIL||my!==searchSeq) return;
-    const res=r.results||[];
-    list.innerHTML=res.map((it,i)=>
-      `<div class="pick-item" data-i="${i}"><span>${esc(it.Label)}</span><span class="pk">${esc(it.category||"")}</span><span class="pm">${esc(it.PrefabName)}</span></div>`
-    ).join("")||`<div class="pick-item" style="opacity:.5;cursor:default">${esc(T("vikings.spawn.no_match"))}</div>`;
-    list._res=res;
-    sel=null; okB.disabled=true;
-  }
-  q.addEventListener("input",()=>{clearTimeout(q._t);q._t=setTimeout(search,150);});
-  list.addEventListener("click",e=>{
-    const el=e.target.closest(".pick-item[data-i]"); if(!el) return;
-    list.querySelectorAll(".pick-item").forEach(x=>x.classList.remove("sel"));
-    el.classList.add("sel");
-    sel=list._res[+el.dataset.i];
-    okB.disabled=false;
-    const hasLq=!!(sel.HasLevel||sel.HasQuality);
-    lq.disabled=!hasLq;
-    lqLbl.textContent=sel.HasLevel?T("vikings.spawn.level.label"):T("vikings.spawn.quality.label");
-    lq.max=sel.HasLevel?"2":"5";
-    if(!hasLq) lq.value=0;
-    else if(+lq.value>+lq.max) lq.value=lq.max;
-  });
-  okB.addEventListener("click",async()=>{
-    if(!sel) return;
-    const amount=Math.min(9999,Math.max(1,parseInt(amt.value,10)||1));
-    const levelOrQuality=lq.disabled?0:Math.max(0,parseInt(lq.value,10)||0);
-    const item=sel;
-    modalClose();
-    const r=await rpc("players.spawn",{playerName:tgt,prefab:item.PrefabName,amount,levelOrQuality});
-    if(r===FAIL) return;
-    /* The server answers every spawn with a line, a refusal as readily as a success, so the
-       line is what decides and what gets shown. A bare false is the older shape of this
-       answer and still means the same thing. */
-    const said=(r&&typeof r==="object"&&r.message)?String(r.message):"";
-    if(r===false||(r&&typeof r==="object"&&r.ok===false)){
-      toast("ᚦ "+(said?T("vikings.spawn.failed.toast",{detail:said}):T("vikings.spawn.failed.nodetail.toast")));
-      logLine("err","[BakaLoader] spawn failed · "+(said||"no reply from the server"));
-      return;
+  /* Everything the picker is holding lives OUT HERE, where the rebuilder can read it,
+     the way promptModal keeps the name that was typed. It used to live in the closure
+     the rebuilder replaces, so a language switch reopened the dialog aimed at the right
+     viking and holding nothing else: the search text gone, the item unpicked, the
+     amount back at one. Finding an item again is the expensive half of this dialog, and
+     a switch is a deliberate act nobody performs to clear a form.
+     The picked item is held as the row itself and matched back by PrefabName after each
+     search, because the list is fetched again on every redraw and the objects that come
+     back are new ones. */
+  let query="", picked=null, amountText="1", gradeText="0", searchSeq=0;
+  const again=()=>{
+    const m=modalOpen(
+      `<div class="mtitle">${esc(T("vikings.spawn.title",{name:tgt}))}</div>`+
+      `<input type="text" id="spQ" placeholder="${esc(T("vikings.spawn.search.placeholder"))}" spellcheck="false" autocomplete="off">`+
+      `<div class="pick-list" id="spList"></div>`+
+      `<div class="mrow"><label>${esc(T("vikings.spawn.amount.label"))}</label><input type="number" id="spAmt" value="1" min="1" max="9999">`+
+      `<label id="spLqLbl">${esc(T("vikings.spawn.level.label"))}</label><input type="number" id="spLq" value="0" min="0" max="5" disabled></div>`+
+      `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk" disabled>${esc(T("vikings.spawn.ok"))}</button></div>`,
+      again);
+    const list=m.querySelector("#spList"), q=m.querySelector("#spQ"),
+          amt=m.querySelector("#spAmt"), lq=m.querySelector("#spLq"),
+          lqLbl=m.querySelector("#spLqLbl"), okB=m.querySelector("#mOk");
+    /* The three boxes, put back before anything is wired: the markup carries the empty
+       dialog's values and this is the state the host left it in. */
+    q.value=query; amt.value=amountText; lq.value=gradeText;
+    /* The grade box and the button, gated on whatever is picked. One piece of code for
+       both roads into this state - a click, and a redraw - so the two cannot drift. */
+    const gate=()=>{
+      okB.disabled=!picked;
+      const hasLq=!!(picked&&(picked.HasLevel||picked.HasQuality));
+      lq.disabled=!hasLq;
+      if(picked) lqLbl.textContent=picked.HasLevel?T("vikings.spawn.level.label"):T("vikings.spawn.quality.label");
+      lq.max=picked&&picked.HasLevel?"2":"5";
+      if(!hasLq) lq.value=0;
+      else if(+lq.value>+lq.max) lq.value=lq.max;
+      gradeText=lq.value;
+    };
+    /* Once now, so a redraw that still holds a picked item shows a live button and an
+       open grade box for the whole of the round trip the list below costs, rather than
+       a dialog that looks like it has forgotten and then remembers. */
+    gate();
+    /* Marks the row the picked item sits on in the list that is on screen now. An item
+       that is not in this list any more (the host narrowed the search past it) is no
+       longer picked, which is what the list used to do to EVERY search. */
+    const markPicked=()=>{
+      const res=list._res||[];
+      const at=picked?res.findIndex(it=>it&&it.PrefabName===picked.PrefabName):-1;
+      picked=at<0?null:res[at];
+      list.querySelectorAll(".pick-item").forEach(x=>x.classList.remove("sel"));
+      if(at>=0){
+        const row=list.querySelector(`.pick-item[data-i="${at}"]`);
+        if(row) row.classList.add("sel");
+      }
+      gate();
+    };
+    async function search(){
+      const my=++searchSeq;
+      const r=await rpc("items.search",{query:query.trim(),limit:100});
+      if(r===FAIL||my!==searchSeq) return;
+      const res=r.results||[];
+      list.innerHTML=res.map((it,i)=>
+        `<div class="pick-item" data-i="${i}"><span>${esc(it.Label)}</span><span class="pk">${esc(it.category||"")}</span><span class="pm">${esc(it.PrefabName)}</span></div>`
+      ).join("")||`<div class="pick-item" style="opacity:.5;cursor:default">${esc(T("vikings.spawn.no_match"))}</div>`;
+      list._res=res;
+      markPicked();
     }
-    /* The same box means star level on a creature and quality on an item, so the sentence
-       says which one rather than gluing a bare word to a number. A spawn with no grade at
-       all is its own key, so nothing has to word an empty tail. */
-    const done=levelOrQuality>0
-      ?(item.HasLevel
-        ?T("vikings.spawn.done.level.toast",{count:amount,item:item.Label,name:tgt,grade:levelOrQuality})
-        :T("vikings.spawn.done.quality.toast",{count:amount,item:item.Label,name:tgt,grade:levelOrQuality}))
-      :T("vikings.spawn.done.toast",{count:amount,item:item.Label,name:tgt});
-    /* The server's own line already names the stack count and the quality it settled on,
-       which is more than the picker knows, so it wins when there is one. */
-    toast("ᛟ "+(said||done));
-    /* The saga stays English, so it keeps its own plain tail rather than the worded one. */
-    const gradeLog=levelOrQuality>0?" · "+(item.HasLevel?"level":"quality")+" "+levelOrQuality:"";
-    logLine("cmd","> spawn "+item.PrefabName+" ×"+amount+gradeLog+" @ "+tgt+(said?" · "+said:""));
-  });
-  m.querySelector("#mCancel").addEventListener("click",modalClose);
-  setTimeout(()=>q.focus(),30);
-  search();
+    q.addEventListener("input",()=>{query=q.value;clearTimeout(q._t);q._t=setTimeout(search,150);});
+    amt.addEventListener("input",()=>{amountText=amt.value;});
+    lq.addEventListener("input",()=>{gradeText=lq.value;});
+    list.addEventListener("click",e=>{
+      const el=e.target.closest(".pick-item[data-i]"); if(!el) return;
+      picked=(list._res||[])[+el.dataset.i]||null;
+      markPicked();
+    });
+    okB.addEventListener("click",async()=>{
+      if(!picked) return;
+      const amount=Math.min(9999,Math.max(1,parseInt(amt.value,10)||1));
+      const levelOrQuality=lq.disabled?0:Math.max(0,parseInt(lq.value,10)||0);
+      const item=picked;
+      modalClose();
+      const r=await rpc("players.spawn",{playerName:tgt,prefab:item.PrefabName,amount,levelOrQuality});
+      if(r===FAIL) return;
+      /* The server answers every spawn with a line, a refusal as readily as a success, so the
+         line is what decides and what gets shown. A bare false is the older shape of this
+         answer and still means the same thing. */
+      const said=(r&&typeof r==="object"&&r.message)?String(r.message):"";
+      if(r===false||(r&&typeof r==="object"&&r.ok===false)){
+        toast("ᚦ "+(said?T("vikings.spawn.failed.toast",{detail:said}):T("vikings.spawn.failed.nodetail.toast")));
+        logLine("err","[BakaLoader] spawn failed · "+(said||"no reply from the server"));
+        return;
+      }
+      /* The same box means star level on a creature and quality on an item, so the sentence
+         says which one rather than gluing a bare word to a number. A spawn with no grade at
+         all is its own key, so nothing has to word an empty tail. */
+      const done=levelOrQuality>0
+        ?(item.HasLevel
+          ?T("vikings.spawn.done.level.toast",{count:amount,item:item.Label,name:tgt,grade:levelOrQuality})
+          :T("vikings.spawn.done.quality.toast",{count:amount,item:item.Label,name:tgt,grade:levelOrQuality}))
+        :T("vikings.spawn.done.toast",{count:amount,item:item.Label,name:tgt});
+      /* The server's own line already names the stack count and the quality it settled on,
+         which is more than the picker knows, so it wins when there is one. */
+      toast("ᛟ "+(said||done));
+      /* The saga stays English, so it keeps its own plain tail rather than the worded one. */
+      const gradeLog=levelOrQuality>0?" · "+(item.HasLevel?"level":"quality")+" "+levelOrQuality:"";
+      logLine("cmd","> spawn "+item.PrefabName+" ×"+amount+gradeLog+" @ "+tgt+(said?" · "+said:""));
+    });
+    m.querySelector("#mCancel").addEventListener("click",modalClose);
+    setTimeout(()=>q.focus(),30);
+    search();
+    return m;
+  };
+  return again();
 }
 
 /* ---------- WORLD (profile config) ----------
@@ -8633,11 +8675,44 @@ function wxWindAt(netTime,env){
   const deg=((angle*180/Math.PI)%360+360)%360; // dir=(sin a,0,cos a): 0 = north(+Z), clockwise
   return {deg,intensity:inten};
 }
-function wxCompass(deg){
-  const n=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
-  return n[Math.round(deg/22.5)%16];
-}
 /* WX-ENGINE-END */
+/* The sixteen points of the compass, from north and going clockwise, which is the order
+   a bearing walks them in. English abbreviates a direction to letters and most languages
+   do not, so each point is a catalog entry rather than one of sixteen literals a
+   translator could never reach. The English abbreviation stays written beside its id:
+   it is the floor a box reads before any catalog has answered, and the catalog gate holds
+   the pair together so neither half can be edited on its own. The property name ends in
+   Id because that is how the gate recognises a table that holds ids rather than English.
+   This used to live inside the weather engine above, which is pure and asks nothing of
+   the page; asking the catalog for words is not pure, so the table sits out here with
+   WX_LABEL, the other table of the same shape. */
+const WX_COMPASS=[
+  {point:"N",   pointId:"atlas.compass.n"},
+  {point:"NNE", pointId:"atlas.compass.nne"},
+  {point:"NE",  pointId:"atlas.compass.ne"},
+  {point:"ENE", pointId:"atlas.compass.ene"},
+  {point:"E",   pointId:"atlas.compass.e"},
+  {point:"ESE", pointId:"atlas.compass.ese"},
+  {point:"SE",  pointId:"atlas.compass.se"},
+  {point:"SSE", pointId:"atlas.compass.sse"},
+  {point:"S",   pointId:"atlas.compass.s"},
+  {point:"SSW", pointId:"atlas.compass.ssw"},
+  {point:"SW",  pointId:"atlas.compass.sw"},
+  {point:"WSW", pointId:"atlas.compass.wsw"},
+  {point:"W",   pointId:"atlas.compass.w"},
+  {point:"WNW", pointId:"atlas.compass.wnw"},
+  {point:"NW",  pointId:"atlas.compass.nw"},
+  {point:"NNW", pointId:"atlas.compass.nnw"},
+];
+/* The point a bearing falls on, worded. T() answers an id it cannot look up with the id
+   itself, and a dotted name in the wind box would read worse than the abbreviation it
+   replaced, so the English beside the id is what a window with no catalog shows. */
+function wxCompass(deg){
+  const p=WX_COMPASS[Math.round(deg/22.5)%16];
+  if(!p) return "";
+  const said=T(p.pointId);
+  return said===p.pointId?p.point:said;
+}
 /* The env keys are Valheim's own and never move; what a host reads is the catalog's.
    The property names end in Id because that is how the catalog gate recognises a table
    that holds ids rather than English. */
