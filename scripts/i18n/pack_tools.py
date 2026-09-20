@@ -23,9 +23,10 @@ Usage:
   pack_tools.py build-manifest --entry ENTRY.json [--entry ...] --app-version 1.2.0
                                --base-url URL --out lang-manifest.json
   pack_tools.py verify-pack --zip lang-ru-1.2.0.zip [--css WebUI/app.css]
+  pack_tools.py verify-ids --zip lang-ru-1.2.0.zip --catalog WebUI/i18n/en.json
 
-build-pack and build-manifest print what they wrote as JSON. verify-pack prints one
-problem per line and exits non zero when there are any.
+build-pack and build-manifest print what they wrote as JSON. verify-pack and verify-ids
+print one problem per line and exit non zero when there are any.
 
 --css reads the stylesheet the pack is for and holds the two against each other: every
 family the pack publishes has to be one the stacks for that language actually ask for,
@@ -33,6 +34,9 @@ and every family those stacks ask for has to be one somebody declares. A pack th
 installs cleanly and publishes its faces under names the page never asks for is a pack
 whose bytes are downloaded, stored, served and never drawn, and nothing inside the zip
 can see that.
+
+A line starting NOTE is something the reading could not settle either way. It is printed
+and not counted, and the run is still clean with notes on it.
 """
 
 import argparse
@@ -557,7 +561,14 @@ def _ranges(text):
 
 
 def _covers(spans, samples):
-    """True when a face declared over these ranges is asked for any of these characters."""
+    """True when a face declared over these ranges is asked for any of these characters.
+
+    A face declared with no unicode-range at all is asked for every character there is,
+    so it is covering by definition and None answers True. What it actually HOLDS is
+    another question, and one this check cannot reach: a full font does hold the script
+    and a subset published without its range does not, and the declaration reads the same
+    either way. The caller keeps that apart and notes it rather than counting it.
+    """
     if spans is None:
         return True
     return any(first <= point <= last for point in samples for first, last in spans)
@@ -577,8 +588,12 @@ def _css_faces(rules):
     return declared
 
 
-def _css_problems(code, faces, css_path):
-    """The pack and the stylesheet, held against each other for one language."""
+def _css_problems(code, faces, css_path, notes):
+    """The pack and the stylesheet, held against each other for one language.
+
+    Answers the problems. Anything it could not actually prove either way is appended to
+    notes, which the caller prints and does not count.
+    """
     problems = []
 
     try:
@@ -630,25 +645,48 @@ def _css_problems(code, faces, css_path):
         label, samples = script
         for name in FONT_VARS:
             covered = False
+            unproved = None
             for family in stacks[name]:
                 key = family.lower()
                 for spans in packed.get(key, []) + css_declared.get(key, []):
-                    if _covers(spans, samples):
-                        covered = True
-                        break
+                    if not _covers(spans, samples):
+                        continue
+                    if spans is None:
+                        # Declared over everything, so the stack does reach it and the
+                        # check passes. Whether the file behind it holds a single glyph
+                        # of this script is not written down anywhere this can read.
+                        if unproved is None:
+                            unproved = family
+                        continue
+                    covered = True
+                    break
                 if covered:
                     break
-            if not covered:
-                problems.append(
-                    "the %s stack for %s carries no face over %s, so it falls to the system face"
-                    % (name, code, label))
+
+            if covered:
+                continue
+            if unproved is not None:
+                notes.append(
+                    "the %s stack for %s reaches %r, which is declared with no unicode range, so "
+                    "it is taken as covering %s and this check did not prove that it does"
+                    % (name, code, unproved, label))
+                continue
+            problems.append(
+                "the %s stack for %s carries no face over %s, so it falls to the system face"
+                % (name, code, label))
 
     return problems
 
 
-def verify_pack(zip_path, css_path=None):
-    """Reads a built pack back the way the installer reads it. Answers a list of problems."""
+def verify_pack(zip_path, css_path=None, notes=None):
+    """Reads a built pack back the way the installer reads it. Answers a list of problems.
+
+    Anything the reading could not settle either way is appended to notes when one is
+    handed in. A note is not a problem and is never counted as one.
+    """
     problems = []
+    if notes is None:
+        notes = []
 
     if not os.path.isfile(zip_path):
         return ["%s is not a file" % zip_path]
@@ -710,9 +748,63 @@ def verify_pack(zip_path, css_path=None):
                 problems.append("the pack carries fonts and no licence text")
 
             if css_path:
-                problems.extend(_css_problems(code, faces, css_path))
+                problems.extend(_css_problems(code, faces, css_path, notes))
     except zipfile.BadZipFile as error:
         return ["%s is not a readable zip: %s" % (zip_path, error)]
+
+    return problems
+
+
+def catalog_ids(text):
+    """The ids a catalog holds, as a set.
+
+    A catalog with no keys block is said so rather than answered as an empty set: an
+    empty set compares as every id missing, which reads like a translation disaster and
+    is really a file in the wrong shape.
+    """
+    keys = json.loads(text).get("keys")
+    if not isinstance(keys, dict):
+        raise ValueError("there is no keys block in it")
+    return set(keys.keys())
+
+
+def verify_ids(zip_path, catalog_path):
+    """The ids in a built pack, held against the English catalog it was cut from.
+
+    The COUNT is not the question and never was. A pack that lost one id and gained
+    another counts exactly right, and what a host gets is one line stuck in English
+    beside a translation nothing will ever look up. So the two sets are compared, and
+    the number the English catalog happens to hold today is never written down here.
+    """
+    if not os.path.isfile(zip_path):
+        return ["%s is not a file" % zip_path]
+
+    try:
+        with zipfile.ZipFile(zip_path) as zip_file:
+            if STRINGS_NAME not in set(zip_file.namelist()):
+                return ["%s is missing from %s" % (STRINGS_NAME, zip_path)]
+            theirs = catalog_ids(zip_file.read(STRINGS_NAME).decode("utf-8"))
+    except (zipfile.BadZipFile, ValueError) as error:
+        return ["%s does not read as a pack: %s" % (zip_path, error)]
+
+    try:
+        with open(catalog_path, "r", encoding="utf-8") as handle:
+            english = catalog_ids(handle.read())
+    except (OSError, ValueError) as error:
+        return ["%s could not be read: %s" % (catalog_path, error)]
+
+    problems = []
+    missing = sorted(english - theirs)
+    extra = sorted(theirs - english)
+
+    if missing:
+        problems.append(
+            "%d id(s) in %s are not in the pack, among them %s"
+            % (len(missing), catalog_path, ", ".join(missing[:8])))
+    if extra:
+        problems.append(
+            "%d id(s) in the pack are in no catalog in the tree, among them %s"
+            % (len(extra), ", ".join(extra[:8])))
 
     return problems
 
@@ -746,6 +838,10 @@ def _cli(argv):
         "--css", default=None,
         help="hold the families the pack publishes against the stacks in this stylesheet")
 
+    ids = commands.add_parser("verify-ids", help="hold a pack's ids against the English catalog")
+    ids.add_argument("--zip", required=True)
+    ids.add_argument("--catalog", required=True, help="the English catalog to compare against")
+
     args = parser.parse_args(argv)
 
     if args.command == "build-pack":
@@ -767,7 +863,17 @@ def _cli(argv):
         print(json.dumps(built, ensure_ascii=False, indent=2))
         return 0
 
-    problems = verify_pack(args.zip, css_path=args.css)
+    if args.command == "verify-ids":
+        problems = verify_ids(args.zip, args.catalog)
+        for problem in problems:
+            print(problem)
+        print("TOTAL %d" % len(problems))
+        return 1 if problems else 0
+
+    notes = []
+    problems = verify_pack(args.zip, css_path=args.css, notes=notes)
+    for note in notes:
+        print("NOTE %s" % note)
     for problem in problems:
         print(problem)
     print("TOTAL %d" % len(problems))

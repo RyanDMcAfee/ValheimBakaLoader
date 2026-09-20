@@ -555,6 +555,52 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.DoesNotContain("Forum", unhappy.Output);
         }
 
+        /// <summary>
+        /// A face published with no unicode range is asked for every character there is, so
+        /// the coverage check counts the stack it sits in as covered and has to: a full font
+        /// legitimately carries no range, and refusing it would refuse the honest case. What
+        /// it cannot tell is whether the file behind that declaration holds a single glyph of
+        /// the script, because a subset published without its range reads exactly the same. So
+        /// it passes with a NOTE naming the face, and the note is not counted as a problem.
+        /// </summary>
+        [Fact]
+        public void A_face_with_no_range_covers_the_script_on_paper_and_says_so()
+        {
+            var css = Stylesheet();
+
+            // Inter with no range at all, which is what every stack for ru leans on for its
+            // Cyrillic, and the other two faces declared over the script the ordinary way.
+            var fixture = Listed("ru", "css-rangeless", entries: new object[]
+            {
+                new { file = "fonts/Body.woff2", family = "Inter", weight = "400 600" },
+                new { file = "fonts/Body.woff2", family = "JetBrains Mono", weight = "400 700", unicodeRange = "U+0301,U+0400-045F" },
+                new { file = "fonts/Display.woff2", family = "Baka Roman", weight = "400", unicodeRange = "U+0301,U+0400-045F" },
+            });
+
+            var outDir = Path.Combine(Work, "out-css-rangeless");
+            Assert.True(RepoScript.Run(
+                RepoScript.Python(), Script(), "build-pack",
+                "--code", "ru", "--strings", fixture.Strings, "--fonts", fixture.Fonts,
+                "--app-version", AppVersion, "--out", outDir).Ok);
+
+            var read = RepoScript.Run(
+                RepoScript.Python(), Script(), "verify-pack",
+                "--zip", Path.Combine(outDir, "lang-ru-1.2.0.zip"), "--css", css);
+
+            // Still clean, because the stack does reach a face that is asked for every
+            // character. The note is what says nobody proved the bytes behind it.
+            Assert.True(read.Ok, read.ToString());
+            Assert.Contains("TOTAL 0", read.Output);
+
+            Assert.Contains("NOTE the --sans stack for ru reaches 'Inter'", read.Output);
+            Assert.Contains("did not prove that it does", read.Output);
+
+            // And the stacks whose Cyrillic comes from a face declared over the script are
+            // not noted, because for those the check did prove it.
+            Assert.DoesNotContain("NOTE the --mono stack", read.Output);
+            Assert.DoesNotContain("NOTE the --serif stack", read.Output);
+        }
+
         // ------------------------------------------------------------------ the two halves together
 
         [Fact]

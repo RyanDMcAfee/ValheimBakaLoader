@@ -15,17 +15,28 @@
 
   So this registers the pack's faces through the page's OWN langInjectFonts, with the
   shape the bridge hands over, sets the language the same way the switch does, draws real
-  sentences out of the pack's own catalog, and then asks the browser two questions.
+  sentences out of the pack's own catalog, and then asks the browser three questions.
 
     1. Did every face the pack publishes actually load? Asked of document.fonts, matching
        a FontFace by family AND by unicode range, because app.css declares 'Inter' too and
        a pack that registers nothing would otherwise look fine. NOT asked with
        document.fonts.check, which answers true for a family nobody ever declared.
 
-    2. When the language's own sentences are drawn through the product's own stacks, does
-       the text come out in a face the PACK carries? Asked twice over: the pack face has
-       to be loaded by the stack samples alone, before anything is forced, and Chromium
-       has to report a downloaded font as the one it actually rendered the node with.
+    2. Is EVERY one of them reached by a stack, before anything is forced? One sample per
+       face: the four stacks are read back off the page as the browser resolved them, each
+       face is drawn through a stack that names its family, and the text is built out of
+       characters inside that face's range which nothing ahead of it in the stack covers.
+       "At least one of the pack's faces was pulled in" is not the question, and it used
+       to be: a pack carrying a fourth face under a family no stack ever names passed that
+       happily, and those bytes were downloaded, stored, served and never asked for.
+
+    3. When the language's own sentences are drawn through the product's own stacks, does
+       Chromium report a downloaded font as the one it actually rendered the node with,
+       and for enough of the script to mean it? A node carrying two characters is no
+       evidence about a page of Japanese, so the sentences are picked with at least a
+       dozen characters of the language's own script in them, and the node that proves the
+       point has to come out with that many glyphs drawn in faces the browser downloaded.
+       The count is printed, so a run that only just clears the floor says so.
 
   Takes an unpacked pack folder (one holding pack.json) or a folder of release zips.
 
@@ -59,6 +70,17 @@ const SCRIPTS = {
 
 /* The four variables every font-family rule in the product goes through. */
 const STACK_VARS = ["--sans", "--serif", "--serif-small", "--mono"];
+
+/* How much of the language's own script a node has to carry before what Chromium says it
+   was drawn with counts as an answer. Two glyphs out of a mostly Latin line is how a
+   whole screen of Han can be reported as proved; a dozen is a phrase, and every one of
+   the four catalogs holds hundreds of lines with that many, so the floor costs nothing. */
+const SCRIPT_FLOOR = 12;
+
+/* Below this a character is in a block app.css declares its own Latin faces over, so a
+   pack face asked for one of them may lose it to Inter or Cinzel rather than to a fault
+   of its own. Sampling stays above the line wherever the face's range allows. */
+const LATIN_BLOCKS = 0x0250;
 
 function playwright() {
   const tries = [
@@ -168,7 +190,17 @@ function payload(pack, files, prefix) {
   return { fonts, served };
 }
 
-/* The sentences a host actually reads, out of the pack's own catalog. */
+/* How much of one line is the language's own script. */
+function scriptCount(text, test) {
+  let held = 0;
+  for (const character of Array.from(text)) if (test.test(character)) held++;
+  return held;
+}
+
+/* The sentences a host actually reads, out of the pack's own catalog.
+   A line only counts when it carries SCRIPT_FLOOR characters of the language's own
+   script. The node that has to prove what Chromium drew is built out of one of these,
+   and a line with two Han characters in it makes a node that proves nothing. */
 function sentences(catalog, test, want) {
   const all = [];
   const walk = value => {
@@ -177,14 +209,13 @@ function sentences(catalog, test, want) {
   };
   walk(catalog.keys || {});
 
-  const script = all.filter(s => test.test(s));
+  const script = all.filter(s => scriptCount(s, test) >= SCRIPT_FLOOR);
   script.sort((a, b) => b.length - a.length);
 
   const picked = [];
   for (const line of script) {
     if (picked.length >= want) break;
     if (line.length > 90) continue;
-    if (line.length < 6) continue;
     picked.push(line);
   }
   while (picked.length < want && script.length) picked.push(script[picked.length % script.length]);
@@ -241,6 +272,89 @@ function canonical(text) {
   return spans.map(([low, high]) => low.toString(16) + "-" + high.toString(16)).sort().join(",");
 }
 
+/* The family names in a stack, in order, with the quotes off. */
+function stackFamilies(stack) {
+  return String(stack == null ? "" : stack)
+    .split(",")
+    .map(piece => piece.trim().replace(/^['"]|['"]$/g, "").trim())
+    .filter(piece => piece.length > 0);
+}
+
+function sameFamily(one, other) {
+  return String(one).toLowerCase() === String(other).toLowerCase();
+}
+
+/* A face with no range is asked for every character, which is what null means here. */
+function inSpans(point, spans) {
+  return spans === null ? true : spans.some(([low, high]) => point >= low && point <= high);
+}
+
+/*
+  The text that can only be answered by this face, drawn through this stack. A browser
+  asks the stack left to right and stops at the first family that covers the character,
+  so a face is only ever reached by a character inside its own range that nothing named
+  ahead of it covers. Characters out of the pack's own catalog first, and out of the
+  blocks app.css keeps its Latin faces over only when the range leaves nothing else.
+*/
+function reachingText(face, ahead, lines, want) {
+  const mine = ranges(face.unicodeRange);
+  const blocked = ahead.map(other => ranges(other.unicodeRange));
+  const reaches = point => inSpans(point, mine) && !blocked.some(spans => inSpans(point, spans));
+
+  const above = [];
+  const below = [];
+  for (const line of lines) {
+    for (const character of Array.from(line)) {
+      const point = character.codePointAt(0);
+      if (!reaches(point)) continue;
+      (point >= LATIN_BLOCKS ? above : below).push(character);
+      if (above.length >= want) return above.join("");
+    }
+  }
+
+  const picked = above.concat(below).slice(0, want);
+  if (picked.length) return picked.join("");
+
+  /* Nothing in the catalog reaches it, so the range itself is asked. A face published
+     over characters this language never writes is still a face, and check 1 still has to
+     be able to load it. */
+  const made = [];
+  for (const [low, high] of mine || [[0x20, 0x7E]]) {
+    for (let point = low; point <= high && made.length < want; point++) {
+      if (reaches(point)) made.push(String.fromCodePoint(point));
+    }
+    if (made.length >= want) break;
+  }
+  return made.join("");
+}
+
+/*
+  One sample per face: the stack it lives in, and the text that will make that stack ask
+  for it. A face whose family no stack names has nowhere to be drawn at all, which is the
+  whole finding, so it comes back said rather than guessed at.
+*/
+function faceSample(face, fonts, stacks, lines) {
+  const homes = [];
+
+  for (const variable of STACK_VARS) {
+    const names = stackFamilies(stacks[variable]);
+    const at = names.findIndex(name => sameFamily(name, face.family));
+    if (at < 0) continue;
+
+    const ahead = names
+      .slice(0, at)
+      .map(name => fonts.find(other => sameFamily(other.family, name)))
+      .filter(other => other && other !== face);
+
+    homes.push({ variable, ahead });
+    const text = reachingText(face, ahead, lines, 8);
+    if (text) return { variable, ahead, text };
+  }
+
+  if (!homes.length) return { variable: null, ahead: [], text: "" };
+  return { variable: homes[0].variable, ahead: homes[0].ahead, text: "" };
+}
+
 /* ---- the page ---- */
 
 const STUB = `(() => {
@@ -285,8 +399,16 @@ const READ_FACES = () => Array.from(document.fonts).map(face => ({
   unicodeRange: face.unicodeRange,
 }));
 
-async function drive(page, code, fonts, stackSamples, faceSamples) {
-  await page.evaluate(([code, fonts, stackSamples]) => {
+/*
+  The page put in this language with this pack's faces declared, and the four stacks read
+  back off it as the browser resolved them. A computed custom property has its var()
+  already followed, so --serif-small reads as the stack it points at, which is --serif in
+  English and --sans under CJK. Reading them off the page rather than parsing the
+  stylesheet a second time means the samples below are built for the stack the text will
+  really be drawn through.
+*/
+async function prepare(page, code, fonts) {
+  return page.evaluate(([code, fonts, variables]) => {
     /* The page's own writer, with the shape the bridge hands over. */
     langInjectFonts(fonts);
 
@@ -296,9 +418,20 @@ async function drive(page, code, fonts, stackSamples, faceSamples) {
     document.documentElement.lang = code;
     document.documentElement.setAttribute("data-lang", code);
 
-    const old = document.getElementById("packProbe");
-    if (old) old.remove();
+    for (const id of ["packProbe", "packFaces", "packForced"]) {
+      const old = document.getElementById(id);
+      if (old) old.remove();
+    }
 
+    const style = getComputedStyle(document.documentElement);
+    const stacks = {};
+    variables.forEach(name => { stacks[name] = style.getPropertyValue(name); });
+    return stacks;
+  }, [code, fonts, STACK_VARS]);
+}
+
+async function drive(page, stackSamples, faceStackSamples, faceSamples) {
+  await page.evaluate(([stackSamples, faceStackSamples]) => {
     const box = document.createElement("div");
     box.id = "packProbe";
     box.style.cssText = "position:fixed;left:0;top:0;width:920px;z-index:99999;background:#111;color:#E8E2D5";
@@ -324,7 +457,25 @@ async function drive(page, code, fonts, stackSamples, faceSamples) {
       box.appendChild(pure);
     });
     document.body.appendChild(box);
-  }, [code, fonts, stackSamples]);
+
+    /* And one node per face the pack publishes, each through a stack that names it, with
+       text only that face can be asked for. Same road as the sentences above and the same
+       moment: nothing here is forced by family, so a face that turns up loaded turned up
+       because a stack in this product asked a real character of it. */
+    const faces = document.createElement("div");
+    faces.id = "packFaces";
+    faces.style.cssText = "position:fixed;left:0;top:300px;width:920px;z-index:99999;background:#111;color:#E8E2D5";
+    faceStackSamples.forEach((sample, index) => {
+      if (!sample.variable || !sample.text) return;
+      const line = document.createElement("div");
+      line.id = "packFaceStack" + index;
+      line.style.fontFamily = "var(" + sample.variable + ")";
+      line.style.fontSize = "18px";
+      line.textContent = sample.text;
+      faces.appendChild(line);
+    });
+    document.body.appendChild(faces);
+  }, [stackSamples, faceStackSamples]);
 
   await page.evaluate(() => document.fonts.ready.then(() => null));
   await page.waitForTimeout(250);
@@ -389,17 +540,23 @@ async function check(page, pack, files, problems, say) {
   const catalog = JSON.parse(files.get("strings.json").toString("utf8"));
   const lines = sentences(catalog, script.test, STACK_VARS.length);
   if (!lines.length) {
-    problems.push(code + ": the catalog holds no " + script.label + " sentence to draw");
+    problems.push(
+      code + ": the catalog holds no line with " + SCRIPT_FLOOR + " characters of " +
+      script.label + " in it, so nothing here can say what a page of it is drawn with");
+    say("FAIL " + code.padEnd(8) + " no sentence with " + SCRIPT_FLOOR + " characters of " + script.label);
     return served;
   }
+
+  const stacks = await prepare(page, code, fonts);
 
   const stackSamples = STACK_VARS.map((variable, index) => {
     const text = lines[index % lines.length];
     return { variable, text, script: onlyScript(text, script.test) };
   });
+  const faceStackSamples = fonts.map(face => faceSample(face, fonts, stacks, lines));
   const faceSamples = fonts.map(face => ({ family: face.family, text: textFor(face, lines) }));
 
-  const { afterStacks, afterForcing } = await drive(page, code, fonts, stackSamples, faceSamples);
+  const { afterStacks, afterForcing } = await drive(page, stackSamples, faceStackSamples, faceSamples);
 
   /* 1. every face the pack publishes has to be a face the browser really loaded */
   for (const face of fonts) {
@@ -416,41 +573,83 @@ async function check(page, pack, files, problems, say) {
     }
   }
 
-  /* 2. and the language's own sentences have to come out in one of them */
-  const pulled = fonts.filter(face => found(afterStacks, face.family, face.unicodeRange).some(f => f.status === "loaded"));
-  if (!pulled.length) {
-    problems.push(
-      code + ": the stacks drew " + script.label + " and pulled in no face the pack carries, " +
-      "so every one of them fell through to a system face");
-    say("FAIL " + code.padEnd(8) + " stacks pulled in none of the pack's faces");
-  } else {
-    say("ok   " + code.padEnd(8) + " stacks pulled in " + pulled.map(f => f.family).join(", "));
-  }
+  /* 2. and EVERY one of them has to be pulled in by a stack that names it, before
+        anything is forced. One face reached is not the question: a face no stack can
+        reach is weight a host downloads and never sees a glyph of. */
+  const pulled = [];
+  fonts.forEach((face, index) => {
+    const sample = faceStackSamples[index];
 
-  /* 3. and Chromium has to say so too, about a node holding nothing but the script */
-  const drawn = await platformFonts(page, stackSamples.map((_, index) => "packScript" + index));
-  const clean = Object.keys(drawn).filter(id => {
-    const used = drawn[id] || [];
-    return used.some(f => f.isCustomFont && f.glyphCount > 0) &&
-      !used.some(f => !f.isCustomFont && f.glyphCount > 0);
+    if (!sample.variable) {
+      problems.push(
+        code + ": the pack publishes '" + face.family + "' and no stack that applies to " + code +
+        " names it, so nothing in the product will ever ask for a character of it");
+      say("FAIL " + code.padEnd(8) + " face " + face.family + ": no stack for " + code + " names it");
+      return;
+    }
+
+    if (!sample.text) {
+      const ahead = sample.ahead.map(other => other.family).join(", ") || "the faces ahead of it";
+      problems.push(
+        code + ": '" + face.family + "' sits behind " + ahead + " in the " + sample.variable +
+        " stack over every character it covers, so it can never be the face that draws one");
+      say("FAIL " + code.padEnd(8) + " face " + face.family + ": nothing in the " + sample.variable + " stack reaches it");
+      return;
+    }
+
+    const loaded = found(afterStacks, face.family, face.unicodeRange).some(f => f.status === "loaded");
+    if (!loaded) {
+      problems.push(
+        code + ": the " + sample.variable + " stack was asked for " + JSON.stringify(sample.text) +
+        " and did not pull in '" + face.family + "', so that text was drawn by something else");
+      say("FAIL " + code.padEnd(8) + " face " + face.family + ": the " + sample.variable + " stack did not pull it in");
+      return;
+    }
+
+    pulled.push(face.family + " (" + sample.variable + ")");
   });
 
-  if (!clean.length) {
-    const named = Object.keys(drawn)
-      .map(id => STACK_VARS[Number(id.replace("packScript", ""))] + " drew in " +
-        (drawn[id] || []).map(f => f.familyName + (f.isCustomFont ? "" : " (the system's)")).join(" and "))
-      .join("; ");
-    problems.push(code + ": Chromium drew the " + script.label + " with a font it did not download (" + named + ")");
-    say("FAIL " + code.padEnd(8) + " " + script.label + " rendered in a system face: " + named);
-  } else {
-    const names = (drawn[clean[0]] || []).map(f => f.familyName + " x" + f.glyphCount);
-    const rest = Object.keys(drawn)
-      .filter(id => !clean.includes(id))
-      .map(id => STACK_VARS[Number(id.replace("packScript", ""))] + " in " +
-        (drawn[id] || []).map(f => f.familyName + (f.isCustomFont ? "" : " (the system's)")).join(" and "));
+  if (pulled.length === fonts.length) {
+    say("ok   " + code.padEnd(8) + " stacks pulled in all " + fonts.length + ": " + pulled.join(", "));
+  }
 
-    say("ok   " + code.padEnd(8) + " " + script.label + " rendered in " + names.join(", ") +
-      " on " + clean.length + " of " + Object.keys(drawn).length + " stacks" +
+  /* 3. and Chromium has to say so too, about a node holding nothing but the script, and
+        about enough of it to be an answer. A node whose downloaded face drew two glyphs
+        is a node that says nothing about the page a host reads, so the count is held
+        against SCRIPT_FLOOR and printed either way. */
+  const drawn = await platformFonts(page, stackSamples.map((_, index) => "packScript" + index));
+  const nodes = Object.keys(drawn).map(id => {
+    const used = drawn[id] || [];
+    const own = used.filter(f => f.isCustomFont && f.glyphCount > 0);
+    const system = used.filter(f => !f.isCustomFont && f.glyphCount > 0);
+    const glyphs = own.reduce((total, f) => total + f.glyphCount, 0);
+    return {
+      variable: STACK_VARS[Number(id.replace("packScript", ""))],
+      own, glyphs,
+      clean: own.length > 0 && system.length === 0 && glyphs >= SCRIPT_FLOOR,
+      said: used.length
+        ? used.map(f => f.familyName + (f.isCustomFont ? "" : " (the system's)") + " x" + f.glyphCount).join(" and ")
+        : "nothing at all",
+    };
+  });
+
+  const clean = nodes.filter(node => node.clean);
+  const named = nodes.map(node => node.variable + " drew " + node.said).join("; ");
+
+  if (!clean.length) {
+    problems.push(
+      code + ": no stack drew " + SCRIPT_FLOOR + " or more glyphs of " + script.label +
+      " in fonts the browser downloaded and nothing else (" + named + ")");
+    say("FAIL " + code.padEnd(8) + " " + script.label + " was not drawn in " + SCRIPT_FLOOR +
+      " downloaded glyphs by any stack: " + named);
+  } else {
+    const best = clean[0];
+    const rest = nodes.filter(node => !node.clean).map(node => node.variable + " in " + node.said);
+
+    say("ok   " + code.padEnd(8) + " " + script.label + " rendered in " +
+      best.own.map(f => f.familyName + " x" + f.glyphCount).join(", ") +
+      " on " + best.variable + ", " + best.glyphs + " glyphs against a floor of " + SCRIPT_FLOOR +
+      ", on " + clean.length + " of " + nodes.length + " stacks" +
       (rest.length ? "; the rest: " + rest.join("; ") : ""));
   }
 
@@ -498,7 +697,9 @@ async function check(page, pack, files, problems, say) {
     }
 
     console.log("");
-    console.log("TOTAL " + problems.length + "  every face the pack publishes is loaded, and the stacks draw in one");
+    console.log(
+      "TOTAL " + problems.length + "  every face the pack publishes loads, every one of them is " +
+      "reached by a stack, and the script comes out in them");
     for (const problem of problems) console.log("  " + problem);
     process.exitCode = problems.length ? 1 : 0;
   } finally {
