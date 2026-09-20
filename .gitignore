@@ -357,6 +357,11 @@ MigrationBackup/
 /Temp/
 /BuildRelease/
 /ReleaseStage/
+# scripts/release holds the release preflight, which is source and not build output. The
+# generic [Rr]elease/ rule near the top of this file was swallowing the whole folder, so a
+# gate that lives there would never be committed and nobody would notice until the day it
+# was needed.
+!scripts/release/
 # Companion BepInEx plugin binaries (Resources/**/*.dll) are tracked so a fresh clone builds and ships them.
 # Local convenience shortcut into the gitignored /Build/ folder (user-specific)
 ValheimBakaLoader.lnk

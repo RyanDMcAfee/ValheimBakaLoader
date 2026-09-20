@@ -1092,6 +1092,185 @@ namespace ValheimBakaLoader.Tests.Tools
             AssertStagingIsEmpty();
         }
 
+        // ------------------------------------------------------------------ 15b. one file, two faces
+
+        /// <summary>
+        /// A pack zip whose list publishes one file twice, which is the shape every CJK pack
+        /// needs: the body face again under "&lt;family&gt; Marks" over a range of exactly the
+        /// full width marks whose code points live in the Latin blocks, so the stack can put
+        /// that face in front of Inter without the bytes being shipped or stored a second time.
+        /// </summary>
+        private static byte[] SharedFacePack(string code, string version, int catalog, byte[] body, byte[] display,
+            string markDigest = null)
+        {
+            var faces = new object[]
+            {
+                new
+                {
+                    file = "fonts/Body.woff2",
+                    family = "Noto Sans JP",
+                    weight = "400",
+                    style = "normal",
+                    unicodeRange = "U+2026,U+3040-309F,U+4E00-9FFF",
+                    sha256 = Sha(body),
+                },
+                new
+                {
+                    file = "fonts/Display.woff2",
+                    family = "Noto Serif JP",
+                    weight = "600",
+                    style = "normal",
+                    unicodeRange = "U+2026,U+3040-309F,U+4E00-9FFF",
+                    sha256 = Sha(display),
+                },
+                new
+                {
+                    file = "fonts/Body.woff2",
+                    family = "Noto Sans JP Marks",
+                    weight = "400",
+                    style = "normal",
+                    unicodeRange = "U+2026",
+                    sha256 = markDigest ?? Sha(body),
+                },
+            };
+
+            var pack = JsonConvert.SerializeObject(new
+            {
+                schema = 1,
+                code,
+                appVersion = version,
+                asset = $"lang-{code.ToLowerInvariant()}-{version}.zip",
+                catalog,
+                nativeName = code,
+                englishName = code,
+                keys = 2,
+                translated = 2,
+                status = "machine",
+                minAppVersion = "1.0.0",
+                fonts = faces,
+            });
+
+            using var buffer = new MemoryStream();
+            using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                Write(zip, "pack.json", Encoding.UTF8.GetBytes(pack));
+                Write(zip, "strings.json", Encoding.UTF8.GetBytes(CatalogJson(code, version, catalog)));
+                Write(zip, "fonts/Body.woff2", body);
+                Write(zip, "fonts/Display.woff2", display);
+                Write(zip, "fonts/OFL.txt", Encoding.UTF8.GetBytes("SIL Open Font License"));
+            }
+
+            return buffer.ToArray();
+        }
+
+        private string[] StoredFaces() =>
+            Directory.Exists(Path.Combine(Root, "_fonts"))
+                ? Directory.GetFiles(Path.Combine(Root, "_fonts"), "*.woff2").Select(Path.GetFileName).OrderBy(n => n).ToArray()
+                : Array.Empty<string>();
+
+        /// <summary>
+        /// The first entry over a file moves it into the shared store, so the second one finds
+        /// nothing where the pack said it would be. Read literally that is a pack naming a file
+        /// it does not carry, and the whole pack is refused: three of the four published packs
+        /// would have been uninstallable. The file is recognised instead, and both entries come
+        /// out pointing at the one stored copy.
+        /// </summary>
+        [Fact]
+        public async Task A_pack_that_publishes_one_file_twice_installs_and_stores_it_once()
+        {
+            var body = Face(6000, seed: 61);
+            var display = Face(4000, seed: 62);
+            var zip = SharedFacePack("ja", AppVersion, 7, body, display);
+
+            var (service, _) = Build(Serving(ManifestJson(Entry("ja", JaPackUrl, zip, 7)), (JaPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ja");
+
+            Assert.True(result.Ok, result.ReasonId);
+
+            // One copy of each file, named for its own digest.
+            Assert.Equal(
+                new[] { Sha(body) + ".woff2", Sha(display) + ".woff2" }.OrderBy(n => n).ToArray(),
+                StoredFaces());
+
+            // And three faces handed to the page, each with the family and the range the pack
+            // published, the two over the body file addressing the same stored copy.
+            var install = service.Installed("ja");
+            Assert.Equal(3, install.Fonts.Count);
+            Assert.Equal(
+                new[] { "Noto Sans JP", "Noto Serif JP", "Noto Sans JP Marks" },
+                install.Fonts.Select(f => f.Family).ToArray());
+            Assert.Equal("U+2026", install.Fonts[2].UnicodeRange);
+            Assert.Equal("U+2026,U+3040-309F,U+4E00-9FFF", install.Fonts[0].UnicodeRange);
+            Assert.Equal(install.Fonts[0].File, install.Fonts[2].File);
+            Assert.NotEqual(install.Fonts[0].File, install.Fonts[1].File);
+
+            foreach (var font in install.Fonts)
+            {
+                Assert.StartsWith("_fonts/", font.File);
+                Assert.True(
+                    File.Exists(Path.Combine(Root, font.File.Replace('/', Path.DirectorySeparatorChar))),
+                    font.Family + " names " + font.File + ", which is not in the store");
+            }
+
+            Assert.False(Directory.Exists(Path.Combine(result.Folder, "fonts")));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// Each entry is its own claim about those bytes, so the second one over a file is
+        /// checked too. A pack that publishes one digest for a face and another for the same
+        /// face under a second family is refused, and leaves nothing behind.
+        /// </summary>
+        [Fact]
+        public async Task A_second_entry_over_one_file_still_has_its_own_digest_checked()
+        {
+            var body = Face(6000, seed: 63);
+            var display = Face(4000, seed: 64);
+            var zip = SharedFacePack("ja", AppVersion, 7, body, display, markDigest: Sha(display));
+
+            var (service, _) = Build(Serving(ManifestJson(Entry("ja", JaPackUrl, zip, 7)), (JaPackUrl, zip)));
+
+            var result = await service.DownloadAsync("ja");
+
+            Assert.False(result.Ok);
+            Assert.Equal(LanguagePackReasons.Integrity, result.ReasonId);
+            Assert.False(Directory.Exists(Path.Combine(Root, "ja", AppVersion)));
+            Assert.Empty(StoredFaces());
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// The sweep counts faces by name, so a file two entries share is referenced twice and
+        /// swept never. It goes when the last pack that names it goes, and not before.
+        /// </summary>
+        [Fact]
+        public async Task The_sweep_keeps_a_file_two_entries_share_until_the_last_pack_naming_it_goes()
+        {
+            var body = Face(6000, seed: 65);
+            var display = Face(4000, seed: 66);
+            var zip = SharedFacePack("ja", AppVersion, 7, body, display);
+
+            var (service, _) = Build(Serving(ManifestJson(Entry("ja", JaPackUrl, zip, 7)), (JaPackUrl, zip)));
+
+            Assert.True((await service.DownloadAsync("ja")).Ok);
+            Assert.Equal(2, StoredFaces().Length);
+
+            service.PruneOnBoot();
+            Assert.Equal(2, StoredFaces().Length);
+
+            var install = service.Installed("ja");
+            foreach (var font in install.Fonts)
+            {
+                Assert.True(File.Exists(Path.Combine(Root, font.File.Replace('/', Path.DirectorySeparatorChar))));
+            }
+
+            // The language goes, and the faces nobody names any more go with it.
+            Directory.Delete(Path.Combine(Root, "ja"), recursive: true);
+            Assert.True(service.PruneOnBoot() > 0);
+            Assert.Empty(StoredFaces());
+        }
+
         // ------------------------------------------------------------------ 16. the boot sweep
 
         [Fact]

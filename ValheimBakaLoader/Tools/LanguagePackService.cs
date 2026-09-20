@@ -1270,6 +1270,11 @@ namespace ValheimBakaLoader.Tools
         /// pack that is reinstalled writes no font bytes at all. Answers a reason id on a
         /// mismatch, otherwise null.
         /// <para>
+        /// A face is an ENTRY rather than a file. One file may be published twice, under two
+        /// families with two ranges, and both entries come out of here pointing at the one
+        /// stored copy with the one digest.
+        /// </para>
+        /// <para>
         /// pack.json is the second source of untrusted paths in a pack, and the first one is
         /// the only one the unpack step guards: ExtractToDirectory refuses an archive entry
         /// that resolves outside the destination, and knows nothing about a file name written
@@ -1295,6 +1300,18 @@ namespace ValheimBakaLoader.Tools
             // two sitting in the shared store as the remains of a pack that never installed.
             var moved = new List<string>();
 
+            // The file each entry of THIS run took out of the staging folder, and the digest it
+            // turned out to have. A pack may publish one file twice: the CJK packs carry their
+            // body face a second time under "<family> Marks" with a range of exactly the few
+            // full width marks whose code points live in the Latin blocks, so the stack can put
+            // that face in front of Inter without the bytes being shipped or stored twice. The
+            // first entry moves the file into the shared store, which means the second one finds
+            // nothing at the staged path: read literally that is a pack naming a file it does
+            // not carry, and the WHOLE pack is refused. So a file this run has already stored is
+            // recognised and reused, with its digest still checked against what this entry
+            // published, because each entry is its own claim about those bytes.
+            var stored = new Dictionary<string, (string Path, string Digest)>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var font in pack.Fonts)
             {
                 if (string.IsNullOrWhiteSpace(font?.File)) return Unwind(moved, LanguagePackReasons.Contents);
@@ -1306,6 +1323,36 @@ namespace ValheimBakaLoader.Tools
                         "The {0} pack names {1}, which is not inside the pack, so it was not installed.",
                         code, font.File);
                     return Unwind(moved, LanguagePackReasons.Contents);
+                }
+
+                if (stored.TryGetValue(staged, out var already))
+                {
+                    // A name is what the pack chose to call the file, so it is checked again:
+                    // the same bytes published a second time as strings.json is still a pack
+                    // trying to move a catalog into the font store.
+                    if (!NamesAFace(font.File))
+                    {
+                        Logger.Warning(
+                            "The {0} pack lists {1} among its faces and that is not a font, so it was not installed.",
+                            code, font.File);
+                        return Unwind(moved, LanguagePackReasons.Contents);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(font.Sha256))
+                    {
+                        Logger.Warning("A font in the {0} pack publishes no digest, so there is nothing to check it against.", code);
+                        return Unwind(moved, LanguagePackReasons.Integrity);
+                    }
+
+                    if (!string.Equals(already.Digest, font.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.Warning("A font in the {0} pack did not match the digest the pack published.", code);
+                        return Unwind(moved, LanguagePackReasons.Integrity);
+                    }
+
+                    font.Sha256 = already.Digest;
+                    font.File = FontsFolderName + "/" + Path.GetFileName(already.Path);
+                    continue;
                 }
 
                 if (!File.Exists(staged))
@@ -1346,19 +1393,20 @@ namespace ValheimBakaLoader.Tools
                     return Unwind(moved, LanguagePackReasons.Contents);
                 }
 
-                var stored = Path.Combine(FontsRoot, digest + StoreExtension(staged));
-                if (File.Exists(stored))
+                var place = Path.Combine(FontsRoot, digest + StoreExtension(staged));
+                if (File.Exists(place))
                 {
                     TryDelete(staged);
                 }
                 else
                 {
-                    File.Move(staged, stored);
-                    moved.Add(stored);
+                    File.Move(staged, place);
+                    moved.Add(place);
                 }
 
+                stored[staged] = (place, digest);
                 font.Sha256 = digest;
-                font.File = FontsFolderName + "/" + Path.GetFileName(stored);
+                font.File = FontsFolderName + "/" + Path.GetFileName(place);
             }
 
             // The licence travels with the fonts, under its own digest so one text is kept once.
@@ -1371,9 +1419,9 @@ namespace ValheimBakaLoader.Tools
                 foreach (var licence in Directory.EnumerateFiles(fontsDir, "*.txt"))
                 {
                     var digest = FileDigest(licence);
-                    var stored = Path.Combine(FontsRoot, "OFL-" + digest + ".txt");
-                    if (File.Exists(stored)) TryDelete(licence);
-                    else File.Move(licence, stored);
+                    var kept = Path.Combine(FontsRoot, "OFL-" + digest + ".txt");
+                    if (File.Exists(kept)) TryDelete(licence);
+                    else File.Move(licence, kept);
 
                     licences.Add(FontsFolderName + "/OFL-" + digest + ".txt");
                 }
