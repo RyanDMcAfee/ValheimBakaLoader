@@ -1,5 +1,5 @@
 BakaLoader Source-Available License
-Version 1.0, 6 July 2026
+Version 1.1, RELEASE-DATE
 
 Copyright (c) 2026 Ryan McAfee ("the Licensor"). All rights reserved.
 
@@ -86,41 +86,68 @@ official distribution channels.
    or suggestions embodied in code), You grant the Licensor a perpetual,
    worldwide, irrevocable, royalty-free license to use, modify,
    relicense, and distribute that material without restriction or
-   obligation of attribution.
+   obligation of attribution. Bug reports, suggestions, and translation
+   corrections sent through the project's issue tracker are welcome, and
+   the material in them falls under the same grant.
 
-6. THIRD-PARTY COMPONENTS
+6. THIRD-PARTY COMPONENTS AND BUNDLED ASSETS
 
    The Software depends on third-party packages (obtained separately via
    NuGet at build time) that are licensed under their own terms,
-   including but not limited to Newtonsoft.Json, Serilog, Humanizer,
-   Semver, DeviceId, Microsoft.Web.WebView2, and
-   Microsoft.Extensions.DependencyInjection. Nothing in this license
-   alters Your rights or obligations under those licenses. This license
-   applies only to the Software itself.
+   including but not limited to Newtonsoft.Json, Serilog,
+   Serilog.Sinks.File, Humanizer, Semver, DeviceId,
+   Microsoft.Web.WebView2, and Microsoft.Extensions.DependencyInjection.
+   Nothing in this license alters Your rights or obligations under those
+   licenses. This license applies only to the Software itself.
 
-7. NO AFFILIATION
+   The Software also ships third-party assets. The fonts under
+   WebUI/fonts, and any fonts shipped inside a language pack, are
+   licensed under the SIL Open Font License, Version 1.1, and remain
+   licensed under it. Their license texts are distributed beside them.
+   Nothing in this license restricts any right the SIL Open Font License
+   grants You in those fonts.
+
+   The BakaLoader companion BepInEx plugins link at run time against
+   BepInEx (LGPL 2.1) and Harmony (MIT). Neither of those is
+   redistributed with the Software.
+
+7. THIRD-PARTY SERVICES AND CONTENT
+
+   At Your direction, the Software contacts third-party services:
+   Thunderstore, Hexium when that second source is switched on, Steam
+   by way of steamcmd, any Discord webhook You configure, a
+   public-address lookup, and GitHub for updates and language packs.
+   Mods, BepInEx, and any other content the Software fetches at Your
+   request are governed by their own terms, and are not controlled,
+   endorsed, or warranted by the Licensor.
+
+8. NO AFFILIATION
 
    Valheim is a trademark of Iron Gate AB. The Software is an
    independent, unofficial tool and is not affiliated with, endorsed by,
    or sponsored by Iron Gate AB, Coffee Stain Publishing, or Valve
    Corporation.
 
-8. UPDATES AND TELEMETRY
+9. UPDATES AND TELEMETRY
 
    The Software may check Official Channels for updates and, if the
    corresponding setting is enabled, transmit anonymous usage statistics
    as described in the project README. Both behaviors can be disabled in
-   the Software's settings.
+   the Software's settings. The Software also downloads language packs
+   from Official Channels when You ask for one, and again after an
+   update for a language You have already chosen unless update checking
+   is switched off. The project README lists the services the Software
+   contacts.
 
-9. TERMINATION
+10. TERMINATION
 
    This license terminates automatically and immediately if You breach
    any of its terms. Upon termination You must cease all use of the
-   Software and destroy all copies in Your possession. Sections 6, 7,
-   10, 11, and 12 survive termination. The Licensor may offer to
+   Software and destroy all copies in Your possession. Sections 6, 7, 8,
+   11, 12, and 13 survive termination. The Licensor may offer to
    reinstate the license at the Licensor's sole discretion.
 
-10. DISCLAIMER OF WARRANTY
+11. DISCLAIMER OF WARRANTY
 
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
@@ -129,7 +156,7 @@ official distribution channels.
    SOFTWARE, INCLUDING WITHOUT LIMITATION ANY DAMAGE TO OR LOSS OF GAME
    WORLDS, SAVE DATA, CONFIGURATIONS, OR SYSTEMS.
 
-11. LIMITATION OF LIABILITY
+12. LIMITATION OF LIABILITY
 
    TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL
    THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
@@ -137,7 +164,7 @@ official distribution channels.
    OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER
    DEALINGS IN THE SOFTWARE.
 
-12. RESERVATION OF RIGHTS; MISCELLANY
+13. RESERVATION OF RIGHTS; MISCELLANY
 
    All rights not expressly granted to You in this license are reserved
    by the Licensor. This license is the entire agreement between You and

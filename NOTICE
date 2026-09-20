@@ -2,9 +2,19 @@ ValheimBakaLoader
 Copyright (c) 2026 Ryan McAfee. All rights reserved.
 
 This software is distributed under the BakaLoader Source-Available
-License, Version 1.0. You may download, run, and study it freely;
+License, Version 1.1. You may download, run, and study it freely;
 redistribution and derivative works are not permitted. See the LICENSE
 file for the full terms.
+
+Third-party notices. BakaLoader is built on NuGet packages that carry
+their own licenses, listed in Section 6 of the LICENSE file. The fonts
+in WebUI/fonts (Cinzel, Inter and JetBrains Mono), and any font shipped
+inside a language pack, are licensed under the SIL Open Font License,
+Version 1.1; each one's license text sits beside it in that folder. The
+BakaLoader companion plugins link at run time against BepInEx (LGPL 2.1)
+and Harmony (MIT), neither of which is redistributed here. Mods,
+BepInEx and other content BakaLoader fetches when you ask it to are
+governed by their own terms.
 
 Valheim is a trademark of Iron Gate AB. This project is an independent,
 unofficial tool and is not affiliated with or endorsed by Iron Gate AB.
