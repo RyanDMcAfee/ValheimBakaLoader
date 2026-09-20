@@ -83,6 +83,45 @@ namespace ValheimBakaLoader.Tools.Models
         }
 
         /// <summary>
+        /// The id the SERVER knows a connected player by, written the one way that works on
+        /// every server: the platform and the player id joined with an underscore.
+        /// <para>
+        /// The game's own kick resolves the text it is given by reading it as a platform user
+        /// id first. On a Steam only server it then looks the peer up by the id alone, because
+        /// a Steam socket answers its host name as the bare steamid64; on a crossplay server it
+        /// looks it up by the whole "Platform_id", because a PlayFab socket answers its host
+        /// name as the whole thing. "Platform_id" satisfies both, and only when that finds
+        /// nobody does the game fall back to comparing player NAMES.
+        /// </para>
+        /// <para>
+        /// That fallback is the bug this exists for: a name the app had read in the wrong
+        /// encoding matched nobody, so the kick reached no one while the player stood there. An
+        /// id is ASCII, is learned from a different log line, and cannot be spelled wrong.
+        /// </para>
+        /// <para>
+        /// Null when either half is missing or carries whitespace, since the command is one
+        /// line and the caller has the player's name to fall back to.
+        /// </para>
+        /// </summary>
+        public static string HostId(string platform, string playerId)
+        {
+            if (string.IsNullOrWhiteSpace(platform) || string.IsNullOrWhiteSpace(playerId)) return null;
+
+            var left = platform.Trim();
+            var right = playerId.Trim();
+
+            foreach (var part in new[] { left, right })
+            {
+                foreach (var c in part)
+                {
+                    if (char.IsWhiteSpace(c)) return null;
+                }
+            }
+
+            return left + "_" + right;
+        }
+
+        /// <summary>
         /// The label to show a human for a platform token. Unknown tokens come
         /// back as written so the UI still says something useful.
         /// </summary>

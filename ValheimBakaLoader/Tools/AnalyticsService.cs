@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ValheimBakaLoader.Tools.Logging;
@@ -196,16 +197,56 @@ namespace ValheimBakaLoader.Tools
 
         private string ExpandedPath => Environment.ExpandEnvironmentVariables(FilePath);
 
+        /// <summary>
+        /// One journal file, read and repaired. Every name in it was learned from the server's
+        /// console output, and until 1.2.0 that output was read with the machine's own code page
+        /// rather than as UTF-8, so a name written in Greek, Cyrillic or Japanese went into the
+        /// journal broken. The statistics hall groups a player's events by their platform id and
+        /// falls back to matching on the character name when an event carries no id, which a
+        /// broken name quietly fails, so one player's deaths could sit apart from their visits.
+        /// <para>
+        /// It takes the path rather than reading the field for the same reason
+        /// <see cref="SetJournalAside"/> does: the live journal sits in the host's profile, and
+        /// a test needs a folder of its own to drive this against.
+        /// </para>
+        /// </summary>
+        internal static List<AnalyticsEvent> ReadJournal(string path)
+            => ReadJournal(path, TextRepair.AnsiPage);
+
+        /// <inheritdoc cref="ReadJournal(string)"/>
+        /// <remarks>
+        /// The page that did the damage is named rather than assumed. The app reads with this
+        /// machine's own, which is what the call above hands in and what the old read used; a
+        /// test reads with the page its fixture was broken on. Without that a fixture broken on
+        /// 1252 could only be checked on a 1252 machine, and on a Russian or Japanese one the
+        /// test would fail for refusing a name it is RIGHT to refuse.
+        /// </remarks>
+        internal static List<AnalyticsEvent> ReadJournal(string path, Encoding page)
+        {
+            var events = new List<AnalyticsEvent>();
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return events;
+
+            var file = JsonConvert.DeserializeObject<AnalyticsFile>(File.ReadAllText(path));
+            if (file?.Events == null) return events;
+
+            foreach (var e in file.Events)
+            {
+                if (e == null) continue;
+                e.PlayerName = TextRepair.FixMojibake(e.PlayerName, page);
+                e.Character = TextRepair.FixMojibake(e.Character, page);
+                events.Add(e);
+            }
+
+            return events;
+        }
+
         private void EnsureLoaded()
         {
             if (Loaded) return;
             Loaded = true;
             try
             {
-                var path = ExpandedPath;
-                if (!File.Exists(path)) return;
-                var file = JsonConvert.DeserializeObject<AnalyticsFile>(File.ReadAllText(path));
-                if (file?.Events != null) Events.AddRange(file.Events.Where(e => e != null));
+                Events.AddRange(ReadJournal(ExpandedPath));
                 Prune();
             }
             catch (Exception e)

@@ -379,6 +379,7 @@
     "vikings.teleport.prompt.placeholder": {"lore": "destination: player name, or x,z,y coords (spaces fine)"},
     "vikings.teleport.done.toast": {"lore": "Teleported {name} → {destination}"},
     "vikings.kick.done.toast": {"lore": "Kicked {name}"},
+    "vikings.kick.nobody.toast": {"lore": "No viking named {name} is on the server, so nobody was kicked.", "plain": "No player named {name} is on the server, so nobody was kicked.", "mark": "ᚦ"},
     "vikings.act.undelivered.toast": {"lore": "command not delivered · server running & RCON bound?", "mark": "ᚦ"},
     "vikings.copy_id.done.toast": {"lore": "ID copied · {id}", "mark": "ᛁ"},
     "vikings.remove.done.toast": {"lore": "Removed {name}", "mark": "ᛪ"},

@@ -4396,9 +4396,19 @@ namespace ValheimBakaLoader.Forms
                     {
                         // Death events can lack a player key when the character couldn't
                         // be tied to a known player - fold into a character-name match.
+                        //
+                        // Either spelling of the name counts as the same character. An event
+                        // written before 1.2.0 carries the name as the machine's own code page
+                        // read it off the server rather than as UTF-8, and on a machine whose
+                        // page cannot be undone (932, 936, 950) it stays that way in the journal
+                        // for good. Matched on the name alone it became a second person in the
+                        // hall, with one person's deaths under one spelling and their visits
+                        // under the other.
                         var byCharacter = players.Values.FirstOrDefault(a =>
                             !string.IsNullOrWhiteSpace(e.Character)
-                            && string.Equals(a.Character, e.Character, StringComparison.OrdinalIgnoreCase));
+                            && (string.Equals(a.Character, e.Character, StringComparison.OrdinalIgnoreCase)
+                                || TextRepair.IsDamagedSpellingOf(e.Character, a.Character)
+                                || TextRepair.IsDamagedSpellingOf(a.Character, e.Character)));
                         if (byCharacter != null) return byCharacter;
                         key = e.PlayerName ?? e.Character ?? "unknown";
                     }
@@ -5182,7 +5192,10 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(true);
             });
 
-            RegisterRpc("players.kick", async p => await Server.KickAsync(RequireTarget(p)));
+            // hostId is optional and additive: a page from an older build sends only the target
+            // and the kick goes out by name, exactly as it always did.
+            RegisterRpc("players.kick", async p =>
+                await Server.KickAsync(RequireTarget(p), p.Value<string>("hostId")));
             RegisterRpc("players.heal", async p => await Server.HealAsync(RequireTarget(p)));
             RegisterRpc("players.smite", async p => await Server.SmiteAsync(RequireTarget(p)));
 
@@ -7047,6 +7060,10 @@ namespace ValheimBakaLoader.Forms
                 Platform = player.Platform,
                 player.PlayerId,
                 player.PlayerName,
+                // The id the server itself knows this player by, for the actions that must
+                // reach a person rather than a spelling. Null when the platform or the id is
+                // missing, and the page falls back to the name it shows.
+                hostId = Tools.Models.PlayerPlatforms.HostId(player.Platform, player.PlayerId),
                 displayName = name,
                 status = player.PlayerStatus.ToString(),
                 lastStatusChange = player.LastStatusChange,

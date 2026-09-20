@@ -33,7 +33,7 @@ against a running server. Run this checklist on a **closed test server**
 | 4 | `dmg <name> 1000000` (Smite button) | Player dies |
 | 5 | `tp <name> x,z,y` (coords from another player's position) | Player teleports; verify axis order correct (x=east, z=north, y=height) - wrong order = player under/above ground |
 | 6 | `tp <name> <otherPlayerName>` | Player teleports to the other player |
-| 7 | `kick <name>` | Player disconnected |
+| 7 | `kick <name>` | Player disconnected, reply "Kicked: \<name\>" naming the player the server found. A name nobody answers to is refused instead: "Error: no player named '\<name\>' is online", and nobody is disconnected |
 | 8 | `baka_spawn Boar x,z,y 3 2` (Spawn X at) | 3 level-2 boars appear at/near the point, snapped to ground |
 | 9 | `baka_killall` | Spawned hostile creatures die; **players survive**. Reply: "KillAll complete: N hostiles slain, U out of reach, S spared (players, pets & allies)" |
 | 10 | `baka_killall` with friendlies present (spawn a Deer; tame a boar; dvergr if reachable) | **Tamed pets, passive animals, and dvergr allies SURVIVE**; only hostile-faction mobs die |
@@ -51,6 +51,10 @@ against a running server. Run this checklist on a **closed test server**
 | 22 | A boss summoned and killed by `baka_killall` | The boss dies **the ordinary way**: it drops its trophy, the power stone lights up, and the world's boss counter moves. Nothing is deleted outright |
 | 23 | **Tame a boar and run `baka_killall` within two seconds** | The boar **survives**. Tamed is read off the server's copy of the world record, and that copy is written by the owning client, so a tame that has only just happened is the one moment the flag might not have arrived yet. A boar that dies here is a replication race, not a faction mistake: report how many seconds it took and whether the taming effect was still playing |
 | 24 | Two `baka_killall` in a row, the second sent before the first answers | The second is refused with "KillAll is already running: N candidates still to go", and the counts in the first one's result line are its own. Two sweeps over one snapshot would double every count and strike half the world twice |
+| 25 | A player whose name is **not ASCII** joins (Greek, Cyrillic or Japanese letters), then `playerlist` | Their name comes back in their own letters in the Saga log and in the Players table, not as `?` and not as a run of Latin-1 characters. This is the whole encoding fix: the app reads the server's output as UTF-8 now. Note the machine's Windows language, because the damage this replaced was done in whatever code page that machine uses |
+| 26 | Kick that same player from the Players table (right click, Kick) | They are disconnected, and the toast names them in their own letters. The app sends the platform id (`Steam_7656...`), so this has to work even for a player whose name was stored broken by an older BakaLoader: the id is what the server matched on, and the reply carries the name back |
+| 27 | With that player still on, kick from `Send console command...` by typing their name with one letter wrong | "Error: no player named '\<what you typed\>' is online" and nobody is disconnected. Before 1.2.0 this answered "Kicked: \<what you typed\>" and the host was told a player had been thrown off who was standing right there |
+| 28 | Kick a player whose name is not ASCII while the roster still shows the **old broken spelling** (an install upgraded from 1.1.x, before they rejoin) | They are still kicked: the id goes out first. Then let them rejoin and check the Players table holds ONE row for the character, in their own letters, rather than the broken spelling beside the good one |
 
 Also test a spawn with a **modded prefab** from the item picker (verifies
 ZNetScene hash lookup against the modded ObjectDB).
@@ -125,7 +129,7 @@ Run this on a closed 1.0 server after the rebuild.
 
 - [ ] Start the server, then read `BepInEx/LogOutput.log` end to end. There must be no
       MissingMethodException and no MissingFieldException anywhere in it.
-- [ ] The same log shows `BakaLoader Commander v1.6.0` and its listening line,
+- [ ] The same log shows `BakaLoader Commander v1.7.0` and its listening line,
       `BakaLoader Spawn Helper v1.5.0 loaded - 'baka_spawn' command registered.` and
       `BakaLoader KillAll v1.7.0 loaded. 'baka_killall' command registered.`
       A missing registration line is the tell that the constructor threw again.
@@ -289,6 +293,41 @@ would be the plugin's doing.
       after any edit rather than expecting a running server to pick one up.
 - [ ] Set both back to `false` and restart before signing off, so the live server ends the
       pass on the default.
+
+## The 2026-09-19 kick, and a player whose name is not English
+
+Two faults, one walk. BakaLoader read the server's console output with the machine's own
+code page rather than as UTF-8, so a player named with two Greek letters was learned,
+stored and kicked as four Latin-1 characters nobody answers to; and `CmdKick` handed its
+text to `ZNet.Kick` and answered `Kicked: <text>` without ever checking that anybody
+matched, so a kick that reached no one read as done.
+
+The app sends the platform id first now (`Steam_<id>`), falls back to the name, and the
+plugin resolves the peer itself before it claims anything. You need one player whose name
+is NOT plain English for this: Greek, Cyrillic, Japanese or an accented Latin name all
+work, and the name must be set on the character, not on the account.
+
+- [ ] That player joins. The roster row shows their name **in their own letters**, and the
+      Saga log's join line does too. Question marks, or a row of accented capitals where a
+      word should be, is the encoding fault and nothing below it is worth running yet.
+- [ ] `playerlist` over RCON names them the same way.
+- [ ] Kick them from the row menu. They are disconnected, and the toast reads
+      **Kicked `<their name>`**, spelled the way they spell it.
+- [ ] Kick somebody who is NOT on the server: type `kick Nobody` into
+      `Send console command...`. The answer printed in the Saga log is
+      `Error: no player named 'Nobody' is online` and nobody is disconnected. A typed
+      command raises no toast; the worded toast is the row menu's, so also kick a player
+      from the Players row menu just after they have left and check that toast says nobody
+      of that name is on the server. It must NOT say kicked.
+- [ ] Ban that same non-English player while they are online. They are thrown off, the ban
+      holds at their next attempt, and the Saga log says kicked rather than "the kick
+      reached nobody".
+- [ ] Heal, smite, teleport and spawn at still reach them by name, which is the half of
+      this that never went through an id.
+- [ ] Open `players-cache.json` in `%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader`
+      after the walk. Their name is stored in their own letters. A cache written by an older
+      build is repaired at the next launch, so a host upgrading should see their old broken
+      rows come back to life rather than doubling: one row per player, not two.
 
 ## Sign-off
 

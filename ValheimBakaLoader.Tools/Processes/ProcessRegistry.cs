@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 
 namespace ValheimBakaLoader.Tools.Processes
 {
@@ -66,6 +67,26 @@ namespace ValheimBakaLoader.Tools.Processes
             return process;
         }
 
+        /// <summary>
+        /// How a child's redirected output is read. UTF-8, because that is what the Unity
+        /// server writes: every line BakaLoader learns a player from (the connect lines, the
+        /// character spawn line, the player id line, the playerlist capture) comes off this
+        /// stream, and with no encoding set .NET decodes it with the machine's own code page.
+        /// On a Windows-1252 machine that turned a name written in Greek, Cyrillic or Japanese
+        /// into one Latin-1 character per byte, and everything keyed on the name inherited it:
+        /// the roster, the kick, the ban, the permit, the teleport, the heal, the smite, the
+        /// spawn at, the statistics.
+        /// <para>
+        /// Every child this registry starts is served by it. Every steamcmd line the app acts
+        /// on is plain ASCII, which is byte for byte the same under UTF-8, and nothing reads
+        /// what taskkill writes. The one line that can differ is steamcmd echoing a folder with
+        /// an accented letter in it, which it writes in the machine's code page: this decoder
+        /// replaces a byte it cannot read rather than throwing, so that line shows one
+        /// replacement mark in the log instead of the process losing its output.
+        /// </para>
+        /// </summary>
+        private static readonly Encoding OutputEncoding = new UTF8Encoding(false);
+
         public Process AddBackgroundProcess(string key, string command, string args)
         {
             var process = new Process
@@ -79,6 +100,8 @@ namespace ValheimBakaLoader.Tools.Processes
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
+                    StandardOutputEncoding = OutputEncoding,
+                    StandardErrorEncoding = OutputEncoding,
                 },
             };
 

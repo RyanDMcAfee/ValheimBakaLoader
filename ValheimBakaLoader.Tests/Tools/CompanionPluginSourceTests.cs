@@ -1091,6 +1091,90 @@ namespace ValheimBakaLoader.Tests.Tools
                 "Commander is published as " + PluginVersionOf(Commander) + ", below the 1.3.1 the UTF-8 fix shipped in");
         }
 
+        // ---- the kick that reported a kick nobody got ----
+
+        /// <summary>
+        /// CmdKick used to hand its text straight to ZNet.Kick(string) and answer "Kicked: " and
+        /// the text. That method looks the text up as a host id, then as a player name, and
+        /// simply RETURNS when neither finds anybody, so every kick read as done. It is the
+        /// second half of the encoding bug: a name the app had read through the wrong code page
+        /// matches nobody, and the host was told the player had been thrown off while they stood
+        /// there.
+        /// <para>
+        /// So the peer is resolved here first, in the order the game resolves it, and the two
+        /// answers are told apart. The lookups require IsReady for the reason FindPeer does: the
+        /// game's own lookups walk past a peer that is not in the world yet.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Commander_KickResolvesThePeerAndOnlyClaimsAKickWhenOneMatched()
+        {
+            var src = WithoutComments(Commander);
+
+            var kick = src.IndexOf("private static string CmdKick(", StringComparison.Ordinal);
+            Assert.True(kick > 0, "CmdKick is gone");
+            var body = src.Substring(kick, Math.Min(1200, src.Length - kick));
+
+            // Both lookups, host id first, which is the order ZNet.InternalKick itself uses.
+            Assert.Contains("FindPeerByHostId(target", body);
+            Assert.Contains("FindPeer(target)", body);
+
+            // The refusal, word for word: the app reads this sentence to decide whether to try
+            // the name instead, and the page reads it to word what the host is told.
+            Assert.Contains("\"Error: no player named '\" + target + \"' is online\"", body);
+
+            // And the claim, which now names the peer rather than the text that was typed.
+            Assert.Contains("\"Kicked: \" + (peer.m_playerName", body);
+
+            // A peer that is not in the world yet is not a peer to kick.
+            var lookup = src.IndexOf("private static ZNetPeer FindPeerByHostId(", StringComparison.Ordinal);
+            Assert.True(lookup > 0, "FindPeerByHostId is gone");
+            Assert.Contains("IsReady()", src.Substring(lookup, Math.Min(700, src.Length - lookup)));
+        }
+
+        /// <summary>
+        /// The id a socket answers with differs between the two kinds of server: a Steam socket
+        /// gives the bare steamid64 and a crossplay socket gives the whole "Steam_&lt;id&gt;".
+        /// The game papers over that by reading anything it cannot parse as a Steam id, and the
+        /// plugin has to match no more loosely than the game does, or it reports a kick the game
+        /// then declines to make. Only the Steam prefix is taken off, and the compare is case
+        /// sensitive, which is what the game's own lookups are.
+        /// </summary>
+        [Fact]
+        public void Commander_MatchesAHostIdNoMoreLooselyThanTheGameDoes()
+        {
+            var src = WithoutComments(Commander);
+
+            var matcher = src.IndexOf("private static bool HostIdMatches(", StringComparison.Ordinal);
+            Assert.True(matcher > 0, "HostIdMatches is gone");
+            var body = src.Substring(matcher, Math.Min(500, src.Length - matcher));
+
+            Assert.Contains("StringComparison.Ordinal", body);
+            Assert.DoesNotContain("OrdinalIgnoreCase", body);
+            Assert.Contains("WithoutSteamPrefix(", body);
+
+            var strip = src.IndexOf("private static string WithoutSteamPrefix(", StringComparison.Ordinal);
+            Assert.True(strip > 0, "WithoutSteamPrefix is gone");
+            var stripBody = src.Substring(strip, Math.Min(400, src.Length - strip));
+            Assert.Contains("\"Steam_\"", stripBody);
+            // No other platform: a console id handed to a Steam server resolves to nobody there.
+            foreach (var other in new[] { "\"Xbox_\"", "\"PlayStation_\"", "\"V_\"" })
+                Assert.DoesNotContain(other, stripBody);
+        }
+
+        /// <summary>
+        /// A plugin that answers differently and ships under the old number is a plugin nobody
+        /// replaces, and the app decides what to tell the host by reading this plugin's words.
+        /// A floor, for the reason the other version checks here give.
+        /// </summary>
+        [Fact]
+        public void Commander_CarriesAtLeastTheVersionTheResolvedKickShippedIn()
+        {
+            Assert.True(PluginVersionOf(Commander) >= new Version("1.7.0"),
+                "Commander is published as " + PluginVersionOf(Commander) +
+                ", below the 1.7.0 the resolved kick shipped in");
+        }
+
         /// <summary>The version a companion plugin publishes to BepInEx, read out of its source.</summary>
         private static Version PluginVersionOf(string src)
         {

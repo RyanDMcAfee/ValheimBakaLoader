@@ -2281,11 +2281,42 @@ namespace ValheimBakaLoader.Game
             return string.Empty;
         }
 
-        /// <summary>Kicks a player by name, Steam/Platform id, or IP (vanilla "kick").</summary>
-        public Task<string> KickAsync(string target)
+        /// <summary>
+        /// Kicks a player. <paramref name="hostId"/> is the platform id the roster learned from
+        /// the connection line ("Steam_76561198...", see
+        /// <see cref="PlayerPlatforms.HostId(string, string)"/>) and is sent first when there is
+        /// one, because the game resolves it without ever comparing a name: a name that reached
+        /// the app through a bad encoding, or that a host typed with one letter out, matches
+        /// nobody and the kick lands on no one at all.
+        /// <para>
+        /// The name is still sent when the id finds nobody, which is the honest outcome for an
+        /// id the app assembled from a log line the game had already rewritten (Valheim 1.0
+        /// prints a console player's id multiplied by a constant). Kicking a player who is
+        /// already gone does nothing, so the second try costs one round trip and no more.
+        /// </para>
+        /// </summary>
+        public async Task<string> KickAsync(string target, string hostId = null)
         {
-            return SendRconCommandAsync(BuildKick(target));
+            var byId = !string.IsNullOrWhiteSpace(hostId)
+                && !string.Equals(hostId, target, StringComparison.Ordinal);
+
+            if (byId)
+            {
+                var reply = await SendRconCommandAsync(BuildKick(hostId));
+                if (!KickFoundNobody(reply)) return reply;
+            }
+
+            return await SendRconCommandAsync(BuildKick(target));
         }
+
+        /// <summary>
+        /// True when the server's answer to a kick says there is nobody of that name or id on
+        /// the server. Commander says so in one fixed sentence; anything else, an empty answer
+        /// included, is not a miss and must not be treated as one, because the vanilla console
+        /// answers a kick with nothing at all.
+        /// </summary>
+        internal static bool KickFoundNobody(string reply)
+            => FirstSpokenLine(reply).StartsWith("Error: no player named", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Deals lethal damage to a player ("smite"). Syntax is VERIFY-LIVE.</summary>
         public Task<string> SmiteAsync(string playerName)

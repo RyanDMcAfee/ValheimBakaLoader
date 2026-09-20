@@ -74,5 +74,41 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             Assert.Equal(expected, PlayerPlatforms.DisplayName(platform));
         }
+
+        // ---- the id the server knows a player by ----
+
+        /// <summary>
+        /// The game reads a kick target as a platform user id first and only compares NAMES
+        /// when that finds nobody. On a Steam only server it looks the peer up by the id alone,
+        /// because a Steam socket answers its host name as the bare number; on a crossplay
+        /// server it looks it up by the whole "Platform_id". The one spelling below satisfies
+        /// both, which is why it is the one the app sends.
+        /// </summary>
+        [Theory]
+        [InlineData(PlayerPlatforms.Steam, "76561198000000001", "Steam_76561198000000001")]
+        [InlineData(PlayerPlatforms.Xbox, "2535000000000000", "Xbox_2535000000000000")]
+        [InlineData(PlayerPlatforms.PlayFab, "BakaXplay_2498_3c72cce4", "PlayFab_BakaXplay_2498_3c72cce4")]
+        [InlineData("  Steam  ", "  76561198000000001  ", "Steam_76561198000000001")]
+        public void AHostIdIsThePlatformAndTheIdJoined(string platform, string playerId, string expected)
+        {
+            Assert.Equal(expected, PlayerPlatforms.HostId(platform, playerId));
+        }
+
+        /// <summary>
+        /// Null rather than half an id: the caller has the player's name to fall back to, and a
+        /// kick built out of a blank half would be a command aimed at nobody. Whitespace inside
+        /// either half is refused for the same reason, since the command is one line.
+        /// </summary>
+        [Theory]
+        [InlineData(null, "76561198000000001")]
+        [InlineData("Steam", null)]
+        [InlineData("", "76561198000000001")]
+        [InlineData("Steam", "   ")]
+        [InlineData("Steam", "7656 1198")]
+        [InlineData("Play Station", "1")]
+        public void AnIdThatCannotBeSentAsOneLineIsNotBuilt(string platform, string playerId)
+        {
+            Assert.Null(PlayerPlatforms.HostId(platform, playerId));
+        }
     }
 }

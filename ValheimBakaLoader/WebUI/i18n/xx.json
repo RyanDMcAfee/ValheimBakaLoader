@@ -1203,6 +1203,10 @@
     "vikings.kick.done.toast": {
       "translation": "[Ẋ Kicked {name} Ẋ] ẊẊẊ"
     },
+    "vikings.kick.nobody.toast": {
+      "translation": "[Ẋ No viking named {name} is on the server, so nobody was kicked. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚦ"
+    },
     "vikings.act.undelivered.toast": {
       "translation": "[Ẋ command not delivered · server running & RCON bound? Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "mark": "ᚦ"

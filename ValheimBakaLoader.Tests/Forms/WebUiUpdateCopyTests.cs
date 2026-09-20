@@ -269,9 +269,14 @@ namespace ValheimBakaLoader.Tests.Forms
             // slain, still walking, already running, stopped part way, said nothing at all,
             // and a shape this version cannot read) plus the refusal that the world save
             // shares with it.
+            // 188 after the kick learned to read the server's answer the same way: the one
+            // sentence a kick can now say that it never could before is that nobody of that
+            // name or id is on the server. The other three endings it reads (a refusal, an
+            // answer with nothing in it, a shape this version has not met) are worded from
+            // entries the sweep already owns.
             // The number is the gate: a new toast whose rune is spelled at the call site
             // and nowhere else lands here.
-            Assert.Equal(187, marked.Count);
+            Assert.Equal(188, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

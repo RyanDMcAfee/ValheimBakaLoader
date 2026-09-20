@@ -152,8 +152,17 @@ namespace ValheimBakaLoader.Tools.Data
         public virtual async Task LoadAsync()
         {
             var file = await Files.LoadAsync<KeyedDataFile<TEntity>>(FilePath);
-            Entities = file?.Data ?? new Dictionary<string, TEntity>();
+            Entities = OnLoaded(file?.Data ?? new Dictionary<string, TEntity>());
         }
+
+        /// <summary>
+        /// The collection exactly as it came off disk, handed to the subclass before anything
+        /// can read it, so a file written by an older version can be repaired on the way in.
+        /// Whatever comes back is what the collection holds, so an implementation is free to
+        /// return a different dictionary. The default keeps the file as written.
+        /// </summary>
+        protected virtual Dictionary<string, TEntity> OnLoaded(Dictionary<string, TEntity> loaded)
+            => loaded;
 
         public void Remove(TEntity entity)
         {

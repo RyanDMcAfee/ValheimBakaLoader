@@ -221,5 +221,20 @@ else
   echo "  the reply table is missing: $KILLALL_SELFTEST"; fail=1
 fi
 
+echo "== 14. what a kick actually did, read rather than assumed =="
+# The same rule as 13, on the other command that reports on a person. A kick used to
+# raise "Kicked X" for any answer at all, including the one that says nobody of that
+# name is on the server, which is exactly what a name read in the wrong encoding
+# produces. The table drives the real reader out of app.js against every reply the
+# plugin can give, and the rules beside it keep the hostId on the call and the kick
+# out of doPlayerAct.
+KICK_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/kick_reply_selftest.js"
+if [ -f "$KICK_SELFTEST" ]; then
+  if out=$(node "$KICK_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the kick reply table is missing: $KICK_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

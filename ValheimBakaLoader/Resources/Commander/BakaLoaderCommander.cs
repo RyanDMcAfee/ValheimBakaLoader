@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.6.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.7.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -32,7 +32,8 @@
 //   dmg <player> <amount>            - negative amount heals (RPC_Heal), positive
 //                                      damages (RPC_Damage); +/-1000000 = heal/smite
 //   tp <player> <dest>               - dest is "x,z,y" coords or another player name
-//   kick <player>                    - ZNet.Kick (name / host id)
+//   kick <player | hostId>           - resolves the peer itself (host id, then name) and
+//                                      answers "Kicked: <name>" only when one matched
 //   baka_spawn <prefab> <x,z,y> [amount] [level] - main-thread spawn (absorbed from
 //                                      BakaLoaderSpawnHelper). The 4th argument is a
 //                                      creature's star level (0 based) or an item's
@@ -103,7 +104,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.6.0";
+        private const string PluginVersion = "1.7.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -699,9 +700,87 @@ namespace BakaLoaderCommander
             var target = fullText.Substring("kick".Length).Trim();
             if (target.Length == 0) return "Usage: kick <player | hostId>";
 
-            // ZNet.Kick(string) is public and resolves player name or host id itself.
-            ZNet.instance.Kick(target);
-            return "Kicked: " + target;
+            // Resolved here first, in the order the game resolves it. ZNet.Kick(string) looks
+            // the text up as a host id and then as a player name and simply RETURNS when
+            // neither finds anybody, so this used to answer "Kicked: <text>" for a kick that
+            // reached no one. A name that had come to the app through the wrong encoding, or
+            // one typed with a letter out, read as done with the player standing right there.
+            string host;
+            var peer = FindPeerByHostId(target, out host);
+            var kickText = host;
+
+            if (peer == null)
+            {
+                peer = FindPeer(target);
+
+                // The peer's OWN spelling of its name goes to the game, not the text that was
+                // typed: the name lookup above accepts a difference in case and the game's own
+                // does not, so handing the typed text back would find nobody after all.
+                if (peer != null) kickText = peer.m_playerName;
+            }
+
+            if (peer == null) return "Error: no player named '" + target + "' is online";
+
+            ZNet.instance.Kick(kickText);
+            return "Kicked: " + (peer.m_playerName ?? target);
+        }
+
+        /// <summary>
+        /// The connected peer a kick target names, matched on the id the SERVER knows a peer by
+        /// rather than on the name a person typed, with that peer's own host id handed back so
+        /// the game is given a spelling its own lookup will find.
+        /// </summary>
+        private static ZNetPeer FindPeerByHostId(string target, out string host)
+        {
+            host = null;
+            if (string.IsNullOrEmpty(target)) return null;
+
+            var peers = ZNet.instance.GetPeers();
+            if (peers == null) return null;
+
+            foreach (var p in peers)
+            {
+                // READY for the same reason FindPeer requires it: the game's own lookups walk
+                // past a peer that is not in the world yet, and so must this one.
+                if (p == null || !p.IsReady() || p.m_socket == null) continue;
+
+                string name = null;
+                try { name = p.m_socket.GetHostName(); } catch { }
+                if (string.IsNullOrEmpty(name)) continue;
+
+                if (!HostIdMatches(name, target)) continue;
+
+                host = name;
+                return p;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Whether a kick target stands for the peer whose socket answers with this host id.
+        /// <para>
+        /// Exact first, and then the one difference between the two kinds of server: a Steam
+        /// socket answers the bare steamid64 while a crossplay socket answers the whole
+        /// "Steam_&lt;id&gt;", and the game papers over that by reading any text it cannot parse
+        /// as a platform id as a Steam id. Only the Steam prefix is taken off here, because
+        /// that is the only one the game treats this way: a console id handed to a Steam server
+        /// resolves to nobody there, and a match this side that the game would not make is a
+        /// kick reported as done that never happened. The compare is case sensitive, which is
+        /// what the game's own list and peer lookups are.
+        /// </para>
+        /// </summary>
+        private static bool HostIdMatches(string host, string target)
+        {
+            var left = WithoutSteamPrefix(host);
+            var right = WithoutSteamPrefix(target);
+            return left.Length > 0 && string.Equals(left, right, StringComparison.Ordinal);
+        }
+
+        private static string WithoutSteamPrefix(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return "";
+            return id.StartsWith("Steam_", StringComparison.Ordinal) ? id.Substring("Steam_".Length) : id;
         }
 
         // ---- baka_spawn <prefab> <x,z,y> [amount] [level] --------------------

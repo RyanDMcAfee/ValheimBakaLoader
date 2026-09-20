@@ -1,0 +1,65 @@
+{
+  "data": {
+    "Steam:76561198000000001": {
+      "platform": "Steam",
+      "playerId": "76561198000000001",
+      "playerName": "Î© Î£",
+      "lastStatusChange": "2026-09-19T21:06:00+00:00",
+      "lastStatusCharacter": "Î© Î£",
+      "characters": [
+        {
+          "characterName": "Î© Î£",
+          "matchConfident": false
+        },
+        {
+          "characterName": "Ω Σ",
+          "matchConfident": true
+        }
+      ],
+      "serverKey": "Final Sunset"
+    },
+    "Steam:76561198000000002": {
+      "platform": "Steam",
+      "playerId": "76561198000000002",
+      "playerName": "Fauré",
+      "lastStatusChange": "2026-09-19T20:00:00+00:00",
+      "lastStatusCharacter": "Fauré",
+      "characters": [
+        {
+          "characterName": "Fauré",
+          "matchConfident": true
+        }
+      ],
+      "serverKey": "Final Sunset"
+    },
+    "Steam:76561198000000003": {
+      "platform": "Steam",
+      "playerId": "76561198000000003",
+      "playerName": "Ð”Ñ€Ð°ÐºÐ¾Ð½",
+      "lastStatusChange": "2026-09-10T08:00:00+00:00",
+      "lastStatusCharacter": "Ð”Ñ€Ð°ÐºÐ¾Ð½",
+      "characters": [
+        {
+          "characterName": "Ð”Ñ€Ð°ÐºÐ¾Ð½",
+          "matchConfident": true
+        }
+      ],
+      "serverKey": "Final Sunset"
+    },
+    "legacy-76561198000000003": {
+      "platform": "Steam",
+      "playerId": "76561198000000003",
+      "playerName": "Дракон",
+      "playerNumericId": "1454938750",
+      "lastStatusChange": "2026-09-18T19:30:00+00:00",
+      "lastStatusCharacter": "Дракон",
+      "characters": [
+        {
+          "characterName": "Дракон",
+          "matchConfident": true
+        }
+      ],
+      "serverKey": "Final Sunset"
+    }
+  }
+}

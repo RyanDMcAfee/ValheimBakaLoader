@@ -7208,7 +7208,7 @@ async function openPlayerMenu(x,y,p){
       fn:()=>setPlayerList(p,"Permitted",isPerm!==true)},
     "hr",
     {r:"ᚲ",label:T("vikings.menu.kick"),danger:true,confirm:true,disabled:!rcon||!connected,tip:rcon?noConn:noR,
-      fn:()=>doPlayerAct("players.kick",{target:tgt},T("vikings.kick.done.toast",{name:tgt}))},
+      fn:()=>doKick(p,tgt)},
     {r:"ᛉ",label:isBan===true?T("vikings.menu.unban"):T("vikings.menu.ban"),
       danger:isBan!==true,confirm:isBan!==true,fn:()=>doBan(p,isBan===true,tgt)},
     "hr",
@@ -7231,6 +7231,100 @@ async function doPlayerAct(method,params,okMsg){
   if(r===false){toast("ᚦ "+T("vikings.act.undelivered.toast"));return;}
   toast("ᛒ "+okMsg);
   logLine("cmd","> "+method.replace("players.","")+" "+(params.target||params.playerName||""));
+}
+
+/* KICK-BEGIN
+   ------------------------------------------------------------------------------------
+   What a kick actually did, read rather than assumed.
+
+   A kick used to go through doPlayerAct, which raises "Kicked X" for any answer at all
+   that is not literally false. The server has four things to say back: it kicked
+   somebody and names them, nobody of that name or id is on the server, it refused the
+   line, or it says nothing at all (the vanilla console answers a kick with silence).
+   Three of those four used to read as a kick that had happened.
+
+   That mattered most for the case this was written for. A name that reached the app in
+   the wrong encoding matches nobody, so the kick landed on no one while the player
+   stood there and the host was told it was done. The app sends the platform id now and
+   only falls back to the name, so this reader is the second half of the same fix: it
+   says which of the four happened. Pure, like the kill-all reader above, so it can be
+   driven as a table with no browser in the room
+   (scripts/ui/kick_reply_selftest.js runs the real code out of this file). */
+
+/**
+ * What the server said about a kick.
+ * @param {string} reply the answer, exactly as it arrived
+ * @returns {object} kind, plus what that kind carries:
+ *   kicked  {name}  it disconnected somebody, and names who
+ *   missing {name}  nobody of that name or id is on the server
+ *   refused {}      Error:, Unknown command, the usage line
+ *   silent  {}      it was carried and the server said nothing
+ *   unknown {}      a shape this version has not met
+ */
+function kickReply(reply){
+  const said=String(reply==null?"":reply).trim();
+  if(!said) return {kind:"silent"};
+  /* Before the refusal test, because this one opens with "Error:" too and it is the one
+     answer that says something the host can act on: they have the wrong name. */
+  const missing=/^Error:\s*no player named\s*'([\s\S]*)'\s*is online/i.exec(said);
+  if(missing) return {kind:"missing",name:missing[1]};
+  if(consoleRefused(said)) return {kind:"refused"};
+  if(/^Usage:\s*kick\b/i.test(said)) return {kind:"refused"};
+  const kicked=/^Kicked:\s*(.+)$/i.exec(said);
+  if(kicked) return {kind:"kicked",name:kicked[1].trim()};
+  return {kind:"unknown"};
+}
+
+/**
+ * Which name to say a kick landed on. The SERVER's spelling wins where it gave one,
+ * because that is the spelling it acted on, with one answer taken back off it: the
+ * 1.6.0 plugin answers "Kicked: " with the exact text it was handed, and the app hands
+ * it the host id first, so that older server names an ID where the host is reading for
+ * a person. An answer that is only the id we sent is no name at all, and the row's own
+ * is better. A leading "Steam_" is not part of an id, on either side of the comparison,
+ * because the plugin can hand the id back with the prefix or without it.
+ * @param {string} said the name the server gave back
+ * @param {string} who the row's own name, which is what the host was looking at
+ * @param {string} hostId the id this kick was sent with, or nothing
+ */
+function kickedName(said,who,hostId){
+  const bare=v=>{const s=String(v==null?"":v).trim();
+    return s.indexOf("Steam_")===0?s.slice(6):s;};
+  const name=bare(said), sent=bare(hostId);
+  if(!name) return who;
+  if(sent&&name===sent) return who||said;
+  return said;
+}
+/* KICK-END */
+
+/** The toast for a kick, worded. The name comes from the SERVER where it named one,
+    because that is the spelling it acted on; the row's own name is the fallback, and
+    it is also what an answer that only echoes the id back falls to. */
+function kickToast(read,who,hostId){
+  switch(read.kind){
+    case "kicked":  return "ᛒ "+T("vikings.kick.done.toast",{name:kickedName(read.name,who,hostId)});
+    case "missing": return "ᚦ "+T("vikings.kick.nobody.toast",{name:read.name||who});
+    case "refused": return "ᚦ "+T("pal.console.refused.toast");
+    /* The vanilla console says nothing back at all, so silence is not a failure and must
+       not be worded as one. It is also not a kick anybody watched happen. */
+    case "silent":  return "ᚦ "+T("pal.kill.toast.silent");
+    default:        return "ᚦ "+T("pal.kill.toast.unreadable");
+  }
+}
+
+/** The kick itself. hostId is the id the server knows this player by; the C# side sends
+    it first and falls back to the name, so a name it never read correctly is no longer
+    the only way to reach somebody. */
+async function doKick(p,tgt){
+  /* Held, rather than written into the call, because the toast has to know what was
+     sent to tell an answer that names a person from one that echoes the id back. */
+  const hostId=(p&&p.hostId)||null;
+  const r=await rpc("players.kick",{target:tgt,hostId});
+  if(r===FAIL) return;
+  /* null is the C# side saying it never went out: no server, or no RCON. */
+  if(r===false||r==null){toast("ᚦ "+T("vikings.act.undelivered.toast"));return;}
+  toast(kickToast(kickReply(r),tgt,hostId));
+  logLine("cmd","> kick "+tgt);
 }
 /* The two lists this menu writes, and the three whole sentences each of them says. The
    toast used to be built as "Added to "+list.toLowerCase()+" list · "+who, which hands a
@@ -7257,8 +7351,19 @@ async function doBan(p,unban,tgt){
   toast(unban?("ᛉ "+T("vikings.unban.done.toast",{name:tgt})):("ᛉ "+T("vikings.ban.done.toast",{name:tgt})));
   logLine(unban?"info":"warn","[BakaLoader] "+(unban?"unbanned ":"banned ")+(p.displayName||p.PlayerId));
   if(!unban&&S.caps.rcon&&p.status==="Online"){
-    const k=await rpc("players.kick",{target:tgt});
-    if(k!==FAIL&&k) logLine("warn","[BakaLoader] kicked "+tgt+" to enforce ban");
+    const k=await rpc("players.kick",{target:tgt,hostId:p.hostId||null});
+    /* The ban is written either way: it is a file on disk and it holds at their next
+       login. What the log must not say is that they were thrown off when nobody
+       watched it happen. ONE of the five answers names a kicked player, and that is
+       the only one this line may claim a kick for: a refusal, a silence and a shape
+       this version has not met are no more a kick than the miss is, and the toast a
+       few lines above already words all of them that way. */
+    if(k!==FAIL){
+      const read=kickReply(k);
+      logLine("warn",read.kind==="kicked"
+        ?"[BakaLoader] kicked "+tgt+" to enforce ban"
+        :"[BakaLoader] banned "+tgt+", but the kick reached nobody");
+    }
   }
 }
 /* spawn-item picker (items.search) */

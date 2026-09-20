@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using ValheimBakaLoader.Tools;
 using ValheimBakaLoader.Tools.Data;
 
 namespace ValheimBakaLoader.Game
@@ -48,11 +49,44 @@ namespace ValheimBakaLoader.Game
         /// <summary>In-game object id; changes every session.</summary>
         [JsonIgnore] public string ZdoId { get; set; }
 
+        /// <summary>
+        /// Records a character this player has been seen using.
+        /// <para>
+        /// A row already on file that is THIS character under the spelling the app used to store
+        /// it in is taken as this character rather than as another one. Until 1.2.0 the server's
+        /// console output was read in the machine's own code page instead of as UTF-8, so a name
+        /// outside the first 128 letters went into the file broken; the read is right now, but
+        /// the old row is still there, and without this the player comes back and the list grows
+        /// a second entry for the one character. The old row is renamed in place, so it keeps its
+        /// position, and a further twin of it is dropped. On a machine whose code page cannot be
+        /// undone (932, 936, 950) this is the only thing that fixes such a list, which is why it
+        /// runs the damage forwards rather than trying to repair what is stored.
+        /// </para>
+        /// </summary>
         public CharacterInfo AddCharacter(string characterName, bool matchConfident = true)
         {
             Characters ??= new List<CharacterInfo>();
 
-            if (!TryGetCharacter(characterName, out var character))
+            TryGetCharacter(characterName, out var character);
+
+            for (var i = Characters.Count - 1; i >= 0; i--)
+            {
+                var row = Characters[i];
+                if (row == null || ReferenceEquals(row, character)) continue;
+                if (!TextRepair.IsDamagedSpellingOf(row.CharacterName, characterName)) continue;
+
+                if (character == null)
+                {
+                    row.CharacterName = characterName;
+                    character = row;
+                }
+                else
+                {
+                    Characters.RemoveAt(i);
+                }
+            }
+
+            if (character == null)
             {
                 character = new CharacterInfo { CharacterName = characterName };
                 Characters.Add(character);
