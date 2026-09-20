@@ -214,6 +214,20 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         public bool OverForeign { get; init; }
 
+        /// <summary>
+        /// True when the host has been told that the pack this install was written from is no
+        /// longer one Thunderstore serves, and said to take the pack it does serve instead.
+        /// <para>
+        /// Without it a write over an install with files missing is a REPAIR, and a repair
+        /// deliberately fetches the exact version the note names rather than the newest one.
+        /// Once that version is taken down there is nothing at that address any more, so every
+        /// repair from then on fetches the same 404 and the install stays broken: the only way
+        /// out is a pack that IS served, and moving a host onto a newer loader is a decision
+        /// that belongs to them. This is that decision, carried on the call that follows it.
+        /// </para>
+        /// </summary>
+        public bool TakeCurrentPack { get; init; }
+
         /// <summary>A write somebody pressed a button for, with nothing yet answered.</summary>
         public static BepInExWriteOptions Manual { get; } = new();
 
@@ -229,7 +243,8 @@ namespace ValheimBakaLoader.Tools
         /// An unattended write that carried one would be a window answering on their behalf.
         /// </summary>
         public bool CarriesAnAnswer =>
-            AllowDowngrade || OverUnrecognised || OverOutside || OverDrivenElsewhere || OverForeign;
+            AllowDowngrade || OverUnrecognised || OverOutside || OverDrivenElsewhere || OverForeign
+            || TakeCurrentPack;
     }
 
     /// <summary>What BakaLoader can say about the BepInEx in one base install.</summary>
@@ -1211,7 +1226,15 @@ namespace ValheimBakaLoader.Tools
             // An archive the host pasted a link to is not one of these. They named that file
             // themselves, and the version the note holds is not the one they asked for, so the
             // rules below have nothing to say about it and neither has the note.
+            //
+            // Neither is a write the host asked to take the CURRENT pack. A repair's whole point
+            // is the pack the note names, and when Thunderstore has stopped serving that pack
+            // there is no putting it back: every repair fetches the same 404 and the row offers
+            // the same repair again. TakeCurrentPack is the host saying they would rather have
+            // the pack the site does serve, which is an ordinary update, so this write stops
+            // being a repair and goes down the update path from here.
             var repairing = string.IsNullOrWhiteSpace(url)
+                && !options.TakeCurrentPack
                 && status.MaintainedByBakaLoader
                 && status.MissingFiles.Count > 0
                 && !status.Drifted
@@ -1222,10 +1245,16 @@ namespace ValheimBakaLoader.Tools
             string declaredSha = null;
             string address;
 
+            // What the site says is current, kept beside the version actually being fetched. On
+            // a repair the two part company (the note's pack is fetched, not the newest one),
+            // and if that fetch fails this is the pack the host would be offered instead.
+            string siteVersion = null;
+
             if (string.IsNullOrWhiteSpace(url))
             {
                 var listed = await ResolveListingAsync(owner, name);
                 version = listed.Version;
+                siteVersion = listed.Version;
                 declaredSize = listed.FileSize;
                 declaredSha = listed.Sha256;
                 address = ConstructedDownloadUrl(owner, name, version);
@@ -1342,6 +1371,20 @@ namespace ValheimBakaLoader.Tools
                 catch (OperationCanceledException) { throw; }
                 catch (Exception e)
                 {
+                    // A REPAIR that could not fetch its own pack is not the same failure as a
+                    // bad minute on the internet, and it must not be filed as one. The repair
+                    // asks for the exact version the install note names, and Thunderstore only
+                    // serves the versions it still lists: once that pack is taken down, every
+                    // restart from here on fetches a 404 and the install stays broken. The
+                    // ordinary offline reason is deliberately swallowed by the unattended
+                    // recorder, so this had no way of ever reaching the host. It has one now,
+                    // and it carries both versions so the row can offer the pack that IS served.
+                    if (repairing)
+                        throw new HostFacingException("bepinex.repairPackGone",
+                            $"BepInEx {version} is the pack this install was written from, and it could not be "
+                            + "fetched, so nothing was put back.",
+                            ("noted", version), ("offered", siteVersion), ("detail", e.Message));
+
                     throw new HostFacingException("bepinex.offline",
                         "BepInEx could not be fetched: " + e.Message, ("detail", e.Message));
                 }

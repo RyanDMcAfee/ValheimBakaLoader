@@ -252,5 +252,37 @@ else
   echo "  the loader row table is missing: $BEPINEX_SELFTEST"; fail=1
 fi
 
+echo "== 16. a sortable header still sorts after a realm switch =="
+# Issue 14. wireSort wires both sortable tables ONCE, while app.js is being evaluated, and
+# until 1.2.1 it was handed the state OBJECT: switchServer replaced both objects on every
+# realm switch, so from the first switch every header click wrote to an orphan while the
+# renderers read the live one. All twelve headers stopped sorting and only a reload cured
+# it, with the header still glowing because that glow is CSS. The browser probe beside this
+# (scripts/ui/sort_survives_realm_switch_probe.js) proves the behaviour; this is the cheap
+# half that runs on every commit, and its last rule is the SHAPE rather than the two names,
+# so the next handler wired once over an object something later replaces is caught here.
+SORT_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/sort_state_selftest.js"
+if [ -f "$SORT_SELFTEST" ]; then
+  if out=$(node "$SORT_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the sort state selftest is missing: $SORT_SELFTEST"; fail=1
+fi
+
+echo "== 17. the five world switches, from the game's vocabulary to the save =="
+# Issue 15. A switch the game has and the page has no control for is not a missing feature,
+# it is data loss: BakaLoader emits -resetmodifiers at every start, which clears a world's
+# whole starting key list, so a switch set in the game client was wiped at the first start
+# with no way in the window to put it back. The rules hold WorldGen.Switches, the controls
+# in index.html, the sentences in the catalog, the unsaved-band reader and the save against
+# each other, and drive the real paint and scrape functions out of app.js.
+SWITCH_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/world_switches_selftest.js"
+if [ -f "$SWITCH_SELFTEST" ]; then
+  if out=$(node "$SWITCH_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the world switches selftest is missing: $SWITCH_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

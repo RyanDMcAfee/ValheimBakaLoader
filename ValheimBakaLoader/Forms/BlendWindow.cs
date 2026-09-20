@@ -50,19 +50,32 @@ namespace ValheimBakaLoader.Forms
         private const string AtlasVirtualHost = "atlas.baka";
 
         /// <summary>
-        /// Where an installed language pack is read from, on the page's own origin.
+        /// The host an installed language pack is read from: a folder mapping of its own over
+        /// the languages folder beside userprefs.
         /// <para>
-        /// A pack's fonts have to have a URL, because <c>@font-face src</c> cannot read a
-        /// local file, and every font fetch is a CORS request. Serving the pack from this
-        /// origin rather than a host of its own means there is no CORS question to get
-        /// wrong, and it lets this side decide the content type and refuse any path that
-        /// resolves outside the languages folder.
+        /// A pack's fonts have to have a URL, because <c>@font-face src</c> cannot read a local
+        /// file. The obvious shape is to serve them off the page's own origin and answer the
+        /// requests by hand, and that shape cannot work: a host registered with
+        /// <c>SetVirtualHostNameToFolderMapping</c> is claimed whole by the folder mapper and
+        /// never raises <c>WebResourceRequested</c>, so a filter on a path under
+        /// <c>app.baka</c> is attached and never called once. That is what shipped in 1.2.0,
+        /// and it is why every language answered "could not be downloaded" while the download
+        /// and the install were working perfectly: the read-back was dead, not the pack.
+        /// </para>
+        /// <para>
+        /// So the packs get a host of their own and the mapper serves them. That puts them on a
+        /// second origin, which makes every pack fetch a cross-origin one, and a font fetch is
+        /// always a CORS request: <see cref="CoreWebView2HostResourceAccessKind.Allow"/> is the
+        /// only access kind that answers both the JSON and the fonts, measured in the engine
+        /// rather than reasoned about. What the page can read is then the whole languages
+        /// folder and nothing else, which is downloaded translation data; userprefs, the logs
+        /// and the caches sit BESIDE that folder rather than inside it.
         /// </para>
         /// </summary>
-        internal const string LanguagePathPrefix = "/lang/";
+        private const string LangVirtualHost = "lang.baka";
 
-        /// <summary>The address shape a pack file is asked for by: https://app.baka/lang/...</summary>
-        internal const string LanguageUrlPrefix = "https://" + VirtualHost + LanguagePathPrefix;
+        /// <summary>The address shape a pack file is asked for by: https://lang.baka/...</summary>
+        internal const string LanguageUrlPrefix = "https://" + LangVirtualHost + "/";
 
         #region Window sizing (DPI aware)
 
@@ -108,95 +121,6 @@ namespace ValheimBakaLoader.Forms
             var dir = Environment.ExpandEnvironmentVariables(Properties.Resources.LanguagesFolderPath);
             Directory.CreateDirectory(dir);
             return dir;
-        }
-
-        /// <summary>
-        /// Turns a <c>/lang/...</c> request path into the file it names under the languages
-        /// folder, or null when it names anything else.
-        /// <para>
-        /// This is the whole security boundary of serving a pack, so it is a plain function
-        /// with no I/O in it and the tests drive it directly. The order matters: decode
-        /// first, canonicalise second, and only then ask whether the answer is still inside
-        /// the folder. Asking any earlier is how <c>%2e%2e</c> gets through.
-        /// </para>
-        /// </summary>
-        /// <param name="languagesRoot">The languages folder every answer must stay under.</param>
-        /// <param name="requestPath">The URL path, leading slash and all.</param>
-        /// <returns>A full path under <paramref name="languagesRoot"/>, or null.</returns>
-        internal static string MapLanguageResourcePath(string languagesRoot, string requestPath)
-        {
-            if (string.IsNullOrWhiteSpace(languagesRoot) || string.IsNullOrWhiteSpace(requestPath))
-                return null;
-
-            var path = requestPath.Replace('\\', '/');
-
-            // A query or a fragment is not part of the file name.
-            var cut = path.IndexOfAny(new[] { '?', '#' });
-            if (cut >= 0) path = path.Substring(0, cut);
-
-            if (!path.StartsWith(LanguagePathPrefix, StringComparison.OrdinalIgnoreCase)) return null;
-
-            var relative = path.Substring(LanguagePathPrefix.Length);
-            if (relative.Length == 0) return null;
-
-            // One decode. A double-encoded run decodes to a literal name rather than to a
-            // traversal, which is exactly what should happen: it names no file and 404s.
-            try { relative = Uri.UnescapeDataString(relative); }
-            catch (Exception) { return null; }
-
-            relative = relative.Replace('\\', '/').TrimStart('/');
-            if (relative.Length == 0) return null;
-
-            // A drive letter, an alternate data stream, a NUL, or anything Windows refuses
-            // in a path at all. None of these can name a file inside the folder.
-            if (relative.IndexOf(':') >= 0) return null;
-            if (relative.IndexOfAny(Path.GetInvalidPathChars()) >= 0) return null;
-            if (relative.IndexOf('\0') >= 0) return null;
-
-            try
-            {
-                var root = Path.GetFullPath(languagesRoot)
-                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                    + Path.DirectorySeparatorChar;
-
-                var candidate = relative.Replace('/', Path.DirectorySeparatorChar);
-                if (Path.IsPathRooted(candidate)) return null;
-
-                var full = Path.GetFullPath(Path.Combine(root, candidate));
-
-                // The answer has to be a file INSIDE the folder. Equal to the folder itself
-                // is a directory, and one character past it is a sibling folder whose name
-                // merely starts the same way.
-                if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null;
-                if (full.Length == root.Length) return null;
-
-                return full;
-            }
-            catch (Exception)
-            {
-                // Too long, badly formed, or a path the platform will not canonicalise.
-                return null;
-            }
-        }
-
-        /// <summary>What a pack file is served as. Anything unrecognised is bytes.</summary>
-        internal static string LanguageContentType(string path)
-        {
-            var extension = Path.GetExtension(path ?? string.Empty).ToLowerInvariant();
-            return extension switch
-            {
-                ".woff2" => "font/woff2",
-                ".woff" => "font/woff",
-                ".ttf" => "font/ttf",
-                ".otf" => "font/otf",
-                // The fifth extension the store admits. Left out once, which served a
-                // collection as bytes while the other four were named properly.
-                ".ttc" => "font/collection",
-                ".json" => "application/json; charset=utf-8",
-                ".css" => "text/css; charset=utf-8",
-                ".txt" => "text/plain; charset=utf-8",
-                _ => "application/octet-stream",
-            };
         }
 
         #region Native interop (drag / resize for the borderless window)
@@ -533,14 +457,30 @@ namespace ValheimBakaLoader.Forms
             core.SetVirtualHostNameToFolderMapping(
                 AtlasVirtualHost, GetAtlasCacheDir(), CoreWebView2HostResourceAccessKind.Allow);
 
-            // An installed language pack is served from this origin, from the languages
-            // folder beside userprefs. Registered BEFORE Navigate, because a filter added
-            // afterwards only applies to requests made after it.
-            WebEnvironment = environment;
-            LanguagesDir = GetLanguagesDir();
-            core.AddWebResourceRequestedFilter(
-                LanguageUrlPrefix + "*", CoreWebView2WebResourceContext.All);
-            core.WebResourceRequested += OnLanguageResourceRequested;
+            // An installed language pack is served from a host of its own, mapped onto the
+            // languages folder beside userprefs, BEFORE Navigate so the page can ask for a pack
+            // the moment it comes up. Allow rather than Deny or DenyCors: the fonts are
+            // cross-origin from the page and a font fetch is always a CORS request, so the
+            // other two kinds answer neither the catalog nor the faces.
+            //
+            // Mapping a folder that is not there THROWS, and a throw here reaches OnLoad, which
+            // says the embedded browser failed to start and closes the window. That would be a
+            // dead app for every host who has never downloaded a pack, so the folder and the
+            // mapping go inside one try: GetLanguagesDir creates it, and if either half still
+            // fails the window comes up with no language route and languages simply do not load,
+            // which is no worse than the state this replaces.
+            try
+            {
+                LanguagesDir = GetLanguagesDir();
+                core.SetVirtualHostNameToFolderMapping(
+                    LangVirtualHost, LanguagesDir, CoreWebView2HostResourceAccessKind.Allow);
+            }
+            catch (Exception ex)
+            {
+                LanguagesDir = null;
+                Logger.Warning(ex,
+                    "The languages folder could not be served to the page, so installed language packs will not load");
+            }
 
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.IsZoomControlEnabled = false;
@@ -575,51 +515,11 @@ namespace ValheimBakaLoader.Forms
             core.Navigate($"https://{VirtualHost}/index.html");
         }
 
-        /// <summary>The WebView2 environment, kept so a pack response can be built from it.</summary>
-        private CoreWebView2Environment WebEnvironment;
-
-        /// <summary>The languages folder, resolved once at startup rather than per request.</summary>
-        private string LanguagesDir;
-
         /// <summary>
-        /// Answers a https://app.baka/lang/... request out of the languages folder.
-        /// Anything that does not resolve to a file inside that folder is a 404, and the
-        /// path question itself lives in <see cref="MapLanguageResourcePath"/> where the
-        /// tests can reach it.
+        /// The languages folder, resolved once at startup rather than per request, and null when
+        /// it could not be served at all.
         /// </summary>
-        private void OnLanguageResourceRequested(object sender, CoreWebView2WebResourceRequestedEventArgs e)
-        {
-            var environment = WebEnvironment;
-            if (environment == null || e?.Request == null) return;
-
-            try
-            {
-                // Still escaped on purpose. MapLanguageResourcePath does the ONE decode
-                // this path is allowed, and decoding here as well would hand it a name
-                // that has already been through Unescape once: %252e%252e would arrive
-                // as %2e%2e and decode to .. inside the very function whose job is to
-                // stop that. One decode, in the place the tests can drive.
-                var path = new Uri(e.Request.Uri).GetComponents(UriComponents.Path, UriFormat.UriEscaped);
-                var file = MapLanguageResourcePath(LanguagesDir, "/" + path);
-
-                if (file != null && File.Exists(file))
-                {
-                    var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
-                    e.Response = environment.CreateWebResourceResponse(
-                        stream, 200, "OK",
-                        "Content-Type: " + LanguageContentType(file) + "\r\nCache-Control: no-cache");
-                    return;
-                }
-            }
-            catch (Exception ex)
-            {
-                // A pack that cannot be read is a missing font, never a broken window.
-                Logger.Debug(ex, "A language pack file could not be served: {uri}", e.Request.Uri);
-            }
-
-            try { e.Response = environment.CreateWebResourceResponse(null, 404, "Not Found", string.Empty); }
-            catch (Exception) { /* the request went away while we answered it */ }
-        }
+        private string LanguagesDir;
 
         /// <summary>
         /// Hands the page the version this build ships, before any of its own script runs.

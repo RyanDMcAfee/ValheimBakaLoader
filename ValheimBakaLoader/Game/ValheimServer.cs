@@ -2989,7 +2989,7 @@ namespace ValheimBakaLoader.Game
                     .Select(m => $"-modifier {m.Key} {m.Value}"));
             }
 
-            if (options.WorldKeys != null) parts.AddRange(options.WorldKeys.Select(k => $"-setkey {k}"));
+            if (options.WorldKeys != null) parts.AddRange(options.WorldKeys.Select(SetKeyFlag).Where(flag => flag != null));
 
             if (!string.IsNullOrWhiteSpace(options.AdditionalArgs))
             {
@@ -3006,6 +3006,42 @@ namespace ValheimBakaLoader.Game
             }
 
             return parts;
+        }
+
+        /// <summary>
+        /// One starting key as the game must receive it, or null for a key that cannot be
+        /// passed on a command line at all.
+        /// <para>
+        /// The game reads <c>-setkey</c> as ONE argument: it takes
+        /// <c>commandLineArgs[j + 1]</c> whole and adds that string to the world's starting
+        /// keys. A value-carrying key is a single string with a space inside it
+        /// ("carryweightrate 150"), and Windows splits an unquoted command line on spaces, so
+        /// writing it bare would hand the game the key "carryweightrate" and leave "150"
+        /// sitting on the line as a flag of its own. Quoting is what keeps the pair together.
+        /// A bare switch is written unquoted, which is the same token either way and keeps the
+        /// line readable in the log.
+        /// </para>
+        /// <para>
+        /// A key carrying a double quote is left out rather than guessed at: there is no way to
+        /// write one into a Windows command line that both survives the split and means what it
+        /// said, and a half-escaped quote would swallow the rest of the line.
+        /// </para>
+        /// <para>
+        /// Lower cased here as well as everywhere it comes from. The game's own <c>-setkey</c>
+        /// reading compares the argument it was given AS GIVEN against the keys already on the
+        /// world and then stores the lower-cased form, so a key with a capital in it walks past
+        /// that check and lands beside its own lower-case twin. Nothing the page can send has a
+        /// capital left in it by the time it arrives, but a hand-edited userprefs.json can, and
+        /// this is the last place before the line where that can be closed.
+        /// </para>
+        /// </summary>
+        private static string SetKeyFlag(string key)
+        {
+            var value = (key ?? "").Trim().ToLowerInvariant();
+            if (value.Length == 0) return null;
+            if (value.Contains('"')) return null;
+
+            return value.Contains(' ') ? @$"-setkey ""{value}""" : $"-setkey {value}";
         }
 
         /// <summary>

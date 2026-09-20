@@ -509,11 +509,17 @@ CLAMPS.forEach(([flag, owner]) => {
   });
 });
 
-test("the press the host makes before the question carries no answers at all", () => {
-  // both flows send a bare {} on the road that does NOT go through the confirm, and the
-  // confirm is the only caller of the chooser that fills one in
-  assert.ok(fn("function bepInExUpdateFlow(").indexOf("bepInExWrite(\"bepinex.update\",{},null)") > 0,
-    "the Update press sends something other than an empty set of answers");
+test("the press the host makes before the question carries no takeover answers", () => {
+  /* The road that does NOT go through the confirm carries nothing the host was not asked.
+     The Update press may carry ONE thing, and it is not a takeover answer: takeCurrentPack
+     says which PACK to write, never whose files to write over, and without it the offer this
+     row makes to move off a pack the site has taken down is an offer the code cannot keep.
+     The five that ARE about somebody else's install are held to one writer each above. */
+  const update = fn("function bepInExUpdateFlow(");
+  assert.ok(update.indexOf("bepInExWrite(\"bepinex.update\",Object.assign({},extra||{}),null)") > 0,
+    "the Update press sends something other than the one answer it may carry");
+  assert.ok(update.indexOf("bepInExWriteFlags(") < 0,
+    "the Update press fills in a takeover answer the host was never asked for");
   assert.ok(fn("function bepInExInstallFlow(").indexOf("bepInExWrite(\"bepinex.install\",{},after)") > 0,
     "the Install press sends something other than an empty set of answers");
   // and the only place those answers are handed to a WRITE is the confirm's own yes. The
@@ -522,8 +528,29 @@ test("the press the host makes before the question carries no answers at all", (
   const handed = SOURCE.match(/bepInExWrite\([^;]*bepInExWriteFlags\(/g) || [];
   assert.strictEqual(handed.length, 1,
     "the answers are handed to " + handed.length + " writes, so one of them skips the question");
-  assert.ok(fn("function bepInExTakeoverModal(").indexOf("bepInExWrite(method,bepInExWriteFlags(b)") > 0,
-    "the one write that carries the answers is not the confirm's yes");
+  assert.ok(fn("function bepInExTakeoverModal(").indexOf("bepInExWrite(method,Object.assign(bepInExWriteFlags(b),extra||{})") > 0,
+    "the one write that carries the answers is not the confirm's yes, or it drops the press's own answer");
+});
+
+/* takeCurrentPack is an answer too, and it is the answer to a question the row asks out loud:
+   the pack this install was written from is gone, take the one that is served. So it is only
+   ever sent where that is true, and it is sent from BOTH places that offer it, or one of the
+   two is a button that leads back to the same refusal. */
+test("the offer to take the pack that is served is the only place that answer is sent", () => {
+  const sent = SOURCE.match(/takeCurrentPack:true/g) || [];
+  assert.strictEqual(sent.length, 2,
+    "takeCurrentPack is sent from " + sent.length + " places, not from the row and the standing note");
+
+  assert.ok(fn("function bepInExRepairPackGone(").indexOf("\"bepinex.repairPackGone\"") > 0,
+    "nothing reads whether the pack this install was written from is the one that is gone");
+
+  const acts = fn("function bepInExRowActions(");
+  assert.ok(acts.indexOf("bepInExRepairPackGone(b)?[\"repair\",\"update\"]:[\"repair\"]") > 0,
+    "the row with files missing offers only a repair that asks for a pack nobody serves");
+
+  const standing = fn("function bepInExLeftAloneWrite(");
+  assert.ok(standing.indexOf("bepInExRepairPackGone(S.bepinex)") > 0,
+    "the standing note's own press does not carry the answer that makes it work");
 });
 
 /* ------------------------------------- what the standing "nothing was written" row offers

@@ -17,7 +17,7 @@
 -->
 <script>
 (function(){
-  var v = window.BAKA_VERSION || "1.2.0";
+  var v = window.BAKA_VERSION || "1.2.1";
   window.BAKA_ASSET_VERSION = v;
   window.BAKA_ASSET = function(name){ return name + "?v=" + encodeURIComponent(v); };
   window.BAKA_ASSET_PLAIN = function(el){
@@ -125,7 +125,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.0</span><!--
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.1</span><!--
              The partial-translation mark. A standing fact about the words on screen, so it
              stands here rather than arriving as a toast; app.js lights it and writes the
              same sentence the globe menu carries onto its tooltip. -->
@@ -478,6 +478,31 @@
               <div class="field"><label data-i18n="world.mod.portals">Portals<button type="button" class="wginfo" id="iModPortals" aria-controls="wgTip" aria-label="What each Portals option does" data-i18n-aria="world.mod.portals.help.aria">?</button></label><select id="fModPortals"></select><div class="fieldnote wgnote" id="fModPortalsNote"></div></div>
               <div class="field"><label data-i18n="world.field.max_players">Max Players</label><input type="text" id="fMaxPlayers" value="10"></div>
             </div>
+            <!-- The five world switches, in the order Game/WorldGen.cs lists them. Named with
+                 the game's own words so a host who set one in the game client recognises it. -->
+            <div class="formgrid" style="margin-top:10px">
+              <div class="field"><label data-i18n="world.wgs.nobuildcost.label">No build cost<button type="button" class="wginfo" id="iKeyNoBuildCost" aria-controls="wgTip" aria-label="What the No build cost switch does" data-i18n-aria="world.wgs.nobuildcost.help.aria">?</button></label>
+                <div class="togglerow"><span class="tl" data-i18n="world.wgs.nobuildcost.line">Building pieces cost nothing to place</span><span class="toggle" id="tKeyNoBuildCost" data-t></span></div>
+              </div>
+              <div class="field"><label data-i18n="world.wgs.playerevents.label">Player based raids<button type="button" class="wginfo" id="iKeyPlayerEvents" aria-controls="wgTip" aria-label="What the Player based raids switch does" data-i18n-aria="world.wgs.playerevents.help.aria">?</button></label>
+                <div class="togglerow"><span class="tl" data-i18n="world.wgs.playerevents.line">Raids follow each player's own progress</span><span class="toggle" id="tKeyPlayerEvents" data-t></span></div>
+              </div>
+              <div class="field"><label data-i18n="world.wgs.passivemobs.label">Passive enemies<button type="button" class="wginfo" id="iKeyPassiveMobs" aria-controls="wgTip" aria-label="What the Passive enemies switch does" data-i18n-aria="world.wgs.passivemobs.help.aria">?</button></label>
+                <div class="togglerow"><span class="tl" data-i18n="world.wgs.passivemobs.line">Creatures do not attack first</span><span class="toggle" id="tKeyPassiveMobs" data-t></span></div>
+              </div>
+              <div class="field"><label data-i18n="world.wgs.nomap.label">No map<button type="button" class="wginfo" id="iKeyNoMap" aria-controls="wgTip" aria-label="What the No map switch does" data-i18n-aria="world.wgs.nomap.help.aria">?</button></label>
+                <div class="togglerow"><span class="tl" data-i18n="world.wgs.nomap.line">No minimap and no map at all</span><span class="toggle" id="tKeyNoMap" data-t></span></div>
+              </div>
+              <div class="field"><label data-i18n="world.wgs.fire.label">Fire hazards<button type="button" class="wginfo" id="iKeyFire" aria-controls="wgTip" aria-label="What the Fire hazards switch does" data-i18n-aria="world.wgs.fire.help.aria">?</button></label>
+                <div class="togglerow"><span class="tl" data-i18n="world.wgs.fire.line">Fires throw cinders outside the Ashlands too</span><span class="toggle" id="tKeyFire" data-t></span></div>
+              </div>
+            </div>
+            <!-- Every starting key this world carries that no switch above stands for, named
+                 so a host can see that saving the switches never drops it. -->
+            <div class="setupreset-note" style="display:none;margin-top:8px" id="wgCarried"></div>
+            <div class="setupreset-note" style="display:block;margin-top:6px" data-i18n="world.wgs.note">switches are saved with the world, the same way the dials are, and go in the next time the server starts</div>
+            <!-- What a first meeting brought in off the world itself, said once. -->
+            <div class="capsbanner" id="wgImported" style="display:none;margin:12px 0 0"></div>
             <div class="setupreset-note" style="display:block;margin-top:8px" data-i18n="world.mods.note">modifiers saved per world · max players above 10 installs a small bundled server plugin · applies the next time the server starts</div>
             <div class="setupreset-note" style="display:block;margin-top:6px" id="wgOwnNote"></div>
             </div>
@@ -831,7 +856,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.0</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.1</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg"><span data-i18n="status.rcon.label">RCON</span> <span class="em" id="sbRcon">bound</span></span>

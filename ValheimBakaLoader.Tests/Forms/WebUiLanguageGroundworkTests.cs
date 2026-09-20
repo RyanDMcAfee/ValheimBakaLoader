@@ -167,9 +167,10 @@ namespace ValheimBakaLoader.Tests.Forms
 
         /// <summary>
         /// THE STYLESHEET DECLARES NO PACK FACE AT ALL, and that is the fix rather than a
-        /// regression. Seven rules used to stand at the top of app.css, each addressing
-        /// https://app.baka/lang/&lt;code&gt;/&lt;version&gt;/fonts/&lt;file&gt;.woff2. The font
-        /// store is content addressed now: a face lives at /lang/_fonts/&lt;sha256&gt;.woff2,
+        /// regression. Seven rules used to stand at the top of app.css, each addressing one
+        /// pack's own folder by name. The font store is content addressed now, and since
+        /// 1.2.1 it is on a host of its own: a face lives at
+        /// https://lang.baka/_fonts/&lt;sha256&gt;.woff2,
         /// shared by every language and every version whose bytes are the same, so the
         /// address a stylesheet could write down does not exist. A rule written against the
         /// old shape would ask for a file that is not there on every single switch, and look
@@ -277,19 +278,15 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("case \"ttc\": return \"collection\";", body);
             Assert.Contains("default: return \"woff2\";", body);
 
-            // And the handler names all five as fonts rather than serving one as bytes.
+            // The other end of the pairing used to be the window's own content-type table, and
+            // since 1.2.1 there is no such table: a pack file is served by the folder mapper,
+            // which names the type itself. So the src's declared format is the ONLY place a
+            // face's kind is stated to the browser, which is what makes the five cases above
+            // load-bearing rather than belt and braces, and the window must not grow a second
+            // owner for the same fact.
             var serving = AppSourceTree.Files()["BlendWindow.cs"];
-            foreach (var pair in new[]
-            {
-                "\".woff2\" => \"font/woff2\"",
-                "\".woff\" => \"font/woff\"",
-                "\".ttf\" => \"font/ttf\"",
-                "\".otf\" => \"font/otf\"",
-                "\".ttc\" => \"font/collection\"",
-            })
-            {
-                Assert.Contains(pair, serving, StringComparison.Ordinal);
-            }
+            Assert.DoesNotContain("font/woff2", serving, StringComparison.Ordinal);
+            Assert.DoesNotContain("LanguageContentType", serving, StringComparison.Ordinal);
         }
 
         /// <summary>

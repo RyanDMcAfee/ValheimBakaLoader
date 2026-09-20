@@ -1639,6 +1639,71 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// Turns a caller-supplied world-switch list into the set BakaLoader stores, or null
+        /// when the caller did not send one at all.
+        /// <para>
+        /// Absent and empty are different answers and both are kept. A page that knows nothing
+        /// about switches sends no <c>keys</c> at all, and null means "leave the stored keys
+        /// exactly as they are"; an empty array is a host who turned every switch off, and that
+        /// clears them. Making absent mean empty would let an older page wipe a world's
+        /// switches every time it saved a dial.
+        /// </para>
+        /// <para>
+        /// Only the five switches are accepted here, because only the five are what this list
+        /// carries: the page draws a toggle each, and <c>keys</c> replaces that subset and
+        /// nothing else. The keys a world carries that no toggle represents never travel
+        /// through here at all, so nothing the pass-through must keep can be refused by it.
+        /// While <see cref="ValheimServerOptions.Validate"/> is unreachable this is the only
+        /// guard on keys there is.
+        /// </para>
+        /// </summary>
+        public static HashSet<string> ParseWorldKeys(JToken raw)
+        {
+            if (raw == null || raw.Type == JTokenType.Null || raw.Type == JTokenType.Undefined) return null;
+
+            if (raw is not JArray list)
+                throw new HostFacingException("worldgen.keysNotAList",
+                    "The world switches must be sent as a list.");
+
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var entry in list)
+            {
+                var key = (entry?.Value<string>() ?? "").Trim().ToLowerInvariant();
+                if (key.Length == 0) continue;
+
+                if (!WorldGen.IsSwitch(key))
+                    throw new HostFacingException("worldgen.unknownKey",
+                        $"'{key}' is not a world switch.", ("key", key));
+
+                keys.Add(key);
+            }
+
+            return keys;
+        }
+
+        /// <summary>
+        /// The stored keys after a save that carried the switch list. Everything that is not
+        /// one of the five switches is kept exactly as it was: a host may already carry
+        /// <c>carryweightrate 150</c> on a world, and a save of the five toggles is not a
+        /// statement about it. A null choice is no statement about the switches either, and
+        /// leaves the whole stored set alone.
+        /// </summary>
+        public static HashSet<string> MergeWorldKeys(IEnumerable<string> stored, HashSet<string> chosenSwitches)
+        {
+            var kept = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var key in stored ?? Enumerable.Empty<string>())
+            {
+                var normalised = (key ?? "").Trim().ToLowerInvariant();
+                if (normalised.Length == 0) continue;
+                if (chosenSwitches != null && WorldGen.IsSwitch(normalised)) continue;
+                kept.Add(normalised);
+            }
+
+            if (chosenSwitches != null) foreach (var key in chosenSwitches) kept.Add(key);
+            return kept;
+        }
+
+        /// <summary>
         /// The restore safety layer's name. Local time on purpose: the game names its own
         /// restore layers with the local clock, BakaLoader's pre-update layers are local, and
         /// the Barrow reads all of them back as a wall clock.
@@ -1976,11 +2041,24 @@ namespace ValheimBakaLoader.Forms
             var id = HostFacingException.IdOf(error) ?? "bepinex.writeFailed";
             if (string.Equals(id, "bepinex.offline", StringComparison.Ordinal)) return;
 
+            // A repair whose own pack the site no longer serves IS one of these, and it is the
+            // one that most needs to be. It reads like a hiccup and is not one: the note names a
+            // version that has been taken down, so every restart from here on asks for a file
+            // that is not there and the install stays broken with nothing said. Both versions
+            // ride along so the row can name what is here and offer the pack that IS served.
+            var values = HostFacingException.ParamsOf(error);
+            string Value(string name)
+                => values != null && values.TryGetValue(name, out var v) ? v as string : null;
+
             _bepInExLastUnattended = new BepInExUnattendedOutcome
             {
                 Outcome = "failed",
                 Profile = profile,
                 Reason = id,
+                // For bepinex.repairPackGone: what the site offers now, and what this install
+                // was written from. Null for every other reason, exactly as before.
+                Version = Value("offered"),
+                InstalledVersion = Value("noted"),
                 WhenUtc = DateTime.UtcNow,
             };
         }
@@ -2191,6 +2269,7 @@ namespace ValheimBakaLoader.Forms
             OverOutside = call?.Value<bool?>("overOutside") == true,
             OverDrivenElsewhere = call?.Value<bool?>("overDrivenElsewhere") == true,
             OverForeign = call?.Value<bool?>("overForeign") == true,
+            TakeCurrentPack = call?.Value<bool?>("takeCurrentPack") == true,
         };
 
         private async Task<object> WriteBepInExAsync(
@@ -2360,15 +2439,27 @@ namespace ValheimBakaLoader.Forms
                 // the install: the window is the one moment this server is down.
                 HealInterruptedBepInExWrite(baseExe, installs);
 
-                var status = BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), installs);
-                var latest = await BepInEx.LatestVersionAsync(status.Package);
+                // The answer is read BEFORE anything is asked of Thunderstore, and it is the
+                // whole of what happens next when it is not a yes. It used to be read after the
+                // version lookup, which meant every restart window asked the site which pack is
+                // current whatever the host had answered: a host who said no, and a host who
+                // has not been asked at all, still had their machine reach Sweden on every
+                // restart. Nothing downstream of here can run without consent anyway, so asking
+                // first was never buying anything.
+                var consent = Tools.BepInExConsent.Effective(prefs.BepInExMaintained, prefs.BepInExMaintenanceAsked);
 
-                var others = Tools.BepInExService.ProfilesBlockingWrite(baseExe, installs).Count > 0;
-                var decision = Tools.BepInExUnattended.Decide(
-                    Tools.BepInExConsent.Effective(prefs.BepInExMaintained, prefs.BepInExMaintenanceAsked),
-                    status.Installed, status.PackVersion, latest, others,
-                    status.DrivenElsewhere, status.ForeignCore, status.Drifted, status.Unrecognised,
-                    status.MissingFiles.Count > 0);
+                // The rule carries the ORDER as well as the table: the answer is read first,
+                // and without a yes the install is not read and Thunderstore is not asked
+                // anything at all. The site used to be asked before the answer was, so every
+                // restart window reached out whatever the host had said.
+                var plan = await Tools.BepInExUnattended.PlanAsync(
+                    consent,
+                    () => BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), installs),
+                    package => BepInEx.LatestVersionAsync(package),
+                    () => Tools.BepInExService.ProfilesBlockingWrite(baseExe, installs).Count > 0);
+
+                var decision = plan.Action;
+                var latest = plan.Latest;
 
                 if (decision == Tools.BepInExUnattendedAction.Skip)
                 {
@@ -3773,6 +3864,10 @@ namespace ValheimBakaLoader.Forms
                 // provisioned. Empty / Normal dials drop out, leaving an empty map.
                 var worldModifiers = ParseWorldModifiers(p["modifiers"] as JObject);
 
+                // Optional world switches for the NEW world, on the same gate as Save Config.
+                // Absent leaves whatever the world turns out to carry alone.
+                var worldSwitches = ParseWorldKeys(p["keys"]);
+
                 var isolateInstall = p.Value<bool?>("isolateInstall") ?? true;
                 var seedMods = p.Value<bool?>("seedMods") ?? true;
                 var isolateSaveFolder = p.Value<bool?>("isolateSaveFolder") ?? true;
@@ -3843,18 +3938,38 @@ namespace ValheimBakaLoader.Forms
 
                 ServerPrefsProvider.SavePreferences(created);
 
+                // A realm can be forged over a world that is already on disk, and that world may
+                // carry its own settings. It gets the same first meeting every start path gets,
+                // BEFORE anything chosen in the wizard is written on top, so adopting a world
+                // never costs it what it had. A brand new world has no header yet and this does
+                // nothing at all.
+                ImportWorldKeysOnFirstMeeting(world, created.SaveDataFolderPath);
+
                 // Persist the chosen difficulty to the NEW world so it is born this way on its
                 // very first launch, rather than starting Normal until the host opens Save Config.
                 // Keyed by world name exactly like worldgen.save, under the same gated store.
-                if (worldModifiers.Count > 0)
+                if (worldModifiers.Count > 0 || worldSwitches != null)
                 {
                     var worldPrefs = WorldPrefsProvider.LoadPreferences(world)
                         ?? new WorldPreferences { WorldName = world };
                     worldPrefs.Preset = null; // individual dials replace any preset (mutually exclusive)
-                    worldPrefs.Modifiers = worldModifiers;
+                    // The forge's five dials all start at Normal and only the moved ones are sent,
+                    // so silence about a dial here is not a statement about it. A one-dial wizard
+                    // is no more a statement about the other four than an all-Normal one is about
+                    // all five: the moved ones go over what the import just read off the world,
+                    // and the rest stay as the world had them. Save Config is the other way round
+                    // on purpose: that page sends the whole dial state every time, so there a
+                    // blank set IS a clear.
+                    if (worldModifiers.Count > 0)
+                    {
+                        if (worldPrefs.Modifiers == null) worldPrefs.Modifiers = new Dictionary<string, string>();
+                        foreach (var pair in worldModifiers) worldPrefs.Modifiers[pair.Key] = pair.Value;
+                    }
+                    worldPrefs.Keys = MergeWorldKeys(worldPrefs.Keys, worldSwitches);
                     WorldPrefsProvider.SavePreferences(worldPrefs);
-                    Logger.Information("New world '{0}' created with modifiers: {1}", world,
-                        string.Join(", ", worldModifiers.Select(kv => kv.Key + "=" + kv.Value)));
+                    Logger.Information("New world '{0}' created with modifiers: {1}; switches: {2}", world,
+                        worldModifiers.Count == 0 ? "none" : string.Join(", ", worldModifiers.Select(kv => kv.Key + "=" + kv.Value)),
+                        worldSwitches == null || worldSwitches.Count == 0 ? "none" : string.Join(", ", worldSwitches.OrderBy(k => k, StringComparer.Ordinal)));
                 }
 
                 CurrentProfile = created.ProfileName;   // switch the UI to the new server
@@ -5035,12 +5150,26 @@ namespace ValheimBakaLoader.Forms
                 var world = p.Value<string>("world");
                 if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
 
+                // A world whose own settings BakaLoader has never read is read here too, so the
+                // card draws what the world really holds rather than an empty set of dials.
+                ImportWorldKeysOnFirstMeeting(world, ResolveSaveDataFolder(null));
+
                 var prefs = WorldPrefsProvider.LoadPreferences(world);
+                var keys = WorldKeyList(prefs);
                 return Task.FromResult<object>(new
                 {
                     world,
                     preset = prefs?.Preset ?? "",
                     modifiers = prefs?.Modifiers ?? new Dictionary<string, string>(),
+                    // The stored keys WHOLE, and the same set split the two ways the card draws
+                    // it. Whole first because that is the contract: everything saved comes back,
+                    // including a key no toggle represents.
+                    keys,
+                    switches = keys.Where(WorldGen.IsSwitch).ToList(),
+                    passThrough = keys.Where(k => !WorldGen.IsSwitch(k)).ToList(),
+                    // What a first meeting brought in, once, for the card to say so. Null when
+                    // there was nothing to bring in or the host has already been told.
+                    imported = WorldKeyImportNotice(world),
                 });
             });
 
@@ -5049,17 +5178,67 @@ namespace ValheimBakaLoader.Forms
                 var world = p.Value<string>("world");
                 if (string.IsNullOrWhiteSpace(world)) throw new ArgumentException("world is required");
 
+                // The save below writes a world-prefs entry, which is the very thing that makes a
+                // world already known. So the first meeting has to happen here too, and first, or
+                // a save is enough to claim a world nobody ever read: the header would never be
+                // opened again and the next start's -resetmodifiers would wipe what it holds. The
+                // first-time setup wizard reaches this handler on a brand new install, which is
+                // exactly the world this import exists for.
+                ImportWorldKeysOnFirstMeeting(world, ResolveSaveDataFolder(null));
+
                 // Every dial is validated against the game's own vocabulary; a missing,
                 // empty, or "normal" value means "game default" and drops the key so no
                 // -modifier arg is emitted for it. Shared with realm creation.
                 var modifiers = ParseWorldModifiers(p["modifiers"] as JObject);
 
+                // Optional, and absent is not empty: a page that does not know about switches
+                // must not clear the ones a world carries. Shared with realm creation.
+                var chosenSwitches = ParseWorldKeys(p["keys"]);
+
+                // Optional, and false unless asked for. The Settings hall sends the WHOLE dial
+                // state on every save, so there a blank set really is "put every dial back to
+                // Normal" and replacing is right. The first-time wizard sends only the dials the
+                // host moved, and silence about a dial there is not a statement about it: with
+                // this flag the moved ones are written over what is stored and the rest are left
+                // where the import found them.
+                var mergeModifiers = p.Value<bool?>("mergeModifiers") == true;
+
                 var prefs = WorldPrefsProvider.LoadPreferences(world) ?? new WorldPreferences { WorldName = world };
                 prefs.Preset = null; // individual dials replace any preset (mutually exclusive)
-                prefs.Modifiers = modifiers;
+                if (mergeModifiers)
+                {
+                    var merged = prefs.Modifiers != null
+                        ? new Dictionary<string, string>(prefs.Modifiers)
+                        : new Dictionary<string, string>();
+                    foreach (var pair in modifiers) merged[pair.Key] = pair.Value;
+                    prefs.Modifiers = merged;
+                }
+                else
+                {
+                    prefs.Modifiers = modifiers;
+                }
+                prefs.Keys = MergeWorldKeys(prefs.Keys, chosenSwitches);
                 WorldPrefsProvider.SavePreferences(prefs);
 
-                return Task.FromResult<object>(new { world, preset = "", modifiers });
+                var stored = prefs.Modifiers ?? new Dictionary<string, string>();
+                var keys = prefs.Keys.OrderBy(k => k, StringComparer.Ordinal).ToList();
+                return Task.FromResult<object>(new
+                {
+                    world,
+                    preset = "",
+                    modifiers = stored,
+                    keys,
+                    switches = keys.Where(WorldGen.IsSwitch).ToList(),
+                    passThrough = keys.Where(k => !WorldGen.IsSwitch(k)).ToList(),
+                });
+            });
+
+            // The host has read what a first meeting brought in, so it is not shown again.
+            RegisterRpc("worldgen.noticeSeen", p =>
+            {
+                var world = p.Value<string>("world");
+                if (!string.IsNullOrWhiteSpace(world)) _worldKeyImports.TryRemove(world, out _);
+                return Task.FromResult<object>(new { world, imported = (object)null });
             });
 
             // Renders the Atlas biome/terrain map for a world's seed to a cached PNG
@@ -8138,8 +8317,10 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
-        /// The pack for the language that is being read, on the page's own origin. Null for
-        /// English, which ships inside the app and is fetched from beside the page.
+        /// The pack for the language that is being read, on the host the languages folder is
+        /// mapped to: a second origin, which the Allow access kind on that mapping is what lets
+        /// the page read. Null for English, which ships inside the app and is fetched from
+        /// beside the page, on the page's own origin.
         /// </summary>
         private static string LanguageStringsUrl(string code, string version) =>
             LanguageCodes.IsEnglish(code) || string.IsNullOrWhiteSpace(version)
@@ -8467,6 +8648,184 @@ namespace ValheimBakaLoader.Forms
             return folder;
         }
 
+        #region A world's own settings, brought in rather than wiped
+
+        /// <summary>
+        /// What a first meeting brought in, by world, waiting for a page to say it. It stands
+        /// until a page has drawn it (worldgen.noticeSeen takes it away), because the import
+        /// often happens with no window open at all: an auto-start runs it before anybody has
+        /// looked at the app.
+        /// </summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, object> _worldKeyImports =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The last disagreement said out loud, by world. A later start whose world holds
+        /// different keys from the profile is worth ONE line, not one per status poll, and a
+        /// disagreement that then changes is worth saying again: the value is the pair of lists,
+        /// so the line repeats only when one of them moves.
+        /// </summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _worldKeyDisagreements =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// When each world's header was last opened for that comparison. The options are built
+        /// again for a status read, a launch check and an update check as well as for a start,
+        /// and opening a live server's world header every time one of those happens would be a
+        /// read nobody asked for. A minute is far finer than the question needs: a disagreement
+        /// is something a host set from the console and then wants to hear about, not something
+        /// that has to be noticed the same second.
+        /// </summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _worldKeyLastCompared =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        private static readonly TimeSpan WorldKeyCompareEvery = TimeSpan.FromMinutes(1);
+
+        /// <summary>One world's stored keys, in a fixed order, never null.</summary>
+        private static List<string> WorldKeyList(WorldPreferences prefs)
+            => (prefs?.Keys ?? new HashSet<string>())
+                .Where(k => !string.IsNullOrWhiteSpace(k))
+                .Select(k => k.Trim().ToLowerInvariant())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(k => k, StringComparer.Ordinal)
+                .ToList();
+
+        /// <summary>What a first meeting brought in for this world, or null.</summary>
+        private object WorldKeyImportNotice(string world)
+            => world != null && _worldKeyImports.TryGetValue(world, out var notice) ? notice : null;
+
+        /// <summary>
+        /// Reads a world's own world-modifier settings out of its header and stores them, the
+        /// first time BakaLoader meets that world.
+        /// <para>
+        /// A world made in the game client, or set from the console, keeps its modifiers as
+        /// starting keys in its own header. Every BakaLoader start begins by clearing that list
+        /// and writing back what the profile holds, which for a world nobody has configured here
+        /// is nothing at all: the world came up vanilla and its settings were gone for good.
+        /// This closes that. The keys are read, turned into dials, switches and pass-through
+        /// keys, and stored BEFORE the options are built, so the start that follows re-emits
+        /// exactly what the world already had.
+        /// </para>
+        /// <para>
+        /// It runs on FIRST MEETING only: a world the profile already holds an entry for is the
+        /// host's own choice and is never overwritten from the header. It never blocks and never
+        /// throws, because the paths it sits on are unattended (auto-start, a crash relaunch, a
+        /// scheduled restart) and a world coming back up matters more than a card nobody is
+        /// there to read. A header that cannot be read imports nothing, says why once, and the
+        /// start goes ahead exactly as it does today.
+        /// </para>
+        /// </summary>
+        private void ImportWorldKeysOnFirstMeeting(string world, string saveFolderHint)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(world)) return;
+
+                var saveFolder = ResolveSaveDataFolder(saveFolderHint);
+                if (string.IsNullOrWhiteSpace(saveFolder)) return;
+
+                var outcome = WorldKeyImportStep.Run(
+                    WorldPrefsProvider,
+                    () => FwlReader.TryReadWorldStartingKeys(saveFolder, world),
+                    world);
+
+                if (outcome.Kind == WorldKeyImportKind.AlreadyKnown)
+                {
+                    LogWorldKeyDisagreement(world, saveFolder, outcome.Existing);
+                    return;
+                }
+
+                if (outcome.Kind == WorldKeyImportKind.NoHeader)
+                {
+                    // Either there is no world there yet (the ordinary case for a realm about to
+                    // make one) or the header would not read. Neither is a reason to stop.
+                    AppLogger.Debug(
+                        "No readable world header for '{0}' under {1}, so nothing was brought in and the start goes ahead.",
+                        world, saveFolder);
+                    return;
+                }
+
+                if (outcome.Kind != WorldKeyImportKind.Imported) return;
+
+                var imported = outcome.Imported;
+                var dials = imported.Modifiers
+                    .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                    .Select(pair => pair.Key + "=" + pair.Value)
+                    .ToList();
+
+                Logger.Information(
+                    "World '{0}' already carried its own settings, so they were brought in before the start: dials {1}; switches {2}; carried as they were {3}.",
+                    world,
+                    dials.Count == 0 ? "none" : string.Join(", ", dials),
+                    imported.Switches.Count == 0 ? "none" : string.Join(", ", imported.Switches),
+                    imported.PassThrough.Count == 0 ? "none" : string.Join(", ", imported.PassThrough));
+
+                var notice = new
+                {
+                    world,
+                    modifiers = imported.Modifiers,
+                    keys = imported.Keys.OrderBy(k => k, StringComparer.Ordinal).ToList(),
+                    switches = imported.Switches,
+                    passThrough = imported.PassThrough,
+                    whenUtc = DateTime.UtcNow,
+                };
+                _worldKeyImports[world] = notice;
+                PostEvent("worldgen.imported", notice);
+            }
+            catch (Exception e)
+            {
+                // A start must still happen. A world that could not be read is a world left
+                // exactly as BakaLoader has always left it.
+                AppLogger.Warning("A world's own settings could not be brought in: {0}", e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Says once, in the Saga, that a world's header and the profile's stored settings have
+        /// stopped agreeing. No dialog and no import: the profile is the host's own choice by
+        /// this point, and somebody who set a key from the console is entitled to know that the
+        /// next start will clear it rather than to have it quietly kept.
+        /// </summary>
+        private void LogWorldKeyDisagreement(string world, string saveFolder, WorldPreferences prefs)
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                if (_worldKeyLastCompared.TryGetValue(world, out var last)
+                    && now - last < WorldKeyCompareEvery) return;
+                _worldKeyLastCompared[world] = now;
+
+                var headerKeys = FwlReader.TryReadWorldStartingKeys(saveFolder, world);
+                if (headerKeys == null) return;
+
+                var onDisk = WorldKeyImport.ComparableHeaderKeys(headerKeys);
+                var stored = WorldKeyImport.KeysFor(prefs);
+                if (onDisk.SequenceEqual(stored, StringComparer.Ordinal)) return;
+
+                // A preset cannot be spelled out as keys from this side, so a profile holding
+                // one has no list to compare and would otherwise disagree with every world
+                // forever.
+                if (!string.IsNullOrEmpty(prefs.Preset)) return;
+
+                var signature = string.Join("|", onDisk) + " vs " + string.Join("|", stored);
+                if (_worldKeyDisagreements.TryGetValue(world, out var said)
+                    && string.Equals(said, signature, StringComparison.Ordinal)) return;
+
+                _worldKeyDisagreements[world] = signature;
+                Logger.Information(
+                    "World '{0}' holds {1}, and this profile is set to start it with {2}. The start writes the profile's set.",
+                    world,
+                    onDisk.Count == 0 ? "no world modifiers" : string.Join(", ", onDisk),
+                    stored.Count == 0 ? "no world modifiers" : string.Join(", ", stored));
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not compare a world's own settings with the profile's: {0}", e.Message);
+            }
+        }
+
+        #endregion
+
         /// <summary>
         /// Builds runtime server options from a preferences payload, mirroring
         /// MainWindow.GetServerOptionsFromFormState (user-pref fallbacks, world prefs,
@@ -8483,6 +8842,22 @@ namespace ValheimBakaLoader.Forms
                 : serverPrefs.ProfileName;
 
             var worldName = serverPrefs.WorldName;
+
+            // A world BakaLoader has never held settings for has its OWN settings read out of
+            // its header and brought in first, so the start below re-emits what the world
+            // already had instead of resetting it to nothing. This is the one place every start
+            // path builds its options, the unattended ones included, which is why the import
+            // hangs here rather than off the Start button: auto-start, a crash relaunch and a
+            // scheduled restart have nobody to answer a card, and none of them may wipe a world.
+            if (!string.IsNullOrWhiteSpace(worldName))
+            {
+                ImportWorldKeysOnFirstMeeting(
+                    worldName,
+                    !string.IsNullOrWhiteSpace(serverPrefs.SaveDataFolderPath)
+                        ? serverPrefs.SaveDataFolderPath
+                        : userPrefs.SaveDataFolderPath);
+            }
+
             var worldPrefs = string.IsNullOrWhiteSpace(worldName)
                 ? null
                 : WorldPrefsProvider.LoadPreferences(worldName);

@@ -359,9 +359,35 @@ namespace ValheimBakaLoader.Game
         public HashSet<string> WorldKeys { get; set; }
 
         /// <summary>
-        /// The single gate every start path goes through. Throws
-        /// <see cref="ArgumentException"/> with a player-readable message on
-        /// the first rule that fails.
+        /// The rules a set of options would have to pass to be worth starting, as one gate,
+        /// throwing <see cref="ArgumentException"/> with a player-readable message on the first
+        /// one that fails.
+        /// <para>
+        /// NOTHING CALLS IT. It was written as "the single gate every start path goes through"
+        /// and the wiring never landed, so every check in here has been unreachable for as long
+        /// as it has existed: the identity rules, the password rules, the port rules, the
+        /// schedule minimums, the save and backup interval rules, the world-generation
+        /// vocabulary checks, and the refusal of a host-typed <c>-logFile</c>. It is left
+        /// unreachable on purpose in 1.2.1 rather than quietly switched on, because several of
+        /// those rules would start refusing launches that work today: a profile whose server
+        /// name equals its world name, or whose save interval is longer than its short backup
+        /// interval, boots perfectly well and would meet a hard refusal at the Start button on
+        /// the strength of a rule nobody has ever seen enforced.
+        /// </para>
+        /// <para>
+        /// The reachable guards on the same ground are elsewhere and are narrower on purpose:
+        /// the world dials go through <c>BlendWindow.ParseWorldModifiers</c>, the world
+        /// switches through <c>BlendWindow.ParseWorldKeys</c>, the extra arguments through
+        /// <c>ValheimServer.SanitizeAdditionalArgs</c> (which DROPS what it refuses rather than
+        /// refusing the start), and the paths through the two path helpers this would call
+        /// last. <c>ValheimServerOptionsValidateGateTests</c> names every check that is
+        /// unreachable so the fact is visible rather than implied by a comment.
+        /// </para>
+        /// <para>
+        /// 1.2.2: decide rule by rule which of these should hold a start back, soften or drop
+        /// the ones that would refuse a working profile, and wire what is left into one start
+        /// path so this comment can go back to saying "every start path".
+        /// </para>
         /// </summary>
         public void Validate()
         {

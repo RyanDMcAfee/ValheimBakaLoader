@@ -1627,6 +1627,14 @@ namespace ValheimBakaLoader.Tools
                 return null;
             }
 
+            // Everything under the languages folder is readable by the page: the folder is mapped
+            // onto a virtual host so a pack's fonts can have a URL at all, and the mapper guesses
+            // a content type off the registry rather than asking this side. So what goes in is
+            // held to what a pack IS, at the one door that puts it there, rather than to what the
+            // zip happened to carry. An archive that ships planted.html or planted.exe beside its
+            // catalog gets them dropped here and never reaches the served tree.
+            PruneToServedContents(code, source);
+
             string aside = null;
 
             try
@@ -1657,6 +1665,89 @@ namespace ValheimBakaLoader.Tools
 
             if (aside != null) TryDeleteDirectory(aside);
             return target;
+        }
+
+        /// <summary>
+        /// Drops everything in a pack folder that a pack is not made of, before it is moved into
+        /// the tree the page can read.
+        /// <para>
+        /// A pack is its catalog, its own pack.json, a licence text, and the faces it lists. The
+        /// faces have normally been moved into the shared store by the time this runs and are
+        /// named there, so what is usually left to drop is whatever else the archive carried.
+        /// A font the pack still names inside its own folder is kept, because dropping it would
+        /// break the pack rather than harden it.
+        /// </para>
+        /// <para>
+        /// This never fails an install: a file that will not delete is one file the page can read
+        /// that it did not need to, not a language a host cannot have. It says so and carries on.
+        /// </para>
+        /// </summary>
+        private void PruneToServedContents(string code, string folder)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder)) return;
+
+                var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    Path.GetFullPath(Path.Combine(folder, StringsFileName)),
+                    Path.GetFullPath(Path.Combine(folder, PackFileName)),
+                };
+
+                // Every path here is resolved against the folder and checked to have stayed
+                // inside it, the same way StoreFonts resolves one: pack.json is written by
+                // whoever built the archive and a name out of it is not a promise about where
+                // it points.
+                var pack = ReadPackFile(Path.Combine(folder, PackFileName));
+                foreach (var font in pack?.Fonts ?? new List<LanguagePackFont>())
+                {
+                    var named = font?.File;
+                    if (string.IsNullOrWhiteSpace(named)) continue;
+
+                    var inside = ResolveInside(folder, named);
+                    if (inside != null) keep.Add(Path.GetFullPath(inside));
+                }
+
+                var dropped = 0;
+                foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+                {
+                    var full = Path.GetFullPath(file);
+                    if (keep.Contains(full)) continue;
+
+                    // A licence travels with the faces and is the one thing a pack carries that
+                    // nothing lists by name.
+                    if (string.Equals(Path.GetExtension(full), ".txt", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    try { File.Delete(full); dropped++; }
+                    catch (Exception e)
+                    {
+                        Logger.Warning(
+                            "A file in the {0} pack could not be dropped before it was put in place ({1}): {2}",
+                            code, Path.GetFileName(full), e.Message);
+                    }
+                }
+
+                if (dropped > 0)
+                    Logger.Information(
+                        "The {0} pack carried {1} file(s) that are not part of a pack, so they were left out of the installed folder.",
+                        code, dropped);
+
+                // A folder with nothing left in it is not worth serving either. Deepest first so
+                // a nest of them goes in one pass.
+                foreach (var sub in Directory.EnumerateDirectories(folder, "*", SearchOption.AllDirectories)
+                             .OrderByDescending(path => path.Length))
+                {
+                    try
+                    {
+                        if (!Directory.EnumerateFileSystemEntries(sub).Any()) Directory.Delete(sub);
+                    }
+                    catch (Exception) { /* something is holding it; it is empty and harmless */ }
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Warning("The {0} pack could not be trimmed before it was put in place: {1}", code, e.Message);
+            }
         }
 
         private void RecordInstall(string code, string version)

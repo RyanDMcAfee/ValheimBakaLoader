@@ -125,6 +125,7 @@ const HOST_SENTENCES=[
   {named:"bepinex.drivenElsewhere",    textId:"bepinex.reason.driven_elsewhere"},
   {named:"bepinex.foreignCore",        textId:"bepinex.reason.foreign_core"},
   {named:"bepinex.repairMismatch",     textId:"bepinex.reason.repair_mismatch"},
+  {named:"bepinex.repairPackGone",     textId:"bepinex.reason.repair_pack_gone"},
   {named:"worlds.copySourceRequired",    textId:"world.copy.reason.source_required"},
   {named:"worlds.copyBadSourceRef",      textId:"world.copy.reason.bad_source"},
   {named:"worlds.copyBadSubfolder",      textId:"world.copy.reason.bad_subfolder"},
@@ -208,6 +209,11 @@ function bepInExLeftAloneText(last){
     installed:last.installedVersion||"",
     pack:last.version||"",
     when:last.eligibleUtc?new Date(last.eligibleUtc).toLocaleString(LOC()):"",
+    /* The same two numbers again under the names the repair-gone sentence knows them by:
+       the pack this install was written FROM, which the note records and the site no
+       longer serves, and the one the site does offer now. */
+    noted:last.installedVersion||"",
+    offered:last.version||"",
   };
   return bepInExReasonText(last.reason,params)||hostSentence(last.reason,params);
 }
@@ -1849,7 +1855,11 @@ async function switchServer(name){
   S.prefs=prefs; S.profileName=prefs.ProfileName; S.saveInterval=prefs.SaveInterval??600;
   S.players=[]; S.invite=null; S.net={conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]};
   S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
-  S.mods=null; S.modsScanned=false; S.lastScan=null; S.modSort={col:null,dir:0};
+  /* Put back, never replaced: the sort states are the one pair of objects the page wires a
+     handler over once and never again, so a fresh object here is a state the headers would
+     stop being able to reach. wireSort resolves them through a getter for the same reason;
+     the two together are belt and braces and they do not conflict. */
+  S.mods=null; S.modsScanned=false; S.lastScan=null; sortReset(S.modSort);
   S.modIndexAt=null; S.modIndexSource=null;
   /* a search was typed about the previous realm's mods and scrolls, so it goes with them */
   S.modFilter=""; if($("#modSearch")) $("#modSearch").value="";
@@ -1866,7 +1876,7 @@ async function switchServer(name){
   S.update={installKind:null,updatePending:false,pendingBytes:0,buildId:null,targetBuildId:null,
             canUpdate:false,running:false,reason:""};
   try{renderUpdatePill();}catch(_){}
-  S.journal={}; S.vikSort={col:null,dir:0}; S.crashed=false;
+  S.journal={}; sortReset(S.vikSort); S.crashed=false;
   /* the previous realm's write times belong to the previous realm */
   renderSaveAvg();
   try{atlasReset();}catch{}
@@ -3034,11 +3044,25 @@ function renderSortMarks(sel,state,descFirst){
     th.querySelector(".sortmark").textContent=on?(up?"▲":"▼"):"";
   });
 }
-function wireSort(sel,state,onChange){
+/* Puts one sort state back to the table's own order WITHOUT replacing the object. That is
+   the whole point of it: a realm switch used to hand S.modSort and S.vikSort brand new
+   objects, and anything still holding the old one wrote to an orphan from then on. */
+function sortReset(state){if(state){state.col=null;state.dir=0;}}
+/* stateOf is a GETTER, and it has to stay one. Both tables are wired once while app.js is
+   being evaluated and never again, so a closure handed the state OBJECT holds that exact
+   object for the life of the window. switchServer puts both sort states back, and the
+   renderers read S.modSort and S.vikSort fresh every time they draw: hand the object in
+   here and the click writes to whatever was current at startup while the render reads what
+   is current now. That is issue 14, and it stopped all twelve sortable headers dead after
+   the first realm switch, with the header still glowing because that glow is CSS.
+   Resolving it at CLICK time is what makes the two ends read the same state, and
+   sortReset above means even a closure that somehow outlives a switch is looking at a
+   state that was put back rather than a stale one. */
+function wireSort(sel,stateOf,onChange){
   document.querySelectorAll(sel).forEach(th=>{
     th.setAttribute("role","button");
     th.setAttribute("tabindex","0");
-    const go=()=>{sortCycle(state,th.dataset.sort);onChange();};
+    const go=()=>{sortCycle(stateOf(),th.dataset.sort);onChange();};
     th.addEventListener("click",go);
     th.addEventListener("keydown",e=>{
       if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();go();}
@@ -3047,7 +3071,7 @@ function wireSort(sel,state,onChange){
 }
 const MOD_DESC_FIRST=new Set(["installed","latest"]);
 function renderModSortMarks(){renderSortMarks("#page-mods th.sortable",S.modSort,MOD_DESC_FIRST);}
-wireSort("#page-mods th.sortable",S.modSort,()=>renderMods());
+wireSort("#page-mods th.sortable",()=>S.modSort,()=>renderMods());
 /* The six sentences a Mods row explains itself with used to stand as consts here, and
    every one of them is asked for by id now. The Latest cell on a delisted mod was already
    written that way (mods.status.not_listed.tip) and the reason it gave holds for all six:
@@ -3494,10 +3518,25 @@ function bepInExRowActions(b){
   if(!state) return [];
   if(state==="maintained") return [];
   if(state==="missing") return ["install"];
-  if(state==="incomplete") return ["repair"];
+  /* Repair is the right offer for files that went: they came out of the pack the note names
+     and that is the pack they go back from. It stops being the right offer on its own once
+     the site has taken that pack down, because then repair asks for the same address for
+     ever and gets the same 404. Update stands beside it there, and it carries the host's
+     answer to the one question repair cannot ask: take the pack the site does serve. */
+  if(state==="incomplete") return bepInExRepairPackGone(b)?["repair","update"]:["repair"];
   if(state==="unrecognised"||state==="damaged")
     return b.newestBackup?["restore","install"]:["install"];
   return ["update"];
+}
+/* True when the last unattended write here stopped because Thunderstore no longer serves the
+   pack this install was written from. It is the one shape where a repair can never finish:
+   the pack the note names is the pack a repair fetches, and there is nothing at that address
+   any more. Read off the standing left-alone answer rather than guessed at from the state,
+   because the state says only that files are missing and says nothing about why putting them
+   back failed. */
+function bepInExRepairPackGone(b){
+  const last=b&&b.lastUnattended;
+  return !!(last&&last.leftAsItWas&&last.reason==="bepinex.repairPackGone");
 }
 const BEPINEX_ACTION_WORDS={
   install:{labelId:"bepinex.row.action.install"},
@@ -3667,6 +3706,12 @@ function renderBepInExRow(){
      could not say before. The switch that decides it is a press away, beside the note. */
   const broughtIn=bepInExBroughtInAtRestart(b);
   if(broughtIn) notes.push(T("bepinex.row.note.brought_in"));
+  /* The mark a write that did not finish leaves behind, still on disk. The host side tries
+     to settle it on every read of this install, so one that is still here means the note
+     beside these files could not be written, and THAT is why an install BakaLoader wrote
+     can read as one it did not. It was sent from the first version of this row and never
+     drawn, which left the commonest way into the Outside state with nothing to explain it. */
+  if(b.interruptedWrite) notes.push(T("bepinex.row.note.interrupted_write"));
   if(b.updateWaiting) notes.push(T("bepinex.row.note.waiting",{version:b.updateWaiting}));
   const shared=(Array.isArray(b.sharingProfiles)?b.sharingProfiles.filter(Boolean):[]).length;
   if(shared>1) notes.push(T("bepinex.row.note.shared",{count:shared-1}));
@@ -3701,7 +3746,11 @@ function renderBepInExRow(){
       :"")+
     wrong;
   el.querySelector("#bepInstall")?.addEventListener("click",()=>bepInExInstallFlow(null));
-  el.querySelector("#bepUpdate")?.addEventListener("click",()=>bepInExUpdateFlow());
+  /* The Update beside a Repair is only ever drawn where the noted pack is gone, and there it
+     IS the answer: without it the host side recomputes the same repair off the same install
+     and fetches the same missing pack. Everywhere else Update carries no answer at all. */
+  el.querySelector("#bepUpdate")?.addEventListener("click",
+    ()=>bepInExUpdateFlow(bepInExRepairPackGone(S.bepinex)?{takeCurrentPack:true}:null));
   el.querySelector("#bepRepair")?.addEventListener("click",()=>bepInExRepairFlow());
   el.querySelector("#bepRestore")?.addEventListener("click",()=>bepInExRestoreFlow());
   el.querySelector("#bepRemove")?.addEventListener("click",()=>bepInExRemoveFlow());
@@ -3718,9 +3767,13 @@ function bepInExInstallFlow(after){
   if(S.bepinex&&bepInExConsent(S.bepinex)){bepInExWrite("bepinex.install",{},after);return;}
   bepInExOfferModal(after);
 }
-function bepInExUpdateFlow(){
-  if(bepInExNeedsConfirm(S.bepinex,"update")){bepInExTakeoverModal("bepinex.update",null);return;}
-  bepInExWrite("bepinex.update",{},null);
+/* `extra` is the answer this particular press carries, if it carries one. Today that is only
+   ever takeCurrentPack, from the two places that offer to move an install off a pack the site
+   has taken down. It rides through the confirm as well, because a write over an install
+   BakaLoader did not make still asks first and the answer must survive the question. */
+function bepInExUpdateFlow(extra){
+  if(bepInExNeedsConfirm(S.bepinex,"update")){bepInExTakeoverModal("bepinex.update",null,extra);return;}
+  bepInExWrite("bepinex.update",Object.assign({},extra||{}),null);
 }
 /* Files the note lists that an antivirus or a tidy-up took away. Nothing here is somebody
    else's work, so it is put back without a question; what is worth asking about is only
@@ -3812,7 +3865,7 @@ function bepInExPackOffered(b){
    is skipped is a button that does nothing.
    With the host's yes already given, the already-looked-after sentence rides along with
    the press they actually make, and the switch behind it is one click away. */
-function bepInExTakeoverModal(method,after){
+function bepInExTakeoverModal(method,after,extra){
   const b=S.bepinex;
   const installed=(b&&b.coreVersion)||T("bepinex.row.version.unknown");
   const pack=bepInExPackOffered(b);
@@ -3829,7 +3882,7 @@ function bepInExTakeoverModal(method,after){
          `${esc(T("bepinex.notice.already_maintained.action"))}</button>`
         :""),
     ()=>T("bepinex.dialog.takeover.ok"),
-    ()=>bepInExWrite(method,bepInExWriteFlags(b),after));
+    ()=>bepInExWrite(method,Object.assign(bepInExWriteFlags(b),extra||{}),after));
 }
 /* The switch, reached from the dialog that named it. Delegated on the background rather
    than wired to the button, because a language switch rebuilds the dialog from its thunk
@@ -3925,6 +3978,11 @@ function bepInExReportWrite(method,r){
   if(res&&res.adopted&&res.nothingChanged){
     toast("ᛒ "+T("bepinex.row.adopted.toast",{version:version||""}));
     logLine("ok","[BepInEx] the install here already matched the pack, so only the note was written");
+    /* An adoption is a write, so what it reached beyond this install is said here too. It is
+       the one ending that returns before the tail below, and leaving the call out of it meant
+       realms that were given the sharing they lacked went unmentioned on the very press that
+       gave it to them. */
+    bepInExReportReach(res);
     return;
   }
   /* The full sentence needs BOTH numbers and somewhere the old files went. A first install
@@ -3936,11 +3994,47 @@ function bepInExReportWrite(method,r){
     toast("ᛒ "+T("bepinex.row.updated.toast",{from,to:version,folder}));
     logLine("ok","[BepInEx] "+what+" · "+from+" to "+version+
       ", the files it replaced are in "+folder);
+    bepInExReportReach(res);
     return;
   }
   toast("ᛒ "+(version?T("bepinex.row.installed.toast",{version})
                      :T("bepinex.row.installed.noversion.toast")));
   logLine("ok","[BepInEx] "+what+(version?" · pack "+version:""));
+  bepInExReportReach(res);
+}
+/* How far that write reached beyond the install it was aimed at, in the chronicle. Three
+   facts the host side has always sent and nothing has ever read:
+     previousPackVersion         the pack BakaLoader's OWN note named before this write. Every
+                                 producer sends it beside previousVersion, which is the same
+                                 number where there was a note and the core assembly's own
+                                 version where there was not. So the two are never a pair of
+                                 different numbers, and what this one adds is not another
+                                 number: it is that the number was read off a note BakaLoader
+                                 wrote rather than off the file on disk. Where there was no
+                                 note it is absent, and then nothing is said
+     isolatedInstallsLinked      realms whose isolated install was given the sharing it
+                                 lacked, so they follow this core from now on
+     profileLoaderFilesRefreshed loose loader files put back in step in isolated realms that
+                                 hold copies rather than links, which is every realm on
+                                 another volume. Without that pass those realms run a new
+                                 core under an old loader file, and nothing on screen said
+                                 it had been dealt with.
+   The chronicle rather than the row: the row says what an install IS, and these say what
+   one press did. They are counts of other realms, so they are only ever written when there
+   were any. */
+function bepInExReportReach(res){
+  if(!res) return;
+  if(res.previousPackVersion)
+    logLine("info","[BepInEx] the note here recorded pack "+res.previousPackVersion+
+      " before this write");
+  const linked=Number(res.isolatedInstallsLinked)||0;
+  if(linked>0)
+    logLine("ok","[BepInEx] "+linked+" isolated install"+(linked===1?"":"s")+
+      " now share this core");
+  const refreshed=Number(res.profileLoaderFilesRefreshed)||0;
+  if(refreshed>0)
+    logLine("ok","[BepInEx] the loader file was put back in step in "+refreshed+
+      " isolated profile"+(refreshed===1?"":"s"));
 }
 /* The write's own progress, in the dialog layer where the question was asked. The bar is
    the one the server update and the bulk mod update already draw, so a host who has seen
@@ -6785,17 +6879,33 @@ const BEPINEX_LEFT_ALONE_ACTS={
   foreign:          {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
   newer:            {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
   repairMismatch:   {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
+  /* A repair whose own pack the site has taken down. Pressing repair again asks for the
+     same missing pack for ever, so the one press that helps is the one that moves this
+     install onto the pack the site DOES serve. It goes through the row's own Update, so a
+     write over an install BakaLoader did not make still asks first, and it borrows that
+     button's own words rather than a second id saying the same sentence. */
+  "bepinex.repairPackGone":{act:"write", labelId:"bepinex.row.action.update"},
 };
 function bepInExLeftAloneAct(last){
   return (last&&last.reason&&BEPINEX_LEFT_ALONE_ACTS[last.reason])||null;
 }
 /* Take the pack now, by hand. It goes through the same flow the row's own button does, so
-   a write over an install BakaLoader did not make still asks before it writes. */
-function bepInExLeftAloneWrite(){
+   a write over an install BakaLoader did not make still asks before it writes.
+   Where the reason was a repair whose pack the site has taken down, the press carries the
+   host's answer with it. Without that the write is recomputed as the same repair, asks for
+   the same missing pack and ends in the same refusal, which would make this button a promise
+   the code does not keep. */
+function bepInExLeftAloneWrite(last){
+  /* Read off the answer this row was RAISED with rather than off the live status. The row
+     stands for as long as it takes the host to deal with it, and a write in between can
+     leave S.bepinex saying something else; the question this button answers was settled
+     when the row went up. */
+  const gone=last?last.reason==="bepinex.repairPackGone"&&!!last.leftAsItWas
+                 :bepInExRepairPackGone(S.bepinex);
   clearCondition("bepinexLeftAlone");
   if(Native.available) Native.call("bepinex.noticeSeen",{});
   goPage("mods");
-  bepInExUpdateFlow();
+  bepInExUpdateFlow(gone?{takeCurrentPack:true}:null);
 }
 function bepInExLeftAloneWiki(){
   if(Native.available) Native.call("shell.openUrl",{target:"bepinex-wiki"});
@@ -6817,7 +6927,7 @@ function conditionBepInExLeftAlone(last){
     again:()=>conditionBepInExLeftAlone(last),
     wire:bar=>{
       bar.querySelector("#cbBepLeftAct")?.addEventListener("click",
-        offer&&offer.act==="wiki"?bepInExLeftAloneWiki:bepInExLeftAloneWrite);
+        offer&&offer.act==="wiki"?bepInExLeftAloneWiki:(()=>bepInExLeftAloneWrite(last)));
       bar.querySelector("#cbBepLeft").addEventListener("click",bepInExLeftAloneSeen);
     },
   });
@@ -7899,7 +8009,7 @@ function renderPlayers(){
   tb._list=list;
   renderAppBar();   // after #homeVik is filled: the preview counts its dots
 }
-wireSort("#page-vikings th.sortable",S.vikSort,()=>renderPlayers());
+wireSort("#page-vikings th.sortable",()=>S.vikSort,()=>renderPlayers());
 /* The "..." button opens exactly the menu a right-click opens, so the roster's
    actions are reachable from the keyboard and from a trackpad without a second
    button. It is positioned off the button, not off the pointer. */
@@ -8559,6 +8669,15 @@ function worldFormRead(){
   for(const id of WORLD_FORM_FIELDS){const el=$("#"+id);if(el)out[id]=String(el.value??"");}
   for(const id of WORLD_FORM_TOGGLES){const el=$("#"+id);if(el)out[id]=el.classList.contains("on")?"1":"0";}
   for(const key in WORLDGEN){const el=$("#"+WORLDGEN[key].sel);if(el)out[WORLDGEN[key].sel]=String(el.value??"");}
+  /* The five world switches ride along with Save Config exactly as the dials do, so an
+     unsaved one is unsaved: it wears the marker on its own field, it raises the notice,
+     and it makes the Save button breathe. They are read here rather than in
+     WORLD_FORM_TOGGLES because that list is the server-wide settings, and these belong to
+     the world the field above them names. */
+  for(const key of WORLDGEN_SWITCH_KEYS){
+    const el=$("#"+WORLDGEN_SWITCHES[key].sw);
+    if(el) out[WORLDGEN_SWITCHES[key].sw]=el.classList.contains("on")?"1":"0";
+  }
   out.world=worldFieldValue();
   return out;
 }
@@ -9002,6 +9121,57 @@ function worldModPanelHtml(key,val){
       `<div class="wgt-eff">${esc(o.effects)}</div></div>`).join("")+
     `<div class="wgt-foot">${esc(T("world.wg.own_note"))}</div>`;
 }
+/* ---------- THE FIVE WORLD SWITCHES ----------
+   The game's boolean starting keys: the ones its own world-modifier screen draws as
+   toggles rather than as dials. They are stored with the world exactly as the dials are
+   and reach the command line the same way, and until 1.2.1 nothing on this page could set
+   one. That mattered more than a missing control usually does, because BakaLoader emits
+   -resetmodifiers at every start, and that clears a world's WHOLE starting key list: a
+   switch set in the game client was wiped at the first BakaLoader start, with no way in
+   the window to put it back.
+   The keys are the game's own names, spelled the way it writes them into the world header,
+   and the order is the order Game/WorldGen.cs lists them in. A gate holds this table
+   against WorldGen.Switches so neither can grow a name the other does not have.
+     sw      the toggle on the World modifiers card
+     marker  its ? button, which opens the shared panel
+     labelId named after the key each one sets, so a host who set it from the console or read
+             it out of the world header recognises which switch is which. What the game's own
+             world-modifier screen calls them is NOT what these say: those labels live in the
+             client's scene rather than in its assembly, so nothing here could be checked
+             against them and nothing here claims to have been
+     lineId  the one line beside the toggle
+     helpId  the fuller sentence the panel opens with
+   Every claim in that copy was read out of the decompiled game rather than guessed; the
+   wiki's World modifiers page names the line each one came from. */
+const WORLDGEN_SWITCHES={
+  nobuildcost: {sw:"tKeyNoBuildCost",  marker:"iKeyNoBuildCost",
+                labelId:"world.wgs.nobuildcost.label",  lineId:"world.wgs.nobuildcost.line",
+                helpId:"world.wgs.nobuildcost.help"},
+  playerevents:{sw:"tKeyPlayerEvents", marker:"iKeyPlayerEvents",
+                labelId:"world.wgs.playerevents.label", lineId:"world.wgs.playerevents.line",
+                helpId:"world.wgs.playerevents.help"},
+  passivemobs: {sw:"tKeyPassiveMobs",  marker:"iKeyPassiveMobs",
+                labelId:"world.wgs.passivemobs.label",  lineId:"world.wgs.passivemobs.line",
+                helpId:"world.wgs.passivemobs.help"},
+  nomap:       {sw:"tKeyNoMap",        marker:"iKeyNoMap",
+                labelId:"world.wgs.nomap.label",        lineId:"world.wgs.nomap.line",
+                helpId:"world.wgs.nomap.help"},
+  fire:        {sw:"tKeyFire",         marker:"iKeyFire",
+                labelId:"world.wgs.fire.label",         lineId:"world.wgs.fire.line",
+                helpId:"world.wgs.fire.help"},
+};
+const WORLDGEN_SWITCH_KEYS=Object.keys(WORLDGEN_SWITCHES);
+/* The panel one switch's ? marker opens: its name, what it does, the line that stands
+   beside the toggle, and the key the game writes for it so a host can match this card
+   against the game's own world-modifier screen. */
+function worldSwitchPanelHtml(key){
+  const s=WORLDGEN_SWITCHES[key]; if(!s) return "";
+  return `<div class="wgt-head">${esc(T(s.labelId))}</div>`+
+    `<div class="wgt-intro">${esc(T(s.helpId))}</div>`+
+    `<div class="wgt-row sel"><div class="wgt-lbl">${esc(T(s.lineId))}</div>`+
+    `<div class="wgt-ex"></div><div class="wgt-eff">${esc(key)}</div></div>`+
+    `<div class="wgt-foot">${esc(T("world.wgs.note"))}</div>`;
+}
 /* One shared hover panel serves every dial on both surfaces. It is fixed to the window
    and sits outside the form, so neither a scrolling pane nor the realm-forge dialog's
    own clipping can cut it off, and there is no per-dial copy to keep in step. */
@@ -9058,10 +9228,18 @@ function wgTipOwnerOnScreen(){
   }
   return r.bottom>top+2&&r.top<bottom-2&&r.right>left+2&&r.left<right-2;
 }
-function wgTipOpen(marker,key,val){
+function wgTipOpen(marker,key,val){wgTipOpenHtml(marker,worldModPanelHtml(key,val));}
+/* The same panel over one of the five switches. A switch has no options to lay out, so it
+   has its own builder rather than a dial's with the option list left empty. */
+function wgTipOpenSwitch(marker,key){wgTipOpenHtml(marker,worldSwitchPanelHtml(key));}
+/* The panel itself, opened over markup somebody else built. The dials and the five
+   switches describe different things and neither should own the other's copy, but the
+   placement, the screen-reader pointer and the Escape bookkeeping are the panel's own and
+   there is one of those. */
+function wgTipOpenHtml(marker,html){
   if(!wgTip||!marker) return;
   wgTipKeep();
-  wgTip.innerHTML=worldModPanelHtml(key,val);
+  wgTip.innerHTML=html;
   // moving straight from one marker to the next never closes the panel, so the dial it
   // was describing has to be let go of here or it keeps a description of the wrong thing
   if(wgTipOwner&&wgTipOwner!==marker) wgTipDescribe(wgTipOwner,false);
@@ -9121,9 +9299,16 @@ function wireWorldDialHelp(key,selEl,noteEl,markerEl){
     paint();
     if(wgTipOwner===markerEl) wgTipOpen(markerEl,key,selEl.value); // keep an open panel honest
   });
+  wireWgTipMarker(markerEl,selEl,()=>wgTipOpen(markerEl,key,selEl.value));
+}
+/* One ? marker: which control it speaks for, and how its panel is opened. `open` is a
+   thunk rather than a built string because the panel has to be right at the moment it goes
+   up, not at the moment the marker was wired: a dial's panel marks the option chosen NOW.
+   Split out of wireWorldDialHelp so the five switches get the same behaviour rather than a
+   second copy of it that drifts. */
+function wireWgTipMarker(markerEl,controlEl,open){
   if(!markerEl) return;
-  wgTipSel.set(markerEl,selEl);
-  const open=()=>wgTipOpen(markerEl,key,selEl.value);
+  if(controlEl) wgTipSel.set(markerEl,controlEl);
   markerEl.addEventListener("mouseenter",open);
   markerEl.addEventListener("focus",open);      // same panel for a host on the keyboard
   markerEl.addEventListener("click",e=>{e.preventDefault();open();});
@@ -9185,6 +9370,116 @@ function scrapeWorldModDials(){
   for(const [key,def] of Object.entries(WORLDGEN)){const v=$("#"+def.sel).value;if(v)mods[key]=v;}
   return mods;
 }
+/* Paint the five switches from the list of switch keys this world carries. A name that is
+   not one of the five never reaches here: the host side splits the stored keys into the
+   switch subset and the rest, and the rest is drawn by renderWorldCarried below. */
+function applyWorldSwitches(keys){
+  const on=new Set((Array.isArray(keys)?keys:[]).map(k=>String(k||"").trim().toLowerCase()));
+  for(const key of WORLDGEN_SWITCH_KEYS){
+    const el=$("#"+WORLDGEN_SWITCHES[key].sw);
+    if(el) el.classList.toggle("on",on.has(key));
+  }
+}
+/* Read the five switches back. ALWAYS all five, as the list of the ones that are on: the
+   host side takes an absent list as "leave the stored switches alone" so an older page
+   cannot wipe them, and an empty one as "the host turned every switch off". Sending what
+   is on screen every time is what makes the difference mean something. */
+function scrapeWorldSwitches(){
+  return WORLDGEN_SWITCH_KEYS.filter(key=>swOn(WORLDGEN_SWITCHES[key].sw));
+}
+/* The keys this world carries that no toggle above stands for: a host may have set
+   `carryweightrate 150` from the game's console, and a save of the five switches is not a
+   statement about it. It is kept, it still reaches the command line, and it is NAMED here
+   so nothing is dropped quietly. */
+function renderWorldCarried(){
+  const el=$("#wgCarried"); if(!el) return;
+  const held=S.worldMods&&S.worldMods.world===worldFieldValue()&&Array.isArray(S.worldMods.passThrough)
+    ?S.worldMods.passThrough:[];
+  el.style.display=held.length?"block":"none";
+  el.textContent=held.length?T("world.wgs.carried",{keys:held.join(", ")}):"";
+}
+/* ---------- WHAT A FIRST MEETING BROUGHT IN ----------
+   A world made in the game client, or set from its console, carries its own starting keys
+   and knows nothing about BakaLoader. The first time BakaLoader meets such a world it reads
+   those keys off the world itself and fills the dials and switches in BEFORE the start, so
+   the -resetmodifiers every start emits puts back exactly what the world already had
+   instead of clearing it.
+   That happens whether or not anybody is at the keyboard, which is the whole point: an
+   auto start, a crash relaunch and a scheduled restart have nobody to answer a dialog. So
+   the host is TOLD rather than asked, once, in a notice that blocks nothing. It arrives
+   two ways because the import can happen either way: on worldgen.get for an import that
+   happened before this hall was opened, and on the worldgen.imported event for one that
+   happens while it is open. */
+let WORLD_IMPORTED=null;
+function showWorldImported(notice){
+  WORLD_IMPORTED=notice&&notice.world?notice:null;
+  renderWorldImported();
+}
+function renderWorldImported(){
+  const el=$("#wgImported"); if(!el) return;
+  const n=WORLD_IMPORTED;
+  if(!n){el.style.display="none";el.innerHTML="";return;}
+  /* Only ever over the world it is about. The notice says the dials and switches BESIDE it
+     were filled in off the world's own header, and the card under it always draws whichever
+     world the field holds, so a notice left standing after the host picked another world
+     would be a sentence pointing at controls it is not true of. It is kept rather than
+     thrown away: picking that world again draws it, because the host side holds the notice
+     until somebody presses Got it. */
+  if(n.world!==worldFieldValue()){el.style.display="none";el.innerHTML="";return;}
+  /* Each half only speaks when it has something to say. A world that carried nothing but
+     two switches has no dial line, and a sentence reading "dials: " would be worse than
+     no sentence at all. */
+  const lines=[];
+  /* Every one of these lists is joined with the middle dot rather than with a comma, which
+     is the separator this card already uses. An option's own label carries a descriptive
+     tail with a comma inside it ("Hard, enemies hit harder"), so a comma between the items
+     as well would leave a host no way to see where one dial ends and the next begins. */
+  const sep=" · ";
+  const dials=Object.entries(n.modifiers||{})
+    .filter(([key,val])=>WORLDGEN[key]&&wgOpt(key,val))
+    .map(([key,val])=>T(WORLDGEN[key].labelId)+": "+T(wgOpt(key,val).labelId));
+  if(dials.length) lines.push(T("world.wgs.imported.dials",{list:dials.join(sep)}));
+  const on=(n.switches||[]).filter(k=>WORLDGEN_SWITCHES[k])
+    .map(k=>T(WORLDGEN_SWITCHES[k].labelId));
+  if(on.length) lines.push(T("world.wgs.imported.switches",{list:on.join(sep)}));
+  const carried=Array.isArray(n.passThrough)?n.passThrough:[];
+  if(carried.length) lines.push(T("world.wgs.imported.carried",{list:carried.join(sep)}));
+  el.style.display="block";
+  el.innerHTML=
+    `<div class="capshead"><span class="r">ᚷ</span>${esc(T("world.wgs.imported.title"))}</div>`+
+    `<div class="capslist">${esc(T("world.wgs.imported.body",{world:n.world}))}`+
+    lines.map(line=>`<br>${esc(line)}`).join("")+`</div>`+
+    `<div class="capsact"><button class="btn btn-ghost btn-sm" id="wgImportedSeen">`+
+    `${esc(T("world.wgs.imported.action"))}</button></div>`;
+  el.querySelector("#wgImportedSeen").addEventListener("click",()=>{
+    const world=WORLD_IMPORTED&&WORLD_IMPORTED.world;
+    WORLD_IMPORTED=null;
+    renderWorldImported();
+    /* Said once. The host side forgets it on this call, so a later worldgen.get does not
+       hand the same notice back. */
+    if(Native.available&&world) rpc("worldgen.noticeSeen",{world});
+  });
+}
+/* Whether a worldgen.get answer really is a world's stored set.
+   Asking whether SOMETHING came back is not the same question. rpc() answers FAIL when the
+   call failed, and null when the host side answered with nothing, and both of those were
+   already refused; but an empty object answers both of those tests as a success while
+   carrying no dials, no keys and no world, and the card believes whatever this says. One
+   Save Config later that empty set is written to the world and the next start's
+   -resetmodifiers takes the world's own difficulty off it. That is the wipe, and a bare {}
+   is the shape a half-written host route, a reply that lost its body, or a stub left in a
+   bridge hands back.
+   So the test is the SHAPE the handler really builds. RegisterRpc("worldgen.get") answers
+   with world, preset, modifiers, keys, switches, passThrough and imported, and two of those
+   are built unconditionally from the stored prefs: modifiers is a map (empty when the world
+   has no dials set) and keys is a list (empty when it carries none). An answer without both
+   of them is not this handler's answer, whatever else it is. */
+function worldGenAnswered(r){
+  if(r===FAIL||!r||typeof r!=="object") return false;
+  const mods=r.modifiers;
+  if(!mods||typeof mods!=="object"||Array.isArray(mods)) return false;
+  return Array.isArray(r.keys);
+}
 let _worldModsSeq=0;
 /* Render the difficulty dials for the selected world. The host's pick lives in S.worldMods,
    NOT in the DOM, so a re-render (an event, a Save, a helm turn) never discards an unsaved
@@ -9192,23 +9487,70 @@ let _worldModsSeq=0;
    genuine change of world reloads the stored values from disk. */
 async function renderWorldMods(){
   const world=worldFieldValue();
-  // Same world we already hold: keep the host's (possibly unsaved) dials, no reload, no clobber.
-  if(S.worldMods&&S.worldMods.world===world){ applyWorldModDials(S.worldMods.mods); return; }
-  // A different world (or first load): pull its stored values fresh, guarded so a slow
-  // lookup for an older world can never overwrite a newer one.
+  /* EVERY entry takes the next number, including the one that gets no further than the
+     held-set check below. The number is what a lookup still in flight compares itself
+     against when it lands, so a draw that takes none is a draw that cannot supersede one:
+     pick a world whose lookup is slow, pick the one before it again while that lookup is
+     still out, and the held-set check hands the card straight back - with the number
+     unchanged, the late answer would still match and would paint the world that was LEFT
+     over the card of the world on screen. Taken here, above that check, for that reason. */
   const seq=++_worldModsSeq;
-  let cur={};
+  /* Asked again first thing, so a change of world takes a notice about the world before it
+     off the card AT ONCE rather than at the end of a pull that may be a moment away. The
+     guard inside it is what decides; this is only the moment it is asked. */
+  renderWorldImported();
+  // Same world we already hold, AND really read back from the host side: keep the host's
+  // (possibly unsaved) dials and switches, no reload, no clobber. A held set whose lookup
+  // never answered is not kept, because nothing else asks again until the world changes:
+  // it would stand for the rest of the session, every later draw would go on showing
+  // Normal for a world nobody has read, and the save would go on refusing to write it.
+  if(S.worldMods&&S.worldMods.world===world&&S.worldMods.pulled){
+    applyWorldModDials(S.worldMods.mods);
+    applyWorldSwitches(S.worldMods.keys);
+    renderWorldCarried();
+    return;
+  }
+  // A different world (or first load): pull its stored values fresh, guarded by the number
+  // above so a slow lookup for an older world can never overwrite a newer one.
+  let cur={}, on=[], carried=[], brought=null;
+  /* Whether the four above really are what this world has stored. A lookup that did not
+     answer, or that answered with something that is not the stored set worldGenAnswered
+     describes, leaves every one of them empty, and empty is indistinguishable on screen
+     from a world set to Normal throughout with no switch on: anything that WRITES from that would
+     take the world's own difficulty off it, because every start emits -resetmodifiers and
+     what is stored afterwards is all the world has. Nothing is pulled when there is no host
+     behind the page or no world chosen yet, and neither of those can be wrong about a
+     stored set, so both count as read. */
+  let pulled=true;
   if(Native.available&&world){
     const r=await rpc("worldgen.get",{world});
     if(seq!==_worldModsSeq) return; // a newer world selection superseded this lookup
-    if(r!==FAIL&&r?.modifiers) cur=r.modifiers;
+    pulled=worldGenAnswered(r);
+    if(pulled){
+      if(r.modifiers) cur=r.modifiers;
+      /* The five switches, and every other key this world carries, split by the host side
+         out of the one stored list. An older host sends neither, and both stay empty
+         rather than being guessed at. */
+      if(Array.isArray(r.switches)) on=r.switches;
+      if(Array.isArray(r.passThrough)) carried=r.passThrough;
+      if(r.imported) brought=r.imported;
+    }
   }
-  S.worldMods={world,mods:{...cur}};
+  S.worldMods={world,mods:{...cur},keys:on.slice(),passThrough:carried.slice(),pulled};
   applyWorldModDials(cur);
-  /* The dials now show what is stored for THIS world, so that is their clean state. Only
-     these five are adopted: a host who typed a server name and then changed world still
-     has the name marked, which is the whole point of adopting rather than re-snapshotting. */
-  try{worldFormAdopt(...Object.values(WORLDGEN).map(def=>def.sel));}catch(_){}
+  applyWorldSwitches(on);
+  renderWorldCarried();
+  /* Unconditional on purpose. A pull that brings back no notice is a world with nothing to
+     say, and that has to CLEAR whatever was being shown: the card beside it has just been
+     redrawn with this world's dials and switches, so a notice left over from the world
+     before it would be describing controls that are no longer the ones it is about. */
+  showWorldImported(brought);
+  /* The dials and the switches now show what is stored for THIS world, so that is their
+     clean state. Only these ten are adopted: a host who typed a server name and then
+     changed world still has the name marked, which is the whole point of adopting rather
+     than re-snapshotting. */
+  try{worldFormAdopt(...Object.values(WORLDGEN).map(def=>def.sel),
+                     ...WORLDGEN_SWITCH_KEYS.map(key=>WORLDGEN_SWITCHES[key].sw));}catch(_){}
 }
 /* World seed: read-only identity from the world's .fwl. A seed is fixed at world
    creation and can NEVER change (the field is locked); a world with no .fwl yet
@@ -9284,10 +9626,27 @@ $("#copyWorldAs")?.addEventListener("click",()=>{
 });
 /* A dial the host turns updates the intended state for the selected world at once, so the
    value survives any later re-render and Save Config sends exactly what is on screen. */
+/* Everything the card holds for the selected world, read off the screen. The keys a
+   toggle does not stand for are carried along untouched: nothing on this card can change
+   them, and rebuilding the intended state without them would drop them at the next save.
+   Whether this world's stored set was ever read back travels with them for the same
+   reason: a dial turned on a card that is standing at Normal because the lookup failed
+   must not turn that card into one the save believes.
+   With NO host behind the page there is nothing to be unread about, so a card there is
+   always a read one: the preview never asks a lookup anything, and the same test that
+   renderWorldMods makes when it decides not to ask is made here. Without it a dial turned
+   in the browser preview recorded itself as unread the moment the held set was about some
+   other world, and the next draw painted it back to Normal. */
+function worldModsFromScreen(){
+  const world=worldFieldValue();
+  const mine=S.worldMods&&S.worldMods.world===world?S.worldMods:null;
+  const held=mine&&Array.isArray(mine.passThrough)?mine.passThrough.slice():[];
+  return {world,mods:scrapeWorldModDials(),keys:scrapeWorldSwitches(),passThrough:held,
+          pulled:!Native.available||!!(mine&&mine.pulled)};
+}
 for(const [key,def] of Object.entries(WORLDGEN)){
   $("#"+def.sel).addEventListener("change",()=>{
-    const world=worldFieldValue();
-    S.worldMods={world,mods:scrapeWorldModDials()};
+    S.worldMods=worldModsFromScreen();
   });
   /* The live sentence and the hover panel for this dial. The ids follow the select's
      own: fModCombat -> fModCombatNote for the line, iModCombat for the marker. */
@@ -9301,9 +9660,28 @@ for(const [key,def] of Object.entries(WORLDGEN)){
    from the intended state rather than calling renderWorldMods() again keeps it a wording
    pass: no second lookup for a world the page already holds, and an unsaved dial the host
    set before the words arrived survives it. */
+/* A switch the host flips is the same kind of edit a dial is, so it lands on the intended
+   state at once and the help marker beside it opens the same shared panel. The class on
+   the toggle has already been flipped by the time this runs: the shared [data-t] handler
+   is registered while app.js is still near the top of itself, and this one is registered
+   here, which is far below it. */
+for(const key of WORLDGEN_SWITCH_KEYS){
+  const def=WORLDGEN_SWITCHES[key];
+  const el=$("#"+def.sw);
+  const marker=$("#"+def.marker);
+  if(el) el.addEventListener("click",()=>{S.worldMods=worldModsFromScreen();});
+  wireWgTipMarker(marker,el,()=>wgTipOpenSwitch(marker,key));
+}
 function repaintWorldDialCopy(){
   applyWorldModDials(S.worldMods?S.worldMods.mods:{});
   const own=$("#wgOwnNote"); if(own) own.textContent=T("world.wg.own_note");
+  /* The switches' own words: their five lines are static markup and the walk over
+     data-i18n has already redrawn them, but the carried line and the first-meeting notice
+     are built here and nothing else would repaint them. The toggles themselves are painted
+     again from the intended state for the same reason the dials are. */
+  applyWorldSwitches(S.worldMods?S.worldMods.keys:[]);
+  renderWorldCarried();
+  renderWorldImported();
 }
 repaintWorldDialCopy();
 renderWorldMods(); // seed the dials with Normal defaults (both modes)
@@ -9389,22 +9767,49 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   const r=await rpc("profiles.save",{name,prefs});
   if(r===FAIL) return;
   // World dials ride along with Save Config, keyed to the selected world. Only write them
-  // when S.worldMods actually holds THIS world's dials: that way an unpopulated or
-  // stale-world dial set can never wipe a stored difficulty, while an intentional all-Normal
-  // choice (mods:{}) still clears it. The dials are scraped once more here so the on-screen
-  // value is authoritative even if a change event was missed.
-  if(prefs.WorldName&&S.worldMods&&S.worldMods.world===prefs.WorldName){
+  // when S.worldMods actually holds THIS world's dials AND they were really read back off
+  // the host side: that way an unpopulated, a stale-world or an unanswered dial set can
+  // never wipe a stored difficulty, while an intentional all-Normal choice (mods:{}) still
+  // clears it. The dials are scraped once more here so the on-screen value is authoritative
+  // even if a change event was missed.
+  if(prefs.WorldName&&S.worldMods&&S.worldMods.world===prefs.WorldName&&S.worldMods.pulled){
     const modifiers=scrapeWorldModDials();
+    /* The five switches go with them, ALWAYS as a list, even an empty one. An absent list
+       means "leave the stored switches alone" on the host side, which is what keeps an
+       older page from wiping them; a page that knows about switches has to say what it
+       means, and what it means is whatever is on screen. */
+    const keys=scrapeWorldSwitches();
     S.worldMods.mods=modifiers;
-    await rpc("worldgen.save",{world:prefs.WorldName,modifiers});
+    S.worldMods.keys=keys;
+    const saved=await rpc("worldgen.save",{world:prefs.WorldName,modifiers,keys});
+    /* The reply carries the whole stored set back, and BOTH halves of it are read back.
+       Neither can have changed here, so this is belt and braces: what it buys is that the
+       line and the toggles on screen are what was really stored rather than what the page
+       assumed would be. Reading one half and assuming the other is how the two would
+       quietly part company the day the host side starts storing something else. */
+    if(saved!==FAIL&&saved&&Array.isArray(saved.passThrough)){
+      S.worldMods.passThrough=saved.passThrough.slice();
+      renderWorldCarried();
+    }
+    if(saved!==FAIL&&saved&&Array.isArray(saved.switches)){
+      S.worldMods.keys=saved.switches.slice();
+      applyWorldSwitches(saved.switches);
+    }
   }else if(prefs.WorldName){
-    /* The dials on screen belong to another world, or to no world yet. Writing them here
-       would stamp one world's difficulty onto another, so the save is skipped, but it is
-       skipped OUT LOUD: this used to pass in silence under a success toast, and the host
-       walked away believing a difficulty they had just set was saved. */
-    console.warn("[BakaLoader] world difficulty not saved: the dials on screen belong to "+
-      (S.worldMods&&S.worldMods.world?"'"+S.worldMods.world+"'":"no world yet")+
-      ", not '"+prefs.WorldName+"'");
+    /* The dials on screen belong to another world, or to no world yet, or to this world
+       and were never read back off it. Writing them here would stamp one world's difficulty
+       onto another, or stamp Normal over a difficulty nobody has read, so the save is
+       skipped, but it is skipped OUT LOUD: this used to pass in silence under a success
+       toast, and the host walked away believing a difficulty they had just set was saved.
+       Saying it again is what the toast asks for, and it is worth asking for: the redraw
+       below reaches renderWorldMods, which no longer holds an unread set back, so the card
+       fills itself with what is really stored before the host presses it. */
+    console.warn("[BakaLoader] world difficulty not saved: "+
+      (S.worldMods&&S.worldMods.world===prefs.WorldName
+        ?"the stored dials for '"+prefs.WorldName+"' never came back, so the card is standing at Normal"
+        :"the dials on screen belong to "+
+          (S.worldMods&&S.worldMods.world?"'"+S.worldMods.world+"'":"no world yet")+
+          ", not '"+prefs.WorldName+"'"));
     toast("ᚷ "+T("world.difficulty.not_saved.toast"));
   }
   // max players rides along too - >10 auto-installs the bundled max-players plugin
@@ -9549,8 +9954,14 @@ async function wizFinish(skip){
   if(r===FAIL) return;
   // world rules picked in the wizard apply to the active profile's world
   const world=S.prefs?.WorldName;
+  /* Only the dials the host actually moved are in WIZ.mods, so this save asks for a MERGE.
+     Without that it would be read as the whole dial state and would clear the dials the
+     world's own header was just read to be carrying: a wizard that says nothing about
+     Resources is not a host saying Resources is Normal. Save Config is the other way round
+     and sends every dial every time, which is why the flag is asked for here rather than
+     made the handler's only behaviour. */
   if(!skip&&world&&Object.values(WIZ.mods).some(v=>v))
-    await rpc("worldgen.save",{world,modifiers:WIZ.mods});
+    await rpc("worldgen.save",{world,modifiers:WIZ.mods,mergeModifiers:true});
   // chosen seed applies ONLY to a not-yet-created world (C# refuses otherwise)
   if(!skip&&WIZ.seedEligible&&WIZ.worldSeed.trim()&&WIZ.seedWorld){
     const sr=await rpc("world.setSeed",{world:WIZ.seedWorld,seedName:WIZ.worldSeed.trim()});
@@ -11218,6 +11629,19 @@ if(Native.available){
      of that write. Neither is filtered by profile, because the loader belongs to the
      install rather than to any one server on it. */
   Native.on("bepinex.changed",d=>{S.bepinex=d||null;renderMods();});
+  /* A world BakaLoader had never met carried its own starting keys, and they have just
+     been brought into this realm's world prefs. The host was not asked (an auto start or
+     a scheduled restart has nobody to ask), so they are told: the notice on the World
+     modifiers card says what came in, and the card is drawn again so the dials and
+     switches under it show it. */
+  Native.on("worldgen.imported",d=>{
+    if(!d||!d.world) return;
+    showWorldImported(d);
+    /* The stored values this realm holds have changed underneath the card, so the held
+       copy is dropped and the card pulls them again. */
+    if(S.worldMods&&S.worldMods.world===d.world) S.worldMods=null;
+    try{renderWorldMods();}catch(_){}
+  });
   Native.on("bepinex.progress",onBepInExProgress);
   /* The chip. A tick with no id is the countdown ending and says nothing. */
   Native.on("server.countdown",d=>{
@@ -11531,6 +11955,12 @@ if(!Native.available){
   $("#fWorld").innerHTML=WORLD_NAMES.map(n=>`<option>${esc(n)}</option>`).join("")
     +`<option value="${WORLD_NEW_VALUE}"></option>`;
   syncWorldNew();
+  /* And the card drawn once for the world these options just chose. renderWorldMods ran
+     while app.js was being evaluated, long before this list existed, so the set it holds
+     is about the empty field it found then and no event fires here to ask it again: every
+     dial turned by hand afterwards would be read against a held set about another world.
+     Drawn here, the held set is about Final Sunset, which is what the field says. */
+  renderWorldMods();
 
   /* mock config vault (RUNES page preview) */
   CFG.mock={

@@ -12,12 +12,12 @@
    A language pack carries the faces that cover it.
 
    THERE ARE NO PACK @font-face RULES IN THIS FILE, and that is the whole point. Seven of
-   them used to stand here, each addressing https://app.baka/lang/<code>/<app version>/
-   fonts/<file>.woff2. The font store is content addressed now: a face lives at
-   https://app.baka/lang/_fonts/<sha256>.woff2, shared by every language and every version
-   that carries the same bytes, so the address a stylesheet could write down does not exist
-   any more. A rule written against the old shape would have asked for a file that is not
-   there on every switch, and looked exactly like a font that failed to load.
+   them used to stand here, each addressing one pack's own folder by name. The font store is
+   content addressed now: a face lives at https://lang.baka/_fonts/<sha256>.woff2, on the
+   host the languages folder is mapped to, shared by every language and every version that
+   carries the same bytes, so the address a stylesheet could write down does not exist any
+   more. A rule written against the old shape would have asked for a file that is not there
+   on every switch, and looked exactly like a font that failed to load.
 
    So the rules are injected at runtime instead, by switchLanguage() in app.js, into a
    <style id="langFonts"> element it owns: one @font-face per font the bridge reports for
@@ -1140,7 +1140,12 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   box-shadow:0 0 14px rgba(213,69,60,.25)}
 .setupreset{display:flex;align-items:center;gap:12px;margin-top:20px;padding-top:16px;
   border-top:1px solid var(--bronze)}
-.setupreset-note{font-size:10px;color:var(--bone-faint);letter-spacing:.4px}
+.setupreset-note{font-size:10px;color:var(--bone-faint);letter-spacing:.4px;
+  /* The same last resort the help panel takes, for the same reason: the note under the
+     world dials is the longest sentence on the Settings hall, and a run with nowhere to
+     break in it took the whole hall sideways rather than wrapping. Measured at 1024x680
+     under the pseudo catalog, where the note wanted 939px of a 854px box. */
+  overflow-wrap:anywhere}
 
 /* missing required-mods banner (vikings page) */
 .capsbanner{margin-bottom:14px;padding:12px 16px;border:1px solid rgba(232,169,60,.4);
@@ -1642,6 +1647,15 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   letter-spacing:.4px}
 .wgtip .wgt-foot{margin-top:8px;padding-top:7px;border-top:1px solid var(--bronze);
   font-size:10px;color:var(--bone-faint);letter-spacing:.4px}
+/* A run with nowhere to break in it pushed this panel sideways instead of wrapping inside
+   it: the panel is a fixed 420px and its own overflow is a scrollbar, so the sentence went
+   off the edge and the host had to scroll a tooltip to read it. It is not a made up case.
+   A starting key is one word ("carryweightrate 150" breaks, "deathdeleteunequipped" does
+   not), a German or Finnish compound is one word, and the pseudo catalog pads every
+   sentence with a single unbroken run, which is how this was found: at 1024x680 under xx
+   the panel measured 952px of content in a 418px box. Breaking inside a word is the last
+   resort it says it is, so ordinary sentences in every language wrap exactly as before. */
+.wgtip{overflow-wrap:anywhere}
 
 /* ============ PER-LANGUAGE TYPE RULES ============
    The stacks above swap a face. These swap the SETTINGS around it, which is a separate
@@ -1766,6 +1780,257 @@ html[data-lang="ja"] .ctxhead,
 html[data-lang="zh-Hans"] .ctxhead,
 html[data-lang="zh-Hant"] .ctxhead{
   font-size:11px; letter-spacing:0; text-transform:none;
+}
+
+/* SENTENCES. Everything above lifts a LABEL, and the sentences beside those labels were
+   never in it. Walked at 1024x680 through every hall, every dialog the app can open, the
+   palette, the language menu and the three bars, the three packs draw 8954 readings of
+   Han under 12px across 224 selector and size rows. What follows closes every one of them
+   but three: the pills, chips and rail labels the block above already placed at 11px and
+   11.5px in boxes that do not grow, the config editor, whose size is shared with the
+   highlight layer drawn behind it, and one line in the Saga's log-file dialog, whose size
+   is written inline on the element in app.js where a stylesheet does not reach.
+
+   Same three decisions in the same order: the size comes up to the floor, and the tracking
+   and the uppercase come off wherever they were there to carry Latin. Every size below is
+   the size English draws too, so nothing about a translation put them there and no shorter
+   sentence moves them; every selector below already stands in this file, and every one is
+   keyed on html[data-lang], so nothing here fires in English or in Russian. Also left
+   alone: .wgt-eff, .toast .tt, .hbpct, .hpid and the log, which are Latin in a monospace
+   face at any size, and the runes. */
+
+/* The rail's foot: the mead link and the line that says a newer BakaLoader is ready, both
+   at 8.5px on a short window. 11px rather than 12px, and this is the one tier in the block
+   that does not reach the floor. Both lines wrap inside the 92px column, so the size is
+   paid for in the rail's height, and the rail has none to spare: the strip above is sized
+   so a two-server realm fits whole (181px), and app.js#fitServerStrip hands the strip
+   whatever the foot leaves. Measured in Japanese at 1024x680, the foot goes 54.6px at
+   8.5px, 64.4px at 11px, and 99.6px at 12px, where the strip drops to 134px and a "+1"
+   cue appears over a chip that no longer fits. 11px leaves the strip whole and the foot
+   under the height English already gives it, which is where the block above put the other
+   boxes that cannot grow. */
+html[data-lang="ja"] .side-foot .mead, html[data-lang="ja"] .side-foot .foot-ver.upd,
+html[data-lang="zh-Hans"] .side-foot .mead, html[data-lang="zh-Hans"] .side-foot .foot-ver.upd,
+html[data-lang="zh-Hant"] .side-foot .mead, html[data-lang="zh-Hant"] .side-foot .foot-ver.upd{
+  font-size:11px; letter-spacing:0;
+}
+
+/* The three strips that never grow: the 44px title bar's command chip, the 48px app bar's
+   uptime and player count, and the 28px status bar. Only the type inside them changes,
+   and 12px on the CJK line-height still sits inside the shortest of the three. */
+html[data-lang="ja"] .cmdchip, html[data-lang="ja"] .ab-meta, html[data-lang="ja"] .statusbar,
+html[data-lang="zh-Hans"] .cmdchip, html[data-lang="zh-Hans"] .ab-meta, html[data-lang="zh-Hans"] .statusbar,
+html[data-lang="zh-Hant"] .cmdchip, html[data-lang="zh-Hant"] .ab-meta, html[data-lang="zh-Hant"] .statusbar{
+  font-size:12px;
+}
+
+/* The line under a hall's title. */
+html[data-lang="ja"] .pagehead .sub,
+html[data-lang="zh-Hans"] .pagehead .sub,
+html[data-lang="zh-Hant"] .pagehead .sub{
+  font-size:12px;
+}
+
+/* The Norse captions, which are words rather than marks: a host who turned Norse names on
+   is reading them, and at 10px with 1.6px of tracking they are the same fault as the rail
+   label was. The header row wraps and the caption keeps its ember colour and its weight,
+   so it still reads as a caption beside a label of the same size. */
+html[data-lang="ja"] .hnorse, html[data-lang="ja"] .cnorse,
+html[data-lang="zh-Hans"] .hnorse, html[data-lang="zh-Hans"] .cnorse,
+html[data-lang="zh-Hant"] .hnorse, html[data-lang="zh-Hant"] .cnorse{
+  font-size:12px; letter-spacing:0; text-transform:none;
+}
+
+/* Card sub-values and captions: the mono sub-line under a big number, the sentence under
+   a card header, a viking's joined-at line, the statistics feed's clock, a table's mono
+   cell, and both halves of an empty state in both its sizes. */
+html[data-lang="ja"] .subval, html[data-lang="ja"] .cardnote, html[data-lang="ja"] .vsub,
+html[data-lang="ja"] .skrow, html[data-lang="ja"] .skrow .skt, html[data-lang="ja"] td.mono,
+html[data-lang="ja"] .empty-state .es-title, html[data-lang="ja"] .empty-state .es-reason,
+html[data-lang="ja"] .empty-state.es-compact .es-title,
+html[data-lang="ja"] .empty-state.es-compact .es-reason,
+html[data-lang="zh-Hans"] .subval, html[data-lang="zh-Hans"] .cardnote, html[data-lang="zh-Hans"] .vsub,
+html[data-lang="zh-Hans"] .skrow, html[data-lang="zh-Hans"] .skrow .skt, html[data-lang="zh-Hans"] td.mono,
+html[data-lang="zh-Hans"] .empty-state .es-title, html[data-lang="zh-Hans"] .empty-state .es-reason,
+html[data-lang="zh-Hans"] .empty-state.es-compact .es-title,
+html[data-lang="zh-Hans"] .empty-state.es-compact .es-reason,
+html[data-lang="zh-Hant"] .subval, html[data-lang="zh-Hant"] .cardnote, html[data-lang="zh-Hant"] .vsub,
+html[data-lang="zh-Hant"] .skrow, html[data-lang="zh-Hant"] .skrow .skt, html[data-lang="zh-Hant"] td.mono,
+html[data-lang="zh-Hant"] .empty-state .es-title, html[data-lang="zh-Hant"] .empty-state .es-reason,
+html[data-lang="zh-Hant"] .empty-state.es-compact .es-title,
+html[data-lang="zh-Hant"] .empty-state.es-compact .es-reason{
+  font-size:12px;
+}
+/* The saves caption and the count on a foldable header carry a little tracking and no
+   uppercase, so only the tracking comes off with the size. */
+html[data-lang="ja"] .savecap, html[data-lang="ja"] .fs-hint,
+html[data-lang="zh-Hans"] .savecap, html[data-lang="zh-Hans"] .fs-hint,
+html[data-lang="zh-Hant"] .savecap, html[data-lang="zh-Hant"] .fs-hint{
+  font-size:12px; letter-spacing:0;
+}
+
+/* The Settings hall. The note under a field and the notes under the world card are the
+   longest sentences in the product; the switch line is the one beside each toggle; the
+   imported-world list is what a first meeting read off the world itself. */
+html[data-lang="ja"] .fieldnote, html[data-lang="ja"] .setupreset-note,
+html[data-lang="zh-Hans"] .fieldnote, html[data-lang="zh-Hans"] .setupreset-note,
+html[data-lang="zh-Hant"] .fieldnote, html[data-lang="zh-Hant"] .setupreset-note{
+  font-size:12px; letter-spacing:0;
+}
+html[data-lang="ja"] .togglerow .tl, html[data-lang="ja"] .capsbanner .capslist,
+html[data-lang="zh-Hans"] .togglerow .tl, html[data-lang="zh-Hans"] .capsbanner .capslist,
+html[data-lang="zh-Hant"] .togglerow .tl, html[data-lang="zh-Hant"] .capsbanner .capslist{
+  font-size:12px;
+}
+/* The Directories line: what BakaLoader will really open, where that came from, and the
+   word for the folder itself. The row is baseline-aligned and wraps, so a wider key costs
+   the path column width rather than breaking. */
+html[data-lang="ja"] .dircur-k,
+html[data-lang="zh-Hans"] .dircur-k,
+html[data-lang="zh-Hant"] .dircur-k{
+  font-size:12px; letter-spacing:0; text-transform:none;
+}
+html[data-lang="ja"] .dircur-src,
+html[data-lang="zh-Hans"] .dircur-src,
+html[data-lang="zh-Hant"] .dircur-src{
+  font-size:12px; letter-spacing:0;
+}
+html[data-lang="ja"] .dircur-v,
+html[data-lang="zh-Hans"] .dircur-v,
+html[data-lang="zh-Hant"] .dircur-v{
+  font-size:12px;
+}
+
+/* The shared help panel a switch marker opens. The panel is a fixed 420px with
+   max-height:72vh and its own overflow, so a taller panel scrolls rather than leaving the
+   window, and measured after this rule the tallest of the five is still inside both. The
+   intro inherits the panel; the starting key is left alone above. */
+html[data-lang="ja"] .wgtip, html[data-lang="ja"] .wgtip .wgt-lbl, html[data-lang="ja"] .wgtip .wgt-ex,
+html[data-lang="zh-Hans"] .wgtip, html[data-lang="zh-Hans"] .wgtip .wgt-lbl, html[data-lang="zh-Hans"] .wgtip .wgt-ex,
+html[data-lang="zh-Hant"] .wgtip, html[data-lang="zh-Hant"] .wgtip .wgt-lbl, html[data-lang="zh-Hant"] .wgtip .wgt-ex{
+  font-size:12px;
+}
+html[data-lang="ja"] .wgtip .wgt-head,
+html[data-lang="zh-Hans"] .wgtip .wgt-head,
+html[data-lang="zh-Hant"] .wgtip .wgt-head{
+  font-size:12px; letter-spacing:0; text-transform:none;
+}
+html[data-lang="ja"] .wgtip .wgt-foot,
+html[data-lang="zh-Hans"] .wgtip .wgt-foot,
+html[data-lang="zh-Hant"] .wgtip .wgt-foot{
+  font-size:12px; letter-spacing:0;
+}
+
+/* The unsaved band. app.js measures this notice and gives the hall a floor deep enough to
+   hold it, and re-measures on a ResizeObserver, so a taller notice takes a deeper band
+   rather than sliding behind the form. */
+html[data-lang="ja"] .worldunsaved .wu-k,
+html[data-lang="zh-Hans"] .worldunsaved .wu-k,
+html[data-lang="zh-Hant"] .worldunsaved .wu-k{
+  font-size:12px; letter-spacing:0; text-transform:none;
+}
+html[data-lang="ja"] .worldunsaved .wu-v,
+html[data-lang="zh-Hans"] .worldunsaved .wu-v,
+html[data-lang="zh-Hant"] .worldunsaved .wu-v{
+  font-size:12px;
+}
+
+/* What stands over a hall and what lands under it: the condition bar and the realm edit
+   bar that shares its class, the toast, and the BepInEx row's own sentence and notes. All
+   of them are sentences in a box that grows with them. */
+html[data-lang="ja"] .holdbar, html[data-lang="ja"] .toast,
+html[data-lang="ja"] .beprow .bepmsg, html[data-lang="ja"] .beprow-wrap .bepnotes,
+html[data-lang="zh-Hans"] .holdbar, html[data-lang="zh-Hans"] .toast,
+html[data-lang="zh-Hans"] .beprow .bepmsg, html[data-lang="zh-Hans"] .beprow-wrap .bepnotes,
+html[data-lang="zh-Hant"] .holdbar, html[data-lang="zh-Hant"] .toast,
+html[data-lang="zh-Hant"] .beprow .bepmsg, html[data-lang="zh-Hant"] .beprow-wrap .bepnotes{
+  font-size:12px;
+}
+
+/* The Map. The layer and biome chips are the last two chip tiers with no per-language
+   rule, and both sit in rows that wrap; the weather line and the facts beside it are
+   sentences. */
+html[data-lang="ja"] .lchip, html[data-lang="ja"] .wxb,
+html[data-lang="zh-Hans"] .lchip, html[data-lang="zh-Hans"] .wxb,
+html[data-lang="zh-Hant"] .lchip, html[data-lang="zh-Hant"] .wxb{
+  font-size:12px; letter-spacing:0; text-transform:none;
+}
+html[data-lang="ja"] .wxf, html[data-lang="ja"] .afact,
+html[data-lang="zh-Hans"] .wxf, html[data-lang="zh-Hans"] .afact,
+html[data-lang="zh-Hant"] .wxf, html[data-lang="zh-Hant"] .afact{
+  font-size:12px;
+}
+
+/* The palette and the language menu: the hall a command belongs to, the three keys along
+   the foot, and the line under a language's own name. */
+html[data-lang="ja"] .pitem .k, html[data-lang="ja"] .palette .pfoot, html[data-lang="ja"] .lm-row .lm-sub,
+html[data-lang="zh-Hans"] .pitem .k, html[data-lang="zh-Hans"] .palette .pfoot, html[data-lang="zh-Hans"] .lm-row .lm-sub,
+html[data-lang="zh-Hant"] .pitem .k, html[data-lang="zh-Hant"] .palette .pfoot, html[data-lang="zh-Hant"] .lm-row .lm-sub{
+  font-size:12px;
+}
+html[data-lang="ja"] .langmenu .lm-head,
+html[data-lang="zh-Hans"] .langmenu .lm-head,
+html[data-lang="zh-Hant"] .langmenu .lm-head{
+  font-size:12px; letter-spacing:0; text-transform:none;
+}
+
+/* The dialogs. The body carries the question, and everything below it is the drill-down a
+   dialog is built out of: a fact row and its value, a copied-file list, a command's
+   description, the note and the warning under a body. Every one of them is inside a
+   .mbody that already scrolls, so a taller dialog is a longer scroll rather than a dialog
+   off the window. */
+html[data-lang="ja"] .modal .mbody, html[data-lang="ja"] .modal .mbody-note,
+html[data-lang="ja"] .modal .mwarn, html[data-lang="ja"] .modal .mono-list,
+html[data-lang="ja"] .modal .drow, html[data-lang="ja"] .modal .drow .dv,
+html[data-lang="ja"] .modal .crow .cd, html[data-lang="ja"] .wiz-stat,
+html[data-lang="zh-Hans"] .modal .mbody, html[data-lang="zh-Hans"] .modal .mbody-note,
+html[data-lang="zh-Hans"] .modal .mwarn, html[data-lang="zh-Hans"] .modal .mono-list,
+html[data-lang="zh-Hans"] .modal .drow, html[data-lang="zh-Hans"] .modal .drow .dv,
+html[data-lang="zh-Hans"] .modal .crow .cd, html[data-lang="zh-Hans"] .wiz-stat,
+html[data-lang="zh-Hant"] .modal .mbody, html[data-lang="zh-Hant"] .modal .mbody-note,
+html[data-lang="zh-Hant"] .modal .mwarn, html[data-lang="zh-Hant"] .modal .mono-list,
+html[data-lang="zh-Hant"] .modal .drow, html[data-lang="zh-Hant"] .modal .drow .dv,
+html[data-lang="zh-Hant"] .modal .crow .cd, html[data-lang="zh-Hant"] .wiz-stat{
+  font-size:12px;
+}
+/* One cell inside those rows keeps the size it had. The key column's monospace form is a
+   world name or a backup file name, Latin in every pack, and it is the part of a Barrow
+   layer row that gives up width so the two controls keep their seats. Lifted with the row
+   it lost 43px of "Midgard_backup_auto-20260711-060000" to the ellipsis in Japanese, which
+   is a name a host is reading to pick the right layer. Its sibling value keeps the lift,
+   because that one does carry Han. */
+html[data-lang="ja"] .modal .drow .dk.mono,
+html[data-lang="zh-Hans"] .modal .drow .dk.mono,
+html[data-lang="zh-Hant"] .modal .drow .dk.mono{
+  font-size:11.5px;
+}
+/* A dialog's section head and the label beside a small input, both tracked and uppercased.
+   The wizard's step names below are tracked and are not. */
+html[data-lang="ja"] .modal .dsec, html[data-lang="ja"] .modal .mrow label,
+html[data-lang="zh-Hans"] .modal .dsec, html[data-lang="zh-Hans"] .modal .mrow label,
+html[data-lang="zh-Hant"] .modal .dsec, html[data-lang="zh-Hant"] .modal .mrow label{
+  font-size:12px; letter-spacing:0; text-transform:none;
+}
+html[data-lang="ja"] .wiz-steps .ws,
+html[data-lang="zh-Hans"] .wiz-steps .ws,
+html[data-lang="zh-Hant"] .wiz-steps .ws{
+  font-size:12px; letter-spacing:0;
+}
+
+/* The search boxes a hall carries in its header, and the Saga's. Their placeholders are
+   translated, so at 10px they are Han a host reads before they have typed anything, and
+   what they then type is drawn at the same size. Neither box has a fixed height. */
+html[data-lang="ja"] .pagesearch, html[data-lang="ja"] .termsearch,
+html[data-lang="zh-Hans"] .pagesearch, html[data-lang="zh-Hans"] .termsearch,
+html[data-lang="zh-Hant"] .pagesearch, html[data-lang="zh-Hant"] .termsearch{
+  font-size:12px;
+}
+
+/* The mods list's newer-version marks, which are a sentence rather than a version. */
+html[data-lang="ja"] .modmark,
+html[data-lang="zh-Hans"] .modmark,
+html[data-lang="zh-Hant"] .modmark{
+  font-size:12px; letter-spacing:0;
 }
 
 /* FIXED ROW HEIGHTS. A CJK fallback face raises the line box, so scrollHeight passes

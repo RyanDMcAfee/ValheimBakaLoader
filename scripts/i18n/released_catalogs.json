@@ -1,0 +1,32 @@
+{
+  "_about": [
+    "Every release that has been published, oldest first. The last one in the list is",
+    "the English a host out there may already be holding a pack of.",
+    "",
+    "fingerprint: sha256, as hex, of the English in that release's en.json, built this way.",
+    "  1. Take the catalog's keys object.",
+    "  2. For every id in it write one line: the id, a tab, the lore field, a tab, the",
+    "     plain field.",
+    "  3. Each field is written as compact JSON with object keys sorted, so a plural",
+    "     entry carries all of its forms in a fixed order and a tab or a newline inside a",
+    "     sentence cannot break the line. A field that is not there is an empty string.",
+    "  4. Sort the lines, join them with a single newline, encode UTF-8, sha256, hex.",
+    "Nothing else is in it: not _meta, not the catalog revision, not params or allowsHtml.",
+    "",
+    "Written by: python scripts/i18n/check_catalog.py --record <version>, on release day,",
+    "after the version's English is final. check_catalog.py reads it on every run and says",
+    "so when the English has moved since the last entry here and _meta.catalog has not.",
+    "",
+    "The 1.2.0 entry was seeded by hand from the release commit 7e3e0bf, whose csproj",
+    "names Version 1.2.0 and whose en.json names appVersion 1.2.0 and catalog 1. The",
+    "repository carries no v1.2.0 tag. Nothing reads git from here on: this file is the",
+    "record, so the rule answers the same offline and in a shallow checkout."
+  ],
+  "releases": [
+    {
+      "version": "1.2.0",
+      "catalog": 1,
+      "fingerprint": "283eb3f0d0201d8c55ba09b6c5dd0efd9a0d7ebde33a60fbfa74ec1abbde3dad"
+    }
+  ]
+}

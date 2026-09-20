@@ -545,7 +545,10 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var bridge = Bridge();
 
-            Assert.Contains("Tools.BepInExUnattended.Decide(", bridge, StringComparison.Ordinal);
+            // The rule carries the order as well as the table now, so the window calls the one
+            // entry point that reads the answer before it reads anything else. Decide itself is
+            // still the table and is still walked, cell by cell, in BepInExRulesTests.
+            Assert.Contains("Tools.BepInExUnattended.PlanAsync(", bridge, StringComparison.Ordinal);
             Assert.Contains("Tools.BepInExUnattendedAction.Defer", bridge, StringComparison.Ordinal);
             Assert.Contains("_bepInExUpdateWaiting = latest;", bridge, StringComparison.Ordinal);
         }

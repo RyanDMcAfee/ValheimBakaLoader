@@ -365,6 +365,72 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal("_fonts/" + Sha(face) + ".woff2", (string)pack["fonts"][0]["file"]);
         }
 
+        /// <summary>
+        /// A pack is its catalogue, its own pack.json, a licence text and the faces it lists.
+        /// Anything else an archive carries is dropped before the folder is put in place.
+        /// <para>
+        /// This matters from 1.2.1 rather than before it. The languages folder is now mapped
+        /// onto an address the interface can read from, which is what lets a pack's fonts load
+        /// at all, and the mapper guesses a content type off the registry rather than asking
+        /// this side. A pack that carried planted.html or planted.exe would have had them
+        /// sitting in a folder the window's own page can fetch from. They never get there.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task An_archive_carrying_anything_that_is_not_part_of_a_pack_leaves_it_at_the_door()
+        {
+            var face = Face(2_048, seed: 11);
+
+            // A pack of the ordinary shape, plus two files no pack is made of and a licence,
+            // which IS one of the things a pack carries and must survive.
+            using var buffer = new MemoryStream();
+            using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                Write(zip, "pack.json", Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new
+                {
+                    schema = 1,
+                    code = "ru",
+                    appVersion = AppVersion,
+                    catalog = 9,
+                    keys = 1,
+                    translated = 1,
+                    status = "machine",
+                    fonts = new[]
+                    {
+                        new { file = "fonts/Face.woff2", family = "Face", weight = "400", style = "normal", sha256 = Sha(face) },
+                    },
+                })));
+                Write(zip, "strings.json", Encoding.UTF8.GetBytes(CatalogJson("ru", AppVersion, 9)));
+                Write(zip, "fonts/Face.woff2", face);
+                Write(zip, "fonts/OFL.txt", Encoding.UTF8.GetBytes("SIL Open Font Licence"));
+                Write(zip, "planted.html", Encoding.UTF8.GetBytes("<script>alert(1)</script>"));
+                Write(zip, "extra/planted.exe", Filler(64, seed: 12));
+            }
+
+            var bytes = buffer.ToArray();
+            var (service, _) = Build(ManifestJson(Entry("ru", RuPackUrl, bytes, 9)), bytes);
+
+            var result = await service.DownloadAsync("ru");
+            Assert.True(result.Ok, result.ReasonId);
+
+            var served = Directory
+                .EnumerateFiles(result.Folder, "*", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(result.Folder, path).Replace('\\', '/'))
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+
+            Assert.DoesNotContain("planted.html", served);
+            Assert.DoesNotContain("extra/planted.exe", served);
+            Assert.DoesNotContain("extra", served.Select(Path.GetDirectoryName));
+
+            // What a pack IS, and nothing else. The face and its licence have already gone into
+            // the shared store by this point, which is where the pack now names them, so what
+            // stays in the version folder is the catalogue and the pack's own word about itself.
+            Assert.Equal(new[] { "pack.json", "strings.json" }, served);
+            Assert.True(File.Exists(Path.Combine(Root, "_fonts", Sha(face) + ".woff2")));
+            Assert.Single(Directory.EnumerateFiles(Path.Combine(Root, "_fonts"), "OFL-*.txt"));
+        }
+
         // ------------------------------------------------------------------ 3. the cancel that lost the race
 
         /// <summary>

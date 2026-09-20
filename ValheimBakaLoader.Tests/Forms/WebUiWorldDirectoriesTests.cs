@@ -393,7 +393,11 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("function worldFormAdopt(...ids){", js);
             Assert.Contains("for(const id of ids) if(Object.prototype.hasOwnProperty.call(now,id)) WORLD_SNAP[id]=now[id];", js);
             Assert.Contains("try{worldFormAdopt(\"fMaxPlayers\");}catch(_){}", js);
-            Assert.Contains("try{worldFormAdopt(...Object.values(WORLDGEN).map(def=>def.sel));}catch(_){}", js);
+            // The five dials AND the five world switches: both are pulled for the selected
+            // world after the form was snapshotted, so both are adopted in the same call.
+            // Adopting only the dials left every switch marked unsaved on every pull.
+            Assert.Contains("try{worldFormAdopt(...Object.values(WORLDGEN).map(def=>def.sel),", js);
+            Assert.Contains("...WORLDGEN_SWITCH_KEYS.map(key=>WORLDGEN_SWITCHES[key].sw));}catch(_){}", js);
 
             // The count is adopted INSIDE the arm that filled the box, never beside it. A
             // call that failed leaves whatever was in the box, and adopting then declares
@@ -402,11 +406,16 @@ namespace ValheimBakaLoader.Tests.Forms
                 "if(r!==FAIL&&r?.count!=null){\n    $(\"#fMaxPlayers\").value=r.count;\n"
                 + "    try{worldFormAdopt(\"fMaxPlayers\");}catch(_){}\n  }", js);
 
-            // The dials are adopted only on the arm that LOADED a world's stored values.
+            // The dials are adopted only on the arm that LOADED a world's stored values. The
+            // arm that keeps a held set asks for two things, not one: the same world, and a
+            // set that was really read back off the host side. A lookup that failed leaves an
+            // empty dial map that reads exactly like Normal throughout, and keeping it would
+            // stand for the rest of the session.
             var opens = js.IndexOf("async function renderWorldMods(){", StringComparison.Ordinal);
             Assert.True(opens > 0, "app.js no longer declares renderWorldMods");
             var mods = js.Substring(opens, js.IndexOf("\n}\n", opens, StringComparison.Ordinal) - opens);
-            var kept = mods.IndexOf("if(S.worldMods&&S.worldMods.world===world)", StringComparison.Ordinal);
+            var kept = mods.IndexOf(
+                "if(S.worldMods&&S.worldMods.world===world&&S.worldMods.pulled)", StringComparison.Ordinal);
             var adopt = mods.IndexOf("worldFormAdopt(...Object.values(WORLDGEN)", StringComparison.Ordinal);
             Assert.True(kept > 0 && adopt > kept);
             Assert.DoesNotContain("worldFormAdopt", mods.Substring(kept, adopt - kept - 1).Split("return;")[0]);

@@ -310,11 +310,18 @@ namespace ValheimBakaLoader.Tests.Tools
         /// during the download". A fifty megabyte fetch on a slow line is minutes, so anything
         /// the write read before it started is worth being able to change underneath it.
         /// </param>
+        /// <param name="refuseDownload">
+        /// The status the site answers the ARCHIVE address with, when it is not handing an
+        /// archive over. This is the shape a repair meets once the pack its note names has been
+        /// taken down: the listing answers perfectly well about the current pack, and the
+        /// address of the old one is a 404.
+        /// </param>
         private (TestService Service, RecordingHttpHandler Handler) Build(
             PackSpec spec = null, int failCoreCopyAfter = -1,
             long? liveSize = -1, long? indexSize = -1,
             DateTime? created = null, bool? deprecated = null, bool pulled = false,
-            PackSpec served = null, Action whileFetching = null)
+            PackSpec served = null, Action whileFetching = null,
+            HttpStatusCode? refuseDownload = null, string refuseVersion = null)
         {
             spec ??= new PackSpec();
             var bytes = Pack(served ?? spec);
@@ -324,9 +331,18 @@ namespace ValheimBakaLoader.Tests.Tools
             var live = liveSize == -1 ? bytes.LongLength : liveSize;
             var index = indexSize == -1 ? bytes.LongLength : indexSize;
 
-            var provider = new RecordingHttpClientProvider(_ =>
+            var provider = new RecordingHttpClientProvider(request =>
             {
                 whileFetching?.Invoke();
+                if (refuseDownload.HasValue) return new HttpResponseMessage(refuseDownload.Value);
+
+                // ONE version taken down rather than the whole site, which is the shape a repair
+                // whose noted pack is gone actually meets: the address that pack lived at 404s
+                // and the one the listing offers still serves.
+                if (refuseVersion != null
+                    && (request?.RequestUri?.ToString() ?? "").Contains(refuseVersion, StringComparison.Ordinal))
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
             });
 
@@ -2060,6 +2076,109 @@ namespace ValheimBakaLoader.Tests.Tools
             AssertUnchanged(before, Snapshot());
             Assert.False(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
             Assert.Equal("5.4.2350", BepInExMarkerFile.Read(BaseDir).Version);
+        }
+
+        /// <summary>
+        /// A repair whose own pack the site does not serve any more says so, by a name of its
+        /// own, and names the pack that IS served.
+        /// <para>
+        /// This was silent in 1.2.0. The repair asks for the exact version its note holds,
+        /// Thunderstore only serves the versions it still lists, and once that pack is taken
+        /// down every restart from here on fetches a 404. It came back as bepinex.offline, which
+        /// the unattended recorder swallows on purpose because an ordinary bad minute on the
+        /// internet is not worth a standing row. So a permanently broken install produced
+        /// exactly nothing: no row, no reason, no way for a host to find out.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_repair_whose_pack_the_site_no_longer_serves_says_so_and_names_the_one_it_does()
+        {
+            AnInstallMissingItsLoaderFile("5.4.2350");
+            var before = Snapshot();
+
+            // The site has moved on to a newer pack, and the address of the old one is a 404.
+            var (repair, _) = Build(
+                new PackSpec { Version = "5.4.2400" },
+                refuseDownload: HttpStatusCode.NotFound);
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window));
+
+            Assert.Equal("bepinex.repairPackGone", refused.MessageId);
+            Assert.Equal("5.4.2350", refused.Params["noted"]);     // what this install was written from
+            Assert.Equal("5.4.2400", refused.Params["offered"]);   // and what the host can be moved to
+
+            // and the install is exactly as broken as it was found, never half mended
+            AssertUnchanged(before, Snapshot());
+            Assert.False(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
+        }
+
+        /// <summary>
+        /// AND THERE IS A WAY OUT OF IT. The reason above is a dead end on its own: the row and
+        /// the standing note both offer Update, and an Update over an install with files missing
+        /// is recomputed as the same repair, asks for the same pack that is gone, and ends in
+        /// the same refusal. A promise on screen the code cannot keep.
+        /// <para>
+        /// TakeCurrentPack is the host's answer to the one question a repair cannot ask. It
+        /// stops the write being a repair, so it takes the pack the site does serve, and the
+        /// install is mended with the version the note names left behind.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task The_host_can_take_the_pack_the_site_does_serve_when_their_own_is_gone()
+        {
+            AnInstallMissingItsLoaderFile("5.4.2350");
+
+            // The site offers 5.4.2400 and the address 5.4.2350 lived at is a 404.
+            var (service, _) = Build(new PackSpec { Version = "5.4.2400" }, refuseVersion: "5.4.2350");
+
+            // Without the answer it is a repair, and a repair can only ask for its own pack.
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => service.UpdateAsync(BaseExe, Nobody(), options: Pressed));
+            Assert.Equal("bepinex.repairPackGone", refused.MessageId);
+
+            // With it, the very same press writes the pack that is served.
+            var result = await service.UpdateAsync(BaseExe, Nobody(),
+                options: new BepInExWriteOptions { TakeCurrentPack = true });
+
+            Assert.True(result.Installed);
+            Assert.False(result.Skipped);
+            Assert.Equal("5.4.2400", result.Version);
+            Assert.Equal("5.4.2400", BepInExMarkerFile.Read(BaseDir).Version);
+            Assert.True(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));   // the file that went is back
+        }
+
+        /// <summary>
+        /// And it is an answer a window can never give on its own behalf. Moving a host onto a
+        /// newer loader because their own pack was taken down is a decision that belongs to
+        /// them, so an unattended write that arrived carrying it is stripped of it like every
+        /// other answer.
+        /// </summary>
+        [Fact]
+        public void Taking_the_current_pack_is_an_answer_a_window_cannot_carry()
+        {
+            Assert.True(new BepInExWriteOptions { TakeCurrentPack = true }.CarriesAnAnswer);
+            Assert.False(BepInExWriteOptions.Window.TakeCurrentPack);
+        }
+
+        /// <summary>
+        /// An ordinary write whose download failed is still the ordinary reason. This is what
+        /// keeps the new name meaningful: it is a repair that could not get its own pack, not
+        /// every download that ever failed.
+        /// </summary>
+        [Fact]
+        public async Task A_plain_write_whose_download_failed_is_still_the_ordinary_offline_reason()
+        {
+            ExistingInstall();
+
+            var (service, _) = Build(
+                new PackSpec { Version = "5.4.2350" },
+                refuseDownload: HttpStatusCode.NotFound);
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => service.UpdateAsync(BaseExe, Nobody(), options: Pressed));
+
+            Assert.Equal("bepinex.offline", refused.MessageId);
         }
 
         /// <summary>

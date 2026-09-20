@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 namespace ValheimBakaLoader.Tools
 {
@@ -103,5 +104,67 @@ namespace ValheimBakaLoader.Tools
 
             return otherServersRunning ? BepInExUnattendedAction.Defer : BepInExUnattendedAction.Apply;
         }
+
+        /// <summary>
+        /// The same decision with the ORDER it has to be made in, which is a rule of its own
+        /// and belongs beside the table rather than in a hundred line method where it is only
+        /// the order two lines happen to sit in.
+        /// <para>
+        /// The answer is read FIRST and nothing else happens without a yes: no install is read
+        /// and, above all, nothing is asked of Thunderstore. The window used to ask the site
+        /// which pack is current and read the answer afterwards, so a host who said no, and a
+        /// host who had never been asked, still had their machine reach out on every restart.
+        /// The request was never buying anything either, because every path below a no ends in
+        /// <see cref="BepInExUnattendedAction.Skip"/>.
+        /// </para>
+        /// </summary>
+        /// <param name="consentEffective">
+        /// <see cref="BepInExConsent.Effective"/> and never the preference on its own.
+        /// </param>
+        /// <param name="readInstall">The install as it is right now. Only called after a yes.</param>
+        /// <param name="askTheSite">
+        /// The newest pack the site offers, for the package the install names. Only called
+        /// after a yes, which is the whole point of this method.
+        /// </param>
+        /// <param name="otherServersRunning">Whether any OTHER server on this install is up.</param>
+        public static async Task<BepInExUnattendedPlan> PlanAsync(
+            bool consentEffective,
+            Func<BepInExStatus> readInstall,
+            Func<string, Task<string>> askTheSite,
+            Func<bool> otherServersRunning)
+        {
+            if (!consentEffective) return new BepInExUnattendedPlan { Action = BepInExUnattendedAction.Skip };
+
+            var status = readInstall();
+            if (status == null) return new BepInExUnattendedPlan { Action = BepInExUnattendedAction.Skip };
+
+            var latest = await askTheSite(status.Package);
+
+            return new BepInExUnattendedPlan
+            {
+                Action = Decide(
+                    true, status.Installed, status.PackVersion, latest, otherServersRunning(),
+                    status.DrivenElsewhere, status.ForeignCore, status.Drifted, status.Unrecognised,
+                    status.MissingFiles.Count > 0),
+                Status = status,
+                Latest = latest,
+            };
+        }
+    }
+
+    /// <summary>
+    /// What <see cref="BepInExUnattended.PlanAsync"/> came to, and the two things it read on
+    /// the way, so the window does not have to read either of them a second time. Both are
+    /// null when the plan stopped before reading them, which is every plan without a yes.
+    /// </summary>
+    public sealed class BepInExUnattendedPlan
+    {
+        public BepInExUnattendedAction Action { get; init; }
+
+        /// <summary>The install as it was read, or null when it was never read.</summary>
+        public BepInExStatus Status { get; init; }
+
+        /// <summary>The newest pack the site named, or null when it was never asked.</summary>
+        public string Latest { get; init; }
     }
 }

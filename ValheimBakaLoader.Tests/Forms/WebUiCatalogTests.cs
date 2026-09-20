@@ -820,5 +820,143 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("explainId:\"world.wg.portals.veryhard.explain\"", js);
             Assert.Contains("label:\"Combat\",labelId:\"world.wg.combat.label\"", js);
         }
+
+        // ---------------- C5. the revision number, against the English that was published
+        //
+        // Tools/LanguagePackService.TryUnchangedCatalog keeps a pack this machine already
+        // holds whenever the manifest names the catalog number that pack carries. So a
+        // release that changes English and leaves _meta.catalog alone is a release every
+        // host with a pack quietly refuses, and they read the new sentences in English for
+        // ever. 1.2.1 walked into exactly that: thirty new ids, two reworded, and the 1 that
+        // 1.2.0 shipped still in _meta. Nothing could say so, because nothing in the tree
+        // remembered 1.2.0's English. scripts/i18n/released_catalogs.json remembers it now,
+        // as a fingerprint, and these are the two directions of the rule that reads it.
+
+        private static string Releases => RepoScript.At("scripts", "i18n", "released_catalogs.json");
+
+        /// <summary>The shipped catalog, in a folder of its own, against the real release list.</summary>
+        private RepoScript.Result OverReleases(string catalog)
+        {
+            var folder = Scratch();
+            Write(folder, "en.json", catalog);
+            return RepoScript.Run(RepoScript.Python(), CheckCatalog,
+                "--dir", folder, "--releases", Releases);
+        }
+
+        private static string ShippedEnglish() => File.ReadAllText(Path.Combine(
+            AppSourceTree.RepoRoot(), "ValheimBakaLoader", "WebUI", "i18n", "en.json"));
+
+        /// <summary>
+        /// The English this build ships has moved since 1.2.0, so a catalog revision still
+        /// standing at 1.2.0's has to be refused. Driven over a scratch copy of the real
+        /// shipped catalog with the one number put back, which is the state the tree was
+        /// really in: everything else about it is what is about to be published.
+        /// </summary>
+        [Fact]
+        public void English_that_moved_since_the_last_release_needs_a_higher_revision()
+        {
+            var said = OverReleases(ShippedEnglish().Replace("\"catalog\": 2", "\"catalog\": 1"));
+
+            Assert.False(said.Ok, "the gate was happy with the revision that leaves every host behind:\n" + said);
+            Assert.Contains("the English changed since 1.2.0", said.Output);
+            Assert.Contains("_meta.catalog is 1", said.Output);
+            Assert.Contains("has to go up, to 2 or beyond", said.Output);
+        }
+
+        /// <summary>And the same catalog with the revision moved, which is what ships.</summary>
+        [Fact]
+        public void The_same_English_with_the_revision_moved_is_accepted()
+        {
+            var said = OverReleases(ShippedEnglish());
+
+            Assert.True(said.Ok, "the revision that reaches every host was refused:\n" + said);
+            Assert.Contains("TOTAL 0", said.Output);
+        }
+
+        /// <summary>
+        /// A gate whose own record has gone missing says so rather than passing. This one
+        /// stands between a reworded sentence and a host who never sees it, and it has no
+        /// second opinion to fall back on.
+        /// </summary>
+        [Fact]
+        public void A_missing_release_list_is_a_finding_rather_than_a_quiet_pass()
+        {
+            var folder = Scratch();
+            Write(folder, "en.json", ShippedEnglish());
+            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
+                "--dir", folder, "--releases", Path.Combine(folder, "no-such-file.json"));
+
+            Assert.False(said.Ok, "the rule stood down when its own record was not there:\n" + said);
+            Assert.Contains("the released catalogs list is missing", said.Output);
+        }
+
+        /// <summary>
+        /// The record itself: 1.2.0 is written down, with the revision it shipped, and
+        /// 1.2.1 is NOT. Recording a version is release day's job, after its English is
+        /// final; doing it from here would mean the gate was comparing this build against
+        /// itself and could never say anything again.
+        /// </summary>
+        [Fact]
+        public void The_release_list_holds_the_release_that_is_out_and_not_the_one_being_built()
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(Releases));
+            var root = doc.RootElement;
+
+            Assert.True(root.TryGetProperty("_about", out var about),
+                "the release list no longer carries the recipe that makes it readable alone");
+            var recipe = string.Join(" ", about.EnumerateArray().Select(line => line.GetString()));
+            Assert.Contains("sha256", recipe);
+            Assert.Contains("id, a tab, the lore field, a tab", recipe);
+
+            var releases = root.GetProperty("releases").EnumerateArray().ToList();
+            Assert.NotEmpty(releases);
+
+            var last = releases[releases.Count - 1];
+            Assert.Equal("1.2.0", last.GetProperty("version").GetString());
+            Assert.Equal(1, last.GetProperty("catalog").GetInt32());
+            Assert.Equal(64, last.GetProperty("fingerprint").GetString().Length);
+
+            Assert.DoesNotContain(releases, r => r.GetProperty("version").GetString() == "1.2.1");
+        }
+
+        /// <summary>
+        /// Release day's own mode, both ways. Recording the same English under the same
+        /// version twice changes nothing and is not a failure; recording DIFFERENT English
+        /// under a version that has already gone out is refused, because the hosts holding
+        /// that pack are the fact this file is about and a rewritten record would tell the
+        /// gate a lie about them.
+        /// </summary>
+        [Fact]
+        public void Recording_a_release_is_repeatable_and_refuses_to_rewrite_one()
+        {
+            var folder = Scratch();
+            Write(folder, "en.json", ShippedEnglish());
+            var book = Path.Combine(folder, "book.json");
+            Write(folder, "book.json", "{ \"_about\": [], \"releases\": [] }");
+
+            var first = RepoScript.Run(RepoScript.Python(), CheckCatalog,
+                "--dir", folder, "--releases", book, "--record", "9.9.9");
+            Assert.True(first.Ok, "the first recording did not go through:\n" + first);
+            Assert.Contains("recorded 9.9.9", first.Output);
+
+            var again = RepoScript.Run(RepoScript.Python(), CheckCatalog,
+                "--dir", folder, "--releases", book, "--record", "9.9.9");
+            Assert.True(again.Ok, "recording the same English twice was treated as a failure:\n" + again);
+            Assert.Contains("already recorded, unchanged", again.Output);
+
+            // One sentence reworded, and the same version asked for again.
+            Write(folder, "en.json",
+                ShippedEnglish().Replace("\"lore\": \"Passive enemies\"", "\"lore\": \"Peaceful enemies\""));
+            var rewrite = RepoScript.Run(RepoScript.Python(), CheckCatalog,
+                "--dir", folder, "--releases", book, "--record", "9.9.9");
+            Assert.False(rewrite.Ok, "a release that has gone out was quietly rewritten:\n" + rewrite);
+            Assert.Contains("already recorded with different English", rewrite.Output);
+
+            // And nothing was written: the record still says what it said.
+            using var doc = JsonDocument.Parse(File.ReadAllText(book));
+            var releases = doc.RootElement.GetProperty("releases").EnumerateArray().ToList();
+            Assert.Single(releases);
+            Assert.Equal("9.9.9", releases[0].GetProperty("version").GetString());
+        }
     }
 }

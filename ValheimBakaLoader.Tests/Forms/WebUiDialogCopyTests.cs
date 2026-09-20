@@ -214,9 +214,19 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal("Death penalty", Field(catalog["world.wg.deathpenalty.label"], "lore"));
             Assert.Equal("Hardcore, items and skills lost",
                          Field(catalog["world.wg.deathpenalty.hardcore.label"], "lore"));
-            Assert.Equal("BakaLoader applies these settings every time the server starts, and clears any "
-                         + "leftover difficulty keys first. A difficulty change made with the in-game "
-                         + "console does not survive a restart.",
+            // The note under the dials, true of 1.2.1: the reset still runs at every start,
+            // the five switches are put back with the dials, a key no control stands for is
+            // carried along, and a world BakaLoader has never met is READ rather than wiped.
+            // MEETS rather than starts, on purpose. The import hangs off the options every
+            // start path builds AND off worldgen.get, so opening this very screen on a world
+            // nobody has configured here is a first meeting: a sentence that said "starts it"
+            // would be describing half the ways it happens.
+            Assert.Equal("BakaLoader clears the world's whole starting key list at every start and then "
+                         + "puts back exactly what is stored here: these dials, the five switches, and "
+                         + "any other key the world was carrying. A world made in the game client is "
+                         + "read once, the first time BakaLoader meets it, so what it already had is "
+                         + "brought in rather than wiped. A change made from the in-game console after "
+                         + "that is not stored here, so it does not survive a restart.",
                          Field(catalog["world.wg.own_note"], "lore"));
 
             // the panel, the dropdown and the line under a dial all read the ids

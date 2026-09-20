@@ -25,16 +25,28 @@ catalog and everything about it that a person cannot hold in their head:
     id the interface asks for exists, and every id the catalog holds is asked
     for by something. An orphan key is a sentence nobody reads that a translator
     still pays for.
+  * and, for English, that a catalog whose English has moved since the last release
+    carries a HIGHER _meta.catalog revision than that release did. A host who already
+    holds a pack keeps it whenever the manifest names the catalog number they have, so
+    a release that adds or rewords sentences without moving the number leaves every one
+    of those hosts reading the new sentences in English for ever. The English that was
+    last published is remembered as a fingerprint in scripts/i18n/released_catalogs.json,
+    which is a plain file rather than a question put to git, so this rule answers the same
+    way offline and in a shallow checkout.
 
 Usage:
   check_catalog.py                          the shipped catalog, every check
   check_catalog.py --dir DIR                catalogs in DIR, no completeness
   check_catalog.py --norse TERMS.json       another Norse register list
   check_catalog.py --dir DIR --app A --html H [--i18n I]   with completeness
+  check_catalog.py --releases FILE          another released catalogs list
+  check_catalog.py --record 1.2.1           write today's English down as published
 
 Prints one finding per line, then TOTAL n, and exits non zero when n is not 0.
+--record prints what it wrote instead, and is the one mode that changes a file.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -53,6 +65,7 @@ DEFAULT_HTML = os.path.join(REPO, "ValheimBakaLoader", "WebUI", "index.html")
 DEFAULT_I18N = os.path.join(REPO, "ValheimBakaLoader", "WebUI", "i18n.js")
 DEFAULT_DASHES = os.path.join(REPO, "scripts", "copy-gate", "lang_dashes.json")
 DEFAULT_CSPROJ = os.path.join(REPO, "ValheimBakaLoader", "ValheimBakaLoader.csproj")
+DEFAULT_RELEASES = os.path.join(HERE, "released_catalogs.json")
 
 # The sentences that never reach a page are asked for on the C# side, through
 # HostCatalog.T("host.something"). They are in the same catalog as everything else, so
@@ -545,6 +558,224 @@ def shipped_version(path, findings):
     return match.group(1).strip()
 
 
+# ------------------------------------------------ the English that was last published
+#
+# WHY THIS EXISTS. Tools/LanguagePackService.TryUnchangedCatalog reuses a pack this
+# machine already has whenever the manifest's catalog number is the one the installed
+# pack carries. That is the right saving: a release that changes no words should not make
+# every host download the same sentences again. It is also the whole danger: a release
+# that DOES change words and leaves the number alone is a release every host with a pack
+# quietly refuses, and they read the new sentences in English until the number moves.
+#
+# 1.2.1 walked into it. It adds thirty ids and rewords two of 1.2.0's, and _meta.catalog
+# was still the 1 that 1.2.0 shipped, so a host holding the 1.2.0 pack would have kept it.
+# Nothing said so, because nothing in the tree remembered what 1.2.0's English was.
+#
+# So the tree remembers it, as a fingerprint per release in released_catalogs.json, and
+# the rule below is the question nobody could ask before: has the English moved since the
+# last release without the revision moving with it.
+
+# The recipe, in one place, and written into the file itself as well so the file can be
+# read on its own. It is sha256 over the sorted lines "id TAB lore TAB plain" of every
+# entry in the catalog's keys object. Each of the two fields is written as compact JSON
+# with its object keys sorted: that is what puts every plural form in and always in the
+# same order, and what keeps a tab or a newline inside a sentence from breaking the line
+# it is written on. A field the entry does not have is written as an empty string.
+# Nothing else goes in: not _meta, not the revision number, not params or allowsHtml.
+# What is fingerprinted is the ENGLISH a translator would be handed, and only that.
+FINGERPRINT_RECIPE = [
+    "Every release that has been published, oldest first. The last one in the list is",
+    "the English a host out there may already be holding a pack of.",
+    "",
+    "fingerprint: sha256, as hex, of the English in that release's en.json, built this way.",
+    "  1. Take the catalog's keys object.",
+    "  2. For every id in it write one line: the id, a tab, the lore field, a tab, the",
+    "     plain field.",
+    "  3. Each field is written as compact JSON with object keys sorted, so a plural",
+    "     entry carries all of its forms in a fixed order and a tab or a newline inside a",
+    "     sentence cannot break the line. A field that is not there is an empty string.",
+    "  4. Sort the lines, join them with a single newline, encode UTF-8, sha256, hex.",
+    "Nothing else is in it: not _meta, not the catalog revision, not params or allowsHtml.",
+    "",
+    "Written by: python scripts/i18n/check_catalog.py --record <version>, on release day,",
+    "after the version's English is final. check_catalog.py reads it on every run and says",
+    "so when the English has moved since the last entry here and _meta.catalog has not.",
+    "",
+    "The 1.2.0 entry was seeded by hand from the release commit 7e3e0bf, whose csproj",
+    "names Version 1.2.0 and whose en.json names appVersion 1.2.0 and catalog 1. The",
+    "repository carries no v1.2.0 tag. Nothing reads git from here on: this file is the",
+    "record, so the rule answers the same offline and in a shallow checkout.",
+]
+
+
+def field_text(value):
+    """One field of an entry, as one deterministic piece of text. Step 3 of the recipe."""
+    if value is None:
+        return ""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def catalog_fingerprint(keys):
+    """The English of a catalog, as one hash. The recipe above, carried out."""
+    lines = []
+    for entry_id in keys:
+        entry = keys[entry_id] if isinstance(keys[entry_id], dict) else {}
+        lines.append("%s\t%s\t%s"
+                     % (entry_id, field_text(entry.get("lore")), field_text(entry.get("plain"))))
+    lines.sort()
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def read_releases(path, findings):
+    """The released catalogs list, or None with a finding saying why not.
+
+    A missing list is a finding rather than a quiet pass: this rule is the only thing
+    standing between a reworded sentence and a host who never sees it, and a gate that
+    stands down when its own data file goes missing is not a gate.
+    """
+    if not os.path.isfile(path):
+        findings.append((shown(path),
+                         "the released catalogs list is missing, so nothing in the tree"
+                         " knows which English was last published"))
+        return None
+    try:
+        data = json.loads(read_text(path))
+    except ValueError as problem:
+        findings.append((shown(path), "the released catalogs list is not valid JSON: %s" % problem))
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("releases"), list):
+        findings.append((shown(path), "the released catalogs list names no releases array"))
+        return None
+    return data
+
+
+def released_english_drift(keys, meta, path, findings):
+    """English moved since the last release, and the revision did not move with it."""
+    data = read_releases(path, findings)
+    if data is None:
+        return
+    releases = [r for r in data["releases"] if isinstance(r, dict)]
+    if not releases:
+        return                      # nothing published yet, so there is nothing to drift from
+
+    last = releases[-1]
+    named = str(last.get("version") or "the last release")
+    published = str(last.get("fingerprint") or "")
+    if not published:
+        findings.append((shown(path), "%s names no fingerprint" % named))
+        return
+    try:
+        published_catalog = int(last.get("catalog"))
+    except (TypeError, ValueError):
+        findings.append((shown(path), "%s names no catalog revision" % named))
+        return
+
+    if catalog_fingerprint(keys) == published:
+        return                      # the same English; the revision is free to stand still
+
+    try:
+        mine = int(meta.get("catalog"))
+    except (TypeError, ValueError):
+        mine = 0
+    if mine > published_catalog:
+        return
+
+    findings.append((
+        "en.json",
+        "the English changed since %s and _meta.catalog is %s: a pack already installed is"
+        " reused whenever the catalog number has not moved, so every host holding the %s"
+        " pack would keep it and read the changed sentences in English for ever. The"
+        " revision has to go up, to %d or beyond."
+        % (named, meta.get("catalog"), named, published_catalog + 1)))
+
+
+def english_catalog(directory):
+    """The English catalog in a folder, as (path, data), or (None, None)."""
+    if not os.path.isdir(directory):
+        return None, None
+    for name in sorted(os.listdir(directory)):
+        if not name.lower().endswith(".json"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            data = json.loads(read_text(path))
+        except ValueError:
+            continue
+        if isinstance(data, dict) and str((data.get("_meta") or {}).get("language") or "") == "en":
+            return path, data
+    return None, None
+
+
+def write_releases(path, book):
+    """The list back to disk, CRLF like everything else beside it."""
+    text = json.dumps(book, ensure_ascii=False, indent=2) + "\n"
+    with open(path, "wb") as handle:
+        handle.write(text.replace("\n", "\r\n").encode("utf-8"))
+
+
+def record_release(version, directory, path):
+    """Release day: write today's English down as published, under a version.
+
+    Refuses a version that is already written down with different English, because a
+    release that has gone out cannot be rewritten: the hosts holding it are the fact this
+    file is about. Recording the same English under the same version again is allowed and
+    changes nothing, so running it twice is not a failure.
+    """
+    source, data = english_catalog(directory)
+    if data is None:
+        print("%s: no English catalog to record" % shown(directory))
+        return 2
+
+    keys = data.get("keys")
+    if not isinstance(keys, dict):
+        print("%s: the English catalog has no keys object" % shown(source or directory))
+        return 2
+    try:
+        catalog = int((data.get("_meta") or {}).get("catalog"))
+    except (TypeError, ValueError):
+        print("%s: _meta names no catalog revision, so there is nothing to record"
+              % shown(source))
+        return 2
+
+    fingerprint = catalog_fingerprint(keys)
+
+    if os.path.isfile(path):
+        try:
+            book = json.loads(read_text(path))
+        except ValueError as problem:
+            print("%s: not valid JSON: %s" % (shown(path), problem))
+            return 2
+        if not isinstance(book, dict) or not isinstance(book.get("releases"), list):
+            print("%s: names no releases array" % shown(path))
+            return 2
+    else:
+        book = {"_about": list(FINGERPRINT_RECIPE), "releases": []}
+
+    for entry in book["releases"]:
+        if not isinstance(entry, dict) or str(entry.get("version") or "") != str(version):
+            continue
+        if str(entry.get("fingerprint") or "") != fingerprint:
+            print("%s is already recorded with different English: %s on file, %s here."
+                  " A release that has gone out is not rewritten; publish this English"
+                  " under a new version."
+                  % (version, entry.get("fingerprint"), fingerprint))
+            return 1
+        if str(entry.get("catalog")) != str(catalog):
+            print("%s is already recorded with catalog %s and this catalog says %s,"
+                  " which the hosts holding that pack cannot be told about."
+                  % (version, entry.get("catalog"), catalog))
+            return 1
+        print("%s is already recorded, unchanged: catalog %d, %s" % (version, catalog, fingerprint))
+        return 0
+
+    book["releases"].append(
+        {"version": str(version), "catalog": catalog, "fingerprint": fingerprint})
+    write_releases(path, book)
+    print("recorded %s in %s: catalog %d, %s"
+          % (version, shown(path), catalog, fingerprint))
+    return 0
+
+
 def main(argv):
     directory = DEFAULT_DIR
     app_path = None
@@ -555,6 +786,12 @@ def main(argv):
     csproj = None
     host_sources_paths = None
     host_sources_dir = None
+    releases_path = DEFAULT_RELEASES
+    # Named on purpose, which is what tells the released-English rule to run over a folder
+    # that is not the shipped one. A fixture folder has no release history and is not a
+    # candidate to be one, so the rule would have nothing true to say about it.
+    releases_named = False
+    record = None
     defaults = True
 
     index = 1
@@ -586,9 +823,19 @@ def main(argv):
         elif flag == "--host-dir":
             host_sources_dir = value
             index += 2
+        elif flag == "--releases":
+            releases_path = value
+            releases_named = True
+            index += 2
+        elif flag == "--record":
+            record = value
+            index += 2
         else:
             print("unknown argument: %s" % flag)
             return 2
+
+    if record is not None:
+        return record_release(record, directory, releases_path)
 
     if defaults:
         app_path = app_path or DEFAULT_APP
@@ -663,6 +910,11 @@ def main(argv):
 
         if language == "en":
             norse_register_drift(keys, norse_register(norse_path, findings), findings)
+
+        # The shipped catalog always, and any other folder whose release history the
+        # caller has named. See releases_named above for why a fixture folder is not one.
+        if language == "en" and (defaults or releases_named):
+            released_english_drift(keys, meta, releases_path, findings)
 
         if language == "en" and (app_path or html_path):
             completeness(

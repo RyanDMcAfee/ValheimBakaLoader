@@ -296,6 +296,18 @@ namespace ValheimBakaLoader.Tests.Forms
                 "world.mod.death", "world.mod.death.help.aria", "world.mod.resources",
                 "world.mod.resources.help.aria", "world.mod.raids", "world.mod.raids.help.aria",
                 "world.mod.portals", "world.mod.portals.help.aria", "world.field.max_players",
+                // The five world switches under the dials, each with the game's own word
+                // for it, the line beside its toggle and the sentence its ? marker speaks,
+                // then the one note about when a switch goes in.
+                "world.wgs.nobuildcost.label", "world.wgs.nobuildcost.help.aria",
+                "world.wgs.nobuildcost.line",
+                "world.wgs.playerevents.label", "world.wgs.playerevents.help.aria",
+                "world.wgs.playerevents.line",
+                "world.wgs.passivemobs.label", "world.wgs.passivemobs.help.aria",
+                "world.wgs.passivemobs.line",
+                "world.wgs.nomap.label", "world.wgs.nomap.help.aria", "world.wgs.nomap.line",
+                "world.wgs.fire.label", "world.wgs.fire.help.aria", "world.wgs.fire.line",
+                "world.wgs.note",
                 "world.mods.note", "world.sec.advanced", "common.norse.rites",
                 "world.field.empty_restart", "world.field.empty_delay",
                 "world.field.sched_restart", "world.field.sched_hours",

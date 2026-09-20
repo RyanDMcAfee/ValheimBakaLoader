@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
@@ -41,10 +42,12 @@ namespace ValheimBakaLoader.Tools
     ///   int32  seed        (GetStableHashCode of seedName)
     ///   int64  uid
     ///   int32  worldGenVersion
-    ///   ...    trailing fields vary by version (needsDB flag, world modifiers) - not read
+    ///   ...    trailing fields vary by version (needsDB flag, world modifiers)
     ///
-    /// Only the fields through <c>seed</c> are needed, so trailing layout changes
-    /// across game versions cannot break this parser.
+    /// <see cref="TryRead"/> wants only the fields through <c>seed</c>, so trailing
+    /// layout changes across game versions cannot break the identity read.
+    /// <see cref="TryReadStartingKeys"/> is the one reader that goes past them, and
+    /// it gates every field it walks on the world version the same way the game does.
     /// </summary>
     public static class FwlReader
     {
@@ -102,6 +105,95 @@ namespace ValheimBakaLoader.Tools
                 return null;
             }
         }
+
+        /// <summary>
+        /// The world-modifier starting keys a world header carries, exactly as the game wrote
+        /// them, or null when the header could not be read that far.
+        /// <para>
+        /// Null and empty mean different things and both are answers. Empty is a world with no
+        /// modifiers on it, which is the ordinary state of a fresh world; null is a header this
+        /// could not follow (too short, a length prefix that runs off the end, a world version
+        /// from before the game stored keys at all) and the caller is meant to leave the world
+        /// alone rather than treat it as bare.
+        /// </para>
+        /// <para>
+        /// Header only and read only, with a shared handle, so it can be asked while the server
+        /// is up: the game rewrites this file on every save and holds it open. Nothing here ever
+        /// writes to a world file.
+        /// </para>
+        /// <para>
+        /// The layout is the one <c>World.SaveWorldFWLData</c> writes, and every field past the
+        /// seed is version gated exactly as <c>World.LoadWorld</c> gates it: worldGenVersion from
+        /// version 26, needsDB from 30, the starting keys from 32. A header older than 32 never
+        /// carried keys, so it answers empty rather than null: there is nothing there to miss.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> TryReadStartingKeys(string metaPath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(metaPath) || !File.Exists(metaPath)) return null;
+
+                using var fs = new FileStream(metaPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var br = new BinaryReader(fs, Encoding.UTF8);
+
+                var payloadSize = br.ReadInt32();
+                if (payloadSize <= 0 || payloadSize > fs.Length) return null;
+
+                var worldVersion = br.ReadInt32();
+                if (worldVersion <= 0 || worldVersion > 10_000) return null;
+
+                var name = br.ReadString();
+                if (string.IsNullOrEmpty(name)) return null;
+
+                br.ReadString();                                   // seedName
+                br.ReadInt32();                                    // seed
+                br.ReadInt64();                                    // uid
+                if (worldVersion >= WorldGenVersionField) br.ReadInt32();
+                if (worldVersion >= NeedsDbField) br.ReadBoolean();
+
+                // Before the game stored them there is nothing to read, and saying so as an
+                // empty list rather than a failure is the truth: such a world has no keys.
+                if (worldVersion < GlobalKeysField) return Array.Empty<string>();
+
+                var count = br.ReadInt32();
+                // A count is not a promise, but it is also not an allocation: the list starts small and a
+                // count that runs off the end throws into the catch below. Real headers carry hundreds of
+                // keys (the game appends a "preset ..." summary per dial on every start and never dedupes
+                // them), so a ceiling here would refuse a world it should have read.
+                if (count < 0) return null;
+
+                var keys = new List<string>(Math.Min(count, 64));
+                for (var i = 0; i < count; i++) keys.Add(br.ReadString());
+                return keys;
+            }
+            catch
+            {
+                // Short, locked, or not a header at all. The caller leaves the world alone.
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The same keys for a named world under a save folder, in EITHER save format: the
+        /// pre-1.0 "{world}.fwl" or the committed "_main.{N}.fwl2" inside a 1.0 world directory,
+        /// picked the way every other reader here picks it (<see cref="FindWorldMeta"/>, which is
+        /// WorldStore's committed-generation rule). Null when there is no such world.
+        /// </summary>
+        public static IReadOnlyList<string> TryReadWorldStartingKeys(string saveFolder, string worldName)
+        {
+            var path = FindWorldMeta(saveFolder, worldName);
+            return path == null ? null : TryReadStartingKeys(path);
+        }
+
+        /// <summary>The world version that first carried worldGenVersion (Version.World.WorldGenVersion).</summary>
+        private const int WorldGenVersionField = 26;
+
+        /// <summary>The world version that first carried needsDB (Version.World.NeedsDB).</summary>
+        private const int NeedsDbField = 30;
+
+        /// <summary>The world version that first carried starting keys (Version.World.GlobalKeys).</summary>
+        private const int GlobalKeysField = 32;
 
         /// <summary>True for a Valheim 1.0 "_main.{N}.fwl2" metadata file.</summary>
         public static bool IsFwl2Path(string path)

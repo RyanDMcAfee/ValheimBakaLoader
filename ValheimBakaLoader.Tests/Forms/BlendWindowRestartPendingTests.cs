@@ -98,8 +98,11 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // And the world dials that were not saved say so rather than passing under a
             // success toast, which is how a difficulty the host had just set looked saved.
+            // The five switches are skipped by that same branch since 1.2.1, so the sentence
+            // names them: a host told only about the dials would go looking for the switch they
+            // turned on and find it off with nothing having said why.
             Assert.Contains("T(\"world.difficulty.not_saved.toast\")", page);
-            Assert.Equal("World difficulty was not saved for this world. Reopen Settings and save again.",
+            Assert.Equal("World difficulty and switches were not saved for this world. Reopen Settings and save again.",
                          Lore("world.difficulty.not_saved.toast"));
         }
 

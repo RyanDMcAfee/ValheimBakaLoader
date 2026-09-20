@@ -173,7 +173,13 @@ namespace ValheimBakaLoader.Tests.Forms
             var acts = Body("bepInExRowActions");
             Assert.Contains("if(state===\"maintained\") return [];", acts, StringComparison.Ordinal);
             Assert.Contains("if(state===\"missing\") return [\"install\"];", acts, StringComparison.Ordinal);
-            Assert.Contains("if(state===\"incomplete\") return [\"repair\"];", acts, StringComparison.Ordinal);
+            // Repair, and Update beside it in the one shape where repair can never finish: the
+            // pack the note names is the pack a repair fetches, and Thunderstore has taken it
+            // down. Without the second button that row offers only a press that asks for the
+            // same missing pack for ever.
+            Assert.Contains(
+                "if(state===\"incomplete\") return bepInExRepairPackGone(b)?[\"repair\",\"update\"]:[\"repair\"];",
+                acts, StringComparison.Ordinal);
             Assert.Contains("b.newestBackup?[\"restore\",\"install\"]:[\"install\"]", acts, StringComparison.Ordinal);
             Assert.Contains("return [\"update\"];", acts, StringComparison.Ordinal);
 
