@@ -2844,6 +2844,12 @@
     "bepinex.reason.drift": {
       "translation": "[Ẋ Something other than BakaLoader has written to the BepInEx beside this server since BakaLoader put it there, so it stopped looking after it and nothing was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "bepinex.reason.repair_mismatch": {
+      "translation": "[Ẋ The BepInEx {version} that came down does not match, file for file, what BakaLoader recorded when it installed that version, so nothing was put back. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
     "bepinex.notice.already_maintained.title": {
       "translation": "[Ẋ BepInEx is looked after Ẋ] ẊẊẊẊẊẊẊ"
     },

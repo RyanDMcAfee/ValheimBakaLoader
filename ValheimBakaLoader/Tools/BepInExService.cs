@@ -419,6 +419,13 @@ namespace ValheimBakaLoader.Tools
         /// check the download against and no window unpacks it.
         /// </summary>
         public const string Unverified = "unverified";
+
+        /// <summary>
+        /// The pack a repair fetched does not hold, file for file, what the install note
+        /// recorded when BakaLoader wrote that version here, so there was nothing safe to put
+        /// back.
+        /// </summary>
+        public const string RepairMismatch = "repairMismatch";
     }
 
     /// <summary>What an install came to.</summary>
@@ -1200,7 +1207,12 @@ namespace ValheimBakaLoader.Tools
             // to say here, because this pack is not new to this install: it is the one already
             // running on it. Leaving the soak in front of a repair was what made the antivirus
             // case, the commonest breakage there is, wait three days to be put right.
-            var repairing = status.MaintainedByBakaLoader
+            //
+            // An archive the host pasted a link to is not one of these. They named that file
+            // themselves, and the version the note holds is not the one they asked for, so the
+            // rules below have nothing to say about it and neither has the note.
+            var repairing = string.IsNullOrWhiteSpace(url)
+                && status.MaintainedByBakaLoader
                 && status.MissingFiles.Count > 0
                 && !status.Drifted
                 && !string.IsNullOrWhiteSpace(status.PackVersion);
@@ -1244,9 +1256,10 @@ namespace ValheimBakaLoader.Tools
 
                 // The repair fetches the version the note names rather than the newest one. The
                 // size and the digest travel with a particular archive, so they are only kept
-                // when the listing happens to be describing that same version; where it is not,
-                // the log says what was and was not checked, which is the rule a press already
-                // follows and for the same reason: this is not a new loader going in.
+                // when the listing happens to be describing that same version; where it is not
+                // they are dropped here, and the archive is held to the NOTE's own digests
+                // instead once it is unpacked. That check is below, it is not optional, and it
+                // is what a repair leans on rather than a number off a listing that has moved on.
                 if (repairing && !string.Equals(version, status.PackVersion, StringComparison.OrdinalIgnoreCase))
                 {
                     Logger.Information(
@@ -1284,11 +1297,21 @@ namespace ValheimBakaLoader.Tools
                 // A manual write with nothing to check against still goes ahead, because the
                 // host asked for it, but the log says what was and was not verified rather
                 // than leaving "checking" on the progress bar standing for something that did
-                // not happen.
+                // not happen. A repair is no longer one of those: the note beside the install
+                // holds a digest for the loader files BakaLoader could read as it wrote them
+                // out of this very version, and the archive is held to every one of those
+                // digests before anything moves.
                 if (declaredSize == null && string.IsNullOrWhiteSpace(declaredSha))
-                    Logger.Warning(
-                        "Neither Thunderstore answer said what pack {0} weighs, so what came down was not "
-                        + "checked against anything before it was unpacked.", version);
+                {
+                    if (repairing)
+                        Logger.Information(
+                            "Nothing the site says about pack {0} names a size, so what comes down is "
+                            + "checked against the digests the note recorded for it instead.", version);
+                    else
+                        Logger.Warning(
+                            "Neither Thunderstore answer said what pack {0} weighs, so what came down was not "
+                            + "checked against anything before it was unpacked.", version);
+                }
                 else if (listed.SizeFromIndex)
                     Logger.Debug(
                         "The package page gave no size for pack {0}, so the community index's was used.",
@@ -1325,6 +1348,11 @@ namespace ValheimBakaLoader.Tools
 
                 Report(progress, "checking", 45, version);
 
+                // What the SITE said about this archive, when it said anything. A repair very
+                // often arrives here with neither number: the listing has moved on to a newer
+                // pack and nothing on it describes the one the note names. That is no longer a
+                // hole, because the same archive is held to the note's own digests below, but
+                // a size that IS known is still worth comparing and is still compared.
                 if (declaredSize.HasValue && declaredSize.Value > 0 && written != declaredSize.Value)
                     throw new HostFacingException("bepinex.integrity",
                         "The BepInEx download did not match what the site listed, so nothing was written.");
@@ -1356,6 +1384,61 @@ namespace ValheimBakaLoader.Tools
                 var loaderRoot = LoaderRootOf(tempExtract)
                     ?? throw new HostFacingException("bepinex.notALoader",
                         "That archive is not a BepInEx pack, so nothing was written.");
+
+                // The repair's own check, and the reason a repair no longer needs a size off a
+                // listing. Nothing the site says covers the version the note names once
+                // Thunderstore has moved on from it, so what came down used to be unpacked on
+                // trust. The note is what ends that: it holds a SHA256 for the loader files
+                // BakaLoader could read as it wrote them out of this very version, and the
+                // archive is held to every one of those digests here, with the pack's bytes on
+                // one side and the note's digests on the other. What is on disk is not the
+                // question, because half of those files are the ones that went missing.
+                //
+                // Every way an archive can differ refuses. One file the archive does not carry,
+                // one that is a different file, one the note recorded with no digest, or one in
+                // the archive that will not read, means this cannot be shown to be the pack
+                // that was written here. So does one the archive carries that the note never
+                // recorded: the core is copied WHOLE and the note is rebuilt off that folder
+                // afterwards, so an addition nobody compared would be written into the folder
+                // the loader resolves assemblies from and then recorded with its own digest,
+                // and every reading after that would call the install untouched.
+                //
+                // The note is read again here rather than carried down from the status at the
+                // top, because the download in between is minutes on a slow line. A note that
+                // vouches for nothing leaves the archive held to nothing, and this write was
+                // called a repair on the strength of one that did vouch for files, so that is a
+                // refusal too rather than a fall-through.
+                //
+                // Either way the repair stops before the pre-flight and before a byte moves.
+                if (repairing)
+                {
+                    var note = BepInExMarkerFile.Read(baseDir);
+                    var wrong = PackAgainstNote(loaderRoot, note);
+                    var vouchedFor = NoteVouchesForALoaderFile(note);
+
+                    if (wrong.Count > 0 || !vouchedFor)
+                    {
+                        // Which of the two it was, because they ask a host for different things.
+                        if (!vouchedFor)
+                            Logger.Warning(
+                                "The note beside this install holds a digest for no loader file at all, so "
+                                + "there was nothing to hold the BepInEx {0} that came down to and the "
+                                + "repair put nothing back.", version);
+                        else
+                            Logger.Warning(
+                                "The BepInEx {0} that came down is not what the note recorded, on {1} "
+                                + "file(s): {2}. The repair put nothing back.",
+                                version, wrong.Count, string.Join("; ", wrong));
+
+                        if (options.Unattended)
+                            return Skipped(status, BepInExSkipReason.RepairMismatch, version);
+
+                        throw new HostFacingException("bepinex.repairMismatch",
+                            $"The BepInEx {version} that came down does not match, file for file, what "
+                            + "BakaLoader recorded when it installed that version, so nothing was put back.",
+                            ("version", version));
+                    }
+                }
 
                 Report(progress, "installing", 70, version);
 
@@ -2201,6 +2284,167 @@ namespace ValheimBakaLoader.Tools
             Path = RelativeTo(baseDir, file),
             Sha256 = Sha256Of(file),
         };
+
+        /// <summary>
+        /// Everything about an unpacked pack that the note does not account for, each with the
+        /// way it is wrong written beside it, ready for a log line. An empty list means the
+        /// archive holds every loader file the note vouched for, unchanged, AND holds no loader
+        /// file the note never vouched for.
+        /// <para>
+        /// The PACK's bytes are on one side and the NOTE's digests are on the other. What the
+        /// install still has on disk is not the question: on a repair some of these files are
+        /// the ones that went, which is why the repair is happening at all.
+        /// </para>
+        /// <para>
+        /// The set is compared in BOTH directions, for the reason
+        /// <see cref="BepInExIntegrity.PackMatchesDisk"/> gives for comparing its own set both
+        /// ways. A core file the note never named still loads once it is written, because the
+        /// core goes in whole, and the note is rebuilt off that folder afterwards: an addition
+        /// nobody looked at would be recorded with its own digest and read as BakaLoader's own
+        /// work from then on. So an archive is wrong for carrying a loader file as well as for
+        /// missing one or holding a different one.
+        /// </para>
+        /// <para>
+        /// An entry the note recorded with NO digest is not a file anything vouched for, and an
+        /// archive is not let past on one: BakaLoader writes those itself whenever a file would
+        /// not read at the moment the note was built, which is the same antivirus case this
+        /// repair exists for. A file in the archive whose bytes will not read counts as wrong
+        /// too, which is the opposite call from <see cref="BepInExIntegrity.Against"/> and on
+        /// purpose: there an unreadable file must not be read as somebody taking the install
+        /// over, here it is a file about to be written that nothing has vouched for.
+        /// </para>
+        /// <para>
+        /// The set of files is the one <see cref="BepInExIntegrity"/> compares elsewhere, so
+        /// the host's own BepInEx.cfg, the doorstop config, the changelog and the symbols
+        /// beside an assembly are no more the subject here than they are there.
+        /// </para>
+        /// </summary>
+        private static IReadOnlyList<string> PackAgainstNote(string loaderRoot, BepInExMarker marker)
+        {
+            var (vouched, listed) = NoteLoaderFiles(marker);
+
+            // Sorted so the log reads the same way twice, and a set so a file both walks reach
+            // is named once.
+            var wrong = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // What the note named, asked of the archive.
+            foreach (var path in listed)
+            {
+                var inPack = PackPathOf(loaderRoot, path);
+
+                if (inPack == null || !File.Exists(inPack))
+                {
+                    wrong.Add(path + " is not in the archive");
+                    continue;
+                }
+
+                if (!vouched.TryGetValue(path, out var recorded))
+                {
+                    wrong.Add(path + " was recorded with no digest");
+                    continue;
+                }
+
+                var actual = Sha256Of(inPack);
+
+                if (actual == null) wrong.Add(path + " in the archive would not read");
+                else if (!string.Equals(actual, recorded, StringComparison.OrdinalIgnoreCase))
+                    wrong.Add(path + " is a different file");
+            }
+
+            // And the other way round: what the archive carries, asked of the note. A path the
+            // note named has already been answered for above, whichever way it went.
+            foreach (var (path, _) in PackLoaderFiles(loaderRoot))
+                if (!listed.Contains(path))
+                    wrong.Add(path + " is not in the note at all");
+
+            return wrong.ToList();
+        }
+
+        /// <summary>
+        /// True when the note holds a digest for at least one loader file, which is the least
+        /// it has to hold for <see cref="PackAgainstNote"/> to mean anything.
+        /// </summary>
+        private static bool NoteVouchesForALoaderFile(BepInExMarker marker)
+            => NoteLoaderFiles(marker).Vouched.Count > 0;
+
+        /// <summary>
+        /// The note's loader-identity entries twice over: the ones it actually recorded a
+        /// digest for, keyed by path, and every path it named whether it vouched for it or not.
+        /// Both are keyed with forward slashes, the way the note writes them.
+        /// </summary>
+        private static (Dictionary<string, string> Vouched, HashSet<string> Listed)
+            NoteLoaderFiles(BepInExMarker marker)
+        {
+            var vouched = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var entry in marker?.Files ?? Enumerable.Empty<BepInExMarkerFileEntry>())
+            {
+                if (entry == null || string.IsNullOrWhiteSpace(entry.Path)) continue;
+                if (!BepInExIntegrity.IsLoaderIdentity(entry.Path)) continue;
+
+                var path = entry.Path.Replace('\\', '/').TrimStart('/');
+                listed.Add(path);
+
+                if (!string.IsNullOrWhiteSpace(entry.Sha256)) vouched[path] = entry.Sha256.Trim();
+            }
+
+            return (vouched, listed);
+        }
+
+        /// <summary>
+        /// Every loader-identity file an unpacked pack carries, keyed by where it would land
+        /// under the install root.
+        /// <para>
+        /// The core is walked whole, subfolders and all, because that is exactly what the write
+        /// copies. The loose files are the allow list's own, filtered to the ones that decide
+        /// what loads: the changelog and the host's doorstop config are written too, and
+        /// neither is part of the loader's identity here any more than it is anywhere else.
+        /// </para>
+        /// </summary>
+        private static List<(string Path, string File)> PackLoaderFiles(string loaderRoot)
+        {
+            var found = new List<(string, string)>();
+            if (string.IsNullOrWhiteSpace(loaderRoot)) return found;
+
+            var core = System.IO.Path.Combine(loaderRoot, "BepInEx", "core");
+
+            if (Directory.Exists(core))
+            {
+                foreach (var file in Directory.GetFiles(core, "*", SearchOption.AllDirectories))
+                {
+                    var relative = RelativeTo(loaderRoot, file);
+                    if (BepInExIntegrity.IsLoaderIdentity(relative)) found.Add((relative, file));
+                }
+            }
+
+            foreach (var fileName in RootFileAllowList)
+            {
+                if (!BepInExIntegrity.IsLoaderIdentity(fileName)) continue;
+
+                var path = System.IO.Path.Combine(loaderRoot, fileName);
+                if (File.Exists(path)) found.Add((fileName, path));
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// Where a path the note wrote would sit inside an unpacked pack, or null when it will
+        /// not make a path at all.
+        /// </summary>
+        private static string PackPathOf(string loaderRoot, string relativePath)
+        {
+            try
+            {
+                return System.IO.Path.Combine(loaderRoot,
+                    relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar));
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         /// <summary>
         /// The note's file list read off the install itself, for a write that moved no loader

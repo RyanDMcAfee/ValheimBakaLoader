@@ -1790,9 +1790,12 @@ html[data-lang="ja"], html[data-lang="zh-Hans"], html[data-lang="zh-Hant"]{
   line-break:strict;
 }
 /* Nothing that is nowrap by design becomes wrappable. Restated so a later reader does not
-   assume the block above loosened them. */
+   assume the block above loosened them. The toast's clock is one of them: it holds five
+   characters and no words, and beside a long sentence the block above let flex squeeze it
+   into a column of single digits (measured: five lines in a 10px box in ja and zh-Hant). */
 html[data-lang="ja"] .navitem .lbl, html[data-lang="zh-Hans"] .navitem .lbl, html[data-lang="zh-Hant"] .navitem .lbl,
-html[data-lang="ja"] .hstate, html[data-lang="zh-Hans"] .hstate, html[data-lang="zh-Hant"] .hstate{
+html[data-lang="ja"] .hstate, html[data-lang="zh-Hans"] .hstate, html[data-lang="zh-Hant"] .hstate,
+html[data-lang="ja"] .toast .tt, html[data-lang="zh-Hans"] .toast .tt, html[data-lang="zh-Hant"] .toast .tt{
   white-space:nowrap; overflow-wrap:normal;
 }
 /* The log and the config editor are monospace and are read as lines, so a Latin token

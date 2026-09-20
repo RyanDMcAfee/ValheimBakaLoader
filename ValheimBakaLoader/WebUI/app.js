@@ -124,6 +124,7 @@ const HOST_SENTENCES=[
   {named:"bepinex.outsideUnconfirmed", textId:"bepinex.reason.outside_unconfirmed"},
   {named:"bepinex.drivenElsewhere",    textId:"bepinex.reason.driven_elsewhere"},
   {named:"bepinex.foreignCore",        textId:"bepinex.reason.foreign_core"},
+  {named:"bepinex.repairMismatch",     textId:"bepinex.reason.repair_mismatch"},
   {named:"worlds.copySourceRequired",    textId:"world.copy.reason.source_required"},
   {named:"worlds.copyBadSourceRef",      textId:"world.copy.reason.bad_source"},
   {named:"worlds.copyBadSubfolder",      textId:"world.copy.reason.bad_subfolder"},
@@ -185,6 +186,7 @@ const BEPINEX_REASONS=[
   {named:"pulled",          textId:"bepinex.reason.pulled"},
   {named:"soak",            textId:"bepinex.reason.soak"},
   {named:"unverified",      textId:"bepinex.reason.unverified"},
+  {named:"repairMismatch",  textId:"bepinex.reason.repair_mismatch"},
 ];
 /* The sentence for a reason an unattended BepInEx write named, or null when the id is not
    one this page has words for. A refusal id (bepinex.locked and its kind) is handled by
@@ -6771,9 +6773,10 @@ function conditionBepInExHealed(last){
    it threw (bepinex.locked). Both arrive in the same field.
    A pack still soaking or a pre-release is a write the host may simply take now. A locked
    file is a write worth trying again once whatever held the file has let go. The other
-   three are decisions that are the host's to make rather than a press away, so the offer
-   there is the page that explains them. Everything else gets no button, because a button
-   that cannot help is worse than none. */
+   four are not a press away: three of them are decisions that are the host's to make, and
+   the fourth is a pack that is not the one the note recorded, which pressing again cannot
+   turn into the one it recorded. So the offer there is the page that explains them.
+   Everything else gets no button, because a button that cannot help is worse than none. */
 const BEPINEX_LEFT_ALONE_ACTS={
   soak:             {act:"write", labelId:"bepinex.condition.left_alone.install"},
   prerelease:       {act:"write", labelId:"bepinex.condition.left_alone.install"},
@@ -6781,6 +6784,7 @@ const BEPINEX_LEFT_ALONE_ACTS={
   drivenElsewhere:  {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
   foreign:          {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
   newer:            {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
+  repairMismatch:   {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
 };
 function bepInExLeftAloneAct(last){
   return (last&&last.reason&&BEPINEX_LEFT_ALONE_ACTS[last.reason])||null;

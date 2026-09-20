@@ -943,6 +943,7 @@
     "bepinex.reason.soak": { "lore": "BepInEx {version} came out too recently for a restart to put it in unwatched. A restart after {when} will take it, and you can install it by hand before then.", "params": { "version": "text", "when": "text" } },
     "bepinex.reason.unverified": { "lore": "Thunderstore did not say how large the BepInEx {version} download should be, so there was nothing to check it against and nothing was written.", "params": { "version": "text" } },
     "bepinex.reason.drift": { "lore": "Something other than BakaLoader has written to the BepInEx beside this server since BakaLoader put it there, so it stopped looking after it and nothing was written." },
+    "bepinex.reason.repair_mismatch": { "lore": "The BepInEx {version} that came down does not match, file for file, what BakaLoader recorded when it installed that version, so nothing was put back.", "params": { "version": "text" } },
     "bepinex.notice.already_maintained.title": { "lore": "BepInEx is looked after" },
     "bepinex.notice.already_maintained": { "lore": "BakaLoader keeps BepInEx up to date for every server on this install, so there is nothing to put in by hand." },
     "bepinex.notice.already_maintained.action": { "lore": "Open the setting" },

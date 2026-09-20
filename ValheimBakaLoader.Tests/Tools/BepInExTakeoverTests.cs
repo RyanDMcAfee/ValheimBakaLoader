@@ -90,6 +90,22 @@ namespace ValheimBakaLoader.Tests.Tools
 
             /// <summary>Changes the bytes of the text core files without changing the version.</summary>
             public string CoreFlavour = "";
+
+            /// <summary>
+            /// Changes the bytes of ONE core file and nothing else, which is what an archive
+            /// that is not quite the archive the note recorded looks like.
+            /// </summary>
+            public string HarmonyFlavour = "";
+
+            /// <summary>False to build a pack with one core assembly simply not in it.</summary>
+            public bool ShipHarmony = true;
+
+            /// <summary>
+            /// One more assembly under the pack's core that the real pack never shipped, named
+            /// here or null for none. The core is copied whole, so a file that is only in the
+            /// archive still lands in the folder the loader resolves assemblies from.
+            /// </summary>
+            public string ExtraCoreFile;
         }
 
         private static byte[] Pack(PackSpec spec = null)
@@ -116,7 +132,12 @@ namespace ValheimBakaLoader.Tests.Tools
 
                 Write(zip, root + "BepInEx/core/BepInEx.Preloader.dll",
                     "preloader " + spec.Version + spec.CoreFlavour);
-                Write(zip, root + "BepInEx/core/0Harmony.dll", "harmony " + spec.Version + spec.CoreFlavour);
+                if (spec.ShipHarmony)
+                    Write(zip, root + "BepInEx/core/0Harmony.dll",
+                        "harmony " + spec.Version + spec.CoreFlavour + spec.HarmonyFlavour);
+                if (spec.ExtraCoreFile != null)
+                    Write(zip, root + "BepInEx/core/" + spec.ExtraCoreFile,
+                        "something the pack the note recorded never shipped");
                 Write(zip, root + "BepInEx/config/BepInEx.cfg", "[Logging]\nshipped default\n");
 
                 // Linux and macOS only, and the two shell scripts: inert on Windows and never
@@ -277,13 +298,26 @@ namespace ValheimBakaLoader.Tests.Tools
             },
         };
 
+        /// <param name="served">
+        /// The archive the site really hands back, when that is a different pack from the one
+        /// the LISTING describes. A repair asks for the version its own note names, and
+        /// Thunderstore answers that address with that version's archive however far the
+        /// listing has moved on; without this the fixture served the newest pack's bytes under
+        /// the old version's address, which is not a thing the site does.
+        /// </param>
+        /// <param name="whileFetching">
+        /// Runs as the archive is handed back, which is the only way to say "and THIS happened
+        /// during the download". A fifty megabyte fetch on a slow line is minutes, so anything
+        /// the write read before it started is worth being able to change underneath it.
+        /// </param>
         private (TestService Service, RecordingHttpHandler Handler) Build(
             PackSpec spec = null, int failCoreCopyAfter = -1,
             long? liveSize = -1, long? indexSize = -1,
-            DateTime? created = null, bool? deprecated = null, bool pulled = false)
+            DateTime? created = null, bool? deprecated = null, bool pulled = false,
+            PackSpec served = null, Action whileFetching = null)
         {
             spec ??= new PackSpec();
-            var bytes = Pack(spec);
+            var bytes = Pack(served ?? spec);
 
             // Minus one means "the real length", which is what a listing that knows its own
             // package says. A test that wants an endpoint to leave the size out passes null.
@@ -291,7 +325,10 @@ namespace ValheimBakaLoader.Tests.Tools
             var index = indexSize == -1 ? bytes.LongLength : indexSize;
 
             var provider = new RecordingHttpClientProvider(_ =>
-                new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) });
+            {
+                whileFetching?.Invoke();
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            });
 
             var thunderstore = new Mock<IThunderstoreClient>();
             thunderstore
@@ -1919,6 +1956,349 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Empty(ChangedBetween(before, Snapshot()));
         }
 
+        // -------------------------------------------- the repair is checked against the note
+
+        /// <summary>
+        /// An install whose note names a pack, with one loader file taken off it. Every test
+        /// below starts here: it is the antivirus case, and it is the one write that fetches a
+        /// version the listing may no longer say anything at all about.
+        /// </summary>
+        private void AnInstallMissingItsLoaderFile(string version = "5.4.2350")
+        {
+            ExistingInstall();
+            var (service, _) = Build(new PackSpec { Version = version });
+            service.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window).GetAwaiter().GetResult();
+
+            Assert.True(service.Status(BaseExe).MaintainedByBakaLoader);
+            File.Delete(Path.Combine(BaseDir, "winhttp.dll"));
+            Assert.Contains("winhttp.dll", service.Status(BaseExe).MissingFiles);
+        }
+
+        /// <summary>
+        /// Nothing was added or changed AND nothing went. The one-way comparison used on its
+        /// own reads a deleted file as no difference at all, which is the half that matters
+        /// most on a path whose whole promise is that it put nothing back.
+        /// </summary>
+        private static void AssertUnchanged(
+            Dictionary<string, string> before, Dictionary<string, string> after)
+        {
+            Assert.Empty(ChangedBetween(before, after));
+            Assert.Empty(ChangedBetween(after, before));
+            Assert.Equal(before.Count, after.Count);
+        }
+
+        /// <summary>
+        /// Takes the digest off one entry of the note and leaves the entry itself where it is,
+        /// which is what BakaLoader's own writer leaves behind when a file would not read as it
+        /// was being recorded.
+        /// </summary>
+        private void BlankTheNotesDigestFor(string relativePath)
+        {
+            var note = BepInExMarkerFile.Read(BaseDir);
+            var entry = note.Files.Single(
+                f => string.Equals(f.Path, relativePath, StringComparison.OrdinalIgnoreCase));
+
+            Assert.False(string.IsNullOrWhiteSpace(entry.Sha256));
+            entry.Sha256 = null;
+            BepInExMarkerFile.Write(BaseDir, note);
+        }
+
+        /// <summary>
+        /// The repair's own check, asked the way it is meant to answer: the archive really is
+        /// the one the note recorded, so it goes in, and it goes in with NO size anywhere.
+        /// <para>
+        /// That second half is the whole point of the check. A repair fetches the version the
+        /// note names rather than the newest one, and once Thunderstore has moved on nothing on
+        /// the listing describes that version: the size and the digest are dropped, and what is
+        /// left standing behind the archive is the note.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_repair_whose_pack_matches_the_note_goes_in_with_no_size_to_check()
+        {
+            AnInstallMissingItsLoaderFile();
+
+            var (repair, handler) = Build(new PackSpec { Version = "5.4.2350" },
+                liveSize: null, indexSize: null);
+            var result = await repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window);
+
+            Assert.False(result.Skipped);
+            Assert.True(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
+            Assert.True(repair.Status(BaseExe).Installed);
+            Assert.Empty(repair.Status(BaseExe).MissingFiles);
+            Assert.NotEmpty(handler.Requests);
+        }
+
+        /// <summary>
+        /// ONE file in the archive holding something else, and the repair puts nothing back.
+        /// <para>
+        /// This is the hole the check was written for. The version the note names is one
+        /// Thunderstore has moved on from, so the community index answers with no size for it,
+        /// the digest goes with the size, and what came down was unpacked over an install on
+        /// nobody's word. The note has held a SHA256 for every one of those files since the day
+        /// BakaLoader wrote them, and one that does not match means this is not that pack.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_repair_whose_pack_holds_one_different_file_puts_nothing_back()
+        {
+            AnInstallMissingItsLoaderFile();
+            var before = Snapshot();
+
+            var (repair, _) = Build(
+                new PackSpec { Version = "5.4.2350", HarmonyFlavour = " (not the build that went in here)" },
+                liveSize: null, indexSize: null);
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Manual));
+
+            Assert.Equal("bepinex.repairMismatch", refused.MessageId);
+            Assert.Equal("5.4.2350", refused.Params["version"]);
+
+            // byte for byte, and the file that went is still gone: a repair that refuses has
+            // to leave the install exactly as broken as it found it rather than half mended
+            AssertUnchanged(before, Snapshot());
+            Assert.False(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
+            Assert.Equal("5.4.2350", BepInExMarkerFile.Read(BaseDir).Version);
+        }
+
+        /// <summary>
+        /// The same refusal for a file the archive does not carry AT ALL. A pack missing a core
+        /// assembly the note lists is not the pack that was written here either, and unpacking
+        /// it would leave an install whose note claims files that are not on disk.
+        /// </summary>
+        [Fact]
+        public async Task A_repair_whose_pack_is_missing_a_listed_core_file_puts_nothing_back()
+        {
+            AnInstallMissingItsLoaderFile();
+            var before = Snapshot();
+
+            var (repair, _) = Build(new PackSpec { Version = "5.4.2350", ShipHarmony = false },
+                liveSize: null, indexSize: null);
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Manual));
+
+            Assert.Equal("bepinex.repairMismatch", refused.MessageId);
+            AssertUnchanged(before, Snapshot());
+            Assert.False(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
+        }
+
+        /// <summary>
+        /// And the rule is a REPAIR's rule. An ordinary update writes a pack that differs from
+        /// the note on purpose, because a new pack is meant to differ: holding one to the old
+        /// note would refuse every update there is.
+        /// <para>
+        /// One install, walked through both: the archive that is refused as a repair, the mend
+        /// that puts the install back together, and then a NEW pack whose core files differ
+        /// from every digest the note holds, written without a murmur.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task An_ordinary_update_is_not_held_to_the_note_the_way_a_repair_is()
+        {
+            AnInstallMissingItsLoaderFile();
+
+            var (repair, _) = Build(
+                new PackSpec { Version = "5.4.2350", HarmonyFlavour = " (not the build that went in here)" },
+                liveSize: null, indexSize: null);
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Manual));
+            Assert.Equal("bepinex.repairMismatch", refused.MessageId);
+
+            // The install is mended with the pack it was written from, so nothing is missing
+            // any more and the next write is an ordinary update rather than a repair.
+            var (mend, _) = Build(new PackSpec { Version = "5.4.2350" }, liveSize: null, indexSize: null);
+            Assert.False((await mend.UpdateAsync(BaseExe, Nobody(),
+                options: BepInExWriteOptions.Window)).Skipped);
+            Assert.Empty(mend.Status(BaseExe).MissingFiles);
+
+            var (update, _) = Build(new PackSpec { Version = "5.4.2400" });
+            var written = await update.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window);
+
+            Assert.False(written.Skipped);
+            Assert.True(written.Installed);
+            Assert.Equal("5.4.2400", written.Version);
+            Assert.Equal("harmony 5.4.2400",
+                File.ReadAllText(Path.Combine(BaseDir, "BepInEx", "core", "0Harmony.dll")));
+        }
+
+        /// <summary>
+        /// The window path. Nobody is at the keyboard, so there is no toast to throw into: the
+        /// answer is a refusal the result carries, with the reason the row words it from, and
+        /// the install is left exactly as it was.
+        /// </summary>
+        [Fact]
+        public async Task An_unattended_repair_of_a_pack_that_does_not_match_is_recorded_as_a_refusal()
+        {
+            AnInstallMissingItsLoaderFile();
+            var before = Snapshot();
+
+            var (repair, _) = Build(
+                new PackSpec { Version = "5.4.2350", HarmonyFlavour = " (not the build that went in here)" },
+                liveSize: null, indexSize: null);
+
+            var result = await repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window);
+
+            Assert.True(result.Skipped);
+            Assert.Equal(BepInExSkipReason.RepairMismatch, result.SkipReason);
+            Assert.Equal("5.4.2350", result.Version);
+
+            AssertUnchanged(before, Snapshot());
+            Assert.False(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
+            Assert.True(repair.Status(BaseExe).MaintainedByBakaLoader);
+        }
+
+        /// <summary>
+        /// An archive that changes nothing the note named and simply carries ONE MORE assembly
+        /// under the core, and the repair still puts nothing back.
+        /// <para>
+        /// Reading the note's list and asking the archive for each of those files answers the
+        /// wrong question on its own. The core is copied WHOLE, so a file that is only in the
+        /// archive lands in the folder the loader resolves assemblies from, and the note is
+        /// rewritten off that folder afterwards: the addition would then be recorded with its
+        /// own digest and every reading after that would call the install untouched. Adding a
+        /// file has to be as refused as changing one, or the check is a check nobody has to
+        /// get past.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_repair_whose_pack_carries_a_core_file_the_note_never_named_puts_nothing_back()
+        {
+            AnInstallMissingItsLoaderFile();
+            var before = Snapshot();
+
+            var (repair, _) = Build(
+                new PackSpec { Version = "5.4.2350", ExtraCoreFile = "Uninvited.dll" },
+                liveSize: null, indexSize: null);
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Manual));
+
+            Assert.Equal("bepinex.repairMismatch", refused.MessageId);
+            AssertUnchanged(before, Snapshot());
+            Assert.False(File.Exists(Path.Combine(BaseDir, "BepInEx", "core", "Uninvited.dll")));
+            Assert.False(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
+
+            // and the note was not rewritten around it either, which is what would have made
+            // the addition permanent and invisible
+            Assert.DoesNotContain(BepInExMarkerFile.Read(BaseDir).Files,
+                f => f.Path.EndsWith("Uninvited.dll", StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// The other way a note gets written, and a repair on one of those still goes through.
+        /// <para>
+        /// Asking the archive whether it carries anything the note never named is only safe
+        /// because a note's loader files are always exactly one pack's: the core is moved out
+        /// whole and the pack's moved in, so the two sets cannot drift apart. The ADOPTION that
+        /// writes its note from the disk instead is the case worth proving rather than assuming,
+        /// and it reaches that note only after the pack and the disk have been compared both
+        /// ways and found identical. So the note it leaves names that pack's files and no
+        /// others, and a repair off it is an ordinary repair.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_repair_goes_through_on_a_note_the_adoption_wrote_from_the_disk()
+        {
+            ExistingInstall();
+
+            // The pack goes in, then the note is taken away, which is the state a hand-made
+            // install is in. The next write finds the disk already holding the pack and adopts
+            // it by note alone, writing that note from what is on disk.
+            var (setup, _) = Build();
+            await setup.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window);
+            File.Delete(Path.Combine(BaseDir, BepInExMarkerFile.FileName));
+
+            var (adopt, _) = Build();
+            Assert.True((await adopt.UpdateAsync(BaseExe, Nobody(),
+                options: BepInExWriteOptions.Window)).Adopted);
+
+            File.Delete(Path.Combine(BaseDir, "winhttp.dll"));
+            Assert.Contains("winhttp.dll", adopt.Status(BaseExe).MissingFiles);
+
+            var (repair, _) = Build(new PackSpec { Version = "5.4.2350" },
+                liveSize: null, indexSize: null);
+            var result = await repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window);
+
+            Assert.False(result.Skipped);
+            Assert.True(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
+            Assert.Empty(repair.Status(BaseExe).MissingFiles);
+        }
+
+        /// <summary>
+        /// A note entry with no digest is not a file that has been vouched for, so an archive
+        /// is not let past on one.
+        /// <para>
+        /// BakaLoader writes those itself: the note is built by hashing each file just after
+        /// the core is swapped in, and a file that will not read at that moment is recorded
+        /// with no digest at all. A file held open for a second as it is being written is
+        /// exactly the antivirus case this whole path exists for, so the undigested entry it
+        /// leaves is permanent. Skipping the entry would mean the repair writes whatever the
+        /// archive holds for that one file, unchecked, forever after.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_repair_is_refused_over_a_file_the_note_recorded_with_no_digest()
+        {
+            AnInstallMissingItsLoaderFile();
+            BlankTheNotesDigestFor("BepInEx/core/0Harmony.dll");
+            var before = Snapshot();
+
+            var (repair, _) = Build(
+                new PackSpec { Version = "5.4.2350", HarmonyFlavour = " (a different build entirely)" },
+                liveSize: null, indexSize: null);
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Manual));
+
+            Assert.Equal("bepinex.repairMismatch", refused.MessageId);
+            AssertUnchanged(before, Snapshot());
+            Assert.Equal("harmony 5.4.2350",
+                File.ReadAllText(Path.Combine(BaseDir, "BepInEx", "core", "0Harmony.dll")));
+        }
+
+        /// <summary>
+        /// The note losing its digests WHILE the archive comes down, and the repair refusing
+        /// rather than sailing through unchecked.
+        /// <para>
+        /// The check re-reads the note, because the download took minutes and the note is an
+        /// ordinary file on an ordinary disk. A note that has nothing left to hold the archive
+        /// to is not the same thing as an archive that passed: the write was called a repair on
+        /// the strength of a note that DID vouch for files, so the one input that matters going
+        /// missing has to close the path rather than open it.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_repair_whose_note_loses_its_digests_mid_download_puts_nothing_back()
+        {
+            AnInstallMissingItsLoaderFile();
+            var before = Snapshot();
+
+            var (repair, _) = Build(new PackSpec { Version = "5.4.2350" },
+                liveSize: null, indexSize: null,
+                whileFetching: () =>
+                {
+                    var note = BepInExMarkerFile.Read(BaseDir);
+                    foreach (var entry in note.Files) entry.Sha256 = null;
+                    BepInExMarkerFile.Write(BaseDir, note);
+                });
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Manual));
+
+            Assert.Equal("bepinex.repairMismatch", refused.MessageId);
+            Assert.False(File.Exists(Path.Combine(BaseDir, "winhttp.dll")));
+
+            // The note is the one file that DID move, and the test is what moved it, so it is
+            // the only difference allowed in EITHER direction. Nothing was added beside it and
+            // nothing went.
+            var after = Snapshot();
+            Assert.Equal(new[] { BepInExMarkerFile.FileName }, ChangedBetween(before, after));
+            Assert.Equal(new[] { BepInExMarkerFile.FileName }, ChangedBetween(after, before));
+            Assert.Equal(before.Count, after.Count);
+        }
+
         // ------------------------------------------------------------------ nothing is reported wrong
 
         /// <summary>
@@ -2157,9 +2537,12 @@ namespace ValheimBakaLoader.Tests.Tools
             File.Delete(Path.Combine(BaseDir, "winhttp.dll"));
 
             // The site has moved on, and the pack it offers came out an hour ago: a window
-            // would not take THAT pack, and it is not the one the repair wants anyway.
+            // would not take THAT pack, and it is not the one the repair wants anyway. The
+            // address the repair asks for names 5.4.2350, so that is the archive that comes
+            // back: the listing having moved on does not change what the old address serves.
             var (repair, handler) = Build(new PackSpec { Version = "5.4.2400" },
-                created: DateTime.UtcNow.AddHours(-1));
+                created: DateTime.UtcNow.AddHours(-1),
+                served: new PackSpec { Version = "5.4.2350" });
             var result = await repair.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window);
 
             Assert.False(result.Skipped);

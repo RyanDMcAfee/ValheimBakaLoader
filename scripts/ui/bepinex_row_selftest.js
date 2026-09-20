@@ -538,6 +538,10 @@ const LEFT_ALONE = [
   ["another mod manager", "drivenElsewhere", "wiki", "bepinex.condition.not_loaded.action"],
   ["a foreign core", "foreign", "wiki", "bepinex.condition.not_loaded.action"],
   ["an install that is newer", "newer", "wiki", "bepinex.condition.not_loaded.action"],
+  // the archive that came down is not the one the note recorded, and pressing again fetches
+  // the same archive: the only thing a host can usefully do is read what the row is about
+  ["a pack that is not what the note recorded", "repairMismatch", "wiki",
+    "bepinex.condition.not_loaded.action"],
   // nothing a press can do about these, so nothing is offered
   ["a deprecated package", "deprecated", null, null],
   ["a version the site took down", "pulled", null, null],
