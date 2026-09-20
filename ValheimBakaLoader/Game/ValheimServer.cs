@@ -351,6 +351,28 @@ namespace ValheimBakaLoader.Game
         public Func<Task> ApplyModUpdates { get; set; }
 
         /// <summary>
+        /// Optional hook (set by the UI) that keeps the mod loader current. Invoked in the
+        /// same fully stopped gap as <see cref="ApplyModUpdates"/> and before it, so a newer
+        /// core is never met by plugins that were replaced under the old one.
+        /// <para>
+        /// It runs on EVERY restart that has a window: scheduled, manual, crash recovery and
+        /// the empty-server one alike, and whatever mod auto update is set to. That is the
+        /// difference between this hook and the one above, and the whole reason it is a hook
+        /// of its own. <see cref="ApplyModUpdates"/> is reached only when this restart was
+        /// raised because mod updates were PENDING, so a host with mod auto update off, or
+        /// with nothing to update, used to restart forever with the loader step never once
+        /// running. The two settings answer different questions: one is about the mods a host
+        /// chose, the other is about the framework all of them load under.
+        /// </para>
+        /// <para>
+        /// A throw is logged and the restart carries on. A world coming back up matters more
+        /// than the loader being a pack behind, and the hook's own side says on the row what
+        /// did not land.
+        /// </para>
+        /// </summary>
+        public Func<Task> ApplyLoaderUpdate { get; set; }
+
+        /// <summary>
         /// Optional hook (set by the UI) that puts BepInEx in place before the companion
         /// plugins are prepared, when BakaLoader is looking after it and this install has
         /// none. The argument is the server .exe this start is about, because an isolated
@@ -729,8 +751,10 @@ namespace ValheimBakaLoader.Game
         /// <summary>
         /// Completes an in-flight restart once the old process has fully exited:
         /// waits out the restart delay (longer for crash recovery, per the profile),
-        /// installs pending mod updates in the stopped gap when flagged (BepInEx has
-        /// no plugin files loaded right now), then relaunches with the same options.
+        /// keeps the mod loader current and installs pending mod updates in the stopped
+        /// gap (nothing is loaded right now, so both are safe to replace), then relaunches
+        /// with the same options. The loader step runs on every restart and the mod step
+        /// only when this restart was raised for pending updates.
         /// Bails out at each step if something cancelled the restart in the meantime.
         /// </summary>
         /// <summary>
@@ -811,6 +835,26 @@ namespace ValheimBakaLoader.Game
         {
             var delayMs = IsCrashRestart ? Options.AutoRestartDelay * 1000 : DefaultRelaunchDelayMs;
             await (RelaunchDelay ?? (ms => Task.Delay(ms)))(delayMs);
+
+            if (!IsRestarting) return;
+
+            // The loader step, and it is not under ApplyUpdatesOnRestart. That flag is set
+            // from the count of PENDING MOD updates, so gating this on it left the loader
+            // untouched on every restart of every server whose host has mod auto update off.
+            // The window is the moment the process is down and the files are free, and this is
+            // the only step that needs no other reason to run.
+            if (ApplyLoaderUpdate != null)
+            {
+                try
+                {
+                    await ApplyLoaderUpdate();
+                }
+                catch (Exception e)
+                {
+                    ApplicationLogger.Error(e,
+                        "The mod loader step did not run during this restart; starting with the loader that is there.");
+                }
+            }
 
             if (!IsRestarting) return;
 

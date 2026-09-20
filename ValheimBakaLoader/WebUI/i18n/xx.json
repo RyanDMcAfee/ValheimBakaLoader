@@ -755,7 +755,7 @@
       "translation": "[Ẋ BepInEx kept up to date by BakaLoader Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "hearth.upkeep.bepinex.note": {
-      "translation": "[Ẋ Installs BepInEx when it is missing and moves it to a newer pack during a scheduled restart. Every server on this install shares one BepInEx, so this covers all of them. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Installs BepInEx when it is missing, and at a scheduled restart replaces the core and the loader files with the current Thunderstore pack. A BepInEx that is already here is brought into its care the same way, with a copy of everything replaced kept beside the install; your mods, mod configs and BepInEx.cfg are left as they are, and so is your doorstop_config.ini unless the new pack needs a different one. An install another mod manager drives is never touched. Every server on this install shares one BepInEx, so this covers all of them. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "hearth.upkeep.bepinex.on.toast": {
       "translation": "[Ẋ BakaLoader is looking after BepInEx. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ",
@@ -2776,6 +2776,74 @@
     "bepinex.reason.no_wrong_folder": {
       "translation": "[Ẋ There is no misplaced BepInEx folder to remove. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "bepinex.reason.locked": {
+      "translation": "[Ẋ Something has {file} open, so nothing was written. Stop every server on this install, close anything reading that folder, and try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "bepinex.reason.newer": {
+      "translation": "[Ẋ The BepInEx here ({installed}) is newer than the pack Thunderstore offers ({pack}), so nothing was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "installed": "text",
+        "pack": "text"
+      }
+    },
+    "bepinex.reason.core_is_junction": {
+      "translation": "[Ẋ This server's BepInEx core is a link to the install it shares, so the write belongs on that install instead. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.unrecognised_core": {
+      "translation": "[Ẋ There is a BepInEx beside this server that BakaLoader does not recognise, so nothing was written over it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.no_backup": {
+      "translation": "[Ẋ There is no saved copy of BepInEx here to put back. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.write_failed": {
+      "translation": "[Ẋ BepInEx could not be written here. The log has the reason your machine gave, and a copy of anything that was replaced is in the backups folder beside the install. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.outside_unconfirmed": {
+      "translation": "[Ẋ BakaLoader did not put the BepInEx that is beside this server, so nothing was written over it without asking you first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.driven_elsewhere": {
+      "translation": "[Ẋ Another mod manager drives the BepInEx beside this server, so nothing was written over it. Writing here would swap the whole mod set that tool looks after. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.foreign_core": {
+      "translation": "[Ẋ The BepInEx here ({installed}) is not the framework this pack carries, so nothing was written over it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "installed": "text"
+      }
+    },
+    "bepinex.reason.prerelease": {
+      "translation": "[Ẋ The newest BepInEx pack ({version}) is a pre-release, so a restart will not put it in on its own. You can still install it by hand. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "bepinex.reason.deprecated": {
+      "translation": "[Ẋ Thunderstore has flagged this BepInEx package as one to move away from, so nothing was written and the install was left as it was. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.reason.pulled": {
+      "translation": "[Ẋ Thunderstore has taken BepInEx {version} down, so a restart will not put it in. The install was left exactly as it was. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "bepinex.reason.soak": {
+      "translation": "[Ẋ BepInEx {version} came out too recently for a restart to put it in unwatched. A restart after {when} will take it, and you can install it by hand before then. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text",
+        "when": "text"
+      }
+    },
+    "bepinex.reason.unverified": {
+      "translation": "[Ẋ Thunderstore did not say how large the BepInEx {version} download should be, so there was nothing to check it against and nothing was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "bepinex.reason.drift": {
+      "translation": "[Ẋ Something other than BakaLoader has written to the BepInEx beside this server since BakaLoader put it there, so it stopped looking after it and nothing was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "bepinex.notice.already_maintained.title": {
       "translation": "[Ẋ BepInEx is looked after Ẋ] ẊẊẊẊẊẊẊ"
     },
@@ -2784,6 +2852,29 @@
     },
     "bepinex.notice.already_maintained.action": {
       "translation": "[Ẋ Open the setting Ẋ] ẊẊẊẊẊ"
+    },
+    "bepinex.notice.written.title": {
+      "translation": "[Ẋ BepInEx was updated at a restart Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.notice.written.body": {
+      "translation": "[Ẋ BepInEx went from {from} to {to}. A copy of every file that was replaced is in {folder}. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "from": "text",
+        "to": "text",
+        "folder": "text"
+      }
+    },
+    "bepinex.notice.written.body.first": {
+      "translation": "[Ẋ BepInEx {to} was put in at a restart. Anything it replaced is kept in the BepInEx backups folder beside the install. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "to": "text"
+      }
+    },
+    "bepinex.notice.healed.title": {
+      "translation": "[Ẋ A BepInEx write here did not finish Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.notice.healed.body": {
+      "translation": "[Ẋ A write to BepInEx stopped part way, so BakaLoader put the copy from before it back. The loader here is the one you had, and nothing was updated. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "bepinex.condition.waiting.title": {
       "translation": "[Ẋ BepInEx update waiting Ẋ] ẊẊẊẊẊẊẊ"
@@ -2800,6 +2891,28 @@
       "params": {
         "version": "text"
       }
+    },
+    "bepinex.condition.left_alone.title": {
+      "translation": "[Ẋ BepInEx was left as it was Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.condition.left_alone.install": {
+      "translation": "[Ẋ Install it now Ẋ] ẊẊẊẊẊ"
+    },
+    "bepinex.condition.left_alone.retry": {
+      "translation": "[Ẋ Try again Ẋ] ẊẊẊ"
+    },
+    "bepinex.condition.missing_files.title": {
+      "translation": "[Ẋ A BepInEx file is gone Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.condition.no_mods.title": {
+      "translation": "[Ẋ This world is running without its mods Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.condition.no_mods.body": {
+      "translation": {
+        "one": "[Ẋ BepInEx is not loading here, so the {count} mod on this server is doing nothing and the people on it are playing plain Valheim. Stop the server, put BepInEx back, and start it again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ BepInEx is not loading here, so all {count} mods on this server are doing nothing and the people on it are playing plain Valheim. Stop the server, put BepInEx back, and start it again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count"
     },
     "bepinex.condition.not_loaded.title": {
       "translation": "[Ẋ BepInEx did not load Ẋ] ẊẊẊẊẊẊẊ"
@@ -2825,6 +2938,21 @@
     "bepinex.row.pill.outside": {
       "translation": "[Ẋ Outside Ẋ] ẊẊẊ"
     },
+    "bepinex.row.pill.elsewhere": {
+      "translation": "[Ẋ Another tool Ẋ] ẊẊẊẊ"
+    },
+    "bepinex.row.pill.foreign": {
+      "translation": "[Ẋ Different loader Ẋ] ẊẊẊẊẊ"
+    },
+    "bepinex.row.pill.unrecognised": {
+      "translation": "[Ẋ Unrecognised Ẋ] ẊẊẊẊ"
+    },
+    "bepinex.row.pill.damaged": {
+      "translation": "[Ẋ Damaged Ẋ] ẊẊẊ"
+    },
+    "bepinex.row.pill.incomplete": {
+      "translation": "[Ẋ Incomplete Ẋ] ẊẊẊẊ"
+    },
     "bepinex.row.state.missing": {
       "translation": "[Ẋ Not installed, so nothing in this list would load. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
@@ -2836,6 +2964,30 @@
     },
     "bepinex.row.state.outside": {
       "translation": "[Ẋ Installed outside BakaLoader, so there is no telling whether a newer pack is out. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.state.drifted": {
+      "translation": "[Ẋ BakaLoader installed this BepInEx and something else has changed it since, so BakaLoader has stopped looking after it and writes nothing here until you press Update. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.state.elsewhere": {
+      "translation": "[Ẋ Another mod manager drives this BepInEx, so BakaLoader leaves it alone. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.state.foreign": {
+      "translation": "[Ẋ The BepInEx here ({version}) is not the framework the pack BakaLoader installs carries, so it is left alone. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "bepinex.row.state.unrecognised": {
+      "translation": "[Ẋ There is a BepInEx folder here that BakaLoader does not recognise, and nothing in it loads mods. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.state.damaged": {
+      "translation": "[Ẋ The BepInEx folder here is missing the file that loads everything else, so no mod would load. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.state.incomplete": {
+      "translation": "[Ẋ {file} is gone from this install, so BepInEx would not load. An antivirus taking that file is the usual cause. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
     },
     "bepinex.row.version.pack.title": {
       "translation": "[Ẋ The Thunderstore pack version, read from the note BakaLoader writes beside the install. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
@@ -2865,11 +3017,20 @@
     "bepinex.row.note.wrong_folder": {
       "translation": "[Ẋ A BepInEx pack was unpacked under the plugins folder, where it does nothing at all. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "bepinex.row.note.brought_in": {
+      "translation": "[Ẋ You have said yes to BakaLoader looking after BepInEx, so this install is brought into its care at the next scheduled restart. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "bepinex.row.action.install": {
       "translation": "[Ẋ Install BepInEx Ẋ] ẊẊẊẊẊ"
     },
     "bepinex.row.action.update": {
       "translation": "[Ẋ Update to the current pack Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.action.restore": {
+      "translation": "[Ẋ Put the saved copy back Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.row.action.repair": {
+      "translation": "[Ẋ Put the missing files back Ẋ] ẊẊẊẊẊẊẊẊ"
     },
     "bepinex.row.action.remove": {
       "translation": "[Ẋ Remove the misplaced folder Ẋ] ẊẊẊẊẊẊẊẊẊ"
@@ -2885,6 +3046,40 @@
       "translation": "[Ẋ BepInEx is in place. Ẋ] ẊẊẊẊẊẊẊ",
       "mark": "ᛒ"
     },
+    "bepinex.row.updated.toast": {
+      "translation": "[Ẋ BepInEx went from {from} to {to}. The files it replaced are in {folder}. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "from": "text",
+        "to": "text",
+        "folder": "text"
+      },
+      "mark": "ᛒ"
+    },
+    "bepinex.row.already_current.toast": {
+      "translation": "[Ẋ BepInEx {version} is already the pack Thunderstore offers, so nothing was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      },
+      "mark": "ᛒ"
+    },
+    "bepinex.row.adopted.toast": {
+      "translation": "[Ẋ The BepInEx here already matched pack {version} file for file, so BakaLoader took it into its care without writing over anything. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      },
+      "mark": "ᛒ"
+    },
+    "bepinex.row.restored.toast": {
+      "translation": "[Ẋ BepInEx was put back from the copy saved on {stamp}. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "stamp": "text"
+      },
+      "mark": "ᛒ"
+    },
+    "bepinex.row.doorstop_replaced.toast": {
+      "translation": "[Ẋ The new pack needed its own doorstop_config.ini, so yours went into the backup with everything else that was replaced. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛒ"
+    },
     "bepinex.row.removed.toast": {
       "translation": "[Ẋ The misplaced BepInEx folder was removed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "mark": "ᛒ"
@@ -2896,8 +3091,35 @@
     "bepinex.dialog.first.title": {
       "translation": "[Ẋ Let BakaLoader look after BepInEx? Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "bepinex.dialog.first.title.existing": {
+      "translation": "[Ẋ BepInEx is already here. Let BakaLoader look after it? Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "bepinex.dialog.first.body": {
       "translation": "[Ẋ BepInEx is the loader every mod runs under. BakaLoader can put it in when it is missing and move it to a newer pack during a scheduled restart. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.body.outside": {
+      "translation": "[Ẋ This install already has BepInEx (core {version}), put in by you or by another tool. Say yes and BakaLoader brings it into its care at the next scheduled restart: it replaces the BepInEx core and the loader files beside the server with the current pack from Thunderstore, and moves it to a newer pack whenever one comes out. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "bepinex.dialog.first.body.outside.noversion": {
+      "translation": "[Ẋ There is already a BepInEx beside this server, put in by you or by another tool. Say yes and BakaLoader brings it into its care at the next scheduled restart: it replaces the BepInEx core and the loader files beside the server with the current pack from Thunderstore, and moves it to a newer pack whenever one comes out. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.body.elsewhere": {
+      "translation": "[Ẋ Another mod manager drives the BepInEx beside this server: its own doorstop_config.ini points at that tool's profile folder. BakaLoader leaves this install alone whichever way you answer, because writing here would swap the whole mod set that tool looks after. Your answer covers any BepInEx you ask BakaLoader for later. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.body.foreign": {
+      "translation": "[Ẋ The BepInEx beside this server (core {version}) is not the framework the pack BakaLoader installs carries. BakaLoader leaves this install alone whichever way you answer. Your answer covers any BepInEx you ask BakaLoader for later. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "bepinex.dialog.first.kept": {
+      "translation": "[Ẋ Your BepInEx.cfg, every mod, every mod config and the patchers folder are left exactly as they are. Your doorstop_config.ini is kept too, unless the new pack needs a different one, and then yours goes into the backup with everything else. A copy of everything BakaLoader replaces goes into BepInEx\\.bakaloader-bepinex-backups first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.first.no_write": {
+      "translation": "[Ẋ Say no and BakaLoader never writes to it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "bepinex.dialog.first.note": {
       "translation": "[Ẋ One BepInEx is shared by every server on this install, so this answer covers all of them. It can be changed any time in Upkeep. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
@@ -2946,6 +3168,78 @@
     },
     "bepinex.dialog.remove.ok": {
       "translation": "[Ẋ Remove it Ẋ] ẊẊẊ"
+    },
+    "bepinex.dialog.takeover.title": {
+      "translation": "[Ẋ Write BepInEx over the install that is here? Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.takeover.body": {
+      "translation": "[Ẋ The BepInEx beside this server is core {installed}, and BakaLoader did not put it there. Saying yes replaces the core and the loader files with Thunderstore pack {pack}. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "installed": "text",
+        "pack": "text"
+      }
+    },
+    "bepinex.dialog.takeover.body.unknown_pack": {
+      "translation": "[Ẋ The BepInEx beside this server is core {installed}, and BakaLoader did not put it there. Saying yes replaces the core and the loader files with the pack Thunderstore offers when the write runs. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "installed": "text"
+      }
+    },
+    "bepinex.dialog.takeover.elsewhere": {
+      "translation": "[Ẋ Another mod manager drives this install. Writing here swaps the whole mod set that tool looks after, and it will not know. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.takeover.foreign": {
+      "translation": "[Ẋ What is here is not the framework this pack carries, so writing over it changes which BepInEx your mods run under. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.takeover.unrecognised": {
+      "translation": "[Ẋ There is a BepInEx folder here that BakaLoader does not recognise. Whatever is in it is replaced, and a copy goes into the backups folder first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.takeover.drifted": {
+      "translation": "[Ẋ Something else has written to this BepInEx since BakaLoader put it there, so whatever it changed is replaced. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.takeover.ok": {
+      "translation": "[Ẋ Write it Ẋ] ẊẊẊ"
+    },
+    "bepinex.dialog.downgrade.title": {
+      "translation": "[Ẋ Put an older BepInEx in? Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.downgrade.body": {
+      "translation": "[Ẋ The BepInEx here ({installed}) is newer than the pack Thunderstore offers ({pack}). Saying yes moves this install backwards, and a mod built for the newer one may stop loading. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "installed": "text",
+        "pack": "text"
+      }
+    },
+    "bepinex.dialog.downgrade.ok": {
+      "translation": "[Ẋ Install the older pack Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.restore.title": {
+      "translation": "[Ẋ Put the saved copy of BepInEx back? Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "bepinex.dialog.restore.body": {
+      "translation": "[Ẋ This puts back the copy BakaLoader saved on {stamp}, which is the loader exactly as it was before the last write. Your mods, mod configs and BepInEx.cfg are not touched. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "stamp": "text"
+      }
+    },
+    "bepinex.dialog.restore.ok": {
+      "translation": "[Ẋ Put it back Ẋ] ẊẊẊẊ"
+    },
+    "bepinex.dialog.restore.own": {
+      "translation": "[Ẋ There is also the BepInEx you had before BakaLoader, saved on {stamp} when this install came into its care. That copy is kept for good while the others roll over. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "stamp": "text"
+      }
+    },
+    "bepinex.dialog.restore.own.version": {
+      "translation": "[Ẋ There is also the BepInEx you had before BakaLoader, core {version}, saved on {stamp} when this install came into its care. That copy is kept for good while the others roll over. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text",
+        "stamp": "text"
+      }
+    },
+    "bepinex.dialog.restore.own.ok": {
+      "translation": "[Ẋ Put my own BepInEx back instead Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
     },
     "bepinex.progress.title": {
       "translation": "[Ẋ Installing BepInEx Ẋ] ẊẊẊẊẊẊ"

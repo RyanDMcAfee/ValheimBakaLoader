@@ -19,6 +19,14 @@ namespace ValheimBakaLoader.Tools.Models
         [JsonProperty("latest")]
         public ThunderstorePackageVersion Latest { get; set; }
 
+        /// <summary>
+        /// Whether the listing marks this package deprecated, when it said either way. Null
+        /// means nobody answered the question, which is not the same as a no: the BepInEx
+        /// installer only holds an unattended write back on a listing that actually said yes.
+        /// </summary>
+        [JsonProperty("is_deprecated")]
+        public bool? IsDeprecated { get; set; }
+
         /// <summary>Convenience accessor for the latest version number, if present.</summary>
         [JsonIgnore]
         public string LatestVersion => Latest?.VersionNumber;
@@ -55,19 +63,43 @@ namespace ValheimBakaLoader.Tools.Models
 
         /// <summary>
         /// How many bytes the published archive weighs, when the listing carries it. Read by
-        /// the BepInEx installer, which checks what it fetched against what the site said
-        /// before it unpacks anything over a folder a server runs from. Null when the
-        /// response did not name a size, which is not a failure: the check is simply skipped.
+        /// the BepInEx installer, which checks what it fetched against it before it unpacks
+        /// anything over a folder a server runs from.
+        /// <para>
+        /// The package page leaves this out. The community listing carries it, so the
+        /// installer asks the index for the size of the very version the page named rather
+        /// than fetching an archive nothing vouched for; with a size from neither, an
+        /// unattended write is refused and a manual one says in the log that what came down
+        /// was checked against nothing.
+        /// </para>
         /// </summary>
         [JsonProperty("file_size")]
         public long? FileSize { get; set; }
 
         /// <summary>
-        /// The archive's hash, when the listing carries one. Thunderstore does not publish it
-        /// today, so this is normally null and the size is the only check there is; a listing
-        /// that starts carrying one is then checked with no further change.
+        /// The archive's hash, when the listing carries one. Neither endpoint publishes it
+        /// today, so this is normally null and the size above is the check that runs; a
+        /// listing that starts carrying one is then checked too with no further change.
         /// </summary>
         [JsonProperty("sha256")]
         public string Sha256 { get; set; }
+
+        /// <summary>
+        /// Whether the site still serves this version, exactly as the listing spells it. The
+        /// package endpoint carries it today; a version somebody PULLED reads false.
+        /// <see cref="IsActive"/> is the one to read.
+        /// </summary>
+        [JsonProperty("is_active")]
+        public bool? IsActiveRaw { get; set; }
+
+        /// <summary>
+        /// Whether this version is still one the site offers. A listing that said nothing
+        /// counts as yes, the same way a listing that said nothing about deprecation does:
+        /// holding every unattended write back on a field the site might rename tomorrow
+        /// would stop the window working altogether. Only a listing that actually said no
+        /// stops a write.
+        /// </summary>
+        [JsonIgnore]
+        public bool IsActive => IsActiveRaw ?? true;
     }
 }

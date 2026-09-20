@@ -30,24 +30,66 @@ namespace ValheimBakaLoader.Tools
         /// <summary>
         /// The decision.
         /// </summary>
-        /// <param name="maintained">The BepInExMaintained preference.</param>
+        /// <param name="consentEffective">
+        /// Whether the host has ANSWERED the question and the answer was yes, which is
+        /// <see cref="BepInExConsent.Effective"/> and never the preference on its own. An
+        /// unanswered default is not a yes, and nothing unattended happens on one.
+        /// </param>
         /// <param name="installed">Whether BepInEx is installed in the base install at all.</param>
         /// <param name="installedVersion">The pack version the install note names, or null.</param>
         /// <param name="latestVersion">The newest pack version the site offers, or null when unknown.</param>
         /// <param name="otherServersRunning">Whether any OTHER server on this base install is up.</param>
+        /// <param name="drivenElsewhere">
+        /// Whether this install's doorstop config points at another tool's profile folder.
+        /// Writing there swaps a host's whole mod set, so the window never does it.
+        /// </param>
+        /// <param name="foreignCore">Whether the BepInEx here is not a 5.x one.</param>
+        /// <param name="drifted">
+        /// Whether BakaLoader gave up ownership because somebody else wrote over the files its
+        /// note recorded. Taking the install back unattended is how two tools end up
+        /// overwriting each other forever.
+        /// </param>
+        /// <param name="unrecognised">
+        /// Whether there is a core here BakaLoader does not recognise. Nothing is written over
+        /// one of those without being asked.
+        /// </param>
+        /// <param name="filesMissing">
+        /// Whether files the note lists are gone from disk, which an antivirus taking
+        /// winhttp.dll is the ordinary cause of. That is an install to repair, and the repair
+        /// is the write, so it happens even when the version has not moved and even when the
+        /// file that went makes the install read as not installed at all.
+        /// </param>
         public static BepInExUnattendedAction Decide(
-            bool maintained,
+            bool consentEffective,
             bool installed,
             string installedVersion,
             string latestVersion,
-            bool otherServersRunning)
+            bool otherServersRunning,
+            bool drivenElsewhere = false,
+            bool foreignCore = false,
+            bool drifted = false,
+            bool unrecognised = false,
+            bool filesMissing = false)
         {
-            if (!maintained) return BepInExUnattendedAction.Skip;
+            if (!consentEffective) return BepInExUnattendedAction.Skip;
+
+            // Four ways an install says "this is not yours to write to". None of them is a
+            // failure and none of them is silent: the row carries the reason and the manual
+            // button can still be pressed after the host has read it.
+            if (drivenElsewhere || foreignCore || drifted || unrecognised)
+                return BepInExUnattendedAction.Skip;
 
             // Not installed at all is the launch path's business, not this one's: a server
             // about to come up with no loader is handled before it starts, where the failure
             // can be reported against the start that needed it.
-            if (!installed) return BepInExUnattendedAction.Skip;
+            //
+            // An install whose note lists a file that has GONE is the exception, and it is the
+            // ordinary antivirus case: winhttp.dll is half of what "installed" means, so losing
+            // that one file makes a whole install answer false here. Sending it to the launch
+            // path instead would mean the repair only ever happened on a start, and a host
+            // whose world is already up would sit on a loader that loads nothing until they
+            // next stopped it.
+            if (!installed && !filesMissing) return BepInExUnattendedAction.Skip;
 
             // The site did not answer. An unknown newest version is never a reason to write.
             if (string.IsNullOrWhiteSpace(latestVersion)) return BepInExUnattendedAction.Skip;
@@ -57,7 +99,7 @@ namespace ValheimBakaLoader.Tools
             var newer = string.IsNullOrWhiteSpace(installedVersion)
                 || SemVer.Compare(latestVersion, installedVersion) > 0;
 
-            if (!newer) return BepInExUnattendedAction.Skip;
+            if (!newer && !filesMissing) return BepInExUnattendedAction.Skip;
 
             return otherServersRunning ? BepInExUnattendedAction.Defer : BepInExUnattendedAction.Apply;
         }

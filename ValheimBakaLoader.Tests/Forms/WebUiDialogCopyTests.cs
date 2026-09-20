@@ -478,8 +478,11 @@ namespace ValheimBakaLoader.Tests.Forms
             // Written down so a scanner that quietly stops finding calls fails too. A new
             // dialog moves this number and reads the rule above on its way past. 19 with
             // the two BepInEx dialogs, the install offer and the misplaced-folder
-            // removal, and 20 with the name box Copy world as opens.
-            Assert.Equal(20, sites);
+            // removal, and 20 with the name box Copy world as opens. 23 with the three the
+            // loader takeover put in front of a write: the question every write over an
+            // install BakaLoader did not make asks, the one a "this install is newer"
+            // refusal turns into, and the one the saved-copy button asks.
+            Assert.Equal(23, sites);
             Assert.True(frozen.Count == 0,
                 "a dialog would keep its wording through a language switch:\n  "
                 + string.Join("\n  ", frozen));

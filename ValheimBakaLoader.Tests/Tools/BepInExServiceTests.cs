@@ -401,8 +401,14 @@ namespace ValheimBakaLoader.Tests.Tools
             File.WriteAllText(Path.Combine(core, "BepInEx.dll"), "an older core");
             File.WriteAllText(Path.Combine(core, "SomethingOld.dll"), "no longer shipped");
 
+            // The host's yes, said out loud. There is a core here that BakaLoader did not put
+            // here, and the outside clamp asks whether that FILE is present rather than whether
+            // a version can be read out of it: this fixture's core is plain text, so it used to
+            // slip past the clamp and get written over with no confirm at all. What is being
+            // tested is what the write does to the core, not whether it was allowed to happen.
             var (service, _) = Build();
-            var result = await service.InstallAsync(BaseExe, null, Nobody());
+            var result = await service.InstallAsync(BaseExe, null, Nobody(),
+                options: new BepInExWriteOptions { OverOutside = true });
 
             Assert.True(result.Replaced);
             Assert.Equal("core 5.4.2350", File.ReadAllText(Path.Combine(core, "BepInEx.dll")));
@@ -502,8 +508,15 @@ namespace ValheimBakaLoader.Tests.Tools
 
             Assert.Contains(marker.Files, f => f.Path == "winhttp.dll");
             Assert.Contains(marker.Files, f => f.Path == "BepInEx/core/BepInEx.dll");
-            Assert.Contains(marker.Files, f => f.Path == "BepInEx/config/BepInEx.cfg");
             Assert.All(marker.Files, f => Assert.Equal(64, f.Sha256.Length));
+
+            // The shipped config is NOT in the list, and that is the point of where the note
+            // is written: the note goes in as soon as the loader files are in, and the config
+            // copy that follows is a first-time convenience whose failure is not a failed
+            // install. A note listing a file written after it was sealed would be a claim
+            // about something that had not happened yet.
+            Assert.DoesNotContain(marker.Files, f => f.Path == "BepInEx/config/BepInEx.cfg");
+            Assert.True(File.Exists(Path.Combine(BaseDir, "BepInEx", "config", "BepInEx.cfg")));
 
             // And the hash in the note is the hash of what is actually on disk.
             var winhttp = marker.Files.First(f => f.Path == "winhttp.dll");
@@ -538,6 +551,9 @@ namespace ValheimBakaLoader.Tests.Tools
             // A real, versioned assembly: the app's own, which is the only way to prove the
             // fallback reads a file version rather than returning null for everything.
             File.Copy(typeof(BepInExService).Assembly.Location, Path.Combine(core, "BepInEx.dll"));
+            // And the loose loader file, which is the other half of what installed means: on
+            // Windows the game never looks at the core without it.
+            File.WriteAllText(Path.Combine(BaseDir, "winhttp.dll"), "the doorstop proxy");
 
             var service = new BepInExService(null, null, null, Mock.Of<IApplicationLogger>());
             var status = service.Status(BaseExe);

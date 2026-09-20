@@ -115,6 +115,15 @@ const HOST_SENTENCES=[
   {named:"bepinex.busy",           textId:"bepinex.reason.busy"},
   {named:"bepinex.noServerPath",   textId:"bepinex.reason.no_server_path"},
   {named:"bepinex.noWrongFolder",  textId:"bepinex.reason.no_wrong_folder"},
+  {named:"bepinex.locked",           textId:"bepinex.reason.locked"},
+  {named:"bepinex.newer",            textId:"bepinex.reason.newer"},
+  {named:"bepinex.coreIsJunction",   textId:"bepinex.reason.core_is_junction"},
+  {named:"bepinex.unrecognisedCore", textId:"bepinex.reason.unrecognised_core"},
+  {named:"bepinex.noBackup",         textId:"bepinex.reason.no_backup"},
+  {named:"bepinex.writeFailed",      textId:"bepinex.reason.write_failed"},
+  {named:"bepinex.outsideUnconfirmed", textId:"bepinex.reason.outside_unconfirmed"},
+  {named:"bepinex.drivenElsewhere",    textId:"bepinex.reason.driven_elsewhere"},
+  {named:"bepinex.foreignCore",        textId:"bepinex.reason.foreign_core"},
   {named:"worlds.copySourceRequired",    textId:"world.copy.reason.source_required"},
   {named:"worlds.copyBadSourceRef",      textId:"world.copy.reason.bad_source"},
   {named:"worlds.copyBadSubfolder",      textId:"world.copy.reason.bad_subfolder"},
@@ -158,6 +167,48 @@ const LANG_REASONS=[
   {named:"lang.reason.contents",   textId:"lang.reason.contents"},
   {named:"lang.reason.install",    textId:"lang.reason.install"},
 ];
+/* Every way a BepInEx write that nobody watched can end without writing, as the service
+   names it in skipReason, beside the catalog entry that words it. Same idea as LANG_REASONS
+   and a table for the same reason: nothing throws these, so the gate that holds every
+   HOST_SENTENCES row to a real throw stays as strict as it was.
+   Every reason the service can name has a row now, drift included. A reason this table
+   does not know is still not rendered: an id is not copy, and a page that prints one has
+   told the host nothing. */
+const BEPINEX_REASONS=[
+  {named:"newer",           textId:"bepinex.reason.newer"},
+  {named:"unrecognised",    textId:"bepinex.reason.unrecognised_core"},
+  {named:"drivenElsewhere", textId:"bepinex.reason.driven_elsewhere"},
+  {named:"foreign",         textId:"bepinex.reason.foreign_core"},
+  {named:"drift",           textId:"bepinex.reason.drift"},
+  {named:"prerelease",      textId:"bepinex.reason.prerelease"},
+  {named:"deprecated",      textId:"bepinex.reason.deprecated"},
+  {named:"pulled",          textId:"bepinex.reason.pulled"},
+  {named:"soak",            textId:"bepinex.reason.soak"},
+  {named:"unverified",      textId:"bepinex.reason.unverified"},
+];
+/* The sentence for a reason an unattended BepInEx write named, or null when the id is not
+   one this page has words for. A refusal id (bepinex.locked and its kind) is handled by
+   hostSentence below, which is why this only knows the ones a RESULT can carry. */
+function bepInExReasonText(id,params){
+  if(!id) return null;
+  const row=BEPINEX_REASONS.find(r=>r.named===id);
+  if(!row) return null;
+  try{return T(row.textId,params||{});}catch(_){return null;}
+}
+/* The sentence for the standing "nothing was written" the host carries, out of either
+   table: a write that declined on a rule names one of BEPINEX_REASONS, and one that threw
+   names the refusal it threw, which HOST_SENTENCES already words. Null when neither knows
+   it, because an id is not copy and a page that prints one has said nothing. */
+function bepInExLeftAloneText(last){
+  if(!last||!last.leftAsItWas||!last.reason) return null;
+  const params={
+    version:last.version||"",
+    installed:last.installedVersion||"",
+    pack:last.version||"",
+    when:last.eligibleUtc?new Date(last.eligibleUtc).toLocaleString(LOC()):"",
+  };
+  return bepInExReasonText(last.reason,params)||hostSentence(last.reason,params);
+}
 /* The sentence for an ending a language pack download named, or null when the id is not one
    of them. */
 function langReasonText(id,params){
@@ -3289,6 +3340,16 @@ let BEP_PROGRESS=null;         // the last bepinex.progress of that write
 let BEP_PROG_OPEN=false;       // and whether the dialog showing it is ours to close
 let BEP_ADD_IN_FLIGHT=false;   // an add the host may install the loader inside of
 let BEP_ASKED_THIS_RUN=false;  // the first-start question, put once and not again
+/* Whether the host has ever answered that question, as the Upkeep card reads it. Every
+   switch on that card rides in on one save, so while the answer is still missing the
+   loader switch is left OUT of the save: without this a click on Start with Windows
+   records an answer to a question nobody was asked. */
+let BEP_ANSWERED=false;
+/* The standing question, waved away for this run of the window. Waving it away is not an
+   answer: nothing is written, the preference is left exactly as it was, and the row is put
+   again the next time the window opens. That is the same bargain the dialog makes with
+   Escape, which is why neither of them is a gate on anything. */
+let BEP_ASK_ROW_HIDDEN=false;
 /* What is typed into the loader dialog's address box, kept out of the element on purpose:
    a language switch rebuilds the dialog from its thunk and a value left in the input
    would be rebuilt away. Delegated on the background, which is the one node a rebuild
@@ -3297,14 +3358,254 @@ let BEP_URL_TYPED=null;
 $("#modalBg").addEventListener("input",e=>{
   if(e.target&&e.target.id==="mBepUrl") BEP_URL_TYPED=e.target.value;
 });
-/* Which of the three states the row is in. "outside" is an install BakaLoader did not
-   write: there is no note beside it, so what is on show is the loader's own file version
-   and a pack bump cannot be seen from here at all. */
+/* BEPINEX-STATE-BEGIN
+   Every choice the loader row, its question and its confirms make, as pure functions over
+   the one answer the host sends. They hand back CATALOG IDS rather than sentences, which
+   buys three things: the words have one owner, the first-start dialog and the standing row
+   that carries the same question cannot drift apart, and the whole lot can be driven as a
+   table without a browser (scripts/ui/bepinex_row_selftest.js evaluates this block on its
+   own). Nothing in here may touch T(), S or the document.
+   A field an older host does not send is read as absent rather than as false wherever the
+   two would say different things, so a 1.1.x answer still draws the row it always did. */
+
+/* The switch and the answer read together, which is the only reading that is true before
+   the host has said anything: the preference defaults to on, so on its own it says yes on
+   behalf of somebody who has not spoken. The host sends the pair already read as `consent`
+   (BepInExConsent.Effective); an answer from before that sends the two halves instead. */
+function bepInExConsent(b){
+  if(!b) return false;
+  if("consent" in b) return !!b.consent;
+  return !!b.maintained&&!!b.maintenanceAsked;
+}
+/* True only while the host has never answered. An answer with neither field in it is from
+   a version that never asked the question, and a question nothing can record is not put. */
+function bepInExUnanswered(b){
+  if(!b) return false;
+  if("consentUnanswered" in b) return !!b.consentUnanswered;
+  if("maintenanceAsked" in b) return !b.maintenanceAsked;
+  return false;
+}
+/* The core assembly itself, which is the plain "there is a loader here" fact: not a
+   version read out of it, and not the pair of facts `installed` is. An answer from before
+   this field existed only ever said the two together, so that is what it falls back to. */
+function bepInExCoreFilePresent(b){
+  if(!b) return false;
+  if("coreFilePresent" in b) return !!b.coreFilePresent;
+  return !!b.installed;
+}
+/* The loader file beside the server, named by the host so the page carries no copy of it. */
+function bepInExLoaderFileName(b){
+  return (b&&b.loaderFileName)||"winhttp.dll";
+}
+/* True when the core is here and the loose loader file beside the server is not. That is
+   an install that loads nothing, and on Windows it is the ordinary shape of the antivirus
+   case: the file the game actually looks at is the one quarantined.
+   It matters most for an install BakaLoader did NOT write, because there is no note for
+   the file to be missing FROM: `missingFiles` is empty there whatever has gone, and the
+   row read "Missing / Not installed" over a real core sitting on disk. */
+function bepInExLoaderFileGone(b){
+  if(!b||!("loaderFilePresent" in b)) return false;
+  return !b.loaderFilePresent&&bepInExCoreFilePresent(b);
+}
+/* The trailing name of a path the note spells, for comparing one against another. The note
+   lists BepInEx\core\0Harmony.dll and winhttp.dll in the same array. */
+function bepInExFileLeaf(name){
+  const text=String(name||"");
+  const at=Math.max(text.lastIndexOf("\\"),text.lastIndexOf("/"));
+  return (at<0?text:text.slice(at+1)).toLowerCase();
+}
+/* The files the note lists that are not on disk any more, with the loader file beside the
+   server added when it has gone and no note said so. */
+function bepInExMissingFileList(b){
+  const gone=(b&&Array.isArray(b.missingFiles))?b.missingFiles.filter(Boolean):[];
+  if(!bepInExLoaderFileGone(b)) return gone;
+  const loader=bepInExLoaderFileName(b);
+  const leaf=bepInExFileLeaf(loader);
+  return gone.some(f=>bepInExFileLeaf(f)===leaf)?gone:[loader].concat(gone);
+}
+/* Which state the row is in, worst first, because several of these are true at once and
+   only one can be drawn. An unrecognised or damaged core outranks everything: nothing
+   loads there whoever made it. Missing files come before "not installed" because losing
+   winhttp.dll to an antivirus IS what makes an otherwise whole install read as absent, and
+   "not installed" would send the host off to install something that is already there.
+   That list now includes the loader file itself rather than only the ones a note misses,
+   which is what makes this true of an install BakaLoader did not write: there, `missingFiles`
+   is empty whatever has gone, and this row used to say "Missing / Not installed" over a real
+   core on disk, offer an Install the host side refuses, and put the nothing-installed
+   question to a host who plainly has BepInEx.
+   "drifted" is a state of its own rather than a flavour of outside: the stale note stays
+   on disk, so it is true on every read afterwards and not only on the one that dropped
+   ownership. */
 function bepInExState(b){
   if(!b) return null;
+  if(b.unrecognised) return "unrecognised";
+  if(b.damaged) return "damaged";
+  if(bepInExMissingFileList(b).length) return "incomplete";
+  if(b.drivenElsewhere) return "elsewhere";
+  if(b.foreignCore) return "foreign";
   if(!b.installed) return "missing";
-  return b.maintainedByBakaLoader?"maintained":"outside";
+  if(b.drifted) return "drifted";
+  if(!b.maintainedByBakaLoader) return "outside";
+  return bepInExConsent(b)?"maintained":"manual";
 }
+/* The pill and the sentence beside it, per state. Two states share the Outside pill: an
+   install somebody else wrote and one BakaLoader has just given up, because they are the
+   same thing to look at and only the sentence differs. */
+const BEPINEX_ROW_WORDS={
+  missing:      {tone:"grey",  pillId:"bepinex.row.pill.missing",       msgId:"bepinex.row.state.missing"},
+  maintained:   {tone:"green", pillId:"bepinex.row.pill.maintained",    msgId:"bepinex.row.state.maintained"},
+  manual:       {tone:"blue",  pillId:"bepinex.row.pill.manual",        msgId:"bepinex.row.state.manual"},
+  outside:      {tone:"amber", pillId:"bepinex.row.pill.outside",       msgId:"bepinex.row.state.outside"},
+  drifted:      {tone:"amber", pillId:"bepinex.row.pill.outside",       msgId:"bepinex.row.state.drifted"},
+  elsewhere:    {tone:"amber", pillId:"bepinex.row.pill.elsewhere",     msgId:"bepinex.row.state.elsewhere"},
+  foreign:      {tone:"amber", pillId:"bepinex.row.pill.foreign",       msgId:"bepinex.row.state.foreign"},
+  unrecognised: {tone:"ember", pillId:"bepinex.row.pill.unrecognised",  msgId:"bepinex.row.state.unrecognised"},
+  damaged:      {tone:"ember", pillId:"bepinex.row.pill.damaged",       msgId:"bepinex.row.state.damaged"},
+  incomplete:   {tone:"ember", pillId:"bepinex.row.pill.incomplete",    msgId:"bepinex.row.state.incomplete"},
+};
+function bepInExRowWords(b){
+  const state=bepInExState(b);
+  return state?BEPINEX_ROW_WORDS[state]:null;
+}
+/* The slots that sentence needs. The foreign one names the version on disk and the
+   incomplete one names the first file that is gone, so a host reading it knows which file
+   to let back through rather than being told a file is missing. */
+function bepInExRowParams(b){
+  const gone=bepInExMissingFileList(b);
+  return {version:(b&&b.coreVersion)||"",file:gone.length?gone[0]:""};
+}
+/* Which version the row shows, and which of the two things that number is. A note carries
+   the Thunderstore pack version; without one the only number there is is the loader
+   assembly's own, and they are not the same number: pack 5.4.2350 ships BepInEx 5.4.23.5. */
+function bepInExRowVersion(b){
+  if(!b) return null;
+  if(b.maintainedByBakaLoader&&b.packVersion)
+    return {version:b.packVersion,titleId:"bepinex.row.version.pack.title"};
+  const file=b.coreVersion||b.coreFileVersion;
+  return file?{version:file,titleId:"bepinex.row.version.file.title"}:null;
+}
+/* What the row offers to press, in the order it draws them. "restore" is only ever offered
+   where there is a saved copy to put back; without one a broken core is explained and the
+   install is offered instead, which is the other way out of that state. */
+function bepInExRowActions(b){
+  const state=bepInExState(b);
+  if(!state) return [];
+  if(state==="maintained") return [];
+  if(state==="missing") return ["install"];
+  if(state==="incomplete") return ["repair"];
+  if(state==="unrecognised"||state==="damaged")
+    return b.newestBackup?["restore","install"]:["install"];
+  return ["update"];
+}
+const BEPINEX_ACTION_WORDS={
+  install:{labelId:"bepinex.row.action.install"},
+  update: {labelId:"bepinex.row.action.update"},
+  restore:{labelId:"bepinex.row.action.restore"},
+  repair: {labelId:"bepinex.row.action.repair"},
+};
+/* Whether that press writes over an install BakaLoader did not make, which is the press
+   that has to be asked about first (section O). A trusted note BakaLoader wrote is the one
+   case that needs no question: those files are the ones it put there. Nothing installed at
+   all is not something to write over either.
+   Asked of the action as well as of the install, because "restore" puts BakaLoader's own
+   saved copy back and carries its own question about that rather than this one. */
+function bepInExNeedsConfirm(b,action){
+  if(action!=="update"&&action!=="install"&&action!=="repair") return false;
+  if(!b||bepInExState(b)==="missing") return false;
+  if(b.unrecognised||b.drivenElsewhere||b.foreignCore||b.drifted) return true;
+  return !b.maintainedByBakaLoader;
+}
+/* The answers that press carries, each one a refusal the host makes on its own unless it
+   is told the host was shown what it would cost and said yes. A page that forgets to ask
+   simply gets the refusal, which is why they are derived from the same facts the confirm
+   is worded from rather than typed at each call site. */
+function bepInExWriteFlags(b){
+  const flags={};
+  if(!bepInExNeedsConfirm(b,"update")) return flags;
+  if(!b.maintainedByBakaLoader) flags.overOutside=true;
+  if(b.unrecognised) flags.overUnrecognised=true;
+  if(b.drivenElsewhere) flags.overDrivenElsewhere=true;
+  if(b.foreignCore) flags.overForeign=true;
+  return flags;
+}
+/* Whether a scheduled restart really will bring this install into BakaLoader's care. It
+   is the same question BepInExUnattended.Decide answers on the host side and it has to
+   give the same answer, because the row says it out loud: an install another mod manager
+   drives, a core that is not a 5.x BepInEx, a folder of files nothing recognises and one
+   somebody else has written to since are all SKIPPED there, and a note promising a restart
+   that never comes would be worse than saying nothing. What is left is an install with no
+   trusted note beside it, which is the one the window really does adopt.
+   The four are named here as well as being ruled out by the state above, on purpose. Which
+   state a row draws in is a drawing decision; what a restart will do is a promise. Writing
+   the promise down separately means a later change to the order the states are asked in
+   cannot quietly turn this note into one the window breaks. */
+function bepInExBroughtInAtRestart(b){
+  if(!b||!bepInExConsent(b)) return false;
+  if(b.drivenElsewhere||b.foreignCore||b.unrecognised||b.drifted) return false;
+  return bepInExState(b)==="outside";
+}
+/* The extra sentence the confirm carries for the state it is asked in, or null where the
+   plain one says everything. Each of these names a consequence the host cannot see from
+   the row: a whole mod set that moves, a framework that is not the one this pack carries,
+   files nothing recognises, or somebody else who has been writing here too. */
+const BEPINEX_CONFIRM_EXTRA={
+  elsewhere:   {extraId:"bepinex.dialog.takeover.elsewhere"},
+  foreign:     {extraId:"bepinex.dialog.takeover.foreign"},
+  unrecognised:{extraId:"bepinex.dialog.takeover.unrecognised"},
+  drifted:     {extraId:"bepinex.dialog.takeover.drifted"},
+};
+/* Read off the FACTS rather than off the row's state, in the order the states are asked
+   in. Several of these are true of one install at once and the row can only draw one of
+   them: an install another mod manager drives whose winhttp.dll an antivirus took draws as
+   Incomplete, and the one thing its confirm most has to say is still that writing here
+   swaps that tool's whole mod set. Which row is drawn is a drawing decision; what a write
+   would cost is the question. */
+function bepInExConfirmExtraId(b){
+  if(!b) return null;
+  if(b.unrecognised) return BEPINEX_CONFIRM_EXTRA.unrecognised.extraId;
+  if(b.drivenElsewhere) return BEPINEX_CONFIRM_EXTRA.elsewhere.extraId;
+  if(b.foreignCore) return BEPINEX_CONFIRM_EXTRA.foreign.extraId;
+  if(b.drifted) return BEPINEX_CONFIRM_EXTRA.drifted.extraId;
+  return null;
+}
+/* The question, whichever shape the install is in. ONE owner for the words: the modal on
+   the Start press and the standing row that carries the same question while it is
+   unanswered both read this, so neither can be edited without the other following.
+     fresh      nothing installed, and the wording that always was
+     outside    an install BakaLoader did not make, named with the version on disk
+     elsewhere  an install another mod manager drives, which a yes never writes to
+     foreign    a core that is not the framework this pack carries, the same way
+   `kept` and `no` are only on the branch a yes would actually write to. Saying "your mods
+   are left alone" about an install nothing is going to touch reads as a promise about a
+   write that is not on the table. */
+/* The outside question in its two shapes: one that names the version on disk, and one for
+   a core whose assembly carries no readable version, where "(core )" would read as a typo
+   and a made-up number would be worse. */
+const BEPINEX_OUTSIDE_BODY={
+  withVersion:   {bodyId:"bepinex.dialog.first.body.outside"},
+  withoutVersion:{bodyId:"bepinex.dialog.first.body.outside.noversion"},
+};
+function bepInExQuestion(b){
+  const state=bepInExState(b);
+  const version=(b&&b.coreVersion)||"";
+  if(b&&b.drivenElsewhere)
+    return {variant:"elsewhere",titleId:"bepinex.dialog.first.title.existing",
+            bodyId:"bepinex.dialog.first.body.elsewhere",params:{}};
+  if(b&&b.foreignCore)
+    return {variant:"foreign",titleId:"bepinex.dialog.first.title.existing",
+            bodyId:"bepinex.dialog.first.body.foreign",params:{version}};
+  /* An install with no trusted note beside it: somebody else's files, and the branch the
+     drafts in the spec were written for. One BakaLoader DID write is the ordinary question
+     about looking after it from here on, which is the wording that always was. */
+  if(state&&state!=="missing"&&!b.maintainedByBakaLoader)
+    return {variant:"outside",titleId:"bepinex.dialog.first.title.existing",
+            bodyId:BEPINEX_OUTSIDE_BODY[version?"withVersion":"withoutVersion"].bodyId,
+            params:{version},
+            keptId:"bepinex.dialog.first.kept",noId:"bepinex.dialog.first.no_write"};
+  return {variant:"fresh",titleId:"bepinex.dialog.first.title",
+          bodyId:"bepinex.dialog.first.body",params:{}};
+}
+/* BEPINEX-STATE-END */
 /* True only once the host has actually answered and said no loader is there. Unknown is
    not missing: the empty state and the add flow both read this and neither may claim a
    thing about an install nothing has looked at yet. */
@@ -3314,10 +3615,22 @@ function bepInExRunning(){
   const b=S.bepinex;
   return (b&&Array.isArray(b.runningProfiles))?b.runningProfiles.filter(Boolean):[];
 }
+/* The buttons the row draws, each one keyed by the action the chooser named so the wiring
+   below can find it again. "restore" leads with the ember: where there is a saved copy of
+   a broken install, putting it back is the thing to press. */
+const BEPINEX_ACTION_ELEMENTS={
+  install:{id:"bepInstall",cls:"btn-ember"},
+  update: {id:"bepUpdate", cls:"btn-ghost"},
+  restore:{id:"bepRestore",cls:"btn-ember"},
+  repair: {id:"bepRepair", cls:"btn-ember"},
+};
 function renderBepInExRow(){
   const el=$("#bepinexRow"); if(!el) return;
   const b=S.bepinex;
   const state=bepInExState(b);
+  /* The standing rows read the same answer, so they are raised from here: this runs on
+     the first status, on every push after it and on a profile switch. */
+  renderBepInExConditions();
   /* Nothing has been read yet, or this host predates the answer. A strip that says
      nothing is worse than no strip at all. */
   if(!state){el.style.display="none";el.innerHTML="";return;}
@@ -3329,43 +3642,39 @@ function renderBepInExRow(){
   const stop=busy||up.length>0;
   const why=busy?T("bepinex.row.note.busy"):T("bepinex.row.blocked.title");
   const gate=stop?` disabled title="${esc(why)}"`:"";
-  const version=state==="maintained"?b.packVersion:b.coreFileVersion;
-  const verHtml=state==="missing"?""
-    :`<span class="bepver mono" title="${esc(state==="maintained"
-        ?T("bepinex.row.version.pack.title"):T("bepinex.row.version.file.title"))}">`+
-      `${esc(version||T("bepinex.row.version.unknown"))}</span>`;
-  let cls,pill,msg,acts="";
-  if(state==="missing"){
-    cls="grey"; pill=T("bepinex.row.pill.missing"); msg=T("bepinex.row.state.missing");
-    acts=`<button class="btn btn-ember btn-sm" id="bepInstall"${gate}>${esc(T("bepinex.row.action.install"))}</button>`;
-  }else if(state==="maintained"){
-    /* "maintained" is only the marker on disk: it says BakaLoader wrote this pack, not that
-       it is still watching it. Whether it watches is the Upkeep switch, and the pill has to
-       answer the same question as the sentence beside it. A green "Looked after" over
-       "BakaLoader put this pack in and is not looking after it" is the row arguing with
-       itself, so the switch-off case gets a wording of its own.
-       Looked after also means the next restart window moves it, so there is nothing to
-       press; with the switch off the same install keeps the button, and that is the whole
-       of what the switch changes about this hall. */
-    if(b.maintained){
-      cls="green"; pill=T("bepinex.row.pill.maintained"); msg=T("bepinex.row.state.maintained");
-    }else{
-      cls="blue"; pill=T("bepinex.row.pill.manual"); msg=T("bepinex.row.state.manual");
-      acts=`<button class="btn btn-ghost btn-sm" id="bepUpdate"${gate}>${esc(T("bepinex.row.action.update"))}</button>`;
-    }
-  }else{
-    cls="amber"; pill=T("bepinex.row.pill.outside"); msg=T("bepinex.row.state.outside");
-    acts=`<button class="btn btn-ghost btn-sm" id="bepUpdate"${gate}>${esc(T("bepinex.row.action.update"))}</button>`;
-  }
+  const shown=bepInExRowVersion(b);
+  const verHtml=state==="missing"||!shown?""
+    :`<span class="bepver mono" title="${esc(T(shown.titleId))}">`+
+      `${esc(shown.version||T("bepinex.row.version.unknown"))}</span>`;
+  const words=bepInExRowWords(b);
+  const cls=words.tone;
+  const pill=T(words.pillId);
+  const msg=T(words.msgId,bepInExRowParams(b));
+  const acts=bepInExRowActions(b).map(name=>{
+    const el2=BEPINEX_ACTION_ELEMENTS[name];
+    return `<button class="btn ${el2.cls} btn-sm" id="${el2.id}"${gate}>`+
+      `${esc(T(BEPINEX_ACTION_WORDS[name].labelId))}</button>`;
+  }).join("");
   /* The notes under the row, each a whole sentence of its own. A deferred update is one
      of them rather than a state: it is true of an install that is otherwise perfectly
      current, and the condition bar says the same thing where a host is not on this hall. */
   const notes=[];
-  if(state==="maintained"&&b.maintained) notes.push(T("bepinex.row.note.next_check"));
+  if(state==="maintained") notes.push(T("bepinex.row.note.next_check"));
+  /* An install BakaLoader did not make, with the host's yes already given: the next
+     scheduled restart is what brings it into care, and that is the one thing this row
+     could not say before. The switch that decides it is a press away, beside the note. */
+  const broughtIn=bepInExBroughtInAtRestart(b);
+  if(broughtIn) notes.push(T("bepinex.row.note.brought_in"));
   if(b.updateWaiting) notes.push(T("bepinex.row.note.waiting",{version:b.updateWaiting}));
   const shared=(Array.isArray(b.sharingProfiles)?b.sharingProfiles.filter(Boolean):[]).length;
   if(shared>1) notes.push(T("bepinex.row.note.shared",{count:shared-1}));
   if(busy) notes.push(T("bepinex.row.note.busy"));
+  /* Why the last restart window wrote nothing. It STANDS: that window ran with nobody at
+     the keyboard, so this note and the condition bar are the only places it is ever said.
+     The install was left exactly as it was in every one of these cases, which is what the
+     title of the condition carries. */
+  const leftAlone=bepInExLeftAloneText(b.lastUnattended);
+  if(leftAlone) notes.push(leftAlone);
   /* A pack unpacked under plugins is a wrong install rather than a state of the right
      one, so it gets its own line and its own offer. */
   const wrong=b.wrongLocationFolder
@@ -3384,19 +3693,76 @@ function renderBepInExRow(){
     `<span class="bepacts">${acts}</span>`+
     `</div>`+
     (notes.length?`<div class="bepnotes">${notes.map(n=>`<div>${esc(n)}</div>`).join("")}</div>`:"")+
+    (broughtIn
+      ?`<div class="bepnotes"><button class="btn btn-ghost btn-sm" id="bepUpkeep">`+
+       `${esc(T("bepinex.notice.already_maintained.action"))}</button></div>`
+      :"")+
     wrong;
   el.querySelector("#bepInstall")?.addEventListener("click",()=>bepInExInstallFlow(null));
   el.querySelector("#bepUpdate")?.addEventListener("click",()=>bepInExUpdateFlow());
+  el.querySelector("#bepRepair")?.addEventListener("click",()=>bepInExRepairFlow());
+  el.querySelector("#bepRestore")?.addEventListener("click",()=>bepInExRestoreFlow());
   el.querySelector("#bepRemove")?.addEventListener("click",()=>bepInExRemoveFlow());
+  el.querySelector("#bepUpkeep")?.addEventListener("click",()=>openUpkeepBepInEx());
 }
 /* The row's own Install. With BakaLoader looking after the loader there is nothing to
    choose and the pinned pack goes straight in; with the switch off the host is asked
-   which address to fetch from, because that is exactly what the switch hands back. */
+   which address to fetch from, because that is exactly what the switch hands back.
+   Over an install BakaLoader did not make the question comes first either way: the host
+   side refuses that write without the answer, so a press with no confirm behind it is a
+   button that fails rather than one that works. */
 function bepInExInstallFlow(after){
-  if(S.bepinex&&S.bepinex.maintained){bepInExWrite("bepinex.install",{},after);return;}
+  if(bepInExNeedsConfirm(S.bepinex,"install")){bepInExTakeoverModal("bepinex.install",after);return;}
+  if(S.bepinex&&bepInExConsent(S.bepinex)){bepInExWrite("bepinex.install",{},after);return;}
   bepInExOfferModal(after);
 }
-function bepInExUpdateFlow(){bepInExWrite("bepinex.update",{},null);}
+function bepInExUpdateFlow(){
+  if(bepInExNeedsConfirm(S.bepinex,"update")){bepInExTakeoverModal("bepinex.update",null);return;}
+  bepInExWrite("bepinex.update",{},null);
+}
+/* Files the note lists that an antivirus or a tidy-up took away. Nothing here is somebody
+   else's work, so it is put back without a question; what is worth asking about is only
+   ever writing over files BakaLoader did not lay down. */
+function bepInExRepairFlow(){
+  if(bepInExNeedsConfirm(S.bepinex,"repair")){bepInExTakeoverModal("bepinex.update",null);return;}
+  bepInExWrite("bepinex.update",{},null);
+}
+/* Puts the newest saved copy back. Named in the question, because a host who cannot tell
+   which copy is about to be put back cannot answer it. */
+function bepInExRestoreFlow(){
+  const b=S.bepinex;
+  const stamp=(b&&b.newestBackup)||"";
+  /* The loader this host had before BakaLoader ever wrote here. It is kept for good while
+     the three ordinary backups roll over, so it is nearly always a DIFFERENT copy from the
+     newest one, and it is the only one that can answer "put my own BepInEx back". Offered
+     by name, with the version it holds, because a stamp on its own says nothing about
+     which of the two a host is choosing. */
+  const own=(b&&b.adoptionBackup)||"";
+  const ownIsNewest=own&&own===stamp;
+  confirmModal(()=>T("bepinex.dialog.restore.title"),
+    ()=>`<div class="mbody-note">${esc(T("bepinex.dialog.restore.body",{stamp}))}</div>`+
+      ((own&&!ownIsNewest)
+        ?`<div class="mbody-note" style="margin-top:10px">${esc(
+            (b.adoptionBackupCoreVersion
+              ?T("bepinex.dialog.restore.own.version",
+                 {version:b.adoptionBackupCoreVersion,stamp:own})
+              :T("bepinex.dialog.restore.own",{stamp:own})))}</div>`+
+         `<button class="btn btn-ghost btn-sm" id="mBepOwn" style="margin-top:6px">`+
+         `${esc(T("bepinex.dialog.restore.own.ok"))}</button>`
+        :""),
+    ()=>T("bepinex.dialog.restore.ok"),
+    ()=>bepInExWrite("bepinex.restore",{},null));
+}
+/* The other copy, reached from the dialog that named it. Delegated on the background for
+   the same reason the Upkeep link is: a language switch rebuilds the dialog from its thunk
+   and takes any handler on the button with it. */
+$("#modalBg").addEventListener("click",e=>{
+  if(e.target&&e.target.id==="mBepOwn"){
+    const own=(S.bepinex&&S.bepinex.adoptionBackup)||"";
+    modalClose();
+    if(own) bepInExWrite("bepinex.restore",{stamp:own},null);
+  }
+});
 function bepInExRemoveFlow(){
   confirmModal(()=>T("bepinex.dialog.remove.title"),
     ()=>`<div class="mbody-note">${esc(T("bepinex.dialog.remove.body"))}</div>`+
@@ -3427,6 +3793,61 @@ function bepInExOfferModal(after){
   const inp=document.querySelector("#mBepUrl");
   if(inp) setTimeout(()=>{inp.focus();inp.select();},40);
 }
+/* The pack the host side has already named, or null when nothing has named one yet. A
+   deferred update knows it, and so does a window that declined to write one; a plain
+   install that has never met Thunderstore does not, and the question says so rather than
+   leaving a gap where a version should be. */
+function bepInExPackOffered(b){
+  if(!b) return null;
+  if(b.updateWaiting) return b.updateWaiting;
+  const last=b.lastUnattended;
+  return (last&&last.version)||null;
+}
+/* SECTION O. Every manual write over an install BakaLoader did not make asks first, and
+   the question names what is on disk, what would be written, what is kept and where the
+   copy of everything replaced goes. It is the page half of a clamp, not page manners: the
+   host side refuses this write without the answers that go out with it, so a confirm that
+   is skipped is a button that does nothing.
+   With the host's yes already given, the already-looked-after sentence rides along with
+   the press they actually make, and the switch behind it is one click away. */
+function bepInExTakeoverModal(method,after){
+  const b=S.bepinex;
+  const installed=(b&&b.coreVersion)||T("bepinex.row.version.unknown");
+  const pack=bepInExPackOffered(b);
+  const extraId=bepInExConfirmExtraId(b);
+  confirmModal(()=>T("bepinex.dialog.takeover.title"),
+    ()=>(extraId?`<div class="mwarn">⚠ ${esc(T(extraId))}</div>`:"")+
+      `<div class="mbody-note">${esc(pack
+        ?T("bepinex.dialog.takeover.body",{installed,pack})
+        :T("bepinex.dialog.takeover.body.unknown_pack",{installed}))}</div>`+
+      `<div class="mbody-note" style="margin-top:10px">${esc(T("bepinex.dialog.first.kept"))}</div>`+
+      (bepInExConsent(b)
+        ?`<div class="mbody-note" style="margin-top:10px">${esc(T("bepinex.notice.already_maintained"))}</div>`+
+         `<button class="btn btn-ghost btn-sm" id="mBepUpkeep" style="margin-top:6px">`+
+         `${esc(T("bepinex.notice.already_maintained.action"))}</button>`
+        :""),
+    ()=>T("bepinex.dialog.takeover.ok"),
+    ()=>bepInExWrite(method,bepInExWriteFlags(b),after));
+}
+/* The switch, reached from the dialog that named it. Delegated on the background rather
+   than wired to the button, because a language switch rebuilds the dialog from its thunk
+   and takes any handler on the button with it. */
+$("#modalBg").addEventListener("click",e=>{
+  if(e.target&&e.target.id==="mBepUpkeep"){modalClose();openUpkeepBepInEx();}
+});
+/* SECTION F. The one answer the page cannot work out in advance: the pack version and the
+   loader's own file version are different numbers (pack 5.4.2350 ships BepInEx 5.4.23.5),
+   so which of the two is newer is the host side's to say. It says so by refusing, naming
+   both numbers, and this is the question that refusal turns into. Nothing goes out again
+   without an explicit yes to moving the install backwards. */
+function bepInExDowngradeModal(method,params,after,slots){
+  const installed=(slots&&slots.installed)||T("bepinex.row.version.unknown");
+  const pack=(slots&&slots.pack)||T("bepinex.row.version.unknown");
+  confirmModal(()=>T("bepinex.dialog.downgrade.title"),
+    ()=>`<div class="mwarn">⚠ ${esc(T("bepinex.dialog.downgrade.body",{installed,pack}))}</div>`,
+    ()=>T("bepinex.dialog.downgrade.ok"),
+    ()=>bepInExWrite(method,Object.assign({},params,{allowDowngrade:true}),after));
+}
 /* The one path every host-driven write goes through, so the row's buttons, the add
    flow's question and the empty state cannot drift apart. The answer IS the new status,
    so nothing asks again afterwards, and `after` is the add that was waiting on it. */
@@ -3439,20 +3860,85 @@ async function bepInExWrite(method,params,after){
   const r=await rpc(method,params||{});
   BEP_WRITING=false;
   bepInExProgressDone();
-  if(r===FAIL){renderBepInExRow();return;}
+  if(r===FAIL){
+    renderBepInExRow();
+    /* The refusal that is a question rather than an ending. rpc() has already said the
+       sentence; this is the offer that goes with it, and it only ever follows a press the
+       host made, so it is not a dialog opening by itself. */
+    if(window.BAKA_ERR_ID==="bepinex.newer"&&method!=="bepinex.remove")
+      bepInExDowngradeModal(method,params,after,window.BAKA_ERR_PARAMS);
+    return;
+  }
   S.bepinex=r;
   renderMods();
   if(method==="bepinex.remove"){
     toast("ᛒ "+T("bepinex.row.removed.toast"));
     logLine("ok","[BepInEx] the misplaced pack folder under plugins was removed");
   }else{
-    const v=r.packVersion||r.coreFileVersion;
-    toast("ᛒ "+(v?T("bepinex.row.installed.toast",{version:v})
-                      :T("bepinex.row.installed.noversion.toast")));
-    logLine("ok","[BepInEx] "+(method==="bepinex.update"?"updated":"installed")+
-      (r.packVersion?" · pack "+r.packVersion:""));
+    bepInExReportWrite(method,r);
   }
   if(typeof after==="function") after();
+}
+/* SECTION H. What that press actually came to, said in the words it came to it in. Five
+   endings look identical in the status fields, because all five end with an install that
+   is there, and only the result tells them apart: a write that moved the version, a write
+   that put a saved copy back, a pack that was already the current one, an adoption that
+   found the files already right and wrote nothing but the note, and a refusal the host
+   side made on a rule. Saying "BepInEx is in place" for all five is the shape of the
+   defect this replaces. */
+function bepInExReportWrite(method,r){
+  const res=r&&r.result;
+  const what=method==="bepinex.update"?"updated":method==="bepinex.restore"?"restored":"installed";
+  /* SECTION D. The question and the Upkeep note both say the host's doorstop_config.ini is
+     kept, and it is, on every write but the one where the pack changes the loader
+     generation: that file cannot drive the new loader, so the pack's goes in and theirs
+     goes into the backup with everything else. Said here, after the fact, because that is
+     the one time the promise on the way in did not hold. */
+  if(res&&res.doorstopReplaced){
+    toast("ᛒ "+T("bepinex.row.doorstop_replaced.toast"));
+    logLine("info","[BepInEx] the new pack needed its own doorstop_config.ini, "+
+      "so yours went into the backup");
+  }
+  if(res&&res.skipped){
+    const said=bepInExReasonText(res.skipReason,{
+      version:res.version||"",installed:res.previousCoreVersion||"",pack:res.version||"",
+      when:res.eligibleUtc?new Date(res.eligibleUtc).toLocaleString(LOC()):"",
+    });
+    toast("ᛒ "+(said||T("bepinex.reason.write_failed")));
+    logLine("info","[BepInEx] nothing was written · "+(res.skipReason||"no reason given"));
+    return;
+  }
+  if(res&&res.restored){
+    toast("ᛒ "+T("bepinex.row.restored.toast",{stamp:res.backupStamp||""}));
+    logLine("ok","[BepInEx] the saved copy was put back"+
+      (res.backupStamp?" from "+res.backupStamp:""));
+    return;
+  }
+  const version=(res&&(res.version||res.coreVersion))||r.packVersion||r.coreFileVersion;
+  if(res&&res.alreadyCurrent&&res.nothingChanged){
+    toast("ᛒ "+T("bepinex.row.already_current.toast",{version:version||""}));
+    logLine("info","[BepInEx] already on the current pack, so nothing was written");
+    return;
+  }
+  if(res&&res.adopted&&res.nothingChanged){
+    toast("ᛒ "+T("bepinex.row.adopted.toast",{version:version||""}));
+    logLine("ok","[BepInEx] the install here already matched the pack, so only the note was written");
+    return;
+  }
+  /* The full sentence needs BOTH numbers and somewhere the old files went. A first install
+     replaced nothing, so it keeps the wording it always had rather than reading
+     "went from  to 5.4.2350". */
+  const from=res&&res.previousVersion;
+  const folder=res&&res.backupPath;
+  if(from&&folder&&version){
+    toast("ᛒ "+T("bepinex.row.updated.toast",{from,to:version,folder}));
+    logLine("ok","[BepInEx] "+what+" · "+from+" to "+version+
+      ", the files it replaced are in "+folder);
+    return;
+  }
+  toast("ᛒ "+(version?T("bepinex.row.installed.toast",{version})
+                     :T("bepinex.row.installed.noversion.toast")));
+  logLine("ok","[BepInEx] "+what+(version?" · pack "+version:""));
 }
 /* The write's own progress, in the dialog layer where the question was asked. The bar is
    the one the server update and the bulk mod update already draw, so a host who has seen
@@ -3520,27 +4006,56 @@ async function refreshBepInEx(){
    anything. Both buttons write both preferences in one save, so a window closed on the
    way past cannot leave the question answered with nothing chosen. Dismissed rather than
    answered, nothing is written and nothing starts, exactly as the launch guard behaves;
-   it is not put again in this run, so the next press of Start simply starts. */
+   it is not put again in this run, so the next press of Start simply starts.
+   SECTION A and B. The same answer is written wherever it is given, and the wording comes
+   from bepInExQuestion, which is what keeps this dialog and the standing row that carries
+   the same question saying the same thing. */
+function bepInExAnswerConsent(yes,where){
+  rpc("userprefs.save",{prefs:{BepInExMaintained:yes,BepInExMaintenanceAsked:true}}).then(r=>{
+    if(r===FAIL) return;
+    BEP_ANSWERED=true;
+    try{setT("tBepMaint",yes);}catch(_){}
+    if(S.bepinex){
+      S.bepinex.maintained=yes;
+      S.bepinex.maintenanceAsked=true;
+      S.bepinex.consent=yes;
+      S.bepinex.consentUnanswered=false;
+      renderMods();
+    }
+    clearCondition("bepinexAsk");
+    toast("ᛒ "+(yes?T("bepinex.dialog.first.yes.toast"):T("bepinex.dialog.first.no.toast")));
+    logLine("info","[BepInEx] maintenance "+(yes?"on":"off")+", answered "+where);
+  });
+}
+/* The body of the question, the same three or four lines wherever it is put. Handed back
+   as an array of sentences so the dialog can lay them out and the condition bar, which
+   draws one line, can join them. */
+function bepInExQuestionLines(b){
+  const q=bepInExQuestion(b);
+  const lines=[T(q.bodyId,q.params)];
+  if(q.keptId) lines.push(T(q.keptId));
+  if(q.noId) lines.push(T(q.noId));
+  return lines;
+}
 function bepInExFirstStartModal(onDone){
   const answer=yes=>{
     modalClose();
-    rpc("userprefs.save",{prefs:{BepInExMaintained:yes,BepInExMaintenanceAsked:true}}).then(r=>{
-      if(r===FAIL) return;
-      try{setT("tBepMaint",yes);}catch(_){}
-      if(S.bepinex){S.bepinex.maintained=yes;S.bepinex.maintenanceAsked=true;renderMods();}
-      toast("ᛒ "+(yes?T("bepinex.dialog.first.yes.toast"):T("bepinex.dialog.first.no.toast")));
-      logLine("info","[BepInEx] maintenance "+(yes?"on":"off")+", asked at the first start");
-    });
+    bepInExAnswerConsent(yes,"at the first start");
     if(typeof onDone==="function") onDone();
   };
-  const m=modalOpen(
-    `<div class="mtitle">${esc(T("bepinex.dialog.first.title"))}</div>`+
-    `<div class="mbody"><div style="margin-bottom:8px">${esc(T("bepinex.dialog.first.body"))}</div>`+
-    `<div class="subval">${esc(T("bepinex.dialog.first.note"))}</div></div>`+
-    `<div class="mbtns">`+
-    `<button class="btn btn-ember btn-sm" id="mBepYes">${esc(T("bepinex.dialog.first.yes"))}</button>`+
-    `<button class="btn btn-ghost btn-sm" id="mBepNo">${esc(T("bepinex.dialog.first.no"))}</button>`+
-    `</div>`,()=>bepInExFirstStartModal(onDone));
+  const draw=()=>{
+    const q=bepInExQuestion(S.bepinex);
+    return `<div class="mtitle">${esc(T(q.titleId))}</div>`+
+      `<div class="mbody">`+
+      bepInExQuestionLines(S.bepinex).map(line=>
+        `<div style="margin-bottom:8px">${esc(line)}</div>`).join("")+
+      `<div class="subval">${esc(T("bepinex.dialog.first.note"))}</div></div>`+
+      `<div class="mbtns">`+
+      `<button class="btn btn-ember btn-sm" id="mBepYes">${esc(T("bepinex.dialog.first.yes"))}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="mBepNo">${esc(T("bepinex.dialog.first.no"))}</button>`+
+      `</div>`;
+  };
+  const m=modalOpen(draw(),()=>bepInExFirstStartModal(onDone));
   m.querySelector("#mBepYes").addEventListener("click",()=>answer(true));
   m.querySelector("#mBepNo").addEventListener("click",()=>answer(false));
   /* "Yes, look after it" is the default, so it is the one the keyboard lands on. */
@@ -3551,7 +4066,7 @@ function bepInExFirstStartModal(onDone){
    not come back yet, is never put a question there is no truthful wording for. */
 function bepInExAskOnce(next){
   const b=S.bepinex;
-  if(!b||b.maintenanceAsked||BEP_ASKED_THIS_RUN){next();return;}
+  if(!b||!bepInExUnanswered(b)||BEP_ASKED_THIS_RUN){next();return;}
   BEP_ASKED_THIS_RUN=true;
   /* The host pressed Start. This is a question in front of that press, not a gate on it,
      so waving it away with Escape or a click on the backdrop leaves the setting exactly
@@ -4850,7 +5365,11 @@ async function initUpkeep(){
     setT("tCheckUpd",up.CheckForUpdates);
     setT("tAutoUpdApp",up.AutoUpdateBakaLoader);
     setT("tAutoUpdMods",up.AutoUpdateMods);
-    setT("tBepMaint",up.BepInExMaintained);
+    /* SECTION A. The state on show is the EFFECTIVE one: the preference defaults to on, so
+       on its own it draws a switch that says BakaLoader is looking after BepInEx on behalf
+       of a host who has never been asked. Until they answer, this reads off. */
+    BEP_ANSWERED=!!up.BepInExMaintenanceAsked;
+    setT("tBepMaint",!!up.BepInExMaintained&&BEP_ANSWERED);
     setT("tUseHexium",up.UseHexiumSource);
     /* The Mods header names the sites a scan reads, so it has to be told on load and not
        only when the switch moves under a host's finger. */
@@ -4884,7 +5403,15 @@ async function initUpkeep(){
     loaded=true;
   }
   /* the generic [data-t] handler already flipped .on before these fire, so just persist */
-  const save=()=>loaded&&rpc("userprefs.save",{prefs:{CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),BepInExMaintained:swOn("tBepMaint"),UseHexiumSource:swOn("tUseHexium"),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")}});
+  /* The loader switch is the one setting on this card that is not simply on or off. Until
+     the host has answered, the preference behind it says yes on nobody's behalf and the
+     switch is drawn off, so sending it would write that drawn state back as an answer: a
+     click on Start with Windows would decide the BepInEx question. It goes into the save
+     only once there IS an answer, and the switch's own handler is what first puts one
+     there. Moving it by hand counts as answering, which the host side records as well. */
+  const bepSaved=()=>BEP_ANSWERED
+    ?{BepInExMaintained:swOn("tBepMaint"),BepInExMaintenanceAsked:true}:{};
+  const save=()=>loaded&&rpc("userprefs.save",{prefs:Object.assign({CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),UseHexiumSource:swOn("tUseHexium"),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")},bepSaved())});
   $("#tCheckUpd").addEventListener("click",()=>{
     save();
     /* the standing update row says whether it installs itself, and with checking off it
@@ -4904,9 +5431,20 @@ async function initUpkeep(){
   /* The loader's own switch. The row above the mods table reads it, so it is redrawn
      here rather than left to say the opposite of the switch until the next status. */
   $("#tBepMaint")?.addEventListener("click",()=>{
+    /* Moving it by hand IS the answer, so the flag goes up before the save rather than
+       after it: the save is what carries the answer, and without this the first click on
+       this switch would be the one save that leaves it out. */
+    BEP_ANSWERED=true;
     save();
     const on=swOn("tBepMaint");
-    if(S.bepinex){S.bepinex.maintained=on;S.bepinex.maintenanceAsked=true;renderMods();}
+    if(S.bepinex){
+      S.bepinex.maintained=on;
+      S.bepinex.maintenanceAsked=true;
+      S.bepinex.consent=on;
+      S.bepinex.consentUnanswered=false;
+      renderMods();
+    }
+    clearCondition("bepinexAsk");
     toast("ᛒ "+(on?T("hearth.upkeep.bepinex.on.toast"):T("hearth.upkeep.bepinex.off.toast")));
   });
   /* The second site goes on or off here and nowhere else. Off, BakaLoader opens no
@@ -5673,11 +6211,37 @@ window.BakaPreview={
   /* The row and its two dialogs. The row rides on bepinex.status, which nothing in a
      browser can answer, so a walk hands the DTO straight in; the bar rides on the
      event the host posts while it writes, and the dialogs are opened by name. */
-  bepinexStatus:dto=>{S.bepinex=dto||null;renderMods();return S.bepinex;},
+  bepinexStatus:dto=>{S.bepinex=dto||null;BEP_ASK_ROW_HIDDEN=false;renderMods();return S.bepinex;},
   bepinexProgress:d=>{BEP_WRITING=true;onBepInExProgress(d);return BEP_PROGRESS;},
   bepinexProgressEnd:()=>{BEP_WRITING=false;bepInExProgressDone();return BEP_PROG_OPEN;},
   bepinexFirstDialog:()=>{BEP_ASKED_THIS_RUN=false;bepInExAskOnce(()=>{});return modalIsOpen();},
   bepinexOffer:()=>{bepInExOfferModal(null);return modalIsOpen();},
+  /* The three dialogs section O and F put in front of a write, opened by name. None of
+     them can be reached in a browser by pressing the button they belong to: the press
+     calls the host, and a browser has no host to refuse it.
+       bepinexTakeover   the question every write over somebody else's install asks
+       bepinexDowngrade  what the "this one is newer" refusal turns into
+       bepinexRestore    the question the saved-copy button asks
+     Each answers whether a dialog is open, so a walk can photograph it and know it did. */
+  bepinexTakeover:()=>{bepInExTakeoverModal("bepinex.update",null);return modalIsOpen();},
+  bepinexDowngrade:slots=>{
+    bepInExDowngradeModal("bepinex.update",{},null,slots||{installed:"5.4.23.5",pack:"5.4.2200"});
+    return modalIsOpen();
+  },
+  bepinexRestore:()=>{bepInExRestoreFlow();return modalIsOpen();},
+  /* What that press came to, drawn as the toast and the log line the real answer draws.
+     The reply shape is the host's: the status fields plus the `result` object the three
+     write calls answer with. */
+  bepinexWrote:reply=>{bepInExReportWrite("bepinex.update",reply||{});return true;},
+  /* Which state, pill, sentences, buttons and question shape one answer comes to, without
+     drawing anything. The selftest tables the same functions; this is how a walk asks the
+     LIVE page the same question about the DTO it just handed in. */
+  bepinexChoice:dto=>{
+    const b=dto||S.bepinex;
+    return {state:bepInExState(b),words:bepInExRowWords(b),actions:bepInExRowActions(b),
+      flags:bepInExWriteFlags(b),question:bepInExQuestion(b),consent:bepInExConsent(b),
+      unanswered:bepInExUnanswered(b)};
+  },
   /* The window-state seam. The host pushes win.state; nothing in a browser can, so a
      walk drives this instead and the button swaps its glyph exactly as it does live. */
   winState:maximized=>{
@@ -5821,9 +6385,14 @@ function renderUpdatePill(){
    the same sentence in the hall the host would be looking at anyway. An app update needs
    a press. Putting the self-resolving row over the one that wants an answer would be
    swapping which of the two is hidden, for the worse. */
+/* bepinexNoMods and bepinexMissingFiles sit with the failures: a world that is up with its
+   whole mod set doing nothing, and a loader file an antivirus took, are both things that
+   are wrong right now. bepinexAsk sits with the notices, because nothing is wrong: it is
+   a question, and it is the one row that answers itself the moment it is answered. */
 const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
-                       "bepinexNotLoaded","serverUpdate","pluginFailure","bepinexNotice",
-                       "appUpdate","bepinexWaiting","modUpdates","restartPending"];
+  "bepinexNoMods","bepinexNotLoaded","bepinexMissingFiles","serverUpdate","pluginFailure",
+  "bepinexNotice","appUpdate","bepinexAsk","bepinexLeftAlone","bepinexWaiting",
+  "bepinexWritten","modUpdates","restartPending"];
 const CONDITIONS=new Map();
 function setCondition(kind,cond){
   if(!cond) CONDITIONS.delete(kind); else CONDITIONS.set(kind,cond);
@@ -6046,9 +6615,212 @@ function conditionRestartPending(on,sig){
    already learns facts about that install. Both are absent on an older host, which
    simply means neither row is ever raised. */
 function conditionBepInEx(bep,status){
-  if(!bep){clearCondition("bepinexWaiting");clearCondition("bepinexNotLoaded");return;}
+  if(!bep){
+    clearCondition("bepinexWaiting");clearCondition("bepinexNotLoaded");
+    clearCondition("bepinexLeftAlone");clearCondition("bepinexWritten");return;
+  }
   conditionBepInExWaiting(bep.updateWaiting,bep.waitingProfiles);
   conditionBepInExNotLoaded(!!bep.notLoaded&&(status==="Running"));
+  conditionBepInExLeftAlone(bep.lastUnattended);
+  conditionBepInExWritten(bep.lastUnattended);
+  /* The three that are facts about the INSTALL rather than about this session ride on
+     bepinex.status instead, and that answer is the one the row is drawn from. */
+  renderBepInExConditions();
+}
+/* ---- the rows that ride on the install's own answer ----
+   Raised from the row's render, so they follow the first status read, every push after it
+   and a profile switch. They read S.bepinex because the status event carries facts the
+   server.status block deliberately does not: that event is posted often, and reading the
+   note back means hashing the core. */
+function renderBepInExConditions(){
+  const b=S.bepinex;
+  conditionBepInExAsk(b);
+  conditionBepInExMissingFiles(b);
+  conditionBepInExNoMods(b);
+}
+/* SECTION A. The question, standing, for a host who never presses Start. The modal is put
+   in front of that press and a host who has no reason to press it would otherwise never be
+   asked at all, while the preference behind the switch says yes on their behalf. Same
+   question, same two answers, same words: both read bepInExQuestion.
+   Dismissing it is not an answer either. It goes for this run and comes back with the next
+   status read, which is what the modal's Escape does as well. */
+function conditionBepInExAsk(b){
+  if(!b||!bepInExUnanswered(b)||BEP_ASK_ROW_HIDDEN){clearCondition("bepinexAsk");return;}
+  const q=bepInExQuestion(b);
+  setCondition("bepinexAsk",{sev:"info",title:T(q.titleId),
+    msg:bepInExQuestionLines(b).join(" "),
+    actionsHtml:
+      `<button class="btn btn-ember btn-sm" id="cbBepAskYes">${esc(T("bepinex.dialog.first.yes"))}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="cbBepAskNo">${esc(T("bepinex.dialog.first.no"))}</button>`,
+    again:()=>conditionBepInExAsk(b),
+    wire:bar=>{
+      bar.querySelector("#cbBepAskYes").addEventListener("click",bepInExAskYes);
+      bar.querySelector("#cbBepAskNo").addEventListener("click",bepInExAskNo);
+    },
+    onDismiss:()=>{BEP_ASK_ROW_HIDDEN=true;},
+  });
+}
+/* The two answers that row carries, and the repair its sibling offers, as named handlers
+   rather than as braced arrows full of statements. A click runs long after the catalog has
+   landed, but the first-frame gate reads a braced arrow inside a function body as ordinary
+   code, so a `;goPage("mods");` in there would make it believe the repaint travels through
+   goPage into the roster, and a hall dropped out of the repaint would pass in silence. */
+function bepInExAskYes(){clearCondition("bepinexAsk");bepInExAnswerConsent(true,"on the Hearth");}
+function bepInExAskNo(){clearCondition("bepinexAsk");bepInExAnswerConsent(false,"on the Hearth");}
+function bepInExRepairFromCondition(){
+  clearCondition("bepinexMissingFiles");
+  goPage("mods");
+  bepInExRepairFlow();
+}
+/* SECTION J. A note that lists files which are not on disk any more. winhttp.dll is the
+   one that goes, it is the whole loading mechanism on Windows, and an antivirus taking it
+   is the ordinary way an install that looks complete stops loading anything. The file is
+   named so a host has something to look for in their antivirus log. */
+function conditionBepInExMissingFiles(b){
+  const gone=bepInExMissingFileList(b);
+  if(!gone.length){clearCondition("bepinexMissingFiles");return;}
+  setCondition("bepinexMissingFiles",{sev:"warn",
+    title:T("bepinex.condition.missing_files.title"),
+    msg:T("bepinex.row.state.incomplete",{file:gone[0]}),
+    actionsHtml:`<button class="btn btn-ember btn-sm" id="cbBepRepair">${esc(T("bepinex.row.action.repair"))}</button>`,
+    again:()=>conditionBepInExMissingFiles(b),
+    wire:bar=>bar.querySelector("#cbBepRepair")
+      .addEventListener("click",bepInExRepairFromCondition),
+  });
+}
+/* SECTION J, last bullet. A world is up, the loader under it is gone or will not load, and
+   this profile has mods: everything in that list is doing nothing and the people on the
+   server are playing something other than what the host set up. Raised here from what the
+   page already holds rather than from a field on server.status, because reading that fact
+   host side means hashing the core on an event that is posted every few seconds.
+   The mod count is the one the hall read. Before a scan there is no list, so nothing is
+   claimed: a row that says "with no mods" about a folder nobody has looked in would be a
+   guess dressed as a fact. */
+function conditionBepInExNoMods(b){
+  const state=bepInExState(b);
+  const broken=state==="missing"||state==="damaged"||state==="unrecognised"||state==="incomplete";
+  const mods=Array.isArray(S.mods)?S.mods.length:0;
+  if(!broken||!mods||S.state?.status!=="Running"){clearCondition("bepinexNoMods");return;}
+  setCondition("bepinexNoMods",{sev:"warn",title:T("bepinex.condition.no_mods.title"),
+    msg:T("bepinex.condition.no_mods.body",{count:mods}),
+    again:()=>conditionBepInExNoMods(b),
+  });
+}
+/* A write that happened at a restart, said once. The host was not at the keyboard for it,
+   so there was no toast and very often no window to put one in: the fact stands here until
+   they close it, and closing it is what tells the host side to stop sending it. */
+/* The moment of the write this page has already written into the chronicle, so a repaint
+   (and the language switch, which replays every condition) does not write it again. */
+let BEP_WRITE_CHRONICLED=null;
+function conditionBepInExWritten(last){
+  if(last&&last.outcome==="healed"){conditionBepInExHealed(last);return;}
+  if(!last||last.outcome!=="written"||!last.toVersion){clearCondition("bepinexWritten");return;}
+  /* A write nobody watched gets its line in the chronicle here, because the place that
+     writes one for a press is the press itself and there was no press. */
+  if(last.whenUtc&&last.whenUtc!==BEP_WRITE_CHRONICLED){
+    BEP_WRITE_CHRONICLED=last.whenUtc;
+    logLine("ok","[BepInEx] moved to "+last.toVersion+" at a restart"+
+      (last.fromVersion?" (was "+last.fromVersion+")":"")+
+      (last.backupStamp?", replaced files kept in "+last.backupStamp:""));
+  }
+  /* The full sentence needs BOTH numbers and a stamp. A first install replaced nothing and
+     has no stamp, and a core whose assembly carries no readable version leaves the first
+     number unknown: neither of those may render "went from  to 5.4.2350". */
+  const folder=(last.backupStamp&&last.fromVersion)
+    ?"BepInEx\\"+(last.backupFolder||"")+"\\"+last.backupStamp
+    :null;
+  setCondition("bepinexWritten",{sev:"info",title:T("bepinex.notice.written.title"),
+    msg:folder
+      ?T("bepinex.notice.written.body",
+          {from:last.fromVersion||"",to:last.toVersion,folder})
+      :T("bepinex.notice.written.body.first",{to:last.toVersion}),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbBepSeen">${esc(T("common.button.close"))}</button>`,
+    again:()=>conditionBepInExWritten(last),
+    wire:bar=>bar.querySelector("#cbBepSeen").addEventListener("click",()=>{
+      clearCondition("bepinexWritten");
+      if(Native.available) Native.call("bepinex.noticeSeen",{});
+    }),
+  });
+}
+/* SECTION L, said in its own words. A write that stopped part way is UNDONE rather than
+   finished: the copy from before it goes back, and the loader the host ends up with is the
+   one they already had. It shares this condition's slot because there is only ever one last
+   unattended outcome, but it may not share its sentences. Drawn with the written wording it
+   read "BepInEx 5.4.23.5 was put in at a restart. Anything it replaced is kept in the
+   BepInEx backups folder beside the install." Nothing was put in, nothing was updated, and
+   a heal over a core that had already gone replaces nothing, so the folder that sentence
+   sent the host to is not even there. */
+function conditionBepInExHealed(last){
+  if(last.whenUtc&&last.whenUtc!==BEP_WRITE_CHRONICLED){
+    BEP_WRITE_CHRONICLED=last.whenUtc;
+    logLine("warn","[BepInEx] a write here did not finish, so the copy from before it was put back");
+  }
+  setCondition("bepinexWritten",{sev:"info",title:T("bepinex.notice.healed.title"),
+    msg:T("bepinex.notice.healed.body"),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbBepSeen">${esc(T("common.button.close"))}</button>`,
+    again:()=>conditionBepInExHealed(last),
+    wire:bar=>bar.querySelector("#cbBepSeen").addEventListener("click",()=>{
+      clearCondition("bepinexWritten");
+      if(Native.available) Native.call("bepinex.noticeSeen",{});
+    }),
+  });
+}
+/* What the host can usefully press on that row, per reason, or nothing at all. The two
+   halves of the key are spelled differently on purpose because the reasons are: a window
+   that DECLINED on a rule names a skip reason (soak), and one that THREW names the refusal
+   it threw (bepinex.locked). Both arrive in the same field.
+   A pack still soaking or a pre-release is a write the host may simply take now. A locked
+   file is a write worth trying again once whatever held the file has let go. The other
+   three are decisions that are the host's to make rather than a press away, so the offer
+   there is the page that explains them. Everything else gets no button, because a button
+   that cannot help is worse than none. */
+const BEPINEX_LEFT_ALONE_ACTS={
+  soak:             {act:"write", labelId:"bepinex.condition.left_alone.install"},
+  prerelease:       {act:"write", labelId:"bepinex.condition.left_alone.install"},
+  "bepinex.locked": {act:"write", labelId:"bepinex.condition.left_alone.retry"},
+  drivenElsewhere:  {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
+  foreign:          {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
+  newer:            {act:"wiki",  labelId:"bepinex.condition.not_loaded.action"},
+};
+function bepInExLeftAloneAct(last){
+  return (last&&last.reason&&BEPINEX_LEFT_ALONE_ACTS[last.reason])||null;
+}
+/* Take the pack now, by hand. It goes through the same flow the row's own button does, so
+   a write over an install BakaLoader did not make still asks before it writes. */
+function bepInExLeftAloneWrite(){
+  clearCondition("bepinexLeftAlone");
+  if(Native.available) Native.call("bepinex.noticeSeen",{});
+  goPage("mods");
+  bepInExUpdateFlow();
+}
+function bepInExLeftAloneWiki(){
+  if(Native.available) Native.call("shell.openUrl",{target:"bepinex-wiki"});
+}
+/* A restart window that wrote nothing, and why. It stands until the host has dealt with
+   it, because that window ran with nobody watching: one line in the log is not telling
+   anybody. Every reason ends the same way, which is that the install is exactly as it was,
+   and each sentence says so rather than leaving the host to assume it. */
+function conditionBepInExLeftAlone(last){
+  const msg=bepInExLeftAloneText(last);
+  if(!msg){clearCondition("bepinexLeftAlone");return;}
+  const offer=bepInExLeftAloneAct(last);
+  setCondition("bepinexLeftAlone",{sev:last.outcome==="failed"?"warn":"info",
+    title:T("bepinex.condition.left_alone.title"),
+    msg,
+    actionsHtml:
+      (offer?`<button class="btn btn-ember btn-sm" id="cbBepLeftAct">${esc(T(offer.labelId))}</button>`:"")+
+      `<button class="btn btn-ghost btn-sm" id="cbBepLeft">${esc(T("common.button.close"))}</button>`,
+    again:()=>conditionBepInExLeftAlone(last),
+    wire:bar=>{
+      bar.querySelector("#cbBepLeftAct")?.addEventListener("click",
+        offer&&offer.act==="wiki"?bepInExLeftAloneWiki:bepInExLeftAloneWrite);
+      bar.querySelector("#cbBepLeft").addEventListener("click",bepInExLeftAloneSeen);
+    },
+  });
+}
+function bepInExLeftAloneSeen(){
+  clearCondition("bepinexLeftAlone");
+  if(Native.available) Native.call("bepinex.noticeSeen",{});
 }
 /* A newer pack that cannot go in yet. Every server on one install loads one BepInEx
    through the same junctions and hard links, so the write waits for all of them rather
@@ -10598,13 +11370,18 @@ if(!Native.available){
 
   /* The loader row, preview side. An install BakaLoader looks after is the state a
      host sees most, so it is the one the browser preview opens on; the walk drives
-     the other three through BakaPreview.bepinexStatus. */
+     every other one through BakaPreview.bepinexStatus. */
   S.bepinex={installed:true,baseFolder:"D:\\steamlibrary\\Valheim dedicated server",
     maintainedByBakaLoader:true,packVersion:"5.4.2350",coreFileVersion:"5.4.23.5",
+    coreVersion:"5.4.23.5",loaderFilePresent:true,
     package:"denikson-BepInExPack_Valheim",source:"thunderstore",
-    installedUtc:null,wrongLocationFolder:null,
+    installedUtc:null,wrongLocationFolder:null,doorstopTarget:null,drivenElsewhere:false,
+    foreignCore:false,damaged:false,unrecognised:false,missingFiles:[],drifted:false,
+    newestBackup:null,interruptedWrite:false,coreIsJunction:false,
     sharingProfiles:["Final Sunset","Midgard Test"],runningProfiles:[],
-    maintained:true,maintenanceAsked:true,updateWaiting:null,busy:false};
+    maintained:true,maintenanceAsked:true,consent:true,consentUnanswered:false,
+    result:null,lastUnattended:null,updateWaiting:null,busy:false};
+  BEP_ANSWERED=true;
   renderBepInExRow();
 
   /* multi-server chip strip preview */

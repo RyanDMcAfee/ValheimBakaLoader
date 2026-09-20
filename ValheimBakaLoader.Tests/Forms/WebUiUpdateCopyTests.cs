@@ -274,9 +274,19 @@ namespace ValheimBakaLoader.Tests.Forms
             // name or id is on the server. The other three endings it reads (a refusal, an
             // answer with nothing in it, a shape this version has not met) are worded from
             // entries the sweep already owns.
+            // 192 after the loader learned to say what a write actually came to. Five
+            // endings used to share one "BepInEx is in place": a write that moved the
+            // version and named where the files it replaced went, a saved copy put back, a
+            // pack that was already the current one, and an adoption that wrote nothing but
+            // the note now each have their own.
+            // 193 after the one promise on the way in that the write cannot always keep: the
+            // host's doorstop_config.ini is kept, unless the new pack changes the loader
+            // generation, and then theirs goes into the backup. The question and the Upkeep
+            // note now carry that exception, and this is the sentence that says afterwards
+            // that it was the write it happened on.
             // The number is the gate: a new toast whose rune is spelled at the call site
             // and nowhere else lands here.
-            Assert.Equal(188, marked.Count);
+            Assert.Equal(193, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

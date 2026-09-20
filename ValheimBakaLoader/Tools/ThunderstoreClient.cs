@@ -274,6 +274,10 @@ namespace ValheimBakaLoader.Tools
                         Namespace = body.Value<string>("namespace") ?? author,
                         Name = body.Value<string>("name") ?? modName,
                         Latest = latest.ToObject<ThunderstorePackageVersion>(),
+                        // Left null when the answer did not carry the field at all, because
+                        // "nobody said" and "it said no" are different answers and the
+                        // BepInEx window only holds back on the second one.
+                        IsDeprecated = body.Value<bool?>("is_deprecated"),
                     },
                 };
             }
@@ -660,6 +664,7 @@ namespace ValheimBakaLoader.Tools
                     Namespace = pkg.Owner,
                     Name = pkg.Name,
                     Latest = pkg.Versions[0],
+                    IsDeprecated = pkg.IsDeprecated,
                 };
 
                 packagesRead++;
@@ -715,6 +720,14 @@ namespace ValheimBakaLoader.Tools
 
             [JsonProperty("versions")]
             public List<ThunderstorePackageVersion> Versions { get; set; }
+
+            /// <summary>
+            /// Whether the community listing marks this package deprecated. The listing is
+            /// also where a per-version file_size comes from, which is what the BepInEx
+            /// installer reads this whole entry for when the package page leaves it out.
+            /// </summary>
+            [JsonProperty("is_deprecated")]
+            public bool? IsDeprecated { get; set; }
         }
     }
 }

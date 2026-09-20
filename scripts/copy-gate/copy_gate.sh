@@ -236,5 +236,21 @@ else
   echo "  the kick reply table is missing: $KICK_SELFTEST"; fail=1
 fi
 
+echo "== 15. what the loader row says about an install, read rather than assumed =="
+# The same rule as 13 and 14, on a surface where the wrong sentence is worse than a wrong
+# toast: the row used to draw nine different shapes of install as "Outside" with an Update
+# button that wrote without a word. The table drives the REAL state and wording choosers out
+# of app.js over every shape the host's answer can arrive in, and the rules beside it keep
+# every id a chooser can name in the catalog, keep a press that has to be asked about from
+# going out with nothing to say for itself, and keep every refusal the host side can throw
+# paired with a sentence, so no raw message from the machine reaches a toast.
+BEPINEX_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/bepinex_row_selftest.js"
+if [ -f "$BEPINEX_SELFTEST" ]; then
+  if out=$(node "$BEPINEX_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the loader row table is missing: $BEPINEX_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

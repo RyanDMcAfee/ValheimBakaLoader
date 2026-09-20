@@ -203,6 +203,16 @@ namespace ValheimBakaLoader.Forms
         // server on this install was up. Null when nothing is waiting. It is per install
         // rather than per profile, because so is BepInEx.
         private string _bepInExUpdateWaiting;
+
+        // How the last unattended BepInEx write ended: what it moved, or why it did not
+        // happen. Per install for the same reason, and it STANDS: a write inside a restart
+        // window happens with nobody at the keyboard, so there is no toast to show it and very
+        // often no window open to show one in. Held here, it travels on every BepInEx answer,
+        // the load-time one included, until a page has drawn it and says so through
+        // bepinex.noticeSeen. One field rather than two, because it is the LAST outcome that
+        // is worth standing: a refusal after a write replaces it, and so does the other way
+        // round.
+        private BepInExUnattendedOutcome _bepInExLastUnattended;
         private bool _requiredModInstallInProgress;
         private bool _maxPlayersSaveInProgress;
         private bool _atlasRenderInProgress;
@@ -1130,14 +1140,16 @@ namespace ValheimBakaLoader.Forms
                 return mods?.Count(m => m.UpdateAvailable) ?? 0;
             };
 
+            // BepInEx first, and on a hook of its own: the loader is what the mods load under,
+            // so moving it after them would leave one restart where new plugins meet an old
+            // core. It is not inside ApplyModUpdates because that one is only reached when
+            // this restart was raised BECAUSE mod updates were pending, and the loader has to
+            // be looked at on every restart that has a window whatever mod auto update is set
+            // to. The two settings answer different questions.
+            session.Server.ApplyLoaderUpdate = () => ApplyBepInExUpdateAsync(profile);
+
             session.Server.ApplyModUpdates = async () =>
             {
-                // BepInEx first, and on its own switch: the loader is what the mods load
-                // under, so moving it after them would leave one restart where new plugins
-                // meet an old core. It runs whether or not mod auto-update is on, because
-                // the two settings answer different questions.
-                await ApplyBepInExUpdateAsync(profile);
-
                 if (!UserPrefsProvider.LoadPreferences().AutoUpdateMods) return;
 
                 var mods = await ScanModsWithLatestAsync(profile);
@@ -1846,10 +1858,143 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// How the last BepInEx write that nobody watched ended: it wrote, it declined on a
+        /// rule, or it threw.
+        /// <para>
+        /// A write inside a restart window is the one write with no audience, so the ordinary
+        /// answer to "what happened" (the reply to the call that asked for it) does not exist.
+        /// This is what stands in its place, and it stands until it has been drawn: a host who
+        /// closes the app at midnight and opens it at nine still reads what their loader did.
+        /// </para>
+        /// </summary>
+        private sealed class BepInExUnattendedOutcome
+        {
+            /// <summary>written | healed | refused | failed.</summary>
+            public string Outcome { get; init; }
+
+            public string Profile { get; init; }
+
+            /// <summary>What was here before the write, for an outcome that wrote.</summary>
+            public string FromVersion { get; init; }
+
+            /// <summary>What is here now.</summary>
+            public string ToVersion { get; init; }
+
+            public string BackupStamp { get; init; }
+
+            /// <summary>
+            /// A <see cref="Tools.BepInExSkipReason"/> when the write declined on a rule, or
+            /// the id of the refusal it threw when it failed outright.
+            /// </summary>
+            public string Reason { get; init; }
+
+            /// <summary>The pack that was on offer, when the reason is about a pack.</summary>
+            public string Version { get; init; }
+
+            /// <summary>
+            /// The loader version on disk here. The "this one is newer than the pack" sentence
+            /// names both numbers, and it is the only sentence that can.
+            /// </summary>
+            public string InstalledVersion { get; init; }
+
+            /// <summary>When a pack that is still soaking becomes old enough to go in.</summary>
+            public DateTime? EligibleUtc { get; init; }
+
+            public DateTime WhenUtc { get; init; }
+        }
+
+        /// <summary>Records what an unattended write came to, for the next page that asks.</summary>
+        private void RecordUnattendedBepInEx(string profile, Tools.BepInExInstallResult result)
+        {
+            if (result == null) return;
+
+            if (result.Skipped)
+            {
+                _bepInExLastUnattended = new BepInExUnattendedOutcome
+                {
+                    Outcome = "refused",
+                    Profile = profile,
+                    Reason = result.SkipReason,
+                    Version = result.Version,
+                    InstalledVersion = result.PreviousCoreVersion,
+                    EligibleUtc = result.EligibleUtc,
+                    WhenUtc = DateTime.UtcNow,
+                };
+                return;
+            }
+
+            // An adoption that found the pack already there moved no bytes. Saying "BepInEx
+            // went from 5.4.2350 to 5.4.2350" would be a made-up sentence, and a refusal an
+            // earlier window raised has stopped being true either way.
+            if (result.NothingChanged)
+            {
+                _bepInExLastUnattended = null;
+                return;
+            }
+
+            // A write that was UNDONE, which is the only shape a restore takes when nobody
+            // pressed anything: a write stopped part way, and the copy from before it went
+            // back. Nothing was updated and nothing was put in, so it cannot ride on the
+            // written wording. It used to, and what a host read was "BepInEx 5.4.23.5 was put
+            // in at a restart. Anything it replaced is kept in the BepInEx backups folder",
+            // pointing at a folder that a heal over a missing core does not even leave behind.
+            if (result.Healed || result.Restored)
+            {
+                _bepInExLastUnattended = new BepInExUnattendedOutcome
+                {
+                    Outcome = "healed",
+                    Profile = profile,
+                    ToVersion = result.CoreVersion,
+                    BackupStamp = result.BackupStamp,
+                    WhenUtc = DateTime.UtcNow,
+                };
+                return;
+            }
+
+            _bepInExLastUnattended = new BepInExUnattendedOutcome
+            {
+                Outcome = "written",
+                Profile = profile,
+                FromVersion = result.PreviousVersion,
+                ToVersion = result.Version,
+                BackupStamp = result.BackupStamp,
+                WhenUtc = DateTime.UtcNow,
+            };
+        }
+
+        /// <summary>
+        /// Records that an unattended write threw, with the id the page words it from.
+        /// <para>
+        /// A Thunderstore that did not answer is deliberately not one of these. Nothing was
+        /// written and nothing is wrong with the install: it was a bad minute on the internet,
+        /// the next restart asks again, and a standing row about it would be a thing the host
+        /// has to read and dismiss for every hiccup between here and Sweden.
+        /// </para>
+        /// </summary>
+        private void RecordUnattendedBepInExFailure(string profile, Exception error)
+        {
+            var id = HostFacingException.IdOf(error) ?? "bepinex.writeFailed";
+            if (string.Equals(id, "bepinex.offline", StringComparison.Ordinal)) return;
+
+            _bepInExLastUnattended = new BepInExUnattendedOutcome
+            {
+                Outcome = "failed",
+                Profile = profile,
+                Reason = id,
+                WhenUtc = DateTime.UtcNow,
+            };
+        }
+
+        /// <summary>
         /// The row the Mods page draws above the table, and the payload of bepinex.changed.
         /// One shape for both, so a page that read the event never has to ask again.
         /// </summary>
-        private object BuildBepInExDto()
+        /// <param name="result">
+        /// What the write this answer is about came to, when there is one: the reply to a call
+        /// that asked for a write, and the event an unattended write posts when it is over.
+        /// Null on a plain status read, where there is no one write to report.
+        /// </param>
+        private object BuildBepInExDto(Tools.BepInExInstallResult result = null)
         {
             var prefs = UserPrefsProvider.LoadPreferences();
             var baseExe = GetCanonicalBaseServerExe();
@@ -1873,12 +2018,122 @@ namespace ValheimBakaLoader.Forms
                 runningProfiles = status.RunningProfiles,
                 maintained = prefs.BepInExMaintained,
                 maintenanceAsked = prefs.BepInExMaintenanceAsked,
+                // The switch and the answer read together, which is the only reading that is
+                // true before the host has said anything: the preference defaults to on, so on
+                // its own it says yes on behalf of somebody who has not spoken.
+                consent = Tools.BepInExConsent.Effective(
+                    prefs.BepInExMaintained, prefs.BepInExMaintenanceAsked),
+                consentUnanswered = Tools.BepInExConsent.Unanswered(prefs.BepInExMaintenanceAsked),
+                // What the host's own doorstop_config.ini names, and whether that is this
+                // install's BepInEx or another tool's profile folder.
+                doorstopTarget = status.DoorstopTarget,
+                drivenElsewhere = status.DrivenElsewhere,
+                // A core that is not a 5.x BepInEx at all.
+                foreignCore = status.ForeignCore,
+                // The assembly's own version whenever there is one, note or no note.
+                coreVersion = status.CoreVersion,
+                // winhttp.dll beside the server, which is half of what "installed" means, and
+                // the name of that file so the row can say which one has gone without the page
+                // carrying a copy of it. The other half is the core assembly itself, which is
+                // the plain "there is a loader here" fact whether or not it has a readable
+                // version and whether or not the loose file beside it is still there.
+                loaderFilePresent = status.LoaderFilePresent,
+                loaderFileName = Tools.BepInExService.LoaderFileName,
+                coreFilePresent = status.CoreFilePresent,
+                // BepInEx/core is there and BepInEx.dll is not, and whether what IS there is
+                // something BakaLoader did not put down.
+                damaged = status.Damaged,
+                unrecognised = status.Unrecognised,
+                // Files the note lists that are gone: antivirus is the usual cause.
+                missingFiles = status.MissingFiles,
+                // Somebody else wrote over the files the note recorded, so BakaLoader gave up
+                // ownership rather than taking the install back off them.
+                drifted = status.Drifted,
+                // The backup the restore would put back, and whether a write was interrupted.
+                newestBackup = status.NewestBackup,
+                // The backup holding the loader this host had before BakaLoader, which is the
+                // one copy of it there will ever be and the one the keep-three rule steps over.
+                adoptionBackup = status.AdoptionBackup,
+                adoptionBackupCoreVersion = status.AdoptionBackupCoreVersion,
+                interruptedWrite = status.InterruptedWrite,
+                coreIsJunction = status.CoreIsJunction,
                 // Set by the unattended window when it found a newer pack and could not write
                 // it because another server on this install was up.
                 updateWaiting = _bepInExUpdateWaiting,
                 // True for ALL four writers, so the row never draws its buttons enabled while
                 // an unattended window or a start is writing the very files they would write.
                 busy = BepInExWriteInProgress,
+                // What the write this answer is about came to. Null on a plain status read.
+                // The three states a write can leave an install in (written to, adopted with
+                // nothing changed, left alone) all look the same in the fields above, because
+                // all three end with an install that is there: this is the only thing that
+                // tells them apart.
+                result = result == null ? null : new
+                {
+                    skipped = result.Skipped,
+                    skipReason = result.SkipReason,
+                    nothingChanged = result.NothingChanged,
+                    alreadyCurrent = result.AlreadyCurrent,
+                    adopted = result.Adopted,
+                    replaced = result.Replaced,
+                    restored = result.Restored,
+                    healed = result.Healed,
+                    doorstopReplaced = result.DoorstopReplaced,
+                    version = result.Version,
+                    previousVersion = result.PreviousVersion,
+                    previousPackVersion = result.PreviousPackVersion,
+                    previousCoreVersion = result.PreviousCoreVersion,
+                    coreVersion = result.CoreVersion,
+                    backupStamp = result.BackupStamp,
+                    backupPath = BepInExBackupPath(status.BaseFolder, result.BackupStamp),
+                    isolatedInstallsLinked = result.IsolatedInstallsLinked,
+                    profileLoaderFilesRefreshed = result.ProfileLoaderFilesRefreshed,
+                    eligibleUtc = result.EligibleUtc,
+                },
+                // How the last write nobody watched ended. It stands until a page has drawn
+                // it, so a host who opens the window the next morning still reads it.
+                lastUnattended = BepInExUnattendedDto(),
+            };
+        }
+
+        /// <summary>
+        /// Where the files a write replaced went, as a path a host can paste into Explorer, or
+        /// null when that write replaced nothing.
+        /// </summary>
+        private static string BepInExBackupPath(string baseFolder, string stamp)
+        {
+            if (string.IsNullOrWhiteSpace(baseFolder) || string.IsNullOrWhiteSpace(stamp)) return null;
+
+            try { return Path.Combine(baseFolder, "BepInEx", Tools.BepInExService.BackupDirName, stamp); }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// How the last unattended write ended, as the page reads it, or null when there has
+        /// not been one. A refused or failed one always carries <c>leftAsItWas</c>: every
+        /// reason on that path ends with the install untouched, and that is the half a host
+        /// most needs to be told.
+        /// </summary>
+        private object BepInExUnattendedDto()
+        {
+            var last = _bepInExLastUnattended;
+            return last == null ? null : new
+            {
+                outcome = last.Outcome,
+                profile = last.Profile,
+                fromVersion = last.FromVersion,
+                toVersion = last.ToVersion,
+                backupStamp = last.BackupStamp,
+                backupFolder = Tools.BepInExService.BackupDirName,
+                reason = last.Reason,
+                version = last.Version,
+                installedVersion = last.InstalledVersion,
+                eligibleUtc = last.EligibleUtc,
+                // A heal is not one of these either: it MOVED files, it just moved them back.
+                // The row that carries "the install was left exactly as it was" is for the
+                // window that declined or threw.
+                leftAsItWas = last.Outcome != "written" && last.Outcome != "healed",
+                whenUtc = last.WhenUtc,
             };
         }
 
@@ -1905,10 +2160,17 @@ namespace ValheimBakaLoader.Forms
             });
         }
 
-        /// <summary>Tells every page the BepInEx answer has changed, and what it changed to.</summary>
-        private void PostBepInExChanged()
+        /// <summary>
+        /// Tells every page the BepInEx answer has changed, and what it changed to.
+        /// </summary>
+        /// <param name="result">
+        /// What the write that changed it came to, when this push follows one. An unattended
+        /// write has no reply to carry it, so the event is where the page reads it, and it is
+        /// the same object the three write calls answer with.
+        /// </param>
+        private void PostBepInExChanged(Tools.BepInExInstallResult result = null)
         {
-            try { PostEvent("bepinex.changed", BuildBepInExDto()); }
+            try { PostEvent("bepinex.changed", BuildBepInExDto(result)); }
             catch (Exception e) { AppLogger.Debug("Could not post bepinex.changed: {0}", e.Message); }
         }
 
@@ -1917,7 +2179,22 @@ namespace ValheimBakaLoader.Forms
         /// already-looked-after notice, the progress events and the changed event, so
         /// bepinex.install and bepinex.update cannot drift apart.
         /// </summary>
-        private async Task<object> WriteBepInExAsync(string url, bool update)
+        /// <summary>
+        /// The answers a page has already collected from the host, read off the call. Each one
+        /// is a refusal the service makes on its own unless it is told the host was shown what
+        /// it would cost and said yes; a page that forgets to ask simply gets the refusal.
+        /// </summary>
+        private static Tools.BepInExWriteOptions BepInExOptionsFrom(JObject call) => new()
+        {
+            AllowDowngrade = call?.Value<bool?>("allowDowngrade") == true,
+            OverUnrecognised = call?.Value<bool?>("overUnrecognised") == true,
+            OverOutside = call?.Value<bool?>("overOutside") == true,
+            OverDrivenElsewhere = call?.Value<bool?>("overDrivenElsewhere") == true,
+            OverForeign = call?.Value<bool?>("overForeign") == true,
+        };
+
+        private async Task<object> WriteBepInExAsync(
+            string url, bool update, Tools.BepInExWriteOptions options = null)
         {
             if (!TryBeginBepInExWrite()) throw BepInExBusy();
 
@@ -1925,8 +2202,11 @@ namespace ValheimBakaLoader.Forms
             {
                 // While BakaLoader is looking after BepInEx, the source is BakaLoader's to
                 // choose. A host who hands it another one is told where the setting is rather
-                // than having their link quietly ignored or quietly obeyed.
-                if (!string.IsNullOrWhiteSpace(url) && UserPrefsProvider.LoadPreferences().BepInExMaintained)
+                // than having their link quietly ignored or quietly obeyed. Read through the
+                // consent rule: a host who has not been asked yet is not being looked after.
+                var writePrefs = UserPrefsProvider.LoadPreferences();
+                if (!string.IsNullOrWhiteSpace(url) && Tools.BepInExConsent.Effective(
+                        writePrefs.BepInExMaintained, writePrefs.BepInExMaintenanceAsked))
                     throw new HostFacingException("bepinex.alreadyMaintained",
                         "BepInEx is already looked after by BakaLoader.");
 
@@ -1938,12 +2218,18 @@ namespace ValheimBakaLoader.Forms
                 var installs = LiveInstalls();
 
                 var result = update
-                    ? await BepInEx.UpdateAsync(baseExe, installs, progress)
-                    : await BepInEx.InstallAsync(baseExe, url, installs, progress);
+                    ? await BepInEx.UpdateAsync(baseExe, installs, progress, options: options)
+                    : await BepInEx.InstallAsync(baseExe, url, installs, progress, options: options);
 
                 RecordBepInExInstall(ActiveProfileName, result);
                 _bepInExUpdateWaiting = null;
-                return BuildBepInExDto();
+
+                // A press answers whatever an earlier window raised. The host is looking at
+                // the reply, so an outcome still standing about the same install would be a
+                // second telling of something they have just dealt with.
+                if (!result.Skipped) _bepInExLastUnattended = null;
+
+                return BuildBepInExDto(result);
             }
             finally
             {
@@ -1956,6 +2242,11 @@ namespace ValheimBakaLoader.Forms
         private void RecordBepInExInstall(string profile, Tools.BepInExInstallResult result)
         {
             if (result == null || !result.Installed) return;
+
+            // A write that was refused and a write that found the pack already in place both
+            // answer "installed", because the install IS there. Neither of them moved a
+            // version, and a journal entry saying one did would be a made-up line.
+            if (result.Skipped || result.NothingChanged) return;
 
             try
             {
@@ -2020,15 +2311,25 @@ namespace ValheimBakaLoader.Forms
             try
             {
                 var waiting = _bepInExUpdateWaiting;
+                var statePrefs = UserPrefsProvider.LoadPreferences();
                 return new
                 {
-                    maintained = UserPrefsProvider.LoadPreferences().BepInExMaintained,
+                    maintained = statePrefs.BepInExMaintained,
+                    // The switch and the answer together: unanswered is its own state and is
+                    // not a yes, so the conditions that speak for BakaLoader read this one.
+                    consent = Tools.BepInExConsent.Effective(
+                        statePrefs.BepInExMaintained, statePrefs.BepInExMaintenanceAsked),
+                    consentUnanswered = Tools.BepInExConsent.Unanswered(statePrefs.BepInExMaintenanceAsked),
                     updateWaiting = waiting,
                     waitingProfiles = waiting == null
                         ? Array.Empty<string>()
                         : Tools.BepInExService.ProfilesBlockingWrite(GetCanonicalBaseServerExe(), KnownInstalls())
                             .ToArray(),
                     notLoaded = BepInExDidNotLoad(session),
+                    // How the last write nobody watched ended. Read straight off what this
+                    // window is holding, so it costs this event nothing: it touches no install
+                    // and asks the service nothing.
+                    lastUnattended = BepInExUnattendedDto(),
                 };
             }
             catch (Exception e)
@@ -2055,12 +2356,19 @@ namespace ValheimBakaLoader.Forms
                 var installs = LiveInstalls()
                     .Where(i => !string.Equals(i.ProfileName, profile, StringComparison.OrdinalIgnoreCase));
 
+                // A write that did not finish is finished here, before anything else looks at
+                // the install: the window is the one moment this server is down.
+                HealInterruptedBepInExWrite(baseExe, installs);
+
                 var status = BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), installs);
                 var latest = await BepInEx.LatestVersionAsync(status.Package);
 
                 var others = Tools.BepInExService.ProfilesBlockingWrite(baseExe, installs).Count > 0;
                 var decision = Tools.BepInExUnattended.Decide(
-                    prefs.BepInExMaintained, status.Installed, status.PackVersion, latest, others);
+                    Tools.BepInExConsent.Effective(prefs.BepInExMaintained, prefs.BepInExMaintenanceAsked),
+                    status.Installed, status.PackVersion, latest, others,
+                    status.DrivenElsewhere, status.ForeignCore, status.Drifted, status.Unrecognised,
+                    status.MissingFiles.Count > 0);
 
                 if (decision == Tools.BepInExUnattendedAction.Skip)
                 {
@@ -2076,6 +2384,8 @@ namespace ValheimBakaLoader.Forms
                     PostBepInExChanged();
                     return;
                 }
+
+                Tools.BepInExInstallResult windowResult = null;
 
                 // The one write slot. A host pressing Install or Update on the row right now
                 // is writing the same BepInEx/core, and an unattended window does not queue
@@ -2098,24 +2408,89 @@ namespace ValheimBakaLoader.Forms
                     // way, but a button that cannot work should not look like one that can.
                     PostBepInExChanged();
 
-                    var result = await BepInEx.UpdateAsync(baseExe, installs);
+                    var result = await BepInEx.UpdateAsync(baseExe, installs,
+                        options: Tools.BepInExWriteOptions.Window);
+                    windowResult = result;
                     RecordBepInExInstall(profile, result);
+                    RecordUnattendedBepInEx(profile, result);
                     _bepInExUpdateWaiting = null;
-                    Logger.Information("BepInEx moved to {0} for profile {1} at the restart window.",
-                        result.Version, profile);
+
+                    if (result.Skipped)
+                        Logger.Information(
+                            "BepInEx for profile {0} was left as it was at the restart window ({1}).",
+                            profile, result.SkipReason);
+                    else if (result.NothingChanged)
+                        Logger.Information(
+                            "BepInEx for profile {0} already held the current pack at the restart window.",
+                            profile);
+                    else
+                        Logger.Information(
+                            "BepInEx for profile {0} went from {1} to {2} at the restart window; what it "
+                            + "replaced is in BepInEx\\{3}\\{4}.",
+                            profile, result.PreviousVersion ?? "nothing", result.Version,
+                            Tools.BepInExService.BackupDirName,
+                            result.BackupStamp ?? "(nothing was replaced)");
                 }
                 finally
                 {
                     EndBepInExWrite();
                 }
 
-                PostBepInExChanged();
+                // The same object the three write calls answer with, on the event the page
+                // already listens to. An unattended write has no reply of its own, so without
+                // this a page that was open through it learns only that something changed.
+                PostBepInExChanged(windowResult);
             }
             catch (Exception e)
             {
                 // A restart must still happen. The world coming back up matters more than the
-                // loader being a version behind, and the row says what did not land.
+                // loader being a version behind. The warning alone is not telling anybody
+                // though, so the reason stands on the row until somebody has read it.
                 AppLogger.Warning("The unattended BepInEx step did not run: {0}", e.Message);
+                RecordUnattendedBepInExFailure(profile, e);
+                PostBepInExChanged();
+            }
+        }
+
+        /// <summary>
+        /// Finishes a BepInEx write that did not finish, and tells the host once that it did.
+        /// <para>
+        /// The mark a write leaves is only ever left by a write that stopped somewhere, and the
+        /// one place stopping costs anything is the single rename between the old core going
+        /// into the backup and the new one coming in. Asked here rather than inside the
+        /// service's status read, so the repair happens under the one write slot every other
+        /// writer holds.
+        /// </para>
+        /// </summary>
+        private void HealInterruptedBepInExWrite(
+            string baseExe, IEnumerable<Tools.BepInExProfileInstall> installs)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(baseExe)) return;
+
+                var status = BepInEx.Status(baseExe, null, installs);
+                if (!status.InterruptedWrite) return;
+
+                if (!TryBeginBepInExWrite()) return;
+
+                Tools.BepInExInstallResult result;
+                try { result = BepInEx.HealInterruptedWrite(baseExe, installs); }
+                finally { EndBepInExWrite(); }
+
+                if (result == null) return;
+
+                Logger.Information(
+                    "A BepInEx write here did not finish, so the copy from before it was put back.");
+
+                // Nobody watched this either: it runs before a start and inside a window.
+                RecordUnattendedBepInEx(null, result);
+                PostBepInExChanged();
+            }
+            catch (Exception e)
+            {
+                // A repair that will not run is not a reason to stop a start or a restart.
+                AppLogger.Warning("A BepInEx write could not be finished: {0}", e.Message);
             }
         }
 
@@ -2133,7 +2508,13 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private void PrepareBepInExForStart(string profile, string exePath)
         {
-            if (!UserPrefsProvider.LoadPreferences().BepInExMaintained) return;
+            // The switch and the answer together. A host upgrading from 1.1.x has the switch on
+            // by default and has not been asked anything yet, and a profile that auto-starts
+            // never reaches the question at all: reading the preference alone would put a
+            // loader in on their behalf before they had a chance to say no.
+            var startPrefs = UserPrefsProvider.LoadPreferences();
+            if (!Tools.BepInExConsent.Effective(
+                    startPrefs.BepInExMaintained, startPrefs.BepInExMaintenanceAsked)) return;
 
             // The base this profile's loader really lives in, resolved from the profile's own
             // preferences rather than from the path: an isolated install cannot say which of
@@ -2141,7 +2522,32 @@ namespace ValheimBakaLoader.Forms
             var baseExe = GetCanonicalBaseServerExe(profile);
             if (string.IsNullOrWhiteSpace(baseExe)) baseExe = exePath;
 
-            if (BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), LiveInstalls()).Installed) return;
+            // A write that did not finish is finished before a start reads the install: this
+            // server is down right now, which is the only time the files are free.
+            HealInterruptedBepInExWrite(baseExe, LiveInstalls());
+
+            var startStatus = BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), LiveInstalls());
+            if (startStatus.Installed) return;
+
+            // A core somebody else put here is never written over by a start. The row explains
+            // it and the manual install asks first; a server coming up is not the place to make
+            // that decision on the host's behalf.
+            //
+            // The last clause is the one that covers the ordinary case rather than the odd
+            // ones. An install with no trusted note whose winhttp.dll an antivirus has taken
+            // answers Installed false, so a start used to walk straight past the three checks
+            // above and write a fresh pack over a core the host had put there themselves. What
+            // the question promised was adoption at the next SCHEDULED RESTART, which is the
+            // window: the whole install is down for it, every file it replaces goes into a
+            // backup first, and the row says it is coming. A start is not that.
+            if (startStatus.Unrecognised || startStatus.DrivenElsewhere || startStatus.ForeignCore
+                || (startStatus.CoreFilePresent && !startStatus.MaintainedByBakaLoader))
+            {
+                AppLogger.Information(
+                    "BepInEx was left as it is for the start of {0}: there is an install here BakaLoader "
+                    + "did not make.", profile);
+                return;
+            }
 
             // The one write slot, and the only path that WAITS for it. A host who pressed
             // Install on the row a moment ago is writing the very files this start needs, and
@@ -2149,6 +2555,8 @@ namespace ValheimBakaLoader.Forms
             // The wait outlasts the download's own timeout, so it ends because the other write
             // ended rather than in the middle of it.
             if (!BeginBepInExWrite(BepInExWriteWait)) throw BepInExBusy();
+
+            Tools.BepInExInstallResult startResult = null;
 
             try
             {
@@ -2173,15 +2581,30 @@ namespace ValheimBakaLoader.Forms
                 // Install("BepInEx", ...) in PrepareCompanionPlugins, so a failure here is
                 // recorded against the BepInEx entry in CompanionPluginStatus and the launch
                 // carries on, the same as any other companion plugin that could not be placed.
-                var result = BepInEx.InstallAsync(baseExe, null, installs, progress)
-                    .GetAwaiter().GetResult();
+                try
+                {
+                    var result = BepInEx.InstallAsync(baseExe, null, installs, progress,
+                            options: Tools.BepInExWriteOptions.Window)
+                        .GetAwaiter().GetResult();
 
-                RecordBepInExInstall(profile, result);
+                    startResult = result;
+                    RecordBepInExInstall(profile, result);
+                    RecordUnattendedBepInEx(profile, result);
+                }
+                catch (Exception e)
+                {
+                    // Recorded and rethrown. The companion-plugin pass around this call is what
+                    // puts a failed loader on that profile's condition bar, and it needs the
+                    // throw to do it; the standing reason is for the Mods row, which has no
+                    // other way to learn that a start tried and could not.
+                    RecordUnattendedBepInExFailure(profile, e);
+                    throw;
+                }
             }
             finally
             {
                 EndBepInExWrite();
-                PostBepInExChanged();
+                PostBepInExChanged(startResult);
             }
         }
 
@@ -3645,7 +4068,16 @@ namespace ValheimBakaLoader.Forms
                     Apply("AutoUpdateMods", v => prefs.AutoUpdateMods = v.Value<bool>());
                     Apply("UseHexiumSource", v => prefs.UseHexiumSource = v.Value<bool>());
                     Apply("AutoUpdateBakaLoader", v => prefs.AutoUpdateBakaLoader = v.Value<bool>());
-                    Apply("BepInExMaintained", v => prefs.BepInExMaintained = v.Value<bool>());
+                    // Moving the Upkeep switch by hand IS the answer to the first-start
+                    // question, so it is recorded as one. Without this a host who found the
+                    // setting and turned it on before ever pressing Start would still count as
+                    // unanswered, and the standing question would go on being asked after they
+                    // had already given it.
+                    Apply("BepInExMaintained", v =>
+                    {
+                        prefs.BepInExMaintained = v.Value<bool>();
+                        prefs.BepInExMaintenanceAsked = true;
+                    });
                     Apply("BepInExMaintenanceAsked", v => prefs.BepInExMaintenanceAsked = v.Value<bool>());
                     Apply("StartWithWindows", v => prefs.StartWithWindows = v.Value<bool>());
                     Apply("ShareAnonymousStats", v => prefs.ShareAnonymousStats = v.Value<bool>());
@@ -5659,7 +6091,8 @@ namespace ValheimBakaLoader.Forms
                 // and the answer says where the switch is instead of failing silently.
                 if (IsBepInExPackReference(reference.Owner, reference.Name))
                 {
-                    if (bepPrefs.BepInExMaintained)
+                    if (Tools.BepInExConsent.Effective(
+                            bepPrefs.BepInExMaintained, bepPrefs.BepInExMaintenanceAsked))
                         return FailDto("BepInEx is already looked after by BakaLoader.", "alreadyMaintained");
 
                     try
@@ -5700,7 +6133,8 @@ namespace ValheimBakaLoader.Forms
                 {
                     // Maintained OFF means BakaLoader never writes BepInEx on its own. The
                     // reason is what lets the page offer the install as a question.
-                    if (!bepPrefs.BepInExMaintained)
+                    if (!Tools.BepInExConsent.Effective(
+                            bepPrefs.BepInExMaintained, bepPrefs.BepInExMaintenanceAsked))
                         return FailDto(
                             "BepInEx is not installed on this server, so there is nothing for a mod to load under.",
                             "noBepInEx");
@@ -5958,15 +6392,62 @@ namespace ValheimBakaLoader.Forms
             // every answer here is about the base install the active profile runs from, and
             // every write reaches every server on it. That is why the refusal below is a
             // refusal and not a warning.
-            RegisterRpc("bepinex.status", p => Task.FromResult<object>(BuildBepInExDto()));
+            RegisterRpc("bepinex.status", p =>
+            {
+                // A write that did not finish is finished the moment anybody asks what the
+                // state of this install is, which is the first thing the Mods page does.
+                HealInterruptedBepInExWrite(GetCanonicalBaseServerExe(), LiveInstalls());
+                return Task.FromResult<object>(BuildBepInExDto());
+            });
 
             RegisterRpc("bepinex.install", async p =>
             {
                 var url = p.Value<string>("url");
-                return await WriteBepInExAsync(url, update: false);
+                return await WriteBepInExAsync(url, update: false, options: BepInExOptionsFrom(p));
             });
 
-            RegisterRpc("bepinex.update", async p => await WriteBepInExAsync(null, update: true));
+            RegisterRpc("bepinex.update", async p =>
+                await WriteBepInExAsync(null, update: true, options: BepInExOptionsFrom(p)));
+
+            // Puts the newest backup back, or the one a stamp names. Offered on the row when
+            // there is a backup and the core is missing or will not load, which is the state an
+            // antivirus or a half-finished write leaves behind.
+            RegisterRpc("bepinex.restore", async p =>
+            {
+                if (!TryBeginBepInExWrite()) throw BepInExBusy();
+
+                Tools.BepInExInstallResult restored;
+                try
+                {
+                    var progress = new SynchronousProgress<Tools.BepInExProgress>(pr =>
+                        PostEvent("bepinex.progress",
+                            new { phase = pr.Phase, percent = pr.Percent, version = pr.Version }));
+
+                    restored = await BepInEx.RestoreAsync(GetCanonicalBaseServerExe(), LiveInstalls(),
+                        p.Value<string>("stamp"), progress);
+                }
+                finally
+                {
+                    EndBepInExWrite();
+                    PostBepInExChanged();
+                }
+
+                // Putting a backup back is the host dealing with whatever the row was saying,
+                // so an outcome an earlier window left standing about this install stops.
+                _bepInExLastUnattended = null;
+
+                return BuildBepInExDto(restored);
+            });
+
+            // The page has drawn what the last unattended write came to, so it stops travelling
+            // on every answer. It is its own call rather than a flag on the status read because
+            // a read happens on every page paint, and a read that cleared it would take the
+            // notice away before anybody had looked at it.
+            RegisterRpc("bepinex.noticeSeen", p =>
+            {
+                _bepInExLastUnattended = null;
+                return Task.FromResult<object>(BuildBepInExDto());
+            });
 
             // Only ever the mis-placed folder under plugins, never BepInEx itself: removing a
             // loader out from under an install is not something a button should be able to do.

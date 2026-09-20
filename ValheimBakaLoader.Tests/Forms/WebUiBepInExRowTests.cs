@@ -122,33 +122,63 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The three states the row can be in, and the one thing each of them offers. A
-        /// looked-after install offers nothing to press, because the next restart window is
+        /// The states the row can be in, worst first, and the one thing each of them offers.
+        /// A looked-after install offers nothing to press, because the next restart window is
         /// what moves it; the same install with the switch off keeps the button.
+        /// <para>
+        /// The three answers this was written for are still three of the rows in the table.
+        /// The others arrived with the takeover work, and the ORDER is the thing worth
+        /// pinning: several of these are true at once, only one can be drawn, and losing
+        /// winhttp.dll to an antivirus must not read as "not installed" and send a host off
+        /// to install something that is already there.
+        /// </para>
         /// </summary>
         [Fact]
         public void The_row_has_a_state_for_each_of_the_three_answers()
         {
             var state = Body("bepInExState");
             Assert.Contains("if(!b.installed) return \"missing\";", state, StringComparison.Ordinal);
-            Assert.Contains("return b.maintainedByBakaLoader?\"maintained\":\"outside\";", state, StringComparison.Ordinal);
+            Assert.Contains("if(!b.maintainedByBakaLoader) return \"outside\";", state, StringComparison.Ordinal);
+            Assert.Contains("return bepInExConsent(b)?\"maintained\":\"manual\";", state, StringComparison.Ordinal);
+
+            // worst first: a core nothing recognises, then a broken one, then a file that is
+            // gone, and only then the question of whether anything is installed at all
+            foreach (var pair in new[]
+                     {
+                         ("if(b.unrecognised) return \"unrecognised\";", "if(b.damaged) return \"damaged\";"),
+                         ("if(b.damaged) return \"damaged\";", "if(bepInExMissingFileList(b).length) return \"incomplete\";"),
+                         ("if(bepInExMissingFileList(b).length) return \"incomplete\";", "if(!b.installed) return \"missing\";"),
+                     })
+            {
+                var first = state.IndexOf(pair.Item1, StringComparison.Ordinal);
+                var second = state.IndexOf(pair.Item2, StringComparison.Ordinal);
+                Assert.True(first >= 0 && second > first,
+                    "the state order moved: " + pair.Item1 + " must be asked before " + pair.Item2);
+            }
+
+            var words = Between(AppJs(), "const BEPINEX_ROW_WORDS={", "\n};");
+            // every state the chooser can answer has a pill and a sentence of its own
+            foreach (var name in new[]
+                     {
+                         "missing", "maintained", "manual", "outside", "drifted",
+                         "elsewhere", "foreign", "unrecognised", "damaged", "incomplete",
+                     })
+                Assert.Contains(name + ":", words, StringComparison.Ordinal);
+            Assert.Contains("pillId:\"bepinex.row.pill.maintained\"", words, StringComparison.Ordinal);
+            Assert.Contains("msgId:\"bepinex.row.state.maintained\"", words, StringComparison.Ordinal);
+            Assert.Contains("pillId:\"bepinex.row.pill.manual\"", words, StringComparison.Ordinal);
+            Assert.Contains("msgId:\"bepinex.row.state.outside\"", words, StringComparison.Ordinal);
+
+            // the buttons each state offers, and the two that offer nothing to press
+            var acts = Body("bepInExRowActions");
+            Assert.Contains("if(state===\"maintained\") return [];", acts, StringComparison.Ordinal);
+            Assert.Contains("if(state===\"missing\") return [\"install\"];", acts, StringComparison.Ordinal);
+            Assert.Contains("if(state===\"incomplete\") return [\"repair\"];", acts, StringComparison.Ordinal);
+            Assert.Contains("b.newestBackup?[\"restore\",\"install\"]:[\"install\"]", acts, StringComparison.Ordinal);
+            Assert.Contains("return [\"update\"];", acts, StringComparison.Ordinal);
 
             var body = Body("renderBepInExRow");
-            // missing: the pack version is not shown, because there is none, and Install is offered
-            Assert.Contains("T(\"bepinex.row.state.missing\")", body, StringComparison.Ordinal);
-            Assert.Contains("id=\"bepInstall\"", body, StringComparison.Ordinal);
-            // maintained: the PACK version, and the note saying when it is looked at again
-            Assert.Contains("const version=state===\"maintained\"?b.packVersion:b.coreFileVersion;", body, StringComparison.Ordinal);
             Assert.Contains("T(\"bepinex.row.note.next_check\")", body, StringComparison.Ordinal);
-            // and the pill follows the switch with it, so the badge and the sentence never
-            // disagree about whether anybody is watching this install
-            Assert.Contains("cls=\"green\"; pill=T(\"bepinex.row.pill.maintained\"); msg=T(\"bepinex.row.state.maintained\");",
-                body, StringComparison.Ordinal);
-            Assert.Contains("cls=\"blue\"; pill=T(\"bepinex.row.pill.manual\"); msg=T(\"bepinex.row.state.manual\");",
-                body, StringComparison.Ordinal);
-            // outside: the loader's own file version, and an offer to move to the pack
-            Assert.Contains("T(\"bepinex.row.state.outside\")", body, StringComparison.Ordinal);
-            Assert.Contains("id=\"bepUpdate\"", body, StringComparison.Ordinal);
             // waiting, and the misplaced folder, are facts about an install rather than states
             Assert.Contains("if(b.updateWaiting) notes.push(T(\"bepinex.row.note.waiting\",{version:b.updateWaiting}));",
                 body, StringComparison.Ordinal);
@@ -164,10 +194,13 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_two_versions_are_never_said_to_be_the_same_number()
         {
-            var body = Body("renderBepInExRow");
+            var chooser = Body("bepInExRowVersion");
 
-            Assert.Contains("T(\"bepinex.row.version.pack.title\")", body, StringComparison.Ordinal);
-            Assert.Contains("T(\"bepinex.row.version.file.title\")", body, StringComparison.Ordinal);
+            Assert.Contains("titleId:\"bepinex.row.version.pack.title\"", chooser, StringComparison.Ordinal);
+            Assert.Contains("titleId:\"bepinex.row.version.file.title\"", chooser, StringComparison.Ordinal);
+            // the pack number is only ever shown for an install that has a note recording one
+            Assert.Contains("if(b.maintainedByBakaLoader&&b.packVersion)", chooser, StringComparison.Ordinal);
+            Assert.Contains("T(shown.titleId)", Body("renderBepInExRow"), StringComparison.Ordinal);
             Assert.Contains("Thunderstore pack version", Lore("bepinex.row.version.pack.title"), StringComparison.Ordinal);
             Assert.Contains("file version", Lore("bepinex.row.version.file.title"), StringComparison.Ordinal);
         }
@@ -181,16 +214,23 @@ namespace ValheimBakaLoader.Tests.Forms
         public void The_buttons_are_refused_out_loud_while_a_server_on_the_install_is_up()
         {
             var body = Body("renderBepInExRow");
+            var elements = Between(AppJs(), "const BEPINEX_ACTION_ELEMENTS={", "\n};");
 
             Assert.Contains("const stop=busy||up.length>0;", body, StringComparison.Ordinal);
             Assert.Contains("const gate=stop?` disabled title=\"${esc(why)}\"`:\"\";", body, StringComparison.Ordinal);
             Assert.Contains("T(\"bepinex.row.blocked.title\")", body, StringComparison.Ordinal);
-            foreach (var button in new[] { "id=\"bepInstall\"", "id=\"bepUpdate\"", "id=\"bepRemove\"" })
-            {
-                var at = body.IndexOf(button, StringComparison.Ordinal);
-                Assert.True(at > 0, "the row lost " + button);
-                Assert.Contains("${gate}", body.Substring(at, Math.Min(90, body.Length - at)), StringComparison.Ordinal);
-            }
+
+            // every button the row can draw comes out of the one builder, and that builder
+            // puts the gate on all of them
+            foreach (var button in new[] { "bepInstall", "bepUpdate", "bepRestore", "bepRepair" })
+                Assert.Contains("id:\"" + button + "\"", elements, StringComparison.Ordinal);
+            Assert.Contains("id=\"${el2.id}\"${gate}", body, StringComparison.Ordinal);
+
+            // and the one button that is not a loader write at all is gated the same way
+            var remove = body.IndexOf("id=\"bepRemove\"", StringComparison.Ordinal);
+            Assert.True(remove > 0, "the row lost id=\"bepRemove\"");
+            Assert.Contains("${gate}", body.Substring(remove, Math.Min(90, body.Length - remove)),
+                StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -326,13 +366,30 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal("BepInEx kept up to date by BakaLoader", Lore("hearth.upkeep.bepinex"));
 
             var upkeep = Body("initUpkeep");
-            Assert.Contains("setT(\"tBepMaint\",up.BepInExMaintained);", upkeep, StringComparison.Ordinal);
-            Assert.Contains("BepInExMaintained:swOn(\"tBepMaint\")", upkeep, StringComparison.Ordinal);
+            // The state on show is the EFFECTIVE one. The preference defaults to on, so the
+            // switch alone would draw a promise made on behalf of a host who has never been
+            // asked, and that is exactly the reading the consent rule exists to stop.
+            Assert.Contains("BEP_ANSWERED=!!up.BepInExMaintenanceAsked;", upkeep, StringComparison.Ordinal);
+            Assert.Contains("setT(\"tBepMaint\",!!up.BepInExMaintained&&BEP_ANSWERED);", upkeep, StringComparison.Ordinal);
+            // and it goes into the save only once there IS an answer: every switch on this
+            // card rides in on one save, so leaving it in would have a click on Start with
+            // Windows record an answer to the loader question
+            Assert.Contains("BepInExMaintained:swOn(\"tBepMaint\"),BepInExMaintenanceAsked:true", upkeep,
+                StringComparison.Ordinal);
+            Assert.Contains("const bepSaved=()=>BEP_ANSWERED", upkeep, StringComparison.Ordinal);
+            Assert.DoesNotContain("AutoUpdateMods:swOn(\"tAutoUpdMods\"),BepInExMaintained:", upkeep);
             Assert.Contains("$(\"#tBepMaint\")?.addEventListener(\"click\",()=>{", upkeep, StringComparison.Ordinal);
+            // moving it by hand IS the answer, so the flag goes up before the save carries it
+            var click = upkeep.IndexOf("$(\"#tBepMaint\")?.addEventListener", StringComparison.Ordinal);
+            var answered = upkeep.IndexOf("BEP_ANSWERED=true;", click, StringComparison.Ordinal);
+            var saved = upkeep.IndexOf("save();", click, StringComparison.Ordinal);
+            Assert.True(answered > click && saved > answered,
+                "the loader switch saves before it records that the question was answered");
             // and the row above the mods table follows the switch at once rather than
             // saying the opposite of it until the next status arrives
-            Assert.Contains("if(S.bepinex){S.bepinex.maintained=on;S.bepinex.maintenanceAsked=true;renderMods();}",
-                upkeep, StringComparison.Ordinal);
+            Assert.Contains("S.bepinex.consent=on;", upkeep, StringComparison.Ordinal);
+            Assert.Contains("S.bepinex.consentUnanswered=false;", upkeep, StringComparison.Ordinal);
+            Assert.Contains("renderMods();", upkeep, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -397,9 +454,15 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var gate = Body("bepInExAskOnce");
 
-            Assert.Contains("if(!b||b.maintenanceAsked||BEP_ASKED_THIS_RUN){next();return;}", gate, StringComparison.Ordinal);
+            Assert.Contains("if(!b||!bepInExUnanswered(b)||BEP_ASKED_THIS_RUN){next();return;}", gate, StringComparison.Ordinal);
             Assert.Contains("BEP_ASKED_THIS_RUN=true;", gate, StringComparison.Ordinal);
             Assert.Contains("bepInExFirstStartModal(go);", gate, StringComparison.Ordinal);
+
+            // and unanswered is its own state: the switch alone is not an answer, because
+            // the preference it reads defaults to on
+            var rule = Body("bepInExUnanswered");
+            Assert.Contains("if(\"consentUnanswered\" in b) return !!b.consentUnanswered;", rule, StringComparison.Ordinal);
+            Assert.Contains("if(\"maintenanceAsked\" in b) return !b.maintenanceAsked;", rule, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -447,8 +510,12 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var dialog = Body("bepInExFirstStartModal");
 
+            // The save itself moved into the one function every place the question is put
+            // writes through, so the dialog, the standing row and the Upkeep switch cannot
+            // record three different things.
+            Assert.Contains("bepInExAnswerConsent(yes,\"at the first start\");", dialog, StringComparison.Ordinal);
             Assert.Contains("rpc(\"userprefs.save\",{prefs:{BepInExMaintained:yes,BepInExMaintenanceAsked:true}})",
-                dialog, StringComparison.Ordinal);
+                Body("bepInExAnswerConsent"), StringComparison.Ordinal);
             Assert.Contains("id=\"mBepYes\"", dialog, StringComparison.Ordinal);
             Assert.Contains("id=\"mBepNo\"", dialog, StringComparison.Ordinal);
             Assert.Contains("btn-ember btn-sm\" id=\"mBepYes\"", dialog, StringComparison.Ordinal);
@@ -499,6 +566,14 @@ namespace ValheimBakaLoader.Tests.Forms
         /// Every sentence this hall owns is asked for by the page, once, and the halves that
         /// live in the document are asked for there and nowhere else. An id with two owners
         /// is a sentence one of them overwrites.
+        /// <para>
+        /// Two shapes count as asking. The plain <c>T("id")</c> is one. The other is a
+        /// chooser table naming the id in a property whose name ends in Id, which is how the
+        /// row states, the button labels and the branches of the first-start question are
+        /// written: the words have one owner that way, and the pure choosers can be driven as
+        /// a table without a catalog. scripts/i18n/check_catalog.py counts the same two
+        /// shapes, so an id that passes here is an id that is not an orphan there.
+        /// </para>
         /// </summary>
         [Theory]
         [InlineData("bepinex.row.")]
@@ -514,8 +589,9 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.NotEmpty(mine);
             foreach (var id in mine)
             {
-                Assert.True(js.Contains("T(\"" + id + "\"", StringComparison.Ordinal),
-                    "app.js never asks for " + id);
+                var asked = js.Contains("T(\"" + id + "\"", StringComparison.Ordinal)
+                    || Regex.IsMatch(js, @"(?<![A-Za-z0-9_$])[A-Za-z0-9_$]*Id\s*:\s*""" + Regex.Escape(id) + @"""");
+                Assert.True(asked, "app.js never asks for " + id);
                 Assert.DoesNotContain("data-i18n=\"" + id + "\"", html);
                 Assert.DoesNotContain("data-i18n-title=\"" + id + "\"", html);
             }
@@ -568,6 +644,10 @@ namespace ValheimBakaLoader.Tests.Forms
         [Theory]
         [InlineData("bepinex.row.installed.toast", "ᛒ")]
         [InlineData("bepinex.row.installed.noversion.toast", "ᛒ")]
+        [InlineData("bepinex.row.updated.toast", "ᛒ")]
+        [InlineData("bepinex.row.already_current.toast", "ᛒ")]
+        [InlineData("bepinex.row.adopted.toast", "ᛒ")]
+        [InlineData("bepinex.row.restored.toast", "ᛒ")]
         [InlineData("bepinex.row.removed.toast", "ᛒ")]
         [InlineData("bepinex.add.pack_installed.toast", "ᛒ")]
         [InlineData("bepinex.dialog.first.yes.toast", "ᛒ")]
@@ -595,6 +675,11 @@ namespace ValheimBakaLoader.Tests.Forms
         [InlineData("bepinexProgressEnd:")]
         [InlineData("bepinexFirstDialog:")]
         [InlineData("bepinexOffer:")]
+        [InlineData("bepinexTakeover:")]
+        [InlineData("bepinexDowngrade:")]
+        [InlineData("bepinexRestore:")]
+        [InlineData("bepinexWrote:")]
+        [InlineData("bepinexChoice:")]
         public void The_preview_can_drive_every_surface(string seam)
         {
             var preview = Between(AppJs(), "window.BakaPreview={", "\n};");
@@ -627,7 +712,7 @@ namespace ValheimBakaLoader.Tests.Forms
             var js = AppJs();
             var write = Body("bepInExWrite");
 
-            foreach (var method in new[] { "bepinex.install", "bepinex.update", "bepinex.remove" })
+            foreach (var method in new[] { "bepinex.install", "bepinex.update", "bepinex.remove", "bepinex.restore" })
             {
                 var calls = Regex.Matches(js, @"rpc\(""" + Regex.Escape(method) + @"""");
                 Assert.True(calls.Count == 0,

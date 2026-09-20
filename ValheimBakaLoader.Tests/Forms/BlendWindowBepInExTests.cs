@@ -53,8 +53,62 @@ namespace ValheimBakaLoader.Tests.Forms
         [InlineData("bepinex.install")]
         [InlineData("bepinex.update")]
         [InlineData("bepinex.remove")]
+        [InlineData("bepinex.restore")]
+        [InlineData("bepinex.noticeSeen")]
         public void The_bridge_answers_every_bepinex_call_the_page_can_make(string method)
             => Assert.Contains("RegisterRpc(\"" + method + "\"", Bridge(), StringComparison.Ordinal);
+
+        /// <summary>
+        /// Every host-side reader of the switch goes through the consent rule, and none of them
+        /// reads the preference on its own.
+        /// <para>
+        /// The preference defaults to ON. A host upgrading from 1.1.x is therefore "maintained"
+        /// from the first second of the first launch, before anybody has been asked anything,
+        /// and a profile that auto-starts never reaches the question at all. Each of these
+        /// three is a path that would otherwise write a loader into somebody's server on the
+        /// strength of a default, which is the one thing the question exists to stop.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Every_path_that_writes_reads_the_answer_and_not_just_the_switch()
+        {
+            var bridge = Bridge().Replace("\r\n", "\n");
+
+            // the restart window
+            Assert.Contains(
+                "Tools.BepInExConsent.Effective(prefs.BepInExMaintained, prefs.BepInExMaintenanceAsked)",
+                bridge, StringComparison.Ordinal);
+
+            // the loader-before-start step
+            Assert.Contains(
+                "if (!Tools.BepInExConsent.Effective(\n"
+                + "                    startPrefs.BepInExMaintained, startPrefs.BepInExMaintenanceAsked)) return;",
+                bridge, StringComparison.Ordinal);
+
+            // and nothing left reading the switch on its own to decide whether to write
+            Assert.DoesNotContain("if (!UserPrefsProvider.LoadPreferences().BepInExMaintained) return;",
+                bridge, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Moving the Upkeep switch by hand IS an answer to the first-start question, so it is
+        /// recorded as one. Without this a host who found the setting and turned it on before
+        /// ever pressing Start would still count as unanswered, and the standing question would
+        /// go on being asked after they had already given it.
+        /// </summary>
+        [Fact]
+        public void Changing_the_upkeep_switch_by_hand_counts_as_answering()
+        {
+            var bridge = Bridge().Replace("\r\n", "\n");
+
+            Assert.Contains(
+                "Apply(\"BepInExMaintained\", v =>\n"
+                + "                    {\n"
+                + "                        prefs.BepInExMaintained = v.Value<bool>();\n"
+                + "                        prefs.BepInExMaintenanceAsked = true;\n"
+                + "                    });",
+                bridge, StringComparison.Ordinal);
+        }
 
         [Theory]
         [InlineData("bepinex.progress")]
@@ -142,13 +196,11 @@ namespace ValheimBakaLoader.Tests.Forms
             var service = Service();
 
             var download = service.IndexOf("await DownloadAsync(", StringComparison.Ordinal);
-            var write = service.IndexOf("var entries = CopyByAllowList(", StringComparison.Ordinal);
-            var again = Regex.Match(service, @"(?<!var )blocked = ProfilesBlockingWrite\(baseExePath, profiles\);");
+            var write = service.IndexOf("var write = Written(() => WriteLoader(", StringComparison.Ordinal);
 
-            Assert.True(download > 0 && write > 0, "the install path is not shaped as this reads it");
-            Assert.True(again.Success, "the writer never asks again with the archive on disk");
-            Assert.True(again.Index > download, "the second ask is not after the download");
-            Assert.True(again.Index < write, "the second ask is not before the write");
+            Assert.True(download > 0 && write > download, "the install path is not shaped as this reads it");
+            Assert.Contains("RefuseWhileServersAreUp(baseExePath, profiles);",
+                service.Substring(download, write - download), StringComparison.Ordinal);
 
             var bridge = Bridge();
             Assert.Contains("private IEnumerable<Tools.BepInExProfileInstall> LiveInstalls()", bridge,
@@ -173,7 +225,13 @@ namespace ValheimBakaLoader.Tests.Forms
             var bridge = Bridge();
 
             Assert.Contains("HostFacingException(\"bepinex.alreadyMaintained\"", bridge, StringComparison.Ordinal);
-            Assert.Contains("UserPrefsProvider.LoadPreferences().BepInExMaintained", bridge, StringComparison.Ordinal);
+
+            // And it is the consent rule that decides, not the preference on its own: a host
+            // upgrading has the switch on by default and has not been asked anything yet, so
+            // the preference alone would tell them BakaLoader was already looking after a
+            // loader they had never agreed to.
+            Assert.Contains("Tools.BepInExConsent.Effective(\n                        writePrefs.BepInExMaintained, writePrefs.BepInExMaintenanceAsked)",
+                bridge.Replace("\r\n", "\n"), StringComparison.Ordinal);
         }
 
         // ------------------------------------------------------------------ the reason codes
@@ -286,23 +344,195 @@ namespace ValheimBakaLoader.Tests.Forms
         // ------------------------------------------------------------------ the unattended window
 
         /// <summary>
-        /// BepInEx moves first, and on its own switch: the loader is what the mods load under,
-        /// so moving it after them would leave one restart where new plugins meet an old core.
+        /// BepInEx moves first, and on a hook of its own: the loader is what the mods load
+        /// under, so moving it after them would leave one restart where new plugins meet an
+        /// old core.
+        /// <para>
+        /// The loader step used to be the first line INSIDE the mod-update hook, and that hook
+        /// is only reached when the restart was raised because mod updates were pending. A
+        /// host with mod auto update off therefore restarted forever with the loader never
+        /// once looked at. That is why the two are separate hooks now, and why this gate is on
+        /// the separation rather than on the order inside one body.
+        /// ValheimServerLoaderWindowTests drives the window itself and proves it fires.
+        /// </para>
         /// </summary>
         [Fact]
-        public void The_restart_window_moves_the_loader_before_the_mods()
+        public void The_restart_window_moves_the_loader_on_a_hook_of_its_own_before_the_mods()
         {
             var bridge = Bridge().Replace("\r\n", "\n");
+
+            Assert.Contains("session.Server.ApplyLoaderUpdate = () => ApplyBepInExUpdateAsync(profile);",
+                bridge, StringComparison.Ordinal);
+
+            // and it is no longer buried in the hook that only fires for pending mod updates
             var at = bridge.IndexOf("session.Server.ApplyModUpdates = async () =>", StringComparison.Ordinal);
-
             Assert.True(at > 0, "the unattended mod-update hook is gone");
-            var body = bridge.Substring(at, Math.Min(900, bridge.Length - at));
+            Assert.DoesNotContain("await ApplyBepInExUpdateAsync(profile);",
+                bridge.Substring(at), StringComparison.Ordinal);
 
-            var loader = body.IndexOf("await ApplyBepInExUpdateAsync(profile);", StringComparison.Ordinal);
-            var mods = body.IndexOf("if (!UserPrefsProvider.LoadPreferences().AutoUpdateMods) return;", StringComparison.Ordinal);
+            // In the window itself the loader goes first, and it is not under the flag that
+            // counts pending mod updates.
+            var resume = Server().Replace("\r\n", "\n");
+            var loader = resume.IndexOf("await ApplyLoaderUpdate();", StringComparison.Ordinal);
+            var mods = resume.IndexOf("await ApplyModUpdates();", StringComparison.Ordinal);
+            var gate = resume.IndexOf("if (ApplyUpdatesOnRestart && ApplyModUpdates != null)",
+                StringComparison.Ordinal);
 
-            Assert.True(loader > 0, "the unattended window no longer moves BepInEx");
+            Assert.True(loader > 0, "the restart window no longer runs the loader step");
             Assert.True(mods > loader, "BepInEx is no longer moved before the mods");
+            Assert.True(gate > loader, "the loader step has been put back under the mod-update flag");
+        }
+
+        // --------------------------------------------------------------- telling the host
+
+        /// <summary>
+        /// The three writes a host can press now answer with what the write CAME TO, not only
+        /// with the state afterwards. Without this the page cannot tell an adoption from a
+        /// refusal from a write that moved a version: all three leave an install that is
+        /// there, and the status DTO says the same thing about all three.
+        /// </summary>
+        [Fact]
+        public void A_write_answers_with_what_it_came_to()
+        {
+            var bridge = Bridge().Replace("\r\n", "\n");
+
+            Assert.Contains("return BuildBepInExDto(result);", bridge, StringComparison.Ordinal);
+            Assert.Contains("return BuildBepInExDto(restored);", bridge, StringComparison.Ordinal);
+
+            foreach (var field in new[]
+                     {
+                         "skipped = result.Skipped,", "skipReason = result.SkipReason,",
+                         "nothingChanged = result.NothingChanged,",
+                         "alreadyCurrent = result.AlreadyCurrent,", "adopted = result.Adopted,",
+                         "restored = result.Restored,", "healed = result.Healed,",
+                         "doorstopReplaced = result.DoorstopReplaced,", "version = result.Version,",
+                         "previousVersion = result.PreviousVersion,",
+                         "previousCoreVersion = result.PreviousCoreVersion,",
+                         "coreVersion = result.CoreVersion,", "backupStamp = result.BackupStamp,",
+                         "backupPath = BepInExBackupPath(",
+                         "eligibleUtc = result.EligibleUtc,",
+                         "profileLoaderFilesRefreshed = result.ProfileLoaderFilesRefreshed,",
+                     })
+                Assert.Contains(field, bridge, StringComparison.Ordinal);
+
+            // and the write nobody asked for posts the same object on the event, because it
+            // has no reply of its own to carry it
+            Assert.Contains("PostBepInExChanged(windowResult);", bridge, StringComparison.Ordinal);
+            Assert.Contains("PostBepInExChanged(startResult);", bridge, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// A write inside a restart window happens with nobody at the keyboard, so there is no
+        /// toast for it and very often no window to put one in. What it did, and what stopped
+        /// it, STAND until a page has shown them: one AppLogger.Warning in a file nobody opens
+        /// is not telling anybody, which is the whole of what section H is about.
+        /// </summary>
+        [Fact]
+        public void An_unattended_write_leaves_something_standing_for_the_page()
+        {
+            var bridge = Bridge().Replace("\r\n", "\n");
+
+            // recorded on all three unattended paths: the window, the loader-before-start step
+            // and the repair of a write that did not finish
+            Assert.Contains("RecordUnattendedBepInEx(profile, result);", bridge, StringComparison.Ordinal);
+            Assert.Contains("RecordUnattendedBepInEx(null, result);", bridge, StringComparison.Ordinal);
+            Assert.Contains("RecordUnattendedBepInExFailure(profile, e);", bridge, StringComparison.Ordinal);
+
+            // and it travels on every answer, the load-time one and the event included
+            Assert.Contains("lastUnattended = BepInExUnattendedDto(),", bridge, StringComparison.Ordinal);
+
+            // the reason the page words it from, and the statement that goes with every reason
+            // on that path, which is that the install is exactly as it was
+            Assert.Contains("reason = last.Reason,", bridge, StringComparison.Ordinal);
+            // A heal is not one of those either. It MOVED files, it just moved them back, so
+            // "the install was left exactly as it was" is not a sentence it may carry.
+            Assert.Contains(
+                "leftAsItWas = last.Outcome != \"written\" && last.Outcome != \"healed\",",
+                bridge, StringComparison.Ordinal);
+
+            // and a Thunderstore that did not answer is NOT one of them: nothing was written
+            // and nothing is wrong with the install, so there is nothing for a host to do
+            Assert.Contains(
+                "if (string.Equals(id, \"bepinex.offline\", StringComparison.Ordinal)) return;",
+                bridge, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// SECTION L. A write that stopped part way is UNDONE, not finished: the copy from
+        /// before it goes back and the loader the host ends up with is the one they already
+        /// had. It used to fall through to the written wording, so the one thing section L
+        /// exists to tell a host read "BepInEx 5.4.23.5 was put in at a restart. Anything it
+        /// replaced is kept in the BepInEx backups folder beside the install." Nothing was put
+        /// in, nothing was updated, and when the core had already gone that folder is not even
+        /// there.
+        /// </summary>
+        [Fact]
+        public void A_write_that_was_undone_is_not_reported_as_a_write()
+        {
+            var bridge = Bridge().Replace("\r\n", "\n");
+            var app = AppJs();
+
+            // the branch, ahead of the written one
+            Assert.Contains("if (result.Healed || result.Restored)", bridge, StringComparison.Ordinal);
+            Assert.Contains("Outcome = \"healed\",", bridge, StringComparison.Ordinal);
+            Assert.True(
+                bridge.IndexOf("Outcome = \"healed\",", StringComparison.Ordinal)
+                < bridge.IndexOf("Outcome = \"written\",", StringComparison.Ordinal),
+                "the heal has to be asked before the write, or a heal is reported as a write");
+
+            // and the page words it as its own thing
+            Assert.Contains(
+                "if(last&&last.outcome===\"healed\"){conditionBepInExHealed(last);return;}",
+                app, StringComparison.Ordinal);
+            Assert.Contains("T(\"bepinex.notice.healed.title\")", app, StringComparison.Ordinal);
+            Assert.Contains("T(\"bepinex.notice.healed.body\")", app, StringComparison.Ordinal);
+
+            foreach (var id in new[] { "bepinex.notice.healed.title", "bepinex.notice.healed.body" })
+                Assert.True(Catalog().ContainsKey(id), id + " is not in the catalog");
+        }
+
+        /// <summary>
+        /// SECTION B and O. A start never writes over a loader somebody else put here. The
+        /// three odd shapes were already refused; the one that mattered was the ordinary one,
+        /// because an install with no note whose winhttp.dll an antivirus took answers Installed
+        /// false and walked straight past them into a fresh pack written over the host's core.
+        /// What the question promised was the next SCHEDULED RESTART, which is the window.
+        /// </summary>
+        [Fact]
+        public void A_start_never_writes_over_an_install_BakaLoader_did_not_make()
+        {
+            var bridge = Bridge().Replace("\r\n", "\n");
+
+            Assert.Contains(
+                "if (startStatus.Unrecognised || startStatus.DrivenElsewhere || startStatus.ForeignCore\n"
+                + "                || (startStatus.CoreFilePresent && !startStatus.MaintainedByBakaLoader))",
+                bridge, StringComparison.Ordinal);
+
+            // and the fact the clamp reads is on the wire, because the row asks the same one
+            Assert.Contains("coreFilePresent = status.CoreFilePresent,", bridge, StringComparison.Ordinal);
+            Assert.Contains("loaderFileName = Tools.BepInExService.LoaderFileName,",
+                bridge, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// The page draws both of them, and both are in the order the bar reads: a condition
+        /// raised under a name the order does not know is stored and never drawn, which reads
+        /// to a host as nothing having happened.
+        /// </summary>
+        [Fact]
+        public void The_page_draws_the_standing_notice_and_the_standing_condition()
+        {
+            var app = AppJs();
+
+            Assert.Contains("conditionBepInExLeftAlone(bep.lastUnattended);", app, StringComparison.Ordinal);
+            Assert.Contains("conditionBepInExWritten(bep.lastUnattended);", app, StringComparison.Ordinal);
+
+            var order = app.Substring(app.IndexOf("const CONDITION_ORDER=", StringComparison.Ordinal), 400);
+            Assert.Contains("\"bepinexLeftAlone\"", order, StringComparison.Ordinal);
+            Assert.Contains("\"bepinexWritten\"", order, StringComparison.Ordinal);
+
+            // and closing the notice is what tells the host side to stop sending it
+            Assert.Contains("Native.call(\"bepinex.noticeSeen\"", app, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -406,6 +636,12 @@ namespace ValheimBakaLoader.Tests.Forms
         [InlineData("bepinex.busy", "bepinex.reason.busy")]
         [InlineData("bepinex.noServerPath", "bepinex.reason.no_server_path")]
         [InlineData("bepinex.noWrongFolder", "bepinex.reason.no_wrong_folder")]
+        [InlineData("bepinex.locked", "bepinex.reason.locked")]
+        [InlineData("bepinex.newer", "bepinex.reason.newer")]
+        [InlineData("bepinex.coreIsJunction", "bepinex.reason.core_is_junction")]
+        [InlineData("bepinex.unrecognisedCore", "bepinex.reason.unrecognised_core")]
+        [InlineData("bepinex.noBackup", "bepinex.reason.no_backup")]
+        [InlineData("bepinex.writeFailed", "bepinex.reason.write_failed")]
         public void Every_bepinex_refusal_is_paired_with_a_sentence_the_page_owns(string throwId, string textId)
         {
             var thrown = Service() + Bridge();
@@ -454,6 +690,44 @@ namespace ValheimBakaLoader.Tests.Forms
         /// <summary>The language pack endings table, from its opening bracket to its close.</summary>
         private static string LangReasonsTable() => NamedTable("const LANG_REASONS=[");
 
+        /// <summary>The unattended BepInEx reasons table, from its opening bracket to its close.</summary>
+        private static string BepInExReasonsTable() => NamedTable("const BEPINEX_REASONS=[");
+
+        /// <summary>
+        /// Every reason the page words is one the service can really name, and every one of
+        /// them has a sentence in the catalog.
+        /// <para>
+        /// This is the gate that had to arrive with the third table. BEPINEX_REASONS pairs the
+        /// endings an unattended write carries in its RESULT rather than in a throw, so
+        /// nothing in the refusal gate above can see it: a row naming a reason that was
+        /// renamed would word nothing, quietly, on the one path where a silent failure is the
+        /// whole problem being solved.
+        /// </para>
+        /// <para>
+        /// Held from the page's end rather than from the service's. Every reason the service
+        /// can name has a row now, drift included; the rule the table keeps is the other
+        /// direction, that nothing in it names a reason or a sentence that is gone.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Every_reason_the_page_words_is_one_the_service_can_name()
+        {
+            var service = Service();
+            var catalog = Catalog();
+            var rows = Regex.Matches(BepInExReasonsTable(), "named:\\s*\"([^\"]+)\"\\s*,\\s*textId:\\s*\"([^\"]+)\"")
+                .Cast<Match>()
+                .Select(m => (Reason: m.Groups[1].Value, TextId: m.Groups[2].Value))
+                .ToList();
+
+            Assert.NotEmpty(rows);
+
+            foreach (var (reason, textId) in rows)
+            {
+                Assert.Contains("= \"" + reason + "\";", service, StringComparison.Ordinal);
+                Assert.True(catalog.ContainsKey(textId), "the catalog has no " + textId);
+            }
+        }
+
         /// <summary>One table in the page, from its opening bracket to the line that closes it.</summary>
         private static string NamedTable(string opens)
         {
@@ -468,16 +742,17 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The net under the two tables above. Each of them is checked from one end or the
-        /// other, HOST_SENTENCES against the throws in the source and LANG_REASONS against the
-        /// service's own constants, and between them they cover every paired row in the page
-        /// TODAY. What neither covers is a THIRD table added tomorrow: rows in it would be
-        /// wording something nothing checks, and both existing gates would stay green while it
-        /// rotted. So the page is held to two tables, and a third one has to arrive with the
+        /// The net under the three tables above. Each of them is checked from one end or the
+        /// other: HOST_SENTENCES against the throws in the source, LANG_REASONS against the
+        /// service's own constants, and BEPINEX_REASONS against the skip reasons the BepInEx
+        /// service can name. Between them they cover every paired row in the page TODAY. What
+        /// none of them covers is a FOURTH table added tomorrow: rows in it would be wording
+        /// something nothing checks, and all three existing gates would stay green while it
+        /// rotted. So the page is held to these three, and a fourth one has to arrive with the
         /// gate that stands under it.
         /// </summary>
         [Fact]
-        public void The_page_pairs_its_sentences_in_the_two_tables_that_are_guarded()
+        public void The_page_pairs_its_sentences_in_the_tables_that_are_guarded()
         {
             var app = AppJs();
             var everywhere = Regex.Matches(app, "named:\\s*\"([^\"]+)\"")
@@ -487,15 +762,15 @@ namespace ValheimBakaLoader.Tests.Forms
 
             Assert.NotEmpty(everywhere);
 
-            var guarded = HostSentencesTable() + LangReasonsTable();
+            var guarded = HostSentencesTable() + LangReasonsTable() + BepInExReasonsTable();
             var loose = everywhere
                 .Where(id => !Regex.IsMatch(guarded, "named:\\s*\"" + Regex.Escape(id) + "\""))
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
 
             Assert.True(loose.Count == 0,
-                "these rows pair a sentence outside HOST_SENTENCES and LANG_REASONS, where nothing checks them: "
-                    + string.Join(", ", loose));
+                "these rows pair a sentence outside HOST_SENTENCES, LANG_REASONS and BEPINEX_REASONS, "
+                    + "where nothing checks them: " + string.Join(", ", loose));
         }
 
         /// <summary>
@@ -650,6 +925,9 @@ namespace ValheimBakaLoader.Tests.Forms
         [InlineData("bepinexWaiting")]
         [InlineData("bepinexNotLoaded")]
         [InlineData("bepinexNotice")]
+        [InlineData("bepinexAsk")]
+        [InlineData("bepinexNoMods")]
+        [InlineData("bepinexMissingFiles")]
         public void Every_bepinex_row_has_a_place_in_the_order(string kind)
         {
             var js = AppJs().Replace("\r\n", "\n");
