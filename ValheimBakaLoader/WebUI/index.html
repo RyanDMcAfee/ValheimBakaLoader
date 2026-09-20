@@ -30,6 +30,53 @@
     '" onerror="BAKA_ASSET_PLAIN(this)">');
 })();
 </script>
+<!--
+  THE FIRST FRAME'S LANGUAGE. The markup below carries its English, which is what makes
+  the window right with no catalog at all; it is also what a host who saved Russian saw
+  for the first four painted frames, because the English catalog and then the pack are
+  two fetches and the frame goes up while they are still being read.
+
+  So the host says the language before the document exists. BAKA_LANG arrives the same
+  road BAKA_VERSION does, injected on the WebView2 core before Navigate, and it is set
+  ONLY when the first frame would otherwise be wrong: a saved language that is not
+  English and has a pack on disk. Absent means paint now, and nothing below runs: that
+  is every English window, every window with no pack, and every window where the
+  injection threw.
+
+  Set, it hangs a cloak: html.lang-pending, which app.css draws as visibility:hidden on
+  the body's children. Visibility rather than display, so every box is laid out at its
+  real size and the reveal is not a reflow; the page background still paints, so what a
+  host sees is the window's own colour rather than white.
+
+  The cloak comes off at the FIRST of two moments, and the second one is why this is
+  safe: the boot chain finishing its pass over the document (app.js calls the reveal
+  there, and again at the end of every applyLanguage), or 1500 ms, whatever happened.
+  A pack that 404s, a fetch that hangs, a throw inside the walk: none of them can leave
+  a host looking at an empty window, because the timeout is armed here, before anything
+  that could fail has been asked for.
+-->
+<script>
+(function(){
+  var code = window.BAKA_LANG;
+  /* The reveal is defined whatever the language is, so app.js has one name to call and
+     no branch of its own. With no cloak hung it answers false and does nothing. */
+  var pending = (typeof code === "string" && code && code !== "en") ? code : null;
+  window.BAKA_LANG_PENDING = pending;
+  window.BAKA_LANG_REVEAL = function(said){
+    var html = document.documentElement;
+    if (!html || !html.classList.contains("lang-pending")) return false;
+    /* Called with a language, it must be the one the cloak was hung for: a redraw in
+       some other language is not the frame this was waiting for. Called with nothing,
+       it is the boot chain or the timeout saying there is nothing left to wait for. */
+    if (said && pending && String(said) !== pending) return false;
+    html.classList.remove("lang-pending");
+    return true;
+  };
+  if (!pending) return;
+  document.documentElement.classList.add("lang-pending");
+  setTimeout(function(){ window.BAKA_LANG_REVEAL(); }, 1500);
+})();
+</script>
 </head>
 <body>
 
@@ -239,7 +286,14 @@
                      choice. app.js fills the options from the packs actually installed. -->
                 <div class="togglerow" style="height:auto;padding:6px 0">
                   <span class="tl" data-i18n="settings.player_messages.label">Messages to players</span>
-                  <select id="selPlayerMsgLang" style="max-width:190px"></select>
+                  <!-- The one option every install has, spelled out here the way every
+                       other static label is, so the select reads correctly on the first
+                       frame and the walker translates it like anything else. app.js
+                       replaces the whole list the moment there is a catalog to word the
+                       installed languages with; before that it leaves this alone rather
+                       than writing an id nothing can look up yet into a control the
+                       walker cannot reach. -->
+                  <select id="selPlayerMsgLang" style="max-width:190px"><option value="same" data-i18n="settings.player_messages.same">Same as the interface</option></select>
                 </div>
                 <div class="subval" style="margin:2px 0 0" data-i18n="settings.player_messages.help">The language of the in-game restart countdown and of the Discord posts.</div>
               </div>
@@ -738,10 +792,29 @@
           <div class="skald-grid">
             <div class="card sk-players" style="padding:0">
               <div style="height:6px"></div>
+              <!-- The column widths are measured, not chosen. Every one of the five
+                   headers was rendered in English, Russian, Japanese and both Chinese
+                   under the per-language type rules and measured with a Range, and the
+                   widest of each plus the 24px of cell padding is what the percentage
+                   has to give it at the app's minimum window. Three of the five used to
+                   be short of their OWN ENGLISH there: Playtime had 56px for 66.5px of
+                   ink, Sessions 36px for 66.1px, Deaths 36px for 52.3px, and an English
+                   header is one unbreakable word, so it overflowed into the column
+                   beside it while Russian and Japanese broke in half instead.
+                   What the three columns take, they take from the two that had it to
+                   give: the Player column keeps 120px at the minimum window against the
+                   126px it had, which is six pixels off a name, and Last seen keeps its
+                   widest rendering with room.
+                   The wrapper below is the floor under all of it: the table can never be
+                   squeezed below the width where the measurements hold, and a card
+                   narrower than that scrolls sideways rather than crushing the headers
+                   again. -->
+              <div class="sk-ptable">
               <table>
-                <thead><tr><th style="width:30%" data-i18n="vikings.col.name">Player</th><th style="width:16%" data-i18n="vikings.col.playtime">Playtime</th><th style="width:12%" data-i18n="skald.col.sessions">Sessions</th><th style="width:12%" data-i18n="vikings.col.deaths">Deaths</th><th data-i18n="vikings.col.seen">Last seen</th></tr></thead>
+                <thead><tr><th style="width:24%" data-i18n="vikings.col.name">Player</th><th style="width:20%" data-i18n="vikings.col.playtime">Playtime</th><th style="width:19%" data-i18n="skald.col.sessions">Sessions</th><th style="width:16.5%" data-i18n="vikings.col.deaths">Deaths</th><th data-i18n="vikings.col.seen">Last seen</th></tr></thead>
                 <tbody id="skPlayerTable"></tbody>
               </table>
+              </div>
             </div>
             <div class="card sk-feed">
               <div class="microlabel" data-i18n="skald.feed.label">Recent events<span class="cnorse" data-i18n="skald.feed.norse">Happenings</span></div>

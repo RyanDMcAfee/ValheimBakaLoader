@@ -710,6 +710,18 @@ namespace ValheimBakaLoader.Tests.Forms
         /// on it, because a walker and a painter writing the same node take turns and the
         /// loser is whichever ran first. The globe is the other way round: the markup owns
         /// its title and its label, and app.js never writes either.
+        /// <para>
+        /// The player-message select is the one element with a HANDOVER rather than an
+        /// owner, and it is worth saying exactly where the handover is. The markup carries
+        /// the one option every install has, with its id on it, because renderPlayerMsgLang
+        /// writes into an option and an option is not somewhere the walker can put the
+        /// English back: with nothing in the markup the select read
+        /// "settings.player_messages.same" for the whole of the gap between app.js being
+        /// evaluated and the catalog arriving. The painter takes the element over on its
+        /// FIRST run, which is a statement at the bottom of that block and therefore long
+        /// before any walk, and what it writes carries no id. So the walker never meets
+        /// that option, the two never take turns over it, and the rule above still holds.
+        /// </para>
         /// </summary>
         [Fact]
         public void Each_new_element_is_written_by_exactly_one_of_the_two()
@@ -724,9 +736,27 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.DoesNotContain("langBtn\").title=", js);
             Assert.DoesNotContain("#langBtn\").textContent", js);
 
-            // The select's options are the painter's, so the markup leaves it empty.
-            Assert.Contains("<select id=\"selPlayerMsgLang\"", html);
-            Assert.DoesNotContain("<select id=\"selPlayerMsgLang\" style=\"max-width:190px\"><option", html);
+            // The select carries exactly one option in the markup, the one every install
+            // has, and it carries its id so the walker words it if the painter somehow
+            // never runs at all.
+            Assert.Contains(
+                "<select id=\"selPlayerMsgLang\" style=\"max-width:190px\">" +
+                "<option value=\"same\" data-i18n=\"settings.player_messages.same\">" +
+                "Same as the interface</option></select>", html);
+            // And nothing else: a second option in the markup would be a language the host
+            // has not downloaded, offered by a file that cannot know what is on disk.
+            Assert.Equal(1, Regex.Matches(
+                html.Substring(html.IndexOf("<select id=\"selPlayerMsgLang\"", StringComparison.Ordinal),
+                    html.IndexOf("</select>", html.IndexOf("<select id=\"selPlayerMsgLang\"", StringComparison.Ordinal),
+                        StringComparison.Ordinal) -
+                    html.IndexOf("<select id=\"selPlayerMsgLang\"", StringComparison.Ordinal)),
+                "<option").Count);
+            // The painter takes the element over before anything can walk it: the call is a
+            // statement in app.js, not something a promise resolves to.
+            Assert.Contains("\nrenderPlayerMsgLang();", js);
+            // And what the painter writes carries no id, so the walker never meets it.
+            Assert.Contains("`<option value=\"${esc(o.code)}\"", js);
+            Assert.DoesNotContain("<option value=\"${esc(o.code)}\" data-i18n", js);
 
             // The dot carries no words of its own at all: its whole content is a tooltip, and
             // it is role=img rather than aria-hidden so the label the painter writes on it is

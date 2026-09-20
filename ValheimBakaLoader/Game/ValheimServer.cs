@@ -280,6 +280,13 @@ namespace ValheimBakaLoader.Game
         /// host reading that chip and the players reading the chat can be on two different
         /// languages and only the page knows which one the window is in. See
         /// <see cref="CountdownChip"/>.
+        /// <para>
+        /// This used to hand out a finished English sentence, so the EventArgs type changed
+        /// when the chip was split. That is a break, and the one place it was visible outside
+        /// this class is mended rather than left: the server.countdown event the bridge posts
+        /// still carries its "message" key with the same English it always held, built from
+        /// the catalog in BlendWindow.Bridge.cs's CountdownMessage.
+        /// </para>
         /// </summary>
         public event EventHandler<CountdownChip> CountdownTick;
 

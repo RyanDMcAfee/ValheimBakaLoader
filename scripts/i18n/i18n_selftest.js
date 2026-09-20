@@ -397,6 +397,186 @@ test("with no catalog at all the lookup still answers", () => {
   assert.strictEqual(I.fmtBytes(2048), "2.0 KB");
 });
 
+/* ------------------------------------------- a pack with holes in it in it
+ *
+ * merge_pack.py --mark-missing writes the literal "__missing" as the VALUE of every id
+ * no translation batch answered, and that shape reached a browser: the id is present in
+ * the active catalog, so the English fallback never ran, and what a host read was
+ * HEARTH.HEAD.TITLE. A pack is a file somebody else built, so every shape a JSON file
+ * can hold is driven here and every one of them has to fall through to the English.
+ */
+/* The builder's marker, spelled here the once. i18n.js holds the same string as
+   MISSING_MARK and the C# page test pins the two together. */
+const MARKER = "__missing";
+
+const HOLED = {
+  _meta: { language: "ru", appVersion: "1.2.0", catalog: 1 },
+  keys: {
+    "hall.title": "__missing",
+    "hall.greet": 7,
+    "hall.mark": true,
+    "tip.saga": null,
+    "field.world": [],
+    "aria.close": "",
+    "only.in.english": { translation: "Одно предложение" }
+  }
+};
+
+test("a pack that answers __missing falls through to the English", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load(HOLED, "ru");
+  assert.strictEqual(I.T("hall.title"), "Hearth Status");
+  assert.ok(I.missing.indexOf("hall.title") >= 0, "the hole was not counted as missing");
+});
+
+test("a number, a boolean, a null, an array and an empty string are all holes", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load(HOLED, "ru");
+  assert.strictEqual(I.T("hall.greet", { name: "Bjorn" }), "Welcome back, Bjorn");
+  assert.strictEqual(I.T("hall.mark"), "World saved");
+  assert.strictEqual(I.mark("hall.mark"), "ᛉ", "the rune came off the English entry");
+  assert.strictEqual(I.T("tip.saga"), "The server log");
+  assert.strictEqual(I.T("field.world"), "World name");
+  assert.strictEqual(I.T("aria.close"), "Close this panel");
+});
+
+test("a real translation beside the holes is still the one that answers", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load(HOLED, "ru");
+  assert.strictEqual(I.T("only.in.english"), "Одно предложение");
+});
+
+test("has() reads a hole the way the lookup does", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load(HOLED, "ru");
+  assert.strictEqual(I.has("hall.title"), true, "English still answers for it");
+  I.load({ _meta: { language: "xx" }, keys: { "nobody.else": "__missing" } }, "xx");
+  assert.strictEqual(I.has("nobody.else"), false);
+});
+
+test("a hole with no English behind it answers with the id, never with the marker", () => {
+  const I = fresh();
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    I.load({ _meta: { language: "xx" }, keys: { "nobody.else": "__missing" } }, "xx");
+    assert.strictEqual(I.T("nobody.else"), "nobody.else");
+  } finally {
+    console.warn = warn;
+  }
+});
+
+/* --------------------------------- a hole INSIDE an entry, which is the real shape
+ *
+ * The cases above are holes where the whole value should be. A real pack is not built
+ * that way: en.json entries are objects with registers in them, so a builder marking an
+ * id no batch answered writes its marker, or a null, or an empty string, INTO the
+ * register, and the object around it still looks like an entry. Read at the value level
+ * only, every one of these was accepted as an answer and painted: the marker itself for
+ * the first, the dotted id for the rest, and an empty label for the empty register. The
+ * entry object is not the sentence; the words are, and there is one test for them.
+ */
+const REGISTER_HOLES = [
+  ["an entry with no register at all", {}],
+  ["the rune kept and the words dropped", { mark: "ᚦ" }],
+  ["a null translation", { translation: null }],
+  ["an empty translation", { translation: "" }],
+  ["a translation of blanks", { translation: "   " }],
+  ["the marker AS the register", { translation: MARKER }],
+  ["both registers null", { lore: null, plain: null }],
+  ["the marker in one register and blanks in the other", { lore: MARKER, translation: "  " }],
+  ["a register that is a number", { translation: 7 }],
+  ["a register that is an array", { translation: ["one", "two"] }]
+];
+
+REGISTER_HOLES.forEach(([name, entry]) => {
+  test("a pack entry with " + name + " falls through to the English", () => {
+    const I = fresh();
+    I.load(ENGLISH, "en");
+    I.load({ _meta: { language: "ru" }, keys: { "hall.title": entry } }, "ru");
+    assert.strictEqual(I.T("hall.title"), "Hearth Status");
+    assert.strictEqual(I.has("hall.title"), true, "English answers, so has() says yes");
+    assert.ok(I.missing.indexOf("hall.title") >= 0, "the hole was not counted as missing");
+  });
+
+  test("a pack entry with " + name + " and no English behind it answers with the id", () => {
+    const I = fresh();
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      I.load({ _meta: { language: "ru" }, keys: { "nobody.else": entry } }, "ru");
+      const said = I.T("nobody.else");
+      assert.strictEqual(said, "nobody.else");
+      assert.ok(said.indexOf(MARKER) < 0, "the builder's marker reached the screen");
+      assert.strictEqual(I.has("nobody.else"), false,
+        "has() said yes and T() then handed back an id");
+    } finally {
+      console.warn = warn;
+    }
+  });
+});
+
+test("a plural with neither the category nor other in it is a hole", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  /* Russian's "few" is there and "other" is not, so a count of 5 has nothing to read. */
+  I.load({
+    _meta: { language: "ru" },
+    keys: { "mods.scanned": { translation: { few: "{count} мода проверено" }, plural: "count" } }
+  }, "ru");
+  assert.strictEqual(I.T("mods.scanned", { count: 5 }), "5 mods scanned");
+  assert.strictEqual(I.has("mods.scanned", { count: 5 }), true);
+});
+
+test("a plural whose other is empty is a hole too", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load({
+    _meta: { language: "ru" },
+    keys: { "mods.scanned": { translation: { one: "", few: "", many: "", other: "" }, plural: "count" } }
+  }, "ru");
+  assert.strictEqual(I.T("mods.scanned", { count: 5 }), "5 mods scanned");
+});
+
+test("a plural missing only this count's category still reads its other", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load({
+    _meta: { language: "ru" },
+    keys: { "mods.scanned": { translation: { other: "{count} модов" }, plural: "count" } }
+  }, "ru");
+  assert.strictEqual(I.T("mods.scanned", { count: 5 }), "5 модов");
+});
+
+test("a hole in the plain register falls to the pack's other register, not to English", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load({ _meta: { language: "ru" }, keys: { "hall.title": { plain: "", translation: "Состояние очага" } } }, "ru");
+  I.setRegister(() => true);
+  assert.strictEqual(I.T("hall.title"), "Состояние очага");
+});
+
+test("the rune comes off the entry that supplied the words", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  /* A pack that kept the rune and lost the sentence: the English answers, so the
+     English rune leads it. Two entries never word one line between them. */
+  I.load({ _meta: { language: "ru" }, keys: { "hall.mark": { mark: "ᚦ", lore: "" } } }, "ru");
+  assert.strictEqual(I.T("hall.mark"), "World saved");
+  assert.strictEqual(I.mark("hall.mark"), "ᛉ");
+});
+
+test("a pack that stores one bare string per id is read as words", () => {
+  const I = fresh();
+  I.load(ENGLISH, "en");
+  I.load({ _meta: { language: "ja" }, keys: { "hall.title": "炉の状態" } }, "ja");
+  assert.strictEqual(I.T("hall.title"), "炉の状態");
+});
+
 test("a second catalog starts the missing list again", () => {
   const I = fresh();
   I.load(ENGLISH, "en");

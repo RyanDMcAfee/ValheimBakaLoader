@@ -170,8 +170,109 @@
       "translation": "[Ẋ World save requested Ẋ] ẊẊẊẊẊẊẊ",
       "mark": "ᛉ"
     },
-    "pal.kill_monsters.done.toast": {
-      "translation": "[Ẋ KillAll unleashed · players, pets & allies spared Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+    "pal.console.refused.toast": {
+      "translation": "[Ẋ The server refused that command. Its own answer is in the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚦ"
+    },
+    "pal.kill.confirm.title": {
+      "translation": "[Ẋ Clear the hostiles Ẋ] ẊẊẊẊẊẊ"
+    },
+    "pal.kill.confirm.body": {
+      "translation": "[Ẋ This strikes every hostile creature in every zone the server has loaded, for every player who is online right now. Players, tamed animals and allies are always spared. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.scope.label": {
+      "translation": "[Ẋ How much of the world Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.scope.everywhere": {
+      "translation": "[Ẋ Everywhere Ẋ] ẊẊẊẊ"
+    },
+    "pal.kill.scope.everywhere.note": {
+      "translation": "[Ẋ Every hostile the server is holding in memory, wherever it stands. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.scope.near": {
+      "translation": "[Ẋ Around one player Ẋ] ẊẊẊẊẊẊ"
+    },
+    "pal.kill.scope.near.note": {
+      "translation": "[Ẋ Only what is standing inside the radius. Nobody else's base is touched. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.nobody_online": {
+      "translation": "[Ẋ Nobody is online, so there is nothing to measure a radius from. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.scope.creature": {
+      "translation": "[Ẋ One kind of creature Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.scope.creature.note": {
+      "translation": "[Ẋ Every one of that creature the server is holding, and nothing else. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.field.player": {
+      "translation": "[Ẋ Player Ẋ] ẊẊ"
+    },
+    "pal.kill.field.radius": {
+      "translation": "[Ẋ Radius in metres Ẋ] ẊẊẊẊẊ"
+    },
+    "pal.kill.field.creature": {
+      "translation": "[Ẋ Creature name Ẋ] ẊẊẊẊ"
+    },
+    "pal.kill.field.creature.placeholder": {
+      "translation": "[Ẋ Eikthyr Ẋ] ẊẊẊ"
+    },
+    "pal.kill.problem.no_player": {
+      "translation": "[Ẋ Choose the player to measure the radius from. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.problem.radius": {
+      "translation": "[Ẋ The radius has to be a number of metres above zero, like 50. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.problem.no_creature": {
+      "translation": "[Ẋ Type the creature's name the way the game spells it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.problem.creature_spaces": {
+      "translation": "[Ẋ A creature name is one word. Eikthyr rather than a phrase. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "pal.kill.confirm.button": {
+      "translation": "[Ẋ Kill them Ẋ] ẊẊẊ"
+    },
+    "pal.kill.toast.complete": {
+      "translation": {
+        "one": "[Ẋ {slain} hostile slain, {unreachable} out of reach, {spared} spared Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {slain} hostiles slain, {unreachable} out of reach, {spared} spared Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "slain",
+      "mark": "ᚦ"
+    },
+    "pal.kill.toast.none": {
+      "translation": "[Ẋ Nothing was slain: {unreachable} out of reach, {spared} spared. Out of reach means nobody is near enough to load it. The server's own answer is in the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛉ"
+    },
+    "pal.kill.toast.started": {
+      "translation": {
+        "one": "[Ẋ The sweep is walking {count} creature. Its result lands in the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ The sweep is walking {count} creatures. Its result lands in the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "mark": "ᚦ"
+    },
+    "pal.kill.toast.busy": {
+      "translation": "[Ẋ A sweep is already running. Wait for its result before starting another. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᛊ"
+    },
+    "pal.kill.toast.stopped": {
+      "translation": {
+        "one": "[Ẋ The sweep stopped part way, after {slain} hostile slain, {unreachable} out of reach and {spared} spared. The server's own line is in the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ The sweep stopped part way, after {slain} hostiles slain, {unreachable} out of reach and {spared} spared. The server's own line is in the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "slain",
+      "mark": "ᚦ"
+    },
+    "pal.kill.toast.stopped.nocounts": {
+      "translation": "[Ẋ The sweep stopped part way. The server's own line is in the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚦ"
+    },
+    "pal.kill.toast.silent": {
+      "translation": "[Ẋ The command was delivered and the server said nothing back. Check the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚦ"
+    },
+    "pal.kill.toast.unreadable": {
+      "translation": "[Ẋ The server answered something this version cannot read. Its answer is in the Saga log. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "mark": "ᚦ"
     },
     "pal.broadcast.done.toast": {
@@ -4239,6 +4340,13 @@
     "common.error.unknown": {
       "translation": "[Ẋ unknown error Ẋ] ẊẊẊẊ"
     },
+    "common.uptime.hm": {
+      "translation": "[Ẋ {hours}h {minutes}m Ẋ] Ẋ",
+      "params": {
+        "hours": "text",
+        "minutes": "text"
+      }
+    },
     "common.rpc.failed.toast": {
       "translation": "[Ẋ {method} failed · {detail} Ẋ] ẊẊẊẊ",
       "mark": "ᚦ"
@@ -5069,6 +5177,12 @@
         "version": "text"
       }
     },
+    "lang.row.current_older_pack": {
+      "translation": "[Ẋ Current, using the pack from {version} Ẋ] ẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
     "lang.row.machine": {
       "translation": "[Ẋ Machine translated Ẋ] ẊẊẊẊẊẊ"
     },
@@ -5297,6 +5411,9 @@
         "server": "text",
         "world": "text"
       }
+    },
+    "host.discord.legacy_world.unnamed": {
+      "translation": "[Ẋ the world Ẋ] ẊẊẊ"
     },
     "host.status.title": {
       "translation": "[Ẋ Valheim server Ẋ] ẊẊẊẊẊ"

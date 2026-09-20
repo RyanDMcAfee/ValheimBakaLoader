@@ -262,10 +262,16 @@ namespace ValheimBakaLoader.Tests.Forms
             // the pack-installed note on a pasted link, the first-start question's two
             // answers, the address box with nothing in it and the maintenance switch either
             // way, the world copy brought its two, the real one and the preview one, and
-            // Browse brought the one the preview shows instead of a file picker. The number
-            // is the gate: a new toast whose rune is spelled at the call site and nowhere
-            // else lands here.
-            Assert.Equal(179, marked.Count);
+            // Browse brought the one the preview shows instead of a file picker.
+            // 186 after the kill sweep learned to read the server's answer: the one
+            // "unleashed" toast that fired on delivery is gone, and in its place are the
+            // seven endings baka_killall can actually have (finished, finished with nothing
+            // slain, still walking, already running, stopped part way, said nothing at all,
+            // and a shape this version cannot read) plus the refusal that the world save
+            // shares with it.
+            // The number is the gate: a new toast whose rune is spelled at the call site
+            // and nowhere else lands here.
+            Assert.Equal(187, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

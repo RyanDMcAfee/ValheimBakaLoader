@@ -37,6 +37,21 @@ namespace ValheimBakaLoader.Tools
         /// <summary>The prefix every id this catalog answers for is spelled under.</summary>
         public const string Prefix = "host.";
 
+        /// <summary>
+        /// The interface ids this side is allowed to read as well, and only in English.
+        /// <para>
+        /// The rule stays what it says above: a sentence a PLAYER reads is spelled under
+        /// <c>host.</c> and is written in the players' language. This is the other case, and
+        /// there is exactly one of it. The window's countdown chip travels over the bridge
+        /// as an id and a number, and the event it travels on also carries the finished
+        /// English sentence it carried before the chip was split, so nothing that read that
+        /// key is broken by the split. That English already exists, under
+        /// <c>hearth.countdown.</c>, and copying it into a literal on this side would be the
+        /// same sentence owned twice.
+        /// </para>
+        /// </summary>
+        internal const string PageEnglishPrefix = "hearth.countdown.";
+
         /// <summary>Where the embedded English lives inside the assembly.</summary>
         internal const string EnglishResourceName = "ValheimBakaLoader.WebUI.i18n.en.json";
 
@@ -78,6 +93,17 @@ namespace ValheimBakaLoader.Tools
         /// <summary>The sentence for an id, in whatever language the players are being written in.</summary>
         public static string T(string id, params (string Name, object Value)[] args) =>
             Current.Say(id, args);
+
+        /// <summary>
+        /// One <see cref="PageEnglishPrefix"/> sentence, in English and never in anything
+        /// else. It is deliberately not <see cref="T"/>: nothing this answers is read by a
+        /// player, and everything it answers is read by a program, so the language must not
+        /// move with the preferences the way the host-facing sentences do.
+        /// </summary>
+        public static string PageEnglish(string id, params (string Name, object Value)[] args) =>
+            id != null && id.StartsWith(PageEnglishPrefix, StringComparison.Ordinal)
+                ? EmbeddedEnglish.Say(id, args)
+                : null;
 
         /// <summary>
         /// The catalog for a language, read out of the pack installed for it, with the
@@ -293,9 +319,10 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
-        /// The host half of a catalog file. Only the host ids are kept: the interface's
-        /// thousand and a half entries are the browser's to hold, and this side has no use
-        /// for them beyond counting them.
+        /// The host half of a catalog file, plus the handful of interface ids
+        /// <see cref="PageEnglish"/> answers for. Everything else is left behind: the
+        /// interface's thousand and a half entries are the browser's to hold, and this side
+        /// has no use for them beyond counting them.
         /// </summary>
         private static Dictionary<string, JObject> ReadHostKeys(string json, bool countAll = false)
         {
@@ -307,7 +334,12 @@ namespace ValheimBakaLoader.Tools
 
             foreach (var pair in keys)
             {
-                if (!pair.Key.StartsWith(Prefix, StringComparison.Ordinal)) continue;
+                if (!pair.Key.StartsWith(Prefix, StringComparison.Ordinal) &&
+                    !pair.Key.StartsWith(PageEnglishPrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 if (pair.Value is JObject entry) kept[pair.Key] = entry;
             }
 

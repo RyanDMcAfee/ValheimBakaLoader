@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ValheimBakaLoader.Forms;
 using ValheimBakaLoader.Tests.Tools;
 using Xunit;
 
@@ -346,6 +347,88 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             Assert.Equal(1, Regex.Matches(Splash(), "PruneOnBoot\\(\\)").Count);
             Assert.DoesNotContain("PruneOnBoot()", Bridge(), StringComparison.Ordinal);
+        }
+
+        // ------------------------------------------------------------------ A2: the first frame
+
+        /// <summary>
+        /// The decision itself, driven rather than read. A window is worth holding the paint
+        /// back for only when all three hold: the saved language is one this app knows, it is
+        /// not English, and a pack for it is on disk.
+        /// </summary>
+        [Theory]
+        // English, in every spelling that reaches the preference. Nothing to say: the markup
+        // in index.html is already English and the first frame is already right.
+        [InlineData("en", true, null)]
+        [InlineData("EN", true, null)]
+        [InlineData(null, true, null)]
+        [InlineData("", true, null)]
+        // A spelling the app does not answer to is not a language to hold a window for.
+        [InlineData("klingon", true, null)]
+        [InlineData("xx", true, null)]
+        // A language with no pack on disk would be hidden and then painted in English, which
+        // is the flash this exists to remove, twice as long.
+        [InlineData("ru", false, null)]
+        [InlineData("ja", false, null)]
+        // And the case it is for.
+        [InlineData("ru", true, "ru")]
+        [InlineData("ja", true, "ja")]
+        [InlineData("zh-hans", true, "zh-Hans")]
+        public void The_page_is_told_the_language_only_when_holding_the_paint_back_is_worth_it(
+            string saved, bool packInstalled, string expected)
+        {
+            Assert.Equal(expected, BlendWindow.LanguageToAnnounce(saved, _ => packInstalled));
+        }
+
+        /// <summary>
+        /// An English window never asks the pack service anything at all. The short circuit
+        /// is what keeps this off the launch path for the hosts who are already reading the
+        /// interface in the language it ships in.
+        /// </summary>
+        [Fact]
+        public void An_english_window_never_asks_about_a_pack()
+        {
+            var asked = new List<string>();
+
+            Assert.Null(BlendWindow.LanguageToAnnounce("en", code => { asked.Add(code); return true; }));
+            Assert.Empty(asked);
+
+            Assert.Equal("ru", BlendWindow.LanguageToAnnounce("ru", code => { asked.Add(code); return true; }));
+            Assert.Equal(new[] { "ru" }, asked);
+        }
+
+        /// <summary>
+        /// And with nothing to ask, nothing is decided. A window with no pack service is a
+        /// window with no packs, so there is no language to hold the paint back for.
+        /// </summary>
+        [Fact]
+        public void With_no_way_to_ask_about_a_pack_nothing_is_announced()
+        {
+            Assert.Null(BlendWindow.LanguageToAnnounce("ru", null));
+        }
+
+        /// <summary>
+        /// The host half of A2: the language is handed over the same way the version is, on
+        /// the document-created hook, so it is set before a line of the page's own script
+        /// runs and before the navigation that loads it.
+        /// </summary>
+        [Fact]
+        public void The_host_hands_the_page_its_language_before_the_page_runs()
+        {
+            var window = AppSourceTree.Files()["BlendWindow.cs"];
+
+            Assert.Contains("window.BAKA_LANG=", window, StringComparison.Ordinal);
+            Assert.Contains("AnnounceLanguageToPageAsync(core)", window, StringComparison.Ordinal);
+
+            var announced = window.IndexOf("await AnnounceLanguageToPageAsync(core);", StringComparison.Ordinal);
+            var navigate = window.IndexOf("core.Navigate(", StringComparison.Ordinal);
+
+            Assert.True(announced > 0, "the language is never handed over");
+            Assert.True(navigate > announced, "the page is navigated before it is told its language");
+
+            // Through the decision, never by reading the preference at the call.
+            Assert.Contains("LanguageToAnnounce(", window, StringComparison.Ordinal);
+            Assert.Contains("LanguagePacks?.InstalledAny(language) != null", window, StringComparison.Ordinal);
         }
     }
 }

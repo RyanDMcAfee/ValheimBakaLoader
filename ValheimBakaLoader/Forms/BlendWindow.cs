@@ -563,6 +563,13 @@ namespace ValheimBakaLoader.Forms
             // browser kept, which covers whatever a stamp cannot reach. Neither is allowed
             // to stop the window coming up.
             await AnnounceVersionToPageAsync(core);
+
+            // And the language, the same way and for the same reason. The page paints as it
+            // is evaluated and the catalog is fetched, so a host saved into Russian used to
+            // read one English frame before the words arrived. This tells the bootstrap what
+            // is coming before the document exists, so it can hold the paint back.
+            await AnnounceLanguageToPageAsync(core);
+
             await ClearCacheOnceForThisVersionAsync(core);
 
             core.Navigate($"https://{VirtualHost}/index.html");
@@ -633,6 +640,66 @@ namespace ValheimBakaLoader.Forms
             {
                 // The page falls back to its own constant, which is the version it shipped with.
                 Logger.Warning(ex, "Could not hand the interface its version");
+            }
+        }
+
+        /// <summary>
+        /// The language the page should come up in, or null when the first frame is English
+        /// anyway and there is nothing to say.
+        /// <para>
+        /// Three things have to hold together for a window to be worth holding back. The
+        /// saved preference has to be a language this app knows, so an unreadable spelling
+        /// left in userprefs.json cannot decide anything. It has to be a language other than
+        /// English, because English is the markup in index.html and is already what the
+        /// first frame paints. And a pack for it has to be on disk, because the words come
+        /// out of a pack: naming a language with nothing installed would hide the window
+        /// and then paint the English it was hiding.
+        /// </para>
+        /// <para>
+        /// The pack is asked about through a delegate rather than read here, which is what
+        /// makes this a decision rather than a lookup: the suite drives all four roads
+        /// through it without a languages folder, and the short circuit above the call means
+        /// an English window never asks the pack service anything at all.
+        /// </para>
+        /// </summary>
+        /// <param name="savedLanguage">The language preference exactly as it was saved.</param>
+        /// <param name="hasPack">Answers whether a pack is installed for a language.</param>
+        internal static string LanguageToAnnounce(string savedLanguage, Func<string, bool> hasPack)
+        {
+            var normalized = LanguageCodes.Normalize(savedLanguage);
+            if (normalized == null || LanguageCodes.IsEnglish(normalized)) return null;
+
+            return hasPack != null && hasPack(normalized) ? normalized : null;
+        }
+
+        /// <summary>
+        /// Hands the page the language it is about to be read in, before any of its own
+        /// script runs. index.html holds the paint back while this is set, and lets it go
+        /// when the first applyLanguage for that language finishes or the safety timeout
+        /// fires, whichever comes first.
+        /// <para>
+        /// Nothing is said for an English window, and nothing is said for a language with no
+        /// pack on disk. Setting nothing is not a failure: the page reads an absent
+        /// BAKA_LANG as "paint now", which is exactly what it did before this existed.
+        /// </para>
+        /// </summary>
+        private async Task AnnounceLanguageToPageAsync(CoreWebView2 core)
+        {
+            try
+            {
+                var code = LanguageToAnnounce(
+                    UserPrefsProvider.LoadPreferences()?.Language,
+                    language => LanguagePacks?.InstalledAny(language) != null);
+                if (code == null) return;
+
+                await core.AddScriptToExecuteOnDocumentCreatedAsync(
+                    "window.BAKA_LANG=" + JsonConvert.SerializeObject(code) + ";");
+            }
+            catch (Exception ex)
+            {
+                // Say nothing and the page paints straight away, in English, and switches a
+                // moment later exactly as it used to. Never worth failing a launch over.
+                Logger.Warning(ex, "Could not hand the interface its language");
             }
         }
 

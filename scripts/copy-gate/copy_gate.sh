@@ -206,5 +206,20 @@ else
   echo "  the pseudo locale builder is missing: $MAKE_PSEUDO"; fail=1
 fi
 
+echo "== 13. the server's answer, read rather than assumed =="
+# A toast that says a command worked is copy, and a toast chosen BEFORE the server
+# answered is copy that is not true. baka_killall answers on the same line whether it
+# ran, refused, started, was already running or fell over, and every one of those used
+# to read "KillAll unleashed". The table drives the real reader out of app.js against
+# every reply the plugin can produce, and the rule beside it refuses the next
+# sendConsole call that hands in a finished sentence instead of reading the reply.
+KILLALL_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/killall_reply_selftest.js"
+if [ -f "$KILLALL_SELFTEST" ]; then
+  if out=$(node "$KILLALL_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the reply table is missing: $KILLALL_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

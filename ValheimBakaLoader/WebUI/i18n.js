@@ -105,24 +105,56 @@
     missing.push(id);
   }
 
-  function entryFor(id) {
-    if (active && has.call(active, id)) return active[id];
-    if (english && has.call(english, id)) { note(id); return english[id]; }
-    return null;
+  /* The marker a pack-merge tool writes for an id no translation batch answered. A pack
+     built that way carries it where the sentence should be, which is worse than having
+     no key at all: the id is present, so the fallback below never ran, and the sentence
+     that reached the screen was the dotted id itself. Two whole halls of
+     HEARTH.HEAD.TITLE were photographed that way before anyone noticed.
+     It is a pack-builder's marker and never a sentence, so the lookup reads it as a
+     hole in the pack, which is what it is. */
+  var MISSING_MARK = "__missing";
+
+  /* WORDS, and there is exactly one shape of them: a string that is neither the marker
+     above nor blank. This is the test everything below finishes on, because it is the
+     only thing a host can actually read. */
+  function words(value) {
+    return typeof value === "string" && value !== MISSING_MARK && value.trim() !== "";
+  }
+
+  /* What counts as an ANSWER, and it is deliberately narrow. Two shapes can hold words:
+     an entry object, and a bare string for a pack that stores one value per id.
+     Everything else that can land in a JSON file - the marker above, a number, a
+     boolean, null, an array, an empty string - is a hole, and a hole in the ACTIVE
+     catalog has to fall through to English rather than be painted.
+     A pack is a file built by somebody else, sometimes by a tool nobody here wrote, so
+     "the catalog will be well formed" is not a thing this file gets to assume. */
+  function usable(value) {
+    if (typeof value === "string") return words(value);
+    return !!value && typeof value === "object" && !Array.isArray(value);
   }
 
   function plainWanted() {
     try { return !!registerGetter(); } catch (_) { return false; }
   }
 
-  /* One entry, two registers, and a translated pack's single value. Plain wins
-     when the host asked for plain and the entry has one; a pack's own
-     translation wins next; the lore wording is the floor. */
-  function pickRegister(entry) {
-    if (!entry || typeof entry !== "object") return null;
-    if (plainWanted() && entry.plain != null) return entry.plain;
-    if (entry.translation != null) return entry.translation;
-    return entry.lore != null ? entry.lore : null;
+  /* One entry, two registers, and a translated pack's single value, in the order they
+     are tried. Plain wins when the host asked for plain and the entry has one; a pack's
+     own translation wins next; the lore wording is the floor.
+     A LIST rather than one pick, because a register is its own hole. The value of the
+     key can be a whole entry object and still carry nothing to read: a builder marking
+     an id it could not answer writes the marker, or a null, or an empty string, INTO
+     the register, and the entry around it still looks like an entry. Each candidate is
+     judged on the words it produces, further down, and a register that produces none is
+     stepped over rather than painted. */
+  function registersOf(entry) {
+    /* A pack that stores one value per id rather than an entry object. */
+    if (typeof entry === "string") return words(entry) ? [entry] : [];
+    if (!usable(entry)) return [];
+    var out = [];
+    if (plainWanted() && usable(entry.plain)) out.push(entry.plain);
+    if (usable(entry.translation)) out.push(entry.translation);
+    if (usable(entry.lore)) out.push(entry.lore);
+    return out;
   }
 
   function pluralCategory(n) {
@@ -133,23 +165,55 @@
 
   /* A plural value is an object of CLDR categories. The category the language
      does not have, or a parameter that is not a number, both land on "other",
-     which every language has.
+     which every language has. A pack that filled in neither the category this
+     count needs nor "other" has left a hole the size of the whole sentence, and it
+     falls through with the rest of them.
 
      A caller that formats its own number hands the raw one in pluralValue and the
      category is picked from THAT. A formatted number cannot be read back: ar-EG
      writes ١ for 1 and Number("١") is NaN, so a slot carrying the words for a
      number would have put every Arabic sentence on "other" and written the plural
      of a sentence about one thing. */
+  function pluralOf(entry, value, params) {
+    var name = entry && entry.plural;
+    var counted = NaN;
+    if (params) counted = has.call(params, "pluralValue") ? params.pluralValue : params[name];
+    var picked = pluralCategory(counted);
+    return words(value[picked]) ? value[picked] : value.other;
+  }
+
+  /** The words one entry gives for these params, or null when it gives none. */
   function resolveValue(entry, params) {
-    var value = pickRegister(entry);
-    if (value && typeof value === "object") {
-      var name = entry.plural;
-      var counted = NaN;
-      if (params) counted = has.call(params, "pluralValue") ? params.pluralValue : params[name];
-      var picked = pluralCategory(counted);
-      value = value[picked] != null ? value[picked] : value.other;
+    var candidates = registersOf(entry);
+    for (var i = 0; i < candidates.length; i++) {
+      var value = candidates[i];
+      if (typeof value === "object") value = pluralOf(entry, value, params);
+      if (words(value)) return value;
     }
-    return value == null ? null : String(value);
+    return null;
+  }
+
+  /* The entry that can ANSWER for an id, the active catalog first and English behind it.
+     "The catalog holds this id" is a different question and the wrong one: a pack can
+     hold the id and hold a hole behind it, and English has to run then too. So the walk
+     asks each catalog for the WORDS and keeps the entry that produced them, which is
+     what makes has() and T() one reading rather than two that can disagree. */
+  function answerFor(id, params) {
+    var text;
+    if (active && has.call(active, id)) {
+      text = resolveValue(active[id], params);
+      if (text != null) return { entry: active[id], text: text };
+    }
+    if (english && has.call(english, id)) {
+      text = resolveValue(english[id], params);
+      if (text != null) { note(id); return { entry: english[id], text: text }; }
+    }
+    return null;
+  }
+
+  function entryFor(id, params) {
+    var answer = answerFor(id, params);
+    return answer ? answer.entry : null;
   }
 
   var SLOT = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
@@ -183,21 +247,25 @@
   function T(id, params) {
     if (id == null) return "";
     var key = String(id);
-    var entry = entryFor(key);
-    if (!entry) { warnOnce(key); return key; }
-    var text = resolveValue(entry, params);
-    if (text == null) { warnOnce(key); return key; }
-    return fill(text, params);
+    var answer = answerFor(key, params);
+    if (!answer) { warnOnce(key); return key; }
+    return fill(answer.text, params);
   }
 
-  /** True when some catalog can answer for this id. */
-  function hasKey(id) {
+  /** True when some catalog can answer for this id WITH WORDS. Literally the reading T()
+      does, over the same entries, so a caller that asks before it draws can never be told
+      yes and then handed an id.
+      @param {string} id dotted catalog id
+      @param {object} [params] the params T() will be given, when there are any: a plural
+        entry is read for the category those params choose, and for "other" without them */
+  function hasKey(id, params) {
     if (id == null) return false;
-    var key = String(id);
-    return !!((active && has.call(active, key)) || (english && has.call(english, key)));
+    return answerFor(String(id), params) != null;
   }
 
-  /** The rune that leads this message, or "" when it leads with none. */
+  /** The rune that leads this message, or "" when it leads with none. Taken off the entry
+      that supplied the WORDS, so a pack entry that kept the rune and lost the sentence
+      cannot stand its rune in front of an English fallback it had no part in. */
   function mark(id) {
     var entry = id == null ? null : entryFor(String(id));
     return entry && entry.mark != null ? String(entry.mark) : "";

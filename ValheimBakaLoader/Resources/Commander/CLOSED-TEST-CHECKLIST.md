@@ -225,16 +225,21 @@ config entry per plugin, `[Spawning] MarkSpawnedAsCheated`, default `false`, in
 while the server is starting, and does not watch it afterwards, so editing one while the
 server runs changes nothing until you stop and start it.
 
-**And the Commander entry cannot be switched on at all as things stand.** BakaLoader
-rewrites `com.baka.commander.cfg` from the server profile on every launch and keeps only
-`BindAddress`, so a `[Spawning]` section written there by hand is destroyed before BepInEx
-ever reads the file. Spawns issued through the app go to Commander whenever Commander holds
-the RCON port, which is the arrangement for this pass, so they come out unmarked whatever a
-host sets. Only `com.baka.spawnhelper.cfg` holds its value, BakaLoader not rewriting that
-one, and it governs only the spawns the Spawn Helper's console command serves. (In the
-coexistence case, where the AviiNL trio won the port, that command is what an app spawn ends
-up reaching, so the Spawn Helper's entry is in force instead and this gap does not apply.)
-Read the two steps at the end of this section before you set anything.
+**Both entries survive, and both are yours to set.** BakaLoader rewrites
+`com.baka.commander.cfg` from the server profile on every launch, and from BakaLoader 1.2.0
+it carries the whole `[Spawning]` section across that rewrite, every line inside it as you
+wrote it, comments and all, the way it has always carried `BindAddress`. Only the header
+line comes back in the app's own spelling, which is what BepInEx writes anyway and which
+carries no setting. So a value written there by hand is still in the file when BepInEx
+reads it at the next start, and it is the value the plugin binds. A file with no
+`[Spawning]` section keeps none, and the plugin writes its own default entry out on that
+start. `com.baka.spawnhelper.cfg` is not rewritten at all and holds its value the same
+way. Spawns issued through the app go to Commander whenever
+Commander holds the RCON port, which is the arrangement for this pass, so the Commander
+entry is the one governing them. (In the coexistence case, where the AviiNL trio won the
+port, an app spawn ends up reaching the Spawn Helper's own console command instead, so its
+entry is the one in force.) Read the two steps at the end of this section before you set
+anything.
 
 **Items and creatures spawned before this version keep their mark.** The flag lives inside
 each object, in the item's own saved data and on the creature's world record, not in this
@@ -270,20 +275,18 @@ would be the plugin's doing.
       **`com.baka.spawnhelper.cfg`**, start the server, `baka_spawn SwordIron <x,z,y>` at the
       server console. The tooltip **must** carry the cheated line now, and holding it must
       pause achievement progress. That is the escape hatch working.
-- [ ] **The Commander side cannot be switched on, and this step confirms that rather than
-      testing it.** Stop the server, set `MarkSpawnedAsCheated = true` under `[Spawning]` in
-      **`com.baka.commander.cfg`**, start the server, and open that file again **before** you
-      spawn anything. The `[Spawning]` section is **already gone**: BakaLoader rewrites the
-      file from the server profile on every launch and keeps only `BindAddress`, so the edit
-      is destroyed before BepInEx ever parses it, and the plugin binds the key at `false`.
-      Now spawn through the app. The tooltip **must** come out **clean**. A cheated line here
-      would mean the rewrite did not happen and is the thing to report.
-- [ ] Writing the value back while the server runs changes nothing either, so do not try it
-      as a workaround: BepInEx read the file at startup and keeps no watcher on it, and the
-      next launch wipes it again. With Commander serving RCON there is presently **no**
-      setting a host can apply that marks a spawn issued through the app. That is a known gap in
-      `Tools/CommanderInstaller.cs`, which preserves `BindAddress` already and needs the same
-      treatment for `[Spawning]`; it is not a plugin fault and not a failure of this pass.
+- [ ] **The Commander side, which is the one an app spawn reads.** Stop the server, set
+      `MarkSpawnedAsCheated = true` under `[Spawning]` in **`com.baka.commander.cfg`**, start
+      the server, and open that file again **before** you spawn anything. The `[Spawning]`
+      section must **still be there** with `true` in it, and `BindAddress` must still hold
+      whatever you had it at: BakaLoader rewrites the rest of the file from the server
+      profile on every launch and carries those two across untouched. Now spawn through the
+      app. The tooltip **must** carry the cheated line. A section that has gone, or a clean
+      tooltip after setting it, means the section did not survive the rewrite and is the
+      thing to report.
+- [ ] Writing the value while the server runs still changes nothing until the next start:
+      BepInEx read the file at startup and keeps no watcher on it. Stop and start the server
+      after any edit rather than expecting a running server to pick one up.
 - [ ] Set both back to `false` and restart before signing off, so the live server ends the
       pass on the default.
 

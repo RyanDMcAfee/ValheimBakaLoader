@@ -135,6 +135,17 @@ body{
   font-family:var(--sans); color:var(--bone); line-height:var(--lh);
   user-select:none;
 }
+/* THE BOOT CLOAK. Hung by the bootstrap in index.html when the host said, before this
+   document existed, that the saved language is not English and has a pack on disk; taken
+   off by the first pass over the document in that language, and by a 1500 ms timeout
+   whatever happens. See the comment above that bootstrap for the whole of it.
+   Three deliberate choices in one rule. VISIBILITY, not display: every box is laid out
+   at its real size while it is hidden, so the reveal is a repaint and never a reflow,
+   and a measurement taken during the cloak is the measurement the host will see. THE
+   BODY'S CHILDREN, not the body: the body keeps its own background, so the window shows
+   the app's colour rather than a white rectangle. And nothing here fires in English,
+   because the class is never added for an English window. */
+html.lang-pending body>*{visibility:hidden}
 ::-webkit-scrollbar{width:9px;height:9px}
 ::-webkit-scrollbar-track{background:var(--iron-deeper)}
 ::-webkit-scrollbar-thumb{background:#4B515A;border-radius:5px;border:2px solid var(--iron-deeper)}
@@ -295,6 +306,13 @@ body{
 .side{
   width:92px;flex:none;display:flex;flex-direction:column;align-items:center;
   padding:14px 0 12px;gap:4px;position:relative;
+  /* A rail label is white-space:nowrap in a 76px box, and a language that needs 84px
+     for it does not wrap: it paints the extra ink straight out of the rail and over
+     the hall beside it, which reads as a label belonging to the wrong thing. Clipped
+     is the lesser evil, and it is one a screenshot shows. Nothing is laid out past
+     this box on purpose; the active item's indicator was, and has been moved back
+     inside it (see .navitem::before). */
+  overflow:hidden;
   background:
     repeating-linear-gradient(2deg,rgba(0,0,0,.14) 0 3px,transparent 3px 9px),
     repeating-linear-gradient(88deg,rgba(255,255,255,.012) 0 1px,transparent 1px 7px),
@@ -315,7 +333,14 @@ body{
   line-height:1.1;color:var(--ember);white-space:nowrap}
 .navitem.active .norse{color:var(--ember-hi)}
 .navitem:hover{color:var(--bone);background:rgba(255,255,255,.035)}
-.navitem::before{content:"";position:absolute;left:-10px;top:12px;bottom:12px;width:3px;
+/* The active item's ember bar. It sat at left:-10px, which put it at x -2.5 in a rail
+   whose own left edge is x 0: two and a half of its three pixels were painted outside
+   the window and what a host actually saw was the glow. Measured, not guessed, by the
+   probe that was written for the overflow rule above - which would have clipped the
+   remaining half pixel and made the loss permanent. The rail's content box is 91px wide
+   (92 less its own right border) and the item is 76, so the item starts at x 7.5: at
+   -7px the whole bar sits at x .5 to 3.5 and is inside the rail for the first time. */
+.navitem::before{content:"";position:absolute;left:-7px;top:12px;bottom:12px;width:3px;
   border-radius:0 3px 3px 0;background:transparent;transition:all .2s var(--ease)}
 .navitem.active{color:var(--ember-hi);background:var(--ember-dim)}
 .navitem.active .rune{text-shadow:0 0 12px rgba(255,122,26,.9);transform:scale(1.08)}
@@ -549,7 +574,15 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .skald-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;align-items:start}
 .skald-grid .sk-players{grid-row:span 2}
 /* fixed layout so every playtime row stays one line and truncates instead */
-.sk-players table{table-layout:fixed}
+/* 480px is the sum of what the five headers need at their widest of five languages,
+   padding and all, rounded up: name 84, playtime 96, sessions 91, deaths 77, last seen
+   97. The percentages in index.html are cut against that number, so every column clears
+   its widest rendering at any card width from 480px up - which includes the 503.7px the
+   card has at the app's minimum window. Below 480 the table stops shrinking and the
+   wrapper scrolls it, because a header that has been crushed into the column beside it
+   is not a table anybody can read. */
+.sk-players table{table-layout:fixed;min-width:480px}
+.sk-players .sk-ptable{overflow-x:auto}
 #skPlayerTable td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #skPlayerTable .vname{font-weight:600;color:var(--bone)}
 .skfeed{display:flex;flex-direction:column;gap:2px;max-height:320px;overflow-y:auto;padding-right:4px}
@@ -665,7 +698,15 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
 .copychip{margin-left:auto;font-size:9px;padding:2px 7px;border:1px solid var(--bronze);border-radius:4px;
   cursor:pointer;color:var(--bone-dim);transition:all .15s var(--ease);letter-spacing:1px}
 .copychip:hover{color:var(--ember-hi);border-color:var(--ember)}
-.pill{font-size:8.5px;letter-spacing:1.2px;font-weight:700;line-height:1.5;padding:2px 7px;border-radius:20px;text-transform:uppercase}
+/* A pill is a label, so it sizes to its own words: no width, no max-width, and one
+   line whatever those words are. The nowrap is the part that was missing. "Update
+   available" is 101px of ink against the 92px this pill was budgeted for, and in a flex
+   row that is tighter than the ones it sits in today it would have broken to two lines
+   inside a 19px-tall capsule rather than pushing the row wider. The minimum keeps a two
+   letter state from collapsing into a dot, and it is below the narrowest English pill
+   there is, so nothing on screen today moves. */
+.pill{font-size:8.5px;letter-spacing:1.2px;font-weight:700;line-height:1.5;padding:2px 7px;border-radius:20px;text-transform:uppercase;
+  white-space:nowrap;max-width:none;min-width:34px;text-align:center}
 .pill.green{background:rgba(111,160,92,.15);color:var(--moss);border:1px solid rgba(111,160,92,.4)}
 .pill.amber{background:rgba(232,169,60,.13);color:var(--amber);border:1px solid rgba(232,169,60,.4)}
 .pill.blue{background:rgba(91,122,140,.15);color:var(--cold-hi);border:1px solid rgba(91,122,140,.4)}
@@ -832,9 +873,14 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   box-shadow:inset 0 2px 12px rgba(0,0,0,.5)}
 .termhead{flex:none;display:flex;align-items:center;gap:8px;padding:8px 12px;
   border-bottom:1px solid rgba(140,109,63,.25);background:rgba(0,0,0,.25)}
+/* The Saga console's filter pills, on the same terms as .pill above. «ПРЕДУПР.» is the
+   widest of the five in any language at 62.5px against the 54px this row was budgeted
+   for, and the row absorbs it; what it must never do is take a second line inside a
+   capsule sized for one. */
 .fpill{font-size:9.5px;letter-spacing:1.6px;text-transform:uppercase;font-weight:600;
   padding:3px 10px;border-radius:20px;border:1px solid var(--bronze);color:var(--bone-dim);
-  cursor:pointer;transition:all .15s var(--ease)}
+  cursor:pointer;transition:all .15s var(--ease);
+  white-space:nowrap;max-width:none;min-width:34px;text-align:center}
 .fpill:hover{color:var(--bone);border-color:var(--bronze-hi)}
 .fpill.active{background:var(--ember-dim);border-color:var(--ember);color:var(--ember-hi)}
 .term{flex:1;overflow-y:auto;padding:10px 14px;font-family:var(--mono);font-size:11px;
@@ -1398,6 +1444,12 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   font-size:9px;color:var(--amber)}
 .holdbar .hbmsg{color:var(--bone-dim);min-width:0;flex:1 1 260px}
 .holdbar .hbacts{display:flex;align-items:center;gap:7px;margin-left:auto;flex:none;flex-wrap:wrap}
+/* The condition bar's action buttons size to their words too. "Update BakaLoader" is
+   137px of ink against the 120px the button was budgeted for and the English is already
+   over it, so there is no width here to cap: the row wraps instead, which is what
+   .hbacts flex-wrap is for. Written down rather than left to .btn's defaults, because
+   the next person to give .btn a width would take this with it. */
+.holdbar .hbacts .btn{max-width:none;flex:none}
 /* A server update is the one condition with a measurable amount left to run, so it
    carries a real bar. A phase that cannot report bytes sweeps instead of lying about
    a percentage. */
@@ -1633,6 +1685,19 @@ html[data-lang="zh-Hant"] .navitem .lbl{
   html[data-lang="zh-Hant"] .navitem .lbl{ font-size:11.5px; letter-spacing:0; }
 }
 
+/* The condition bar's title: 9px of serif with .14em of tracking, uppercased, and it was
+   the one label of its size in this file with no per-language rule at all. At 9px a
+   twelve character Japanese title measures 123px of unreadable ink, and uppercase does
+   nothing to Kana at any size, so the tracking artefact is all that is left of the
+   register the tracking was there to support. Same floor as every other CJK tier here,
+   paid for out of the tracking the same way: the bar's title is flex:none and the row
+   wraps, so a wider title costs the message column width rather than breaking. */
+html[data-lang="ja"] .holdbar .hbtitle,
+html[data-lang="zh-Hans"] .holdbar .hbtitle,
+html[data-lang="zh-Hant"] .holdbar .hbtitle{
+  font-size:12px; letter-spacing:0; text-transform:none; font-weight:600;
+}
+
 /* Every table header: 10px with 2px tracking, uppercased. Twenty percent tracking on a
    Han character, which is the worst single instance of this class in the product. */
 html[data-lang="ja"] thead th,
@@ -1740,9 +1805,21 @@ html[data-lang="ja"] .cfg-editor, html[data-lang="zh-Hans"] .cfg-editor, html[da
 html[data-lang="ru"] .navitem .lbl{
   font-size:10px; letter-spacing:.6px;
 }
-@media (max-height:900px){ html[data-lang="ru"] .navitem .lbl{ font-size:9.5px; letter-spacing:.5px; } }
-@media (max-height:780px){ html[data-lang="ru"] .navitem .lbl{ font-size:9px; letter-spacing:.4px; } }
+/* The two short-viewport step-downs are GONE, and the 10px floor holds at every height.
+   They were written on the assumption that the widest Russian rail label would not fit
+   the 76px box at 10px; it does, with room. СТАТИСТИКА, the longest of the nine, is the
+   only one that comes close: 68.5px of ink at 10px with .6px of tracking, measured in
+   the real rail at the app's minimum 1024x680, which is below 780 and therefore the size
+   the 9px rule was for. The other eight are 58.1px and under. 10px is the floor the
+   research asked for and there was never anything to pay for it with.
+   (Deleting a rule is the additive change here: what it added was a smaller size.) */
 html[data-lang="ru"] .pill, html[data-lang="ru"] .copychip{
+  font-size:10px; letter-spacing:.6px;
+}
+/* The condition bar title, on the same terms as the two labels above it: one step up
+   with the tracking mostly given back, which is how every Russian label rule in this
+   file is written. */
+html[data-lang="ru"] .holdbar .hbtitle{
   font-size:10px; letter-spacing:.6px;
 }
 html[data-lang="ru"] .hstate{

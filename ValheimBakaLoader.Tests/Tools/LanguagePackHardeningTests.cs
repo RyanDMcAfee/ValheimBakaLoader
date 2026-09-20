@@ -516,6 +516,74 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.True(result.Ok, result.ReasonId);
         }
 
+        /// <summary>
+        /// The other half of the latch, and the half nothing was asking about: a fetch that
+        /// arrives WHILE the sweep runs has to be turned away.
+        /// <para>
+        /// The test above passes on the shape this was fixed from, and so does the one in
+        /// LanguagePackServiceTests that sweeps during a download: both of them only ever ask
+        /// the sweep to stand aside, and a sweep that merely CONSULTED IsBusy did stand aside,
+        /// correctly, every time. What it did not do was take anything. So a download starting
+        /// one line later found Current null and nobody sweeping, said yes, and went to work in
+        /// the very staging folder the sweep was emptying. That is the race, it is invisible
+        /// from outside the service, and the only way to stand in it is from inside the sweep.
+        /// </para>
+        /// <para>
+        /// Mutate PruneOnBoot back to asking IsBusy without setting Sweeping and this test goes
+        /// red on the Busy assertion, with the pack landing while the sweep runs; every other
+        /// test in both files stays green.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_fetch_that_arrives_while_the_sweep_runs_is_turned_away()
+        {
+            // Something for the sweep to actually do, so it is not the empty road above.
+            var stale = Path.Combine(Root, "ru", "1.0.0");
+            Directory.CreateDirectory(stale);
+            File.WriteAllText(Path.Combine(stale, "pack.json"), JsonConvert.SerializeObject(new
+            {
+                schema = 1,
+                code = "ru",
+                appVersion = "1.0.0",
+                catalog = 3,
+                keys = 1,
+                translated = 1,
+                status = "machine",
+            }));
+            File.WriteAllText(Path.Combine(stale, "strings.json"), CatalogJson("ru", "1.0.0", 3));
+
+            var zip = PlainPack("ru", AppVersion, 7);
+            var (service, handler) = Build(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), zip);
+
+            LanguagePackResult during = null;
+            service.DuringSweep = () =>
+            {
+                // On its own thread with no context of its own, so the pre-fix shape fails by
+                // going green on the wrong answer rather than by hanging here.
+                var arriving = Task.Run(() => service.DownloadAsync("ru"));
+                during = arriving.Wait(TimeSpan.FromSeconds(30)) ? arriving.Result : null;
+            };
+
+            service.PruneOnBoot();
+
+            Assert.NotNull(during);
+            Assert.False(during.Ok);
+            Assert.False(during.Cancelled);
+            Assert.Equal(LanguagePackReasons.Busy, during.ReasonId);
+
+            // Turned away means turned away: not one byte was asked for, and nothing was put
+            // on disk for the running version while the sweep held the folders.
+            Assert.DoesNotContain(RuPackUrl, handler.Requests);
+            Assert.False(Directory.Exists(Path.Combine(Root, "ru", AppVersion)));
+
+            // The latch came back, so the fetch that arrives after the sweep is served.
+            Assert.False(service.IsBusy);
+            service.DuringSweep = null;
+
+            var after = await service.DownloadAsync("ru");
+            Assert.True(after.Ok, after.ReasonId);
+        }
+
         // ------------------------------------------------------------------ 5. what is on disk after an update
 
         /// <summary>

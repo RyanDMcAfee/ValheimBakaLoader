@@ -556,6 +556,14 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         internal Action<string> BeforeTakingTheDoor { get; set; }
 
+        /// <summary>
+        /// Called on the sweeping thread while the sweep holds the latch, which is the one
+        /// window in which a fetch has to be turned away. The suite stands here to ask for a
+        /// pack from inside the sweep, because that is the direction a sweep that only
+        /// CONSULTED IsBusy got wrong and no test could see; nothing in the app sets it.
+        /// </summary>
+        internal Action DuringSweep { get; set; }
+
         public event EventHandler<LanguageChangedEventArgs> LanguageChanged;
 
         public bool IsBusy
@@ -1907,6 +1915,10 @@ namespace ValheimBakaLoader.Tools
             // the latch and left it set turns away every fetch for as long as the app is open.
             try
             {
+                // Inside the latch and before a single thing is deleted, which is where a
+                // fetch arriving now would be racing for the staging folder.
+                DuringSweep?.Invoke();
+
                 if (!Directory.Exists(RootFolder)) return 0;
 
                 // Staging is transient by definition: anything in it is the remains of a run

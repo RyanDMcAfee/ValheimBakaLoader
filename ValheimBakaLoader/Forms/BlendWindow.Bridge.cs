@@ -473,12 +473,22 @@ namespace ValheimBakaLoader.Forms
             // way back, so warn while the host can still take a copy.
             server.LegacyWorldLoaded += (s, e) =>
             {
-                var world = ServerPrefsProvider.LoadPreferences(profile)?.WorldName ?? "the world";
-                PostEvent("server.legacyWorld", new { world, profile });
+                var named = ServerPrefsProvider.LoadPreferences(profile)?.WorldName;
+
+                // The page's copy, with the stand-in it has always carried. This one is read
+                // in the window, so wording it belongs to the interface catalog and to the
+                // page; it is English here for now and it is the last piece of this event
+                // that is.
+                PostEvent("server.legacyWorld", new { world = named ?? "the world", profile });
 
                 if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
                 {
-                    DiscordWebhooks.SendLegacyWorldLoaded(DisplayName(), world);
+                    // The post is read in a channel by the people who play on the server, so
+                    // the stand-in comes out of their catalog rather than out of this line.
+                    // It used to be the same English string as above, dropped into the middle
+                    // of an otherwise translated sentence.
+                    DiscordWebhooks.SendLegacyWorldLoaded(
+                        DisplayName(), named ?? HostCatalog.T("host.discord.legacy_world.unnamed"));
                 }
             };
 
@@ -510,9 +520,17 @@ namespace ValheimBakaLoader.Forms
             /* The chip's own tick. An id and a number, never a sentence: the page writes the
                words out of the interface catalog, which is the only place that knows which
                language this window is being read in. A null tick is the countdown ending, and
-               carries no id, which is how the page knows to say nothing. */
+               carries no id, which is how the page knows to say nothing.
+
+               "message" is the key this event carried before the chip was split, holding the
+               finished English sentence, and it is still here holding the same sentence to the
+               byte. Nothing in the page reads it: the words on screen come from the id, the
+               unit and the count above. It stays because an event is a contract and this pass
+               is additive, and because ValheimServer.CountdownTick handing a CountdownChip
+               where it used to hand a string is a break on the C# side that nothing should
+               have to feel twice. See CountdownMessage for where the English comes from. */
             server.CountdownTick += (s, chip) => PostEvent("server.countdown",
-                new { id = chip?.Id, unit = chip?.Unit, count = chip?.Count ?? 0, profile });
+                new { id = chip?.Id, unit = chip?.Unit, count = chip?.Count ?? 0, message = CountdownMessage(chip), profile });
             server.PlayerDied += (s, characterName) =>
             {
                 // Tie the character back to a known player when possible: same server,
@@ -534,6 +552,42 @@ namespace ValheimBakaLoader.Forms
                 });
                 PostEvent("server.playerDied", new { character = characterName, profile });
             };
+        }
+
+        /// <summary>
+        /// The countdown chip's sentence in English, for the "message" key the
+        /// server.countdown event has always carried. Null for the tick that ends a
+        /// countdown, which carries no chip and so has nothing to say.
+        /// <para>
+        /// The words are read out of the English catalog under the same ids the page reads
+        /// in whatever language the window is in, so there is one owner for this sentence
+        /// and the English it produces is the English the chip itself shows, to the byte. A
+        /// literal here would be that same sentence written down a second time, which is how
+        /// a translated product ends up with one line nobody can move.
+        /// </para>
+        /// <para>
+        /// The unit falls back to minutes for anything unrecognised, which is the fallback
+        /// the page's own countdownChipWords makes, so the two cannot disagree about a tier
+        /// neither of them has heard of.
+        /// </para>
+        /// </summary>
+        internal static string CountdownMessage(ValheimServer.CountdownChip chip)
+        {
+            if (chip == null) return null;
+
+            if (string.Equals(chip.Id, "restart_now", StringComparison.Ordinal))
+                return HostCatalog.PageEnglish("hearth.countdown.restart_now");
+
+            if (!string.Equals(chip.Id, "restart_in", StringComparison.Ordinal)) return null;
+
+            var time = chip.Unit switch
+            {
+                "hours" => HostCatalog.PageEnglish("hearth.countdown.hours", ("count", chip.Count)),
+                "seconds" => HostCatalog.PageEnglish("hearth.countdown.seconds", ("count", chip.Count)),
+                _ => HostCatalog.PageEnglish("hearth.countdown.minutes", ("count", chip.Count)),
+            };
+
+            return HostCatalog.PageEnglish("hearth.countdown.restart_in", ("time", time));
         }
 
         /// <summary>

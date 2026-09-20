@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ValheimBakaLoader.Forms;
+using ValheimBakaLoader.Game;
 using ValheimBakaLoader.Tests.Tools;
 using ValheimBakaLoader.Tools;
 using Xunit;
@@ -122,6 +124,68 @@ namespace ValheimBakaLoader.Tests.Forms
             {
                 Assert.True(catalog.ContainsKey(id), "the catalog has no " + id);
             }
+        }
+
+        /// <summary>
+        /// A6. Splitting the chip changed two things that were not the page's words: the
+        /// EventArgs type on ValheimServer.CountdownTick, and the "message" key the
+        /// server.countdown event carried. The first is a C# break and is noted where it
+        /// happened; the second is a contract and is mended here. The key is back, holding the
+        /// same English it always held, beside the id and the number rather than instead of
+        /// them.
+        /// </summary>
+        [Fact]
+        public void The_countdown_event_still_carries_the_english_it_always_carried()
+        {
+            var bridge = Bridge();
+
+            Assert.Contains(
+                "count = chip?.Count ?? 0, message = CountdownMessage(chip), profile",
+                bridge,
+                StringComparison.Ordinal);
+
+            // The tick that ends a countdown carries no chip, so it has nothing to say.
+            Assert.Null(BlendWindow.CountdownMessage(null));
+
+            Assert.Equal("Restarting now", BlendWindow.CountdownMessage(ValheimServer.CountdownChip.RestartNow));
+        }
+
+        /// <summary>
+        /// And the English is the English, to the byte. These are the exact sentences the old
+        /// hand-rolled FormatTime produced, tier by tier and singular by plural, which is what
+        /// makes restoring the key a repair rather than a new string nobody has read.
+        /// </summary>
+        [Theory]
+        [InlineData(7200, "Restart in 2 hours")]
+        [InlineData(3600, "Restart in 1 hour")]
+        [InlineData(300, "Restart in 5 minutes")]
+        [InlineData(60, "Restart in 1 minute")]
+        [InlineData(30, "Restart in 30 seconds")]
+        [InlineData(1, "Restart in 1 second")]
+        public void The_chips_english_is_the_english_the_old_helper_wrote(int seconds, string english)
+        {
+            Assert.Equal(english, BlendWindow.CountdownMessage(ValheimServer.CountdownChip.RestartIn(seconds)));
+        }
+
+        /// <summary>
+        /// It is not written down here, it is read out of the one catalog that owns it. A
+        /// literal would be the same sentence with two owners, and the page's copy is the one
+        /// a translator is handed.
+        /// </summary>
+        [Fact]
+        public void The_chips_english_comes_out_of_the_catalog_rather_than_out_of_the_bridge()
+        {
+            var bridge = Bridge();
+
+            Assert.Contains("HostCatalog.PageEnglish(\"hearth.countdown.restart_in\"", bridge, StringComparison.Ordinal);
+            Assert.Contains("HostCatalog.PageEnglish(\"hearth.countdown.restart_now\")", bridge, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"Restart in \"", bridge, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"Restarting now\"", bridge, StringComparison.Ordinal);
+
+            // And it is English whatever the players are being written to in, because what
+            // reads it is a program rather than a person.
+            Assert.Null(HostCatalog.PageEnglish("host.countdown.restart_now"));
+            Assert.Null(HostCatalog.PageEnglish(null));
         }
 
         /// <summary>Every Discord post, title and body.</summary>

@@ -54,22 +54,24 @@
 // The entry is read off disk once, while the server is starting. BepInEx 5.4 keeps no
 // watcher on the .cfg, so changing the setting while the server runs does nothing until
 // the next start.
-// KNOWN GAP: for as long as this plugin is the one serving RCON, which is the normal case
-// and the only arrangement BakaLoader sets up by itself, a host cannot turn this mark ON
-// for a spawn issued through the app. Such a spawn arrives at CmdSpawn below, which reads
-// this plugin's entry, and this plugin's entry can never be anything but the default.
-// BakaLoader rewrites com.baka.commander.cfg from the server profile on every start and
-// keeps only BindAddress, so a [Spawning] section written here by hand is destroyed before
-// BepInEx parses the file. Writing it again after a start does not help either: by then the
-// file has already been read, and the next start wipes it again. Curing this means teaching
-// Tools\CommanderInstaller.cs to carry a [Spawning] section across that rewrite the way it
-// already carries BindAddress.
-// com.baka.spawnhelper.cfg is NOT rewritten by BakaLoader and does hold its value, but it
-// governs only the spawns the Spawn Helper's own console command serves, never CmdSpawn's.
-// That command is reached from the game console and from a third-party RCON plugin that
-// forwards to it, so in the COEXISTENCE case below, where AviiNL-RCON won the port and this
-// plugin is dormant, the Spawn Helper's entry is the one in force and the gap does not
-// apply. It applies whenever Commander is the plugin answering.
+// TURNING IT ON: write MarkSpawnedAsCheated = true under [Spawning] in
+// BepInEx/config/com.baka.commander.cfg and start the server. That value is the one this
+// plugin binds as it loads, and a spawn issued through the app, which arrives at CmdSpawn
+// below and reads this plugin's entry, comes out marked. BakaLoader rewrites this file from the
+// server profile on every start, and from BakaLoader 1.2.0 Tools\CommanderInstaller.cs
+// carries the whole [Spawning] section across that rewrite, every line inside it as the
+// host wrote it, comments and all, the way it has always carried BindAddress. Only the
+// header line is written back in the app's own spelling of it, which BepInEx normalises
+// anyway and which no setting rides on. A file with no such section keeps none, and the
+// plugin writes its own default entry out on that start.
+// (Before 1.2.0 the rewrite kept only BindAddress, so a hand-written [Spawning] section
+// was destroyed before BepInEx parsed the file and this mark could not be turned on at
+// all while Commander was the plugin answering.)
+// com.baka.spawnhelper.cfg is NOT rewritten by BakaLoader at all and holds its value the
+// same way, but it governs only the spawns the Spawn Helper's own console command serves,
+// never CmdSpawn's. That command is reached from the game console and from a third-party
+// RCON plugin that forwards to it, so in the COEXISTENCE case below, where AviiNL-RCON won
+// the port and this plugin is dormant, the Spawn Helper's entry is the one in force.
 //
 // All game work is dispatched to the Unity main thread via a queue drained in
 // Update() - Object.Instantiate()/game API calls from the socket thread crash

@@ -441,6 +441,13 @@ const I18N_READY=(function(){
   const walk=ok=>{
     try{if(ok&&window.I18N)window.I18N.applyStatic(document);}catch(_){}
     if(ok){try{repaintBootCopy();}catch(_){}}
+    /* The boot cloak comes off HERE, and with no language named on purpose. This is the
+       end of the boot chain whichever way it went: the pack landed and the document has
+       just been walked in it, or the pack did not and the window is in English and will
+       stay there. Holding the cloak past this point could only mean a blank window over
+       a pack that already failed. The 1500 ms timeout in index.html covers the one case
+       this line cannot reach, which is a chain that never ends at all. */
+    try{if(window.BAKA_LANG_REVEAL)window.BAKA_LANG_REVEAL();}catch(_){}
     return ok;
   };
   try{
@@ -456,14 +463,20 @@ const I18N_READY=(function(){
          waiting for the pack is what stops this chain painting English over English
          and then painting a second time.
          Be exact about what that buys, because the wiki gets written from comments like
-         this one and this one has already been read for more than it says. It is NOT a
-         promise that the first PAINTED frame is the host's language. The page frame is
-         up while these two local files are still being read, showing the English in the
-         markup, and on a headless harness driving the real boot shape that is about 130ms
-         with the language landing four painted frames later. What it IS: no pass over the
-         document is ever made in a catalog the host did not ask for, so nothing is written
-         in English and corrected afterwards. Measured the same way: two passes at boot,
-         this one and the terminology pass initUpkeep makes, and both are the host's. */
+         this one and this one has already been read for more than it says. What this
+         chain buys on its own is that no pass over the document is ever made in a catalog
+         the host did not ask for, so nothing is written in English and corrected
+         afterwards. Measured the same way: two passes at boot, this one and the
+         terminology pass initUpkeep makes, and both are the host's.
+         What it did NOT buy, and what the boot cloak now does: the first PAINTED frame.
+         The page frame goes up while these two local files are still being read, and it
+         used to show the English in the markup for about 130ms with the language landing
+         four painted frames later. The host says the language before the document exists
+         (window.BAKA_LANG, injected on the WebView2 core before Navigate), the bootstrap
+         in index.html hangs html.lang-pending on that, and walk() below takes it off. The
+         probe records one sample per painted frame and there is no longer a frame in
+         which a non-English window shows English. An English window has no cloak, no
+         delay and the same 74ms first frame it always had. */
       .then(cat=>{EN_CATALOG=cat;window.I18N.load(cat,"en");return langBootCatalog();})
       .then(()=>walk(true))
       .catch(e=>{console.warn("[i18n] the English catalog did not load",e);return walk(false);});
@@ -585,6 +598,12 @@ function applyLanguage(code){
      window comes back in the new language. It draws from LANG, so this is the same
      redraw every other surface gets. */
   try{renderLangMenu();}catch(_){}          /* the globe menu, rows, notes and all */
+  /* The boot cloak, if one is still hanging. Named, so only a redraw in the language
+     the cloak was hung for takes it off: a host who opens the globe and picks a third
+     language while the boot pack is still coming down has not yet seen the frame this
+     was waiting for. In every window that is already up this answers false and costs a
+     class lookup. */
+  try{if(window.BAKA_LANG_REVEAL)window.BAKA_LANG_REVEAL(tag);}catch(_){}
   return tag;
 }
 /* The terminology switch is a language switch with the language left alone: the words
@@ -612,13 +631,20 @@ function applyTerms(){return applyLanguage();}
       same promise that loads the English catalog, between loading it and walking the
       document, so every pass over the document is made in the catalog the host asked for
       and none is made in English for a later pass to correct.
-      This used to read "the first frame is never the wrong language", which is more than
-      it can promise and is what the wiki was written from. The page frame is up while
-      these two local files are still being read, showing the English in index.html, and a
-      headless harness driving the real boot shape puts that at about 130ms with the
-      language landing four painted frames later. There is no boot cloak, and the English
-      in the markup is deliberate: scripts/i18n/check_first_frame.py exists to keep it
-      correct, because it is what a failed catalog fetch falls back to.
+      That is a statement about the PASSES, and for a while this comment also claimed the
+      first frame, which the passes alone cannot buy: the page frame is up while those two
+      local files are still being read, and a headless harness driving the real boot shape
+      put the English in index.html on screen for about 130ms with the language landing
+      four painted frames later.
+      THERE IS A BOOT CLOAK NOW, and it is the other half. The host injects
+      window.BAKA_LANG on the core before Navigate when the saved language is not English
+      and has a pack on disk; the bootstrap in index.html reads it before the document
+      exists and hangs html.lang-pending, which app.css draws as visibility:hidden on the
+      body's children; the walk at the end of the catalog chain takes it off, and a 1500 ms
+      timeout takes it off whatever happens, so a pack that never arrives costs a second
+      and a half rather than a blank window. An English window is untouched: no class, no
+      delay. The English in the markup is still deliberate and still what a failed catalog
+      fetch falls back to, and scripts/i18n/check_first_frame.py exists to keep it correct.
    4. THE FACES ARE WRITTEN AT RUNTIME. The font store is content addressed, so the address
       of a face is a hash the stylesheet cannot know. switchLanguage() owns a
       <style id="langFonts"> element and replaces it whole on every switch. */
@@ -642,6 +668,20 @@ const LANG={
   cancelling:null,
   /* True once a lang.list is in flight, so two presses do not make two requests. */
   asking:false,
+  /* The code THIS window asked the host to switch to, held until the lang.changed that
+     the ask produces has been seen and dropped. One switch has to be one re-render, and
+     without this it was two.
+     Why it needs holding at all: the host raises LanguageChanged while it is still
+     inside the lang.set call, so the event reaches this window BEFORE the reply it is
+     waiting for does. Every guard downstream reads what the window is showing now,
+     which at that instant is still the old language, so the event read as somebody
+     else's switch and the window drew itself twice - once off the event and once off
+     the reply, with a second pack fetch between them.
+     It is the origin token by another name, kept on this side rather than round tripped
+     through the host, because the page is the only place that knows which press started
+     this. Consumed once: the next lang.changed naming this code is genuinely another
+     window's and is followed like any other. */
+  mine:null,
   /* The saved PlayerMessageLanguage: "same" as the interface, or a code of its own. Read
      off the same userprefs document the Upkeep card is painted from. */
   playerMessages:"same",
@@ -673,7 +713,16 @@ function langNameOf(code){
    reads them in: what they are using, what they have, what it would cost, and why they
    cannot have it. */
 function langRowLine(l){
-  if(l.code===langCurrent()) return T("lang.row.current");
+  if(l.code===langCurrent()){
+    /* Current AND behind. The two facts are not alternatives and the row used to show
+       only the first, so the one host who most needs to know the words on screen come
+       from an older pack - the host reading them right now - was the only one the menu
+       did not tell. The line below it is where every other language says the same
+       thing, and this is the same sentence with what it is joined to the front. */
+    return (l.installed&&!l.matchesApp&&!l.builtIn)
+      ?T("lang.row.current_older_pack",{version:l.installedVersion||""})
+      :T("lang.row.current");
+  }
   if(l.builtIn) return T("lang.row.built_in");
   if(l.installed&&l.matchesApp) return T("lang.row.installed");
   if(l.installed) return T("lang.row.older_pack",{version:l.installedVersion||""});
@@ -966,8 +1015,22 @@ async function langPick(code){
 }
 /* The switch itself, once the words are known to be on disk. */
 async function langSet(code){
+  /* Claimed BEFORE the call, because the event this call raises can arrive before the
+     call answers. See LANG.mine. */
+  LANG.mine=code;
   const r=await rpc("lang.set",{code});
-  if(r===FAIL) return false;
+  /* The call itself did not land, so the host changed nothing and raised nothing. The
+     claim goes with it: left standing it would swallow the next real switch from
+     another window. */
+  if(r===FAIL){if(LANG.mine===code)LANG.mine=null;return false;}
+  /* Past this line the claim is cleared by ONE thing: the lang.changed this call raised,
+     arriving at the handler below. That is safe exactly as long as a successful lang.set
+     always raises it, which is not a hope: the rpc writes the preference and calls
+     LanguagePacks.NotifyLanguageChanged in the same block (BlendWindow.Bridge.cs), and
+     BlendWindowLanguageBridgeTests pins both lines to that block. A future lang.set that
+     succeeds quietly would leave the claim standing and swallow the next genuine switch
+     to this same language from another window, so it is that test that has to go red
+     first rather than this page that has to guess. */
   const ok=await switchLanguage(r);
   if(!ok){toast("ᚦ "+T("lang.toast.failed",
     {language:langNameOf(code),reason:T("lang.reason.contents")}));return false;}
@@ -1044,15 +1107,36 @@ function renderLangDot(){
   dot.setAttribute("aria-label",said);
   return missing;
 }
+/* The English for the one option every install has, read off the markup ONCE, before
+   the first rebuild replaces it. Read on every call instead, it would answer with the
+   markup the first time and with nothing every time after, which is the shape a
+   fallback has when it has quietly stopped being one. */
+const PLAYER_MSG_SAME_EN=(()=>{
+  const o=$('#selPlayerMsgLang option[value="same"]');
+  return o?String(o.textContent||"").trim():"";
+})();
 /* The Upkeep card's "Messages to players" select. Its options are the languages a pack is
    actually installed for, because a language nobody has downloaded has no words to write
    a countdown in. Before lang.list has been asked for, the select still carries what is
    saved, so it never shows a choice the host did not make. */
 function renderPlayerMsgLang(){
   const sel=$("#selPlayerMsgLang"); if(!sel) return 0;
+  /* This runs as a statement while app.js is still being evaluated, which is long
+     before the catalog fetch resolves, and the first option it writes is a T() call.
+     With no catalog T() answers an id with the id, so that option read
+     "settings.player_messages.same" for two painted frames. An <option> is not
+     somewhere the static walker can put the English back either: the walker replaces
+     what markup carries, and this had already wiped it.
+     So the one option every install has is worded from the catalog when there is one
+     and from the English index.html carries when there is not. Asking has() for this one
+     id rather than whether a catalog landed at all is deliberate: a window whose en.json
+     never arrived keeps a working select with the languages it has, rather than losing the
+     setting altogether. */
+  const sameWord=(window.I18N&&window.I18N.has("settings.player_messages.same"))
+    ?T("settings.player_messages.same"):PLAYER_MSG_SAME_EN;
   const saved=String(LANG.playerMessages||"same");
   const rows=langRows().filter(l=>l.installed||l.builtIn);
-  const opts=[{code:"same",name:T("settings.player_messages.same")}];
+  const opts=[{code:"same",name:sameWord}];
   rows.forEach(l=>opts.push({code:l.code,name:l.nativeName||l.englishName||l.code}));
   if(!opts.some(o=>o.code===saved)) opts.push({code:saved,name:langNameOf(saved)});
   sel.innerHTML=opts.map(o=>
@@ -1143,6 +1227,10 @@ Native.on("lang.downloadProgress",d=>{
    showing something that is no longer true. */
 Native.on("lang.changed",d=>{
   if(!d||!d.code) return;
+  /* This window's own ask, coming back as an event. Dropped, and the claim with it, so
+     the NEXT event naming the same language really is another window's and is followed.
+     The reply to lang.set is what switches this window, and it is on its way. */
+  if(LANG.mine&&d.code===LANG.mine){LANG.mine=null;return;}
   if(d.code===langCurrent()) return;
   if(!Native.available) return;
   Native.call("lang.status",{}).then(st=>{
@@ -2068,11 +2156,29 @@ function abStatus(){
   if(Native.available) return (S.state&&S.state.status)||"Stopped";
   return running?"Running":"Stopped";
 }
+/* UPTIME-SPAN-BEGIN
+   How long the server has been up, as one sentence fragment with the unit letters in it.
+   Four call sites built this by hand, each spelling "h " and "m" into the middle of a
+   string, which is two English words a translator could not reach: the width pilot
+   measured a Russian Hearth state and found it FITTED only because the span inside it
+   was still "4h 32m" in Latin letters, and wrote down that the real break returns the
+   day somebody translates them. This is that day.
+   One formatter, named slots, and the letters live in the catalog. The English is
+   byte-identical to what the four sites produced: hours plain, minutes padded to two.
+   The padding is a display choice this side owns rather than something a translator has
+   to know, so it is done here and the slot arrives already two characters wide.
+   @param {number} minutes whole minutes of uptime
+   @returns {string} "4h 32m" in English, and whatever the pack says in another language */
+function uptimeSpan(minutes){
+  const total=Math.max(0,Math.floor(Number(minutes)||0));
+  return T("common.uptime.hm",
+    {hours:String(Math.floor(total/60)),minutes:String(total%60).padStart(2,"0")});
+}
+/* UPTIME-SPAN-END */
 function abUptime(){
-  if(!Native.available) return running?(Math.floor(upMin/60)+"h "+pad(upMin%60)+"m"):"";
+  if(!Native.available) return running?uptimeSpan(upMin):"";
   if(!S.upSince||abStatus()!=="Running") return "";
-  const up=Date.now()-S.upSince;
-  return Math.floor(up/3600000)+"h "+pad(Math.floor(up/60000)%60)+"m";
+  return uptimeSpan((Date.now()-S.upSince)/60000);
 }
 function abOnline(){
   const list=S.players||[];
@@ -2153,8 +2259,7 @@ function renderHearth(){
   flameSetState(running?"burning":"cold");
   if(running){
     hCard.classList.remove("cold");
-    hState.textContent=T("hearth.card.hstate.running",
-      {span:Math.floor(upMin/60)+"h "+String(upMin%60).padStart(2,"0")+"m"});
+    hState.textContent=T("hearth.card.hstate.running",{span:uptimeSpan(upMin)});
     hPid.textContent="RUNNING · PID 150428 · valheim_server.x86_64";   // preview fixture
     douseBtn.textContent=T("hearth.appbar.lifecycle.stop");
     douseBtn.title=T("hearth.appbar.lifecycle.stop.title");
@@ -2188,8 +2293,7 @@ function renderHearthNative(){
     :"cold");
   if(st.status==="Running"){
     const up=S.upSince?Date.now()-S.upSince:0;
-    hState.textContent=T("hearth.card.hstate.running",
-      {span:Math.floor(up/3600000)+"h "+pad(Math.floor(up/60000)%60)+"m"});
+    hState.textContent=T("hearth.card.hstate.running",{span:uptimeSpan(up/60000)});
     /* An adopted install is a whole sentence of its own rather than a tail the
        running one grows, because a trailing clause is not where every language
        puts it. */
@@ -4018,8 +4122,17 @@ function updatePalGating(){
   });
 }
 /* Free-form console command over RCON. Echoes "> cmd" to the Saga log, then the
-   reply (many Valheim commands answer to stdout, which the log already tails). */
-async function sendConsole(cmd,okToast){
+   reply (many Valheim commands answer to stdout, which the log already tails).
+   @param {string} cmd the line to send
+   @param {function} [read] what to say about the REPLY, once the command has been
+     delivered. It is handed the reply text, trimmed, and answers with a whole toast or
+     with nothing. r.ok says only that RCON carried the line; the server answers a
+     command it refused on the same channel it answers one it ran, so a caller that
+     toasts success off delivery alone is claiming something nobody checked. Every
+     caller whose command can come back refused hands one of these in; the ones that
+     say nothing on success (the free-typed console, the command picker) hand in
+     nothing and the reply stands on its own in the log. */
+async function sendConsole(cmd,read){
   cmd=(cmd||"").trim(); if(!cmd) return;
   logLine("cmd","> "+cmd);
   const r=await rpc("server.command",{command:cmd});
@@ -4029,10 +4142,245 @@ async function sendConsole(cmd,okToast){
     logLine("warn","[RCON] command failed. Is the server running with RCON enabled?");
     return;
   }
-  if(okToast) toast(okToast);
   const resp=(r.response||"").trim();
+  if(typeof read==="function"){
+    const said=read(resp);
+    if(said) toast(said);
+  }
   if(resp) resp.split(/\r?\n/).forEach(l=>logLine("ok",l));
   else logLine("ok","[RCON] "+cmd+" · dispatched. Replies land here in the Saga log");
+}
+
+/* KILLALL-BEGIN
+   ------------------------------------------------------------------------------------
+   The kill sweep: what the host is about to do, and what the server said they did.
+
+   Both halves of this block exist because of one class of defect. sendConsole used to
+   fire an "unleashed" toast the moment RCON carried the line, and baka_killall answers
+   on that same line with every one of: the three counts, a "started" line for a sweep
+   too big to finish inside the answer, a refusal because one is already running, a
+   stopped-early line, and five different sentences that open with "Error:". Every one
+   of them used to read as success.
+
+   Everything here is a pure function of its arguments so it can be driven as a table
+   with no browser in the room (scripts/ui/killall_reply_selftest.js runs the real code
+   out of this file, between these markers). The wording is not in here: these answer
+   with what happened, and the caller asks the catalog for the words.                  */
+
+/* True when a server's answer to any console command is a refusal rather than a result.
+   The three openings every command in this product can come back with. */
+function consoleRefused(reply){
+  const said=String(reply==null?"":reply).trim();
+  return /^(Error:|Unknown command)/i.test(said)||/^KillAll failed:/i.test(said);
+}
+
+/** The whole numbers out of a counts clause, or null when it is not one. */
+function killAllCounts(said){
+  const m=/(\d+)\s+hostiles?\s+slain,\s*(\d+)\s+out of reach,\s*(\d+)\s+spared/i.exec(said);
+  return m?{slain:+m[1],unreachable:+m[2],spared:+m[3]}:null;
+}
+
+/**
+ * What baka_killall just said, read rather than assumed.
+ * @param {string} reply the server's answer, exactly as it arrived
+ * @returns {object} kind, plus whatever that kind carries:
+ *   complete  {slain,unreachable,spared} the sweep finished inside the answer
+ *   started   {candidates}               too big for the answer, the result is in the log
+ *   busy      {}                         a sweep was already walking; nothing was struck
+ *   stopped   {slain,unreachable,spared} it threw part way; the counts are real work
+ *   refused   {}                         Error:, Unknown command, KillAll failed, Usage:
+ *   silent    {}                         RCON carried it and the server said nothing
+ *   unknown   {}                         a shape this version has not met
+ */
+function killAllReply(reply){
+  const said=String(reply==null?"":reply).trim();
+  if(!said) return {kind:"silent"};
+  if(consoleRefused(said)) return {kind:"refused"};
+  /* The plugin answers a line it could not parse with its usage sentence and strikes
+     nothing. Read as a shape this version had not met, it came back as "the server
+     answered something this version cannot read", which is true of the READER and not
+     of what happened: the command was refused, and that is what the host is told. */
+  if(/^Usage:\s*baka_killall\b/i.test(said)) return {kind:"refused"};
+  if(/^KillAll is already running:/i.test(said)) return {kind:"busy"};
+  if(/^KillAll stopped early:/i.test(said)){
+    const c=killAllCounts(said);
+    /* No counts behind it means nobody counted: say it stopped and say nothing else. */
+    return c?Object.assign({kind:"stopped"},c):{kind:"stopped",counted:false};
+  }
+  if(/^KillAll complete:/i.test(said)){
+    const c=killAllCounts(said);
+    /* "complete" with no counts behind it is a shape this version has not met, and
+       calling it a finished sweep would put three zeroes on screen that nobody
+       counted. */
+    return c?Object.assign({kind:"complete"},c):{kind:"unknown"};
+  }
+  const started=/^KillAll started:\s*(\d+)\s+candidates?/i.exec(said);
+  if(started) return {kind:"started",candidates:+started[1]};
+  return {kind:"unknown"};
+}
+
+/** The scope a host has chosen, before it is a command. Free of the DOM on purpose. */
+function killAllScopeBlank(){return {scope:"everywhere",who:"",radius:"100",name:""};}
+
+/**
+ * The command line for a scope, or the reason it is not one yet.
+ * @param {object} s {scope,who,radius,name}
+ * @returns {object} {cmd} when it is runnable, {problemId} when it is not. The id is a
+ *   catalog id rather than a sentence: this function does not know what language the
+ *   window is reading.
+ */
+function killAllCommand(s){
+  const pick=(s&&s.scope)||"everywhere";
+  if(pick==="near"){
+    const who=String((s&&s.who)||"").trim();
+    if(!who) return {problemId:"pal.kill.problem.no_player"};
+    /* The same number the plugin will refuse if it is not one, refused here first so
+       the host reads it beside the box rather than as a server error afterwards. A
+       player name may hold spaces and the plugin takes the radius off the END of the
+       line, so a name with a space in it is fine here and only the radius is checked. */
+    const metres=Number(String((s&&s.radius)||"").trim().replace(",","."));
+    if(!isFinite(metres)||metres<=0) return {problemId:"pal.kill.problem.radius"};
+    return {cmd:"baka_killall near "+who+" "+metres};
+  }
+  if(pick==="creature"){
+    const name=String((s&&s.name)||"").trim();
+    if(!name) return {problemId:"pal.kill.problem.no_creature"};
+    /* A prefab name never holds a space, and the plugin answers a longer line with a
+       usage error rather than guessing which word was meant. */
+    if(/\s/.test(name)) return {problemId:"pal.kill.problem.creature_spaces"};
+    return {cmd:"baka_killall "+name};
+  }
+  return {cmd:"baka_killall"};
+}
+/* KILLALL-END */
+
+/** The toast for a reply, worded. Split from the reading above so the table test can
+    drive the reading with no catalog, and so one sentence has one owner. */
+function killAllToast(read){
+  switch(read.kind){
+    case "complete":
+      return read.slain>0
+        ?"ᚦ "+T("pal.kill.toast.complete",
+          {slain:read.slain,unreachable:read.unreachable,spared:read.spared,pluralValue:read.slain})
+        :"ᛉ "+T("pal.kill.toast.none",{unreachable:read.unreachable,spared:read.spared});
+    case "started":  return "ᚦ "+T("pal.kill.toast.started",{count:read.candidates});
+    case "busy":     return "ᛊ "+T("pal.kill.toast.busy");
+    /* The counts on a stopped sweep are work that really happened, so they are said
+       rather than dropped: a host who reads "it stopped part way" and nothing else has
+       no idea whether one creature fell or four hundred did. */
+    case "stopped":  if(read.counted===false) return "ᚦ "+T("pal.kill.toast.stopped.nocounts");
+                     return "ᚦ "+T("pal.kill.toast.stopped",
+      {slain:read.slain,unreachable:read.unreachable,spared:read.spared,pluralValue:read.slain});
+    case "refused":  return "ᚦ "+T("pal.console.refused.toast");
+    case "silent":   return "ᚦ "+T("pal.kill.toast.silent");
+    default:         return "ᚦ "+T("pal.kill.toast.unreadable");
+  }
+}
+
+/* The question before the sweep. One tap used to send the bare command, and the bare
+   command now really does strike every hostile in every zone the server has loaded, for
+   every player who is online: a host clearing a raid off one base emptied four other
+   bases with them. So the blast radius is said out loud and the host picks how much of
+   it they meant.
+   The three scopes are the three the plugin serves and nothing else, and the command
+   they build is the plugin's own spelling. What is typed survives a language switch the
+   way promptModal's box does, because the state lives beside the rebuilder. */
+let KILL_SCOPE=killAllScopeBlank();
+function killAllModal(){
+  const online=(S.players||[]).filter(p=>p.status==="Online").map(p=>p.displayName||p.PlayerId||"");
+  /* A player who has gone offline while the dialog stood open is not a radius origin any
+     more, so the choice is dropped rather than sent at a name nobody answers to. */
+  if(KILL_SCOPE.who&&!online.includes(KILL_SCOPE.who)) KILL_SCOPE.who="";
+  /* And with nobody online at all the radius scope is not a choice this dialog can serve,
+     so a remembered "near" goes back to the default rather than standing checked on a row
+     that is greyed out. Left as it was, the row said "Nobody is online, so there is
+     nothing to measure a radius from" and pressing Kill them answered "Choose the player
+     to measure the radius from": two sentences for one condition, and the second of them
+     asking for something the dialog was not offering. */
+  if(KILL_SCOPE.scope==="near"&&!online.length) KILL_SCOPE.scope="everywhere";
+  if(!KILL_SCOPE.who&&online.length===1) KILL_SCOPE.who=online[0];
+  /* A refusal is a reply to one press of one scope, so it is remembered WITH that scope
+     and drawn only while that scope is the one being asked. Held as a bare id it
+     outlived the thing it was about: pick a different scope and the line about creature
+     names was still sitting under a radius box. Matching on the scope covers the radio,
+     the preview seam and anything else that changes the question, rather than relying on
+     every one of them to remember to clear it. */
+  let problem={id:"",scope:""};
+
+  const again=()=>{
+    const pick=KILL_SCOPE.scope;
+    const problemId=problem.scope===pick?problem.id:"";
+    const row=(value,label,note,inert)=>
+      `<label class="togglerow${inert?" gated":""}" style="height:auto;padding:7px 0;align-items:flex-start;cursor:${inert?"default":"pointer"}">`+
+        `<input type="radio" name="kaScope" value="${esc(value)}"${pick===value?" checked":""}${inert?" disabled":""} style="margin:3px 9px 0 0">`+
+        `<span class="tl" style="display:block"><span style="display:block">${esc(label)}</span>`+
+        `<span class="subval" style="display:block;margin-top:2px">${esc(note)}</span></span></label>`;
+
+    const m=modalOpen(
+      `<div class="mtitle">${esc(T("pal.kill.confirm.title"))}</div>`+
+      `<div class="mbody">`+
+        `<div class="subval">${esc(T("pal.kill.confirm.body"))}</div>`+
+        `<div class="dsec" style="margin-top:10px">${esc(T("pal.kill.scope.label"))}</div>`+
+        row("everywhere",T("pal.kill.scope.everywhere"),T("pal.kill.scope.everywhere.note"),false)+
+        row("near",T("pal.kill.scope.near"),
+          online.length?T("pal.kill.scope.near.note"):T("pal.kill.nobody_online"),!online.length)+
+        (pick==="near"&&online.length
+          ?`<div style="display:flex;gap:10px;margin:2px 0 4px 25px">`+
+             `<div class="field" style="flex:1 1 auto"><label>${esc(T("pal.kill.field.player"))}</label>`+
+               `<select id="kaWho">${online.map(n=>
+                 `<option value="${esc(n)}"${n===KILL_SCOPE.who?" selected":""}>${esc(n)}</option>`).join("")}</select></div>`+
+             `<div class="field" style="flex:0 0 130px"><label>${esc(T("pal.kill.field.radius"))}</label>`+
+               `<input type="text" id="kaRadius" inputmode="numeric" spellcheck="false" autocomplete="off" value="${esc(KILL_SCOPE.radius)}"></div>`+
+           `</div>`
+          :"")+
+        row("creature",T("pal.kill.scope.creature"),T("pal.kill.scope.creature.note"),false)+
+        (pick==="creature"
+          ?`<div class="field" style="margin:2px 0 4px 25px"><label>${esc(T("pal.kill.field.creature"))}</label>`+
+             `<input type="text" id="kaName" placeholder="${esc(T("pal.kill.field.creature.placeholder"))}" spellcheck="false" autocomplete="off" value="${esc(KILL_SCOPE.name)}"></div>`
+          :"")+
+        (problemId?`<div class="subval" id="kaNote" style="color:var(--blood);margin-top:6px">${esc(T(problemId))}</div>`:"")+
+      `</div>`+
+      `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="kaCancel">${esc(T("common.button.cancel"))}</button>`+
+        `<button class="btn btn-blood btn-sm" id="kaOk">${esc(T("pal.kill.confirm.button"))}</button></div>`,
+      again);
+
+    m.querySelectorAll('input[name="kaScope"]').forEach(r=>r.addEventListener("change",()=>{
+      KILL_SCOPE.scope=r.value; again();
+    }));
+    /* The line goes as soon as the host starts fixing what it complained about, the same
+       way promptModal's does. Hidden rather than redrawn, because redrawing the dialog on
+       a keystroke would take the caret with it. */
+    const hideNote=()=>{
+      if(!problem.id) return;
+      problem={id:"",scope:""};
+      const note=m.querySelector("#kaNote");
+      if(note) note.style.display="none";
+    };
+    const who=m.querySelector("#kaWho");
+    if(who) who.addEventListener("change",()=>{KILL_SCOPE.who=who.value;hideNote();});
+    const rad=m.querySelector("#kaRadius");
+    /* Kept on every keystroke rather than read on the press: a language switch redraws
+       this dialog, and a half-typed radius is the same loss a reload was rejected for. */
+    if(rad) rad.addEventListener("input",()=>{KILL_SCOPE.radius=rad.value;hideNote();});
+    const name=m.querySelector("#kaName");
+    if(name) name.addEventListener("input",()=>{KILL_SCOPE.name=name.value;hideNote();});
+
+    m.querySelector("#kaCancel").addEventListener("click",modalClose);
+    m.querySelector("#kaOk").addEventListener("click",()=>{
+      if(who) KILL_SCOPE.who=who.value;
+      if(rad) KILL_SCOPE.radius=rad.value;
+      if(name) KILL_SCOPE.name=name.value;
+      const built=killAllCommand(KILL_SCOPE);
+      /* A refusal keeps the dialog open with everything still in it, so one wrong
+         character is one character to fix rather than the whole thing to type again. */
+      if(built.problemId){problem={id:built.problemId,scope:KILL_SCOPE.scope};again();return;}
+      modalClose();
+      sendConsole(built.cmd,reply=>killAllToast(killAllReply(reply)));
+    });
+    setTimeout(()=>{(m.querySelector("#kaName")||m.querySelector("#kaRadius"))?.focus();},30);
+    return m;
+  };
+  return again();
 }
 function filterPal(q){
   const raw=q.trim(); q=raw.toLowerCase(); let first=true;
@@ -4090,9 +4438,14 @@ function invokePal(){
         if(r!==FAIL){applyState(r);toast("ᛪ "+T("hearth.stopping.toast"));logLine("warn","[BakaLoader] stop requested, dousing the embers");}
       });
     }else if(cmd==="save_world"){
-      sendConsole("save","ᛉ "+T("pal.save_world.done.toast"));
+      /* The other command in this palette whose reply can be a refusal. A modded server
+         answers an unknown verb with "Unknown command: 'save' ..." on the same channel
+         it answers a real one, so the saved toast waits to see which arrived. */
+      sendConsole("save",reply=>consoleRefused(reply)
+        ?"ᚦ "+T("pal.console.refused.toast")
+        :"ᛉ "+T("pal.save_world.done.toast"));
     }else if(cmd==="kill_monsters"){
-      sendConsole("baka_killall","ᚦ "+T("pal.kill_monsters.done.toast"));
+      killAllModal();
     }else if(cmd==="broadcast"){
       promptModal(()=>T("vikings.broadcast.title"),()=>T("vikings.broadcast.placeholder"),m=>{
         rpc("server.broadcast",{message:m}).then(r=>{
@@ -5293,6 +5646,25 @@ window.BakaPreview={
     else if(window.I18N&&code) window.I18N.setLocale(code);
     return applyLanguage(code);
   },
+  /* The kill sweep's two seams. The dialog is behind a native check in the palette,
+     because the command it builds goes over RCON and a browser has no server to send it
+     to; the DIALOG itself is all page, so a walk opens it by name and photographs every
+     scope. The second hands a server's answer straight to the reader and gives back the
+     toast it would have raised, so all seven endings can be seen without a sweep.
+       killAll        opens the dialog, as the palette does
+       killAllScope   seeds what is chosen and typed, then redraws
+       killAllSaid    one reply, read and worded, exactly as the real path words it */
+  killAll:()=>{killAllModal();return modalIsOpen();},
+  killAllScope:o=>{
+    KILL_SCOPE=Object.assign(killAllScopeBlank(),KILL_SCOPE,o||{});
+    if(modalIsOpen()) redrawOpenModal();
+    return Object.assign({},KILL_SCOPE);
+  },
+  killAllSaid:reply=>({read:killAllReply(reply),toast:killAllToast(killAllReply(reply))}),
+  /* The roster the radius scope is measured from. A walk wants the EMPTY case as much as
+     the full one: with nobody online the dialog cannot serve a radius at all, and the
+     preview's own four players can never show that state. */
+  players:list=>{S.players=Array.isArray(list)?list:[];renderPlayers();return S.players.length;},
   /* The BepInEx seam. Both rows ride on server.status, which nothing in a browser can
      push, so a walk hands the same block straight to the raiser the status handler calls.
      bepinexNotice is the refusal's row, raised live from the rpc catch. */
@@ -5820,11 +6192,15 @@ function startWithAnswer(answer){
    command sends it; commands that take arguments prefill the input instead. */
 /* The command and its argument shape are what a host types at a server console, so both
    stay verbatim; only the line that says what it does is wording. descId rather than a
-   sentence, because that is how the catalog gate sees a table that holds ids. */
+   sentence, because that is how the catalog gate sees a table that holds ids.
+   asks:"killall" is the one exception to "a complete command is sent on the click". The
+   bare sweep strikes every hostile in every loaded zone for every player online, and a
+   row in a list is one tap: the same question the palette asks is asked here, from the
+   same dialog, so there is no route to the sweep that skips it. */
 const CONSOLE_CMDS=[
   {cmd:"save",args:"",descId:"pal.console.cmd.save"},
   {cmd:"playerlist",args:"",descId:"pal.console.cmd.playerlist"},
-  {cmd:"baka_killall",args:"",descId:"pal.console.cmd.killall"},
+  {cmd:"baka_killall",args:"",descId:"pal.console.cmd.killall",asks:"killall"},
   {cmd:"broadcast center ",args:"<message>",descId:"pal.console.cmd.broadcast"},
   {cmd:"dmg ",args:"<player> <amount>",descId:"pal.console.cmd.dmg"},
   {cmd:"tp ",args:"<player> <x,z,y | player>",descId:"pal.console.cmd.tp"},
@@ -5835,7 +6211,7 @@ const CONSOLE_CMDS=[
 ];
 function consoleModal(){
   const rows=CONSOLE_CMDS.map(c=>
-    `<div class="crow" data-cmd="${esc(c.cmd)}" data-complete="${c.args?"":"1"}">`+
+    `<div class="crow" data-cmd="${esc(c.cmd)}" data-complete="${c.args?"":"1"}"${c.asks?` data-asks="${esc(c.asks)}"`:""}>`+
     `<span class="cc">${esc(c.cmd.trim())}${c.args?` <span class="ca">${esc(c.args)}</span>`:""}</span>`+
     `<span class="cd">${esc(T(c.descId))}</span></div>`).join("");
   const m=modalOpen(
@@ -5855,6 +6231,9 @@ function consoleModal(){
     });
   });
   m.querySelectorAll(".crow").forEach(r=>r.addEventListener("click",()=>{
+    /* The sweep asks first, wherever it is started from, and the dialog it opens is the
+       one that reads the server's answer afterwards. */
+    if(r.dataset.asks==="killall"){modalClose();killAllModal();return;}
     if(r.dataset.complete){modalClose();sendConsole(r.dataset.cmd);return;}
     inp.value=r.dataset.cmd;
     inp.dispatchEvent(new Event("input"));
