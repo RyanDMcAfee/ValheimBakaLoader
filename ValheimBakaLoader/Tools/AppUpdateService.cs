@@ -155,9 +155,7 @@ namespace ValheimBakaLoader.Tools
                     return StageOutcome.AlreadyCurrent;
                 }
 
-                var asset = release.Assets?
-                    .FirstOrDefault(a => a?.BrowserDownloadUrl != null
-                        && a.BrowserDownloadUrl.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+                var asset = ChooseAppAsset(release);
 
                 if (asset == null)
                 {
@@ -214,6 +212,29 @@ namespace ValheimBakaLoader.Tools
             await using var source = await response.Content.ReadAsStreamAsync();
             await using var destination = File.Create(destinationPath);
             await source.CopyToAsync(destination);
+        }
+
+        /// <summary>
+        /// The zip that is the app, out of everything a release carries. Since 1.2.0 a release
+        /// also holds four language packs, and GitHub lists assets by name, so "the first .zip"
+        /// was lang-ja and every host on 1.2.0 failed to update. The app's own name wins when
+        /// the release has it; otherwise the first .zip that is not a language pack.
+        /// </summary>
+        internal static GitHubReleaseAsset ChooseAppAsset(GitHubRelease release)
+        {
+            var zips = release?.Assets?
+                .Where(a => a?.BrowserDownloadUrl != null
+                    && a.BrowserDownloadUrl.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (zips == null || zips.Count == 0) return null;
+
+            var version = (release.TagName ?? string.Empty).TrimStart('v', 'V');
+            var wanted = $"ValheimBakaLoader-{version}-win-x64.zip";
+
+            return zips.FirstOrDefault(a => string.Equals(a.Name, wanted, StringComparison.OrdinalIgnoreCase))
+                ?? zips.FirstOrDefault(a => a.Name == null
+                    || !a.Name.StartsWith("lang-", StringComparison.OrdinalIgnoreCase));
         }
 
         private static bool ZipContainsExe(string zipPath)

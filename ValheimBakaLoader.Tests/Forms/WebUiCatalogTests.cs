@@ -846,21 +846,40 @@ namespace ValheimBakaLoader.Tests.Forms
         private static string ShippedEnglish() => File.ReadAllText(Path.Combine(
             AppSourceTree.RepoRoot(), "ValheimBakaLoader", "WebUI", "i18n", "en.json"));
 
+        /// <summary>The last release the list remembers: its version and the revision it shipped.</summary>
+        private static (string Version, int Catalog) LastRelease()
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(Releases));
+            var last = doc.RootElement.GetProperty("releases").EnumerateArray().Last();
+            return (last.GetProperty("version").GetString(), last.GetProperty("catalog").GetInt32());
+        }
+
         /// <summary>
-        /// The English this build ships has moved since 1.2.0, so a catalog revision still
-        /// standing at 1.2.0's has to be refused. Driven over a scratch copy of the real
-        /// shipped catalog with the one number put back, which is the state the tree was
-        /// really in: everything else about it is what is about to be published.
+        /// English that has moved since the last release, under the revision that release
+        /// shipped, has to be refused. Driven over a scratch copy of the real shipped catalog
+        /// with one sentence reworded and the revision put back to the last release's, which
+        /// is the state a tree is really in when somebody edits a sentence and forgets the
+        /// number. Read from the list rather than written down, so it keeps meaning the same
+        /// thing after every release.
         /// </summary>
         [Fact]
         public void English_that_moved_since_the_last_release_needs_a_higher_revision()
         {
-            var said = OverReleases(ShippedEnglish().Replace("\"catalog\": 2", "\"catalog\": 1"));
+            var (version, catalog) = LastRelease();
+            var english = ShippedEnglish();
+
+            var at = english.IndexOf("\"lore\": \"", StringComparison.Ordinal);
+            Assert.True(at > 0, "the shipped catalog has no lore sentence to reword");
+            english = english.Insert(at + "\"lore\": \"".Length, "Reworded. ");
+            english = System.Text.RegularExpressions.Regex.Replace(
+                english, "\"catalog\":\\s*\\d+", "\"catalog\": " + catalog, System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(5));
+
+            var said = OverReleases(english);
 
             Assert.False(said.Ok, "the gate was happy with the revision that leaves every host behind:\n" + said);
-            Assert.Contains("the English changed since 1.2.0", said.Output);
-            Assert.Contains("_meta.catalog is 1", said.Output);
-            Assert.Contains("has to go up, to 2 or beyond", said.Output);
+            Assert.Contains("the English changed since " + version, said.Output);
+            Assert.Contains("_meta.catalog is " + catalog, said.Output);
+            Assert.Contains("has to go up, to " + (catalog + 1) + " or beyond", said.Output);
         }
 
         /// <summary>And the same catalog with the revision moved, which is what ships.</summary>
@@ -891,8 +910,8 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The record itself: 1.2.0 is written down, with the revision it shipped, and
-        /// 1.2.1 is NOT. Recording a version is release day's job, after its English is
+        /// The record itself: the last release that is OUT is written down with the
+        /// revision it shipped, and the version being built is NOT. Recording a version is release day's job, after its English is
         /// final; doing it from here would mean the gate was comparing this build against
         /// itself and could never say anything again.
         /// </summary>
@@ -912,11 +931,18 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.NotEmpty(releases);
 
             var last = releases[releases.Count - 1];
-            Assert.Equal("1.2.0", last.GetProperty("version").GetString());
-            Assert.Equal(1, last.GetProperty("catalog").GetInt32());
             Assert.Equal(64, last.GetProperty("fingerprint").GetString().Length);
 
-            Assert.DoesNotContain(releases, r => r.GetProperty("version").GetString() == "1.2.1");
+            // The version this tree is building is read off the project, so the rule keeps
+            // meaning "recorded after it is out" without naming a release here.
+            var building = System.Text.RegularExpressions.Regex.Match(
+                File.ReadAllText(Path.Combine(AppSourceTree.RepoRoot(), "ValheimBakaLoader", "ValheimBakaLoader.csproj")),
+                "<Version>([0-9.]+)</Version>").Groups[1].Value;
+            Assert.False(string.IsNullOrEmpty(building), "the project no longer names its version");
+
+            Assert.DoesNotContain(releases, r => r.GetProperty("version").GetString() == building);
+            Assert.True(Version.Parse(last.GetProperty("version").GetString()) < Version.Parse(building),
+                "the last recorded release is not older than the one being built");
         }
 
         /// <summary>

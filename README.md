@@ -69,20 +69,16 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.0
+## What is new in 1.2.1 and 1.2.2
 
-- **BakaLoader in your own language.** A globe in the title bar puts the window into Russian, Japanese, Simplified Chinese or Traditional Chinese, each fetched once as a pack and checked against its published checksum and size before it is used. What your players read is a separate setting, **Messages to players** in Upkeep. [Languages](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Languages)
-- **BepInEx, looked after for you.** A row above the mod table says whether the loader is installed and whether BakaLoader keeps it current, and nothing is looked after until you answer yes to the question on your first Start. An install you already had is adopted with your mods and configs kept, everything replaced backed up, no move backwards without asking, and an install another mod manager drives left alone. [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx)
-- **A fresh mod index.** **Scan** asks Thunderstore's listing index again rather than reading a copy up to fifteen minutes old, and **Check this mod now** asks about a single package. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
-- **Name a world, or copy one.** The World box on Settings ends with **New world…**, and a **COPY AS** chip duplicates a world under a name of your own, seed intact. [Worlds, backups and restore](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Worlds-backups-and-restore)
-- **Settings says what it is using, and what it has not saved.** Both Directories boxes name the path that server will really use, and a field you changed stays marked until you press Save Config. [Settings](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-%28World%29)
-- **Player names in any alphabet.** Cyrillic, Japanese and Chinese names reach the roster spelled properly, and a kick sent for one reaches the right player. [Players](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29)
-- **Nothing BakaLoader spawns carries the game's cheat stamp**, so a replacement axe no longer pauses a player's achievement progress. `MarkSpawnedAsCheated` under `[Spawning]` puts it back. [Players](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29)
-- **Kill all monsters asks first**, with three scopes: everywhere, a radius around one player, or a single creature you name. [Command palette and shortcuts](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Command-palette-and-shortcuts)
-- **The title bar behaves like a title bar.** Double click to maximize and again to put the window back, and drag a maximized one to bring it down under your pointer.
+- **Updating from inside the app works again.** From 1.2.0 the updater could pick a language pack instead of the app and give up, so hosts on 1.2.0 or 1.2.1 got a download error and stayed where they were. It now picks the app by name. [Updating BakaLoader](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-BakaLoader)
+- **Language packs load.** A pack you pick from the globe is read back and used, in Russian, Japanese, Simplified Chinese or Traditional Chinese. [Languages](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Languages)
+- **The five world switches are in the app**: No build cost, Player based raids, Passive enemies, No map and Fire hazards, under the difficulty dials on Settings. [World modifiers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-modifiers)
+- **A world that already has settings keeps them.** The first time BakaLoader starts a world it has not met, it reads that world's own settings instead of clearing them. [World modifiers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-modifiers)
+- **Tables keep sorting** after you switch servers. [Players (Vikings)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29)
+- **Nothing is asked of Thunderstore about BepInEx until you have said yes** to BakaLoader looking after it. [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx)
 
-The cheat stamp and kill sweep changes arrive with the plugins, at your next server start. 1.1.1 and 1.1.2 were never published on their own and are folded in here. Everything in this release, and every release before it, is on the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest) and the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
-
+If you are on 1.2.0 or 1.2.1, the in-app update works now, or you can download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 ---
 
 ## Valheim 1.0
