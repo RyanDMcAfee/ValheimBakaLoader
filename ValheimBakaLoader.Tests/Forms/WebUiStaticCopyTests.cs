@@ -386,7 +386,7 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("data-i18n=\"common.norse.world\"", Html());
             // the dialog's field label, in the dialog that builds it
             var js = AppJs();
-            var open = js.IndexOf("async function addServerProfile()", StringComparison.Ordinal);
+            var open = js.IndexOf("async function addServerProfile(source)", StringComparison.Ordinal);
             var shut = js.IndexOf("function flamePal()", open, StringComparison.Ordinal);
             Assert.True(open > 0 && shut > open, "the new-realm dialog moved");
             Assert.Contains("<label>${esc(T(\"realm.new.world.label\"))}</label>",

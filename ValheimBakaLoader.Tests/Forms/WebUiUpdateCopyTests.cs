@@ -286,7 +286,12 @@ namespace ValheimBakaLoader.Tests.Forms
             // that it was the write it happened on.
             // The number is the gate: a new toast whose rune is spelled at the call site
             // and nowhere else lands here.
-            Assert.Equal(193, marked.Count);
+            // 195 after issue 18: the difficulty half of Save Config can be refused on its
+            // own and now says so, and a scan that does not answer inside a minute is given
+            // up on and says that.
+            // 203 with the eight the cleanse answers with: the six things the server can
+            // say back, the shape this version has not met, and the browser preview.
+            Assert.Equal(203, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

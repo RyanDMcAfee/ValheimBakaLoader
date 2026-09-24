@@ -106,7 +106,10 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             TheHallNames(Hall("vikings", "<!-- ============ PAGE: MODS"), new[]
             {
-                "vikings.head.title", "common.norse.vikings", "vikings.caps.head",
+                "vikings.head.title", "common.norse.vikings",
+                // The hall's one command about the WORLD rather than about a person.
+                "vikings.cleanse.label", "vikings.cleanse.title",
+                "vikings.caps.head",
                 "vikings.caps.note", "vikings.col.name", "common.sort.by_name",
                 "vikings.col.status", "vikings.col.status.title", "vikings.col.platform",
                 "vikings.col.platform.title", "vikings.col.session",

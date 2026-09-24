@@ -597,8 +597,19 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// The newest pack version the site offers, or null when it did not answer. Never throws.
+        /// <para>
+        /// The budget is the most the whole question may take, both requests together. Null
+        /// keeps the client's own deadlines, which is right for a host watching a button; a
+        /// caller with a server waiting on it hands in <see cref="UnattendedResolveTimeout"/>.
+        /// </para>
         /// </summary>
-        Task<string> LatestVersionAsync(string package = null);
+        Task<string> LatestVersionAsync(string package = null, TimeSpan? budget = null);
+
+        /// <summary>
+        /// The most an unattended resolve may spend asking the site which pack to fetch. Every
+        /// step with a server waiting on it is held to this one number.
+        /// </summary>
+        TimeSpan UnattendedResolveTimeout { get; set; }
 
         /// <summary>
         /// Removes a denikson-BepInExPack_Valheim folder that was installed into the plugins
@@ -701,6 +712,52 @@ namespace ValheimBakaLoader.Tools
         public int MaxDownloadRedirects { get; set; } = 5;
 
         private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// The most an unattended write may spend asking Thunderstore which pack to fetch.
+        /// A server start waits on this one, so it is a clock rather than a hope: when it runs
+        /// out the start goes ahead with whatever loader is already there, and the reason is
+        /// recorded against the BepInEx entry the same way any other failed resolve is.
+        /// Settable so a test does not have to wait ten real seconds to prove it.
+        /// </summary>
+        public TimeSpan UnattendedResolveTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// A piece of work with a deadline on it. The work is not cancelled, because the
+        /// Thunderstore client takes no token and carries its own deadlines; what this does is
+        /// stop WAITING for it, which is the whole of what a start needs.
+        /// <para>
+        /// It takes a FUNCTION rather than a task, and that is the whole of the difference
+        /// between a budget and a wish. A task argument is built by the caller before this
+        /// method is entered, so the request had already gone out by the time the zero-budget
+        /// line refused it: the clock had run out and the machine reached Sweden anyway. The
+        /// function is only called once there is budget left to call it with.
+        /// </para>
+        /// </summary>
+        private static async Task<T> WithinAsync<T>(Func<Task<T>> work, TimeSpan? budget, string what)
+        {
+            if (budget == null) return await work();
+
+            // Nothing left on the clock, so nothing is asked. Checked before the function is
+            // called, which is the point of taking a function.
+            if (budget.Value <= TimeSpan.Zero)
+                throw new TimeoutException(
+                    $"{what} did not answer within {Math.Max(1, (int)budget.Value.TotalSeconds)} seconds.");
+
+            var started = work();
+
+            if (await Task.WhenAny(started, Task.Delay(budget.Value)) != started)
+            {
+                // Abandoned, not cancelled. Its exception is read and dropped so a work item
+                // nobody is waiting on any more cannot come back as an unobserved one.
+                _ = started.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+
+                throw new TimeoutException(
+                    $"{what} did not answer within {Math.Max(1, (int)budget.Value.TotalSeconds)} seconds.");
+            }
+
+            return await started;
+        }
 
         private readonly IThunderstoreClient Thunderstore;
         private readonly IHttpClientProvider HttpClientProvider;
@@ -1073,17 +1130,39 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        public async Task<string> LatestVersionAsync(string package = null)
+        public async Task<string> LatestVersionAsync(string package = null, TimeSpan? budget = null)
         {
             var (owner, name) = SplitPackage(package);
+
+            // The same clock the install path's resolve runs on, and for the same reason: this
+            // one is awaited inside the RESTART WINDOW, with a server down on the other side of
+            // it. Two serial requests on a machine that cannot reach Thunderstore held the
+            // window open for as long as the client's own deadlines allowed, and the host's
+            // server stayed down for all of it. With a budget in hand the pair share one, and
+            // when it runs out the window carries on with the loader that is already there.
+            var clock = Stopwatch.StartNew();
+            TimeSpan? Left() => budget == null
+                ? null
+                : (budget.Value > clock.Elapsed ? budget.Value - clock.Elapsed : TimeSpan.Zero);
+
             try
             {
-                var live = await Thunderstore.LookupLiveAsync(owner, name);
+                var live = await WithinAsync(
+                    () => Thunderstore.LookupLiveAsync(owner, name), Left(), "The BepInEx package page");
                 if (live?.Package?.LatestVersion is { } version && !string.IsNullOrWhiteSpace(version))
                     return version;
 
-                var indexed = await Thunderstore.GetLatestAsync(owner, name);
+                var indexed = await WithinAsync(
+                    () => Thunderstore.GetLatestAsync(owner, name), Left(), "The package index");
                 return indexed?.LatestVersion;
+            }
+            catch (TimeoutException e)
+            {
+                // One line, and the step is over. An unknown newest version is never a reason
+                // to write anything, so the window skips the loader and the relaunch goes on.
+                Logger.Warning(
+                    "{0} The loader that is already here is what the server restarts with.", e.Message);
+                return null;
             }
             catch (Exception e)
             {
@@ -1252,7 +1331,14 @@ namespace ValheimBakaLoader.Tools
 
             if (string.IsNullOrWhiteSpace(url))
             {
-                var listed = await ResolveListingAsync(owner, name);
+                // Unattended is the restart window and the loader-before-start step, and both
+                // of those have a server waiting on the other side of them, so both are held
+                // to UnattendedResolveTimeout: this line for the write, and the window's own
+                // version lookup through LatestVersionAsync for the step that decides whether
+                // there is a write at all. A manual Install is a host who pressed a button and
+                // can watch it work, so it keeps the whole of the client's own patience.
+                var listed = await ResolveListingAsync(
+                    owner, name, options.Unattended ? UnattendedResolveTimeout : null);
                 version = listed.Version;
                 siteVersion = listed.Version;
                 declaredSize = listed.FileSize;
@@ -2897,14 +2983,28 @@ namespace ValheimBakaLoader.Tools
         /// every download into a failed integrity check.
         /// </para>
         /// </summary>
-        private async Task<ListedBuild> ResolveListingAsync(string owner, string name)
+        private async Task<ListedBuild> ResolveListingAsync(string owner, string name, TimeSpan? budget = null)
         {
+            // A start is never held hostage by this. The whole resolve gets one clock when the
+            // write is unattended, and when it runs out the resolve gives up rather than the
+            // server waiting: a host whose machine cannot reach Thunderstore had Start never
+            // return at all, because this sat inside the launch on a client with a two-minute
+            // timeout per request and two requests to make.
+            var clock = Stopwatch.StartNew();
+            TimeSpan? Left() => budget == null
+                ? null
+                : (budget.Value > clock.Elapsed ? budget.Value - clock.Elapsed : TimeSpan.Zero);
+
             Tools.Models.ThunderstorePackage package = null;
 
             try
             {
-                var live = await Thunderstore.LookupLiveAsync(owner, name);
+                var live = await WithinAsync(() => Thunderstore.LookupLiveAsync(owner, name), Left(), "The BepInEx package page");
                 package = live?.Package;
+            }
+            catch (TimeoutException e)
+            {
+                Logger.Warning("{0} The loader that is already here is what the server starts with.", e.Message);
             }
             catch (Exception e)
             {
@@ -2914,7 +3014,8 @@ namespace ValheimBakaLoader.Tools
             Tools.Models.ThunderstorePackage indexed = null;
             if (package?.Latest == null)
             {
-                try { indexed = await Thunderstore.GetLatestAsync(owner, name); }
+                try { indexed = await WithinAsync(() => Thunderstore.GetLatestAsync(owner, name), Left(), "The package index"); }
+                catch (TimeoutException e) { Logger.Warning("{0} The loader that is already here is what the server starts with.", e.Message); }
                 catch (Exception e) { Logger.Debug("The package index did not answer either: {0}", e.Message); }
                 package = indexed;
             }
@@ -2936,7 +3037,8 @@ namespace ValheimBakaLoader.Tools
             // The page said which version, and left out what it weighs. The index knows.
             if (size == null && indexed == null)
             {
-                try { indexed = await Thunderstore.GetLatestAsync(owner, name); }
+                try { indexed = await WithinAsync(() => Thunderstore.GetLatestAsync(owner, name), Left(), "The package index"); }
+                catch (TimeoutException e) { Logger.Warning("{0}", e.Message); }
                 catch (Exception e) { Logger.Debug("The package index did not answer either: {0}", e.Message); }
             }
 

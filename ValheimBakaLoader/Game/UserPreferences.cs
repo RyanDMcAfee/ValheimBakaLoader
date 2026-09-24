@@ -56,6 +56,18 @@ namespace ValheimBakaLoader.Game
 
         public bool EnablePasswordValidation { get; set; } = true;
 
+        // Do not hand Thunderstore and the other remote clients through the Windows proxy.
+        // .NET honours the system proxy setting and WPAD discovery out of the box, and a
+        // machine carrying a proxy entry nothing answers on stalls every request while curl
+        // on the same box goes straight out. Off by default: a machine where the ordinary
+        // way works must not be pushed off it. The Test connection button says which way
+        // worked, so this is a switch a host is told to turn on rather than one they guess at.
+        public bool BypassSystemProxy { get; set; }
+
+        // Connect over IPv4 only. An AAAA record that routes nowhere answers a connect by
+        // hanging rather than by refusing. Off by default, same reason.
+        public bool ForceIPv4 { get; set; }
+
         public bool DarkMode { get; set; } = true;
 
         // Swaps the Norse-lore UI terminology for plain English (off by default).
@@ -142,6 +154,8 @@ namespace ValheimBakaLoader.Game
                 WriteApplicationLogsToFile = file.WriteApplicationLogsToFile ?? defaults.WriteApplicationLogsToFile,
                 LogsFolderPath = file.LogsFolderPath ?? defaults.LogsFolderPath,
                 EnablePasswordValidation = file.EnablePasswordValidation ?? defaults.EnablePasswordValidation,
+                BypassSystemProxy = file.BypassSystemProxy ?? defaults.BypassSystemProxy,
+                ForceIPv4 = file.ForceIPv4 ?? defaults.ForceIPv4,
                 DarkMode = file.DarkMode ?? defaults.DarkMode,
                 PlainTerminology = file.PlainTerminology ?? defaults.PlainTerminology,
                 Language = file.Language ?? defaults.Language,
@@ -193,6 +207,8 @@ namespace ValheimBakaLoader.Game
             WriteApplicationLogsToFile = WriteApplicationLogsToFile,
             LogsFolderPath = LogsFolderPath,
             EnablePasswordValidation = EnablePasswordValidation,
+            BypassSystemProxy = BypassSystemProxy,
+            ForceIPv4 = ForceIPv4,
             DarkMode = DarkMode,
             PlainTerminology = PlainTerminology,
             Language = Language,

@@ -1,4 +1,4 @@
-// BakaLoader KillAll v1.7.0 - compiled against SERVER assembly_valheim
+// BakaLoader KillAll v1.8.0 - compiled against SERVER assembly_valheim
 //
 // Registers "baka_killall" as an in-game console command, so a host standing at the
 // server's own console window can clear hostiles without going anywhere near RCON.
@@ -30,7 +30,7 @@ namespace BakaLoaderKillAll
     [BepInPlugin("com.baka.killall", "BakaLoader KillAll", PluginVersion)]
     public class KillAllPlugin : BaseUnityPlugin
     {
-        private const string PluginVersion = "1.7.0";
+        private const string PluginVersion = "1.8.0";
 
         private static ManualLogSource Log;
 
@@ -44,6 +44,9 @@ namespace BakaLoaderKillAll
         // the game has to happen on the Unity main thread or a headless server dies with
         // "Graphics device is null". So the line is parked here and drained in Update().
         private static readonly ConcurrentQueue<PendingSweep> Pending = new ConcurrentQueue<PendingSweep>();
+
+        /// <summary>A baka_cleanse typed at the console, waiting for the main thread.</summary>
+        private static readonly ConcurrentQueue<Terminal> PendingCleanse = new ConcurrentQueue<Terminal>();
 
         private void Awake()
         {
@@ -80,7 +83,31 @@ namespace BakaLoaderKillAll
                 hideBehindDevCommands: false
             );
 
-            Log.LogInfo("BakaLoader KillAll v" + PluginVersion + " loaded. 'baka_killall' command registered.");
+            // The other half of the same story. 1.0.9 to 1.1.2 marked every spawn as
+            // cheated, the game spreads that mark on its own, and nothing in the game ever
+            // takes one back off. This is the way back, and it is registered here rather
+            // than in Commander so a host with only the console can reach it.
+            new Terminal.ConsoleCommand(
+                "baka_cleanse",
+                "baka_cleanse: clear the cheat marks BakaLoader 1.0.9 to 1.1.2 left on spawned things. "
+                + "Needs an empty server. Anything a player is carrying is on their own machine and is not touched.",
+                delegate(Terminal.ConsoleEventArgs args)
+                {
+                    PendingCleanse.Enqueue(args.Context);
+                    if (args.Context != null)
+                        args.Context.AddString("Cleanse queued. The counts land here when it is done.");
+                },
+                // isCheat stays false for the same reason baka_killall's does: from Valheim
+                // 1.0 a cheat-flagged console command refuses to run unless the world is
+                // already flagged, and running one flags the profile. A command whose whole
+                // job is to take cheat marks off must not leave one behind.
+                isCheat: false,
+                isNetwork: false,
+                onlyServer: true,
+                hideBehindDevCommands: false
+            );
+
+            Log.LogInfo("BakaLoader KillAll v" + PluginVersion + " loaded. 'baka_killall' and 'baka_cleanse' commands registered.");
         }
 
         private void Update()
@@ -108,6 +135,26 @@ namespace BakaLoaderKillAll
                 }
 
                 Announce(reply, context);
+            }
+
+            Terminal cleanseContext;
+            while (PendingCleanse.TryDequeue(out cleanseContext))
+            {
+                var where = cleanseContext;
+                string said;
+                try
+                {
+                    // One pass, on this thread, with the counts in the answer. The server is
+                    // empty by the time it runs, so a frame it takes to itself costs nobody.
+                    said = CleanseSweep.Run(null);
+                }
+                catch (Exception ex)
+                {
+                    said = "Cleanse failed: " + ex.Message;
+                    Log.LogError("Cleanse failed: " + ex.Message + "\n" + ex.StackTrace);
+                }
+
+                Announce(said, where);
             }
 
             // A sweep too big to finish inside its answer carries on here, a few

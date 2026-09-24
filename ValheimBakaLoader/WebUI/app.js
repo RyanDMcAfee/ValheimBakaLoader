@@ -1322,6 +1322,10 @@ function emptyState(o){
     `<div class="es-title">${esc(o.title||T("common.empty.title"))}</div>`+
     (o.reason?`<div class="es-reason">${esc(o.reason)}</div>`:"")+
     (a?`<button class="btn btn-ghost btn-sm" data-es-action="${esc(a.name)}">${esc(a.label)}</button>`:"")+
+    /* A second button, for a state where the host has two things to do rather than one:
+       try it again, and go and find out why it did not work. Both go through the same
+       named-action table, so neither caller wires a click handler of its own. */
+    (o.action2?`<button class="btn btn-ghost btn-sm" data-es-action="${esc(o.action2.name)}">${esc(o.action2.label)}</button>`:"")+
     `</div>`;
 }
 /* Named actions, so an empty state can offer the same command the toolbar offers
@@ -1720,7 +1724,13 @@ async function renameServer(name){
 async function duplicateServer(name){
   // Seed a new realm from this one: switch to it so the wizard clones its mod set.
   if(!(S.servers||[]).find(v=>String(v.name)===String(name)&&v.active)) await switchServer(name);
-  addServerProfile();
+  /* And the world with it, which is what Duplicate always looked like it did. It never
+     did: the forge opened on a brand new empty world and the host found that out by
+     walking into it. The source is read AFTER the switch, because that is when S.prefs
+     is this realm's. The switch in the forge can still be turned off, and then it is a
+     new realm with this one's mods and a world of its own. */
+  const world=(S.prefs&&S.prefs.WorldName)||"";
+  addServerProfile(world?{profile:name,world}:null);
 }
 async function archiveServer(name){
   const r=await rpc("profiles.archive",{name});
@@ -1905,7 +1915,11 @@ async function switchServer(name){
    by default, its OWN isolated install (independent BepInEx/plugins) + save folder,
    so a second server is genuinely separate rather than a shadow of the first. The
    heavy lifting (provisioning the isolated install) happens in servers.create. */
-async function addServerProfile(){
+/* `source` is {profile, world} when the forge was opened by Duplicate, and null otherwise.
+   With one, the forge offers to copy that world and offers it ON: a duplicate that came up
+   on an empty world was the whole of issue 17. */
+async function addServerProfile(source){
+  source=(source&&source.world)?source:null;
   // The realm-forge dials for a brand-new world: their own ids so they never collide with the
   // settings-page fMod* dials. Every dial defaults to Normal ("").
   const wsModsHtml=Object.entries(WORLDGEN).map(([key,def])=>
@@ -1922,9 +1936,21 @@ async function addServerProfile(){
       `<div class="field"><label>${esc(T("realm.new.world.label"))}</label>`+
         `<input type="text" id="wsWorld" placeholder="${esc(T("realm.new.world.placeholder"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote" id="wsPorts">${esc(T("realm.new.ports.finding"))}</div></div>`+
+      /* The copy switch, only when there is a world to copy. On by default: a host who
+         pressed Duplicate meant the whole realm, and the one they did not mean is the one
+         they turn off here. */
+      (source
+        ?`<div class="togglerow" title="${esc(T("realm.new.copy_world.title"))}">`+
+           `<span class="tl">${esc(T("realm.new.copy_world.label",{source:source.world}))}</span>`+
+           `<div class="toggle on" id="wsCopyWorld"></div></div>`
+        :"")+
+      /* What the world section is really going to do, said plainly and repainted whenever
+         the switch above moves. Without a source it says the one thing that is true of a
+         brand-new realm: a new name and a new save folder make a new, empty world. */
+      `<div class="fieldnote" id="wsWorldNote" style="margin:2px 0 4px"></div>`+
       `<div class="field"><label>${esc(T("realm.new.seed.label"))}</label>`+
         `<input type="text" id="wsWorldSeed" placeholder="${esc(T("realm.new.seed.placeholder"))}" spellcheck="false" autocomplete="off">`+
-        `<div class="fieldnote">${esc(T("realm.new.seed.note"))}</div></div>`+
+        `<div class="fieldnote" id="wsSeedNote">${esc(T("realm.new.seed.note"))}</div></div>`+
       `<div class="fieldnote" style="margin:2px 0 0">${esc(T("realm.new.difficulty.note"))}</div>`+
       wsModsHtml+
       `<div class="fieldnote" style="margin:6px 0 2px">${esc(T("world.wg.own_note"))}</div>`+
@@ -1937,13 +1963,37 @@ async function addServerProfile(){
       `<div class="mbody-note" id="wsStatus"></div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="wsCancel">${esc(T("common.button.cancel"))}</button>`+
-      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(T("realm.new.ok"))}</button></div>`,addServerProfile);
+      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(T("realm.new.ok"))}</button></div>`,
+    ()=>addServerProfile(source));
 
   const nameI=m.querySelector("#wsName"), worldI=m.querySelector("#wsWorld");
   const iso=m.querySelector("#wsIso"), seed=m.querySelector("#wsSeed"), saveIso=m.querySelector("#wsSaveIso");
   const portsN=m.querySelector("#wsPorts"), statusN=m.querySelector("#wsStatus");
   const okB=m.querySelector("#wsOk");
+  const copyT=m.querySelector("#wsCopyWorld");
+  const seedI=m.querySelector("#wsWorldSeed"), seedNote=m.querySelector("#wsSeedNote");
+  const worldNote=m.querySelector("#wsWorldNote");
   const on=el=>el.classList.contains("on");
+  /* The world section, repainted from the one switch that decides it. Copying: the seed is
+     the copied world's and the box cannot be typed into, because a copied world keeps the
+     seed it was made with and the native side refuses the pair outright. Not copying: a new
+     name plus a new save folder is a new, empty world, and that is worth saying to a host
+     who pressed Duplicate and would otherwise find it out by walking into it. */
+  const paintWorldSection=()=>{
+    const copying=!!(copyT&&on(copyT));
+    if(worldNote) worldNote.textContent=copying
+      ?T("realm.new.copy_world.on.note",{source:source?source.world:""})
+      :T("realm.new.world.empty.note");
+    if(seedI){
+      seedI.disabled=copying;
+      seedI.style.opacity=copying?".4":"";
+      if(copying) seedI.value="";
+    }
+    if(seedNote) seedNote.textContent=copying
+      ?T("realm.new.seed.copied.note"):T("realm.new.seed.note");
+  };
+  paintWorldSection();
+  if(copyT) copyT.addEventListener("click",()=>{copyT.classList.toggle("on");paintWorldSection();});
   [iso,seed,saveIso].forEach(t=>t.addEventListener("click",()=>{
     t.classList.toggle("on");
     // Seeding mods only makes sense with a separate install: dim it when install is shared.
@@ -2000,13 +2050,18 @@ async function addServerProfile(){
     }
     okB.disabled=true; okB.textContent=T("realm.new.working");
     statusN.textContent=on(iso)?T("realm.new.status.provisioning"):T("realm.new.status.saving");
-    const created=await rpc("servers.create",{
+    const payload={
       name, world,
       worldSeed:m.querySelector("#wsWorldSeed").value.trim(),
       isolateInstall:on(iso), seedMods:on(iso)&&on(seed), isolateSaveFolder:on(saveIso),
       port:ports?ports.gamePort:null, rconPort:ports?ports.rconPort:null,
       modifiers,
-    });
+    };
+    /* The key rides ONLY when the switch is on. Sending it with a flag beside it would put
+       the decision on the far side of the wire, where a handler that read the pair and not
+       the flag would copy a world the host had just said not to copy. */
+    if(source&&copyT&&on(copyT)) payload.copyWorldFrom={profile:source.profile,world:source.world};
+    const created=await rpc("servers.create",payload);
     if(created===FAIL||!created){
       okB.disabled=false; okB.textContent=T("realm.new.ok");
       statusN.textContent=T("realm.new.failed");
@@ -2575,6 +2630,15 @@ Object.assign(ES_ACTIONS,{
   startServer:()=>lifecycleToggle(),
   clearModSearch:()=>setModFilter(""),
   clearRuneSearch:()=>setRuneFilter(""),
+  /* From a scan that could not read the site: the Upkeep card holds the two connection
+     switches and the test that says which of them would have helped. */
+  openConnectionTest:()=>{
+    goPage("hearth");
+    const body=$("#upkeepBody"), head=$("#upkeepHead");
+    if(body&&head&&head.getAttribute("aria-expanded")!=="true") head.click();
+    const btn=$("#btnNetTest");
+    if(btn){ btn.scrollIntoView({block:"center"}); btn.focus(); }
+  },
 });
 
 /* ---------- SPARKLINES (shared drawing; mock driver below) ---------- */
@@ -3228,6 +3292,12 @@ function hhmm(iso){
   const L=intl();
   return L?L.fmtTime(d):pad(d.getHours())+":"+pad(d.getMinutes());
 }
+/* Why a scan came back with nothing, and the sentence that says so. A table rather than a
+   pair of calls, so the two ids are named once and the copy gate can see both of them. */
+const MODS_SCAN_FAIL={
+  failed:{reasonId:"mods.empty.failed.reason"},
+  timeout:{reasonId:"mods.empty.failed.reason.timeout"},
+};
 function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
@@ -3250,8 +3320,19 @@ function renderMods(){
   $("#sbMods").textContent=T("side.mods.count",{count:scanned?mods.length:"-"});
   renderModSortMarks();
   if(!scanned){
+    /* Three states here, not two. A scan that FAILED used to leave the hall showing the
+       one that says nothing has been read yet, with a Scan button on it: the host pressed
+       it, waited, got the same panel back, and was never told the site could not be
+       reached at all. The failure is its own state, it says why, and it offers the two
+       things there are to do about it. */
+    const failed=!S.modsScanning&&S.modsScanError;
     $("#modTable").innerHTML=`<tr><td colspan="5">${S.modsScanning
       ?emptyState({mark:"ᛋ",title:T("mods.empty.scanning.title"),reason:T("mods.empty.scanning.reason")})
+      :failed
+      ?emptyState({mark:"ᚦ",title:T("mods.empty.failed.title"),
+          reason:T((MODS_SCAN_FAIL[S.modsScanError]||MODS_SCAN_FAIL.failed).reasonId),
+          action:{name:"scanMods",label:T("mods.empty.failed.action")},
+          action2:{name:"openConnectionTest",label:T("mods.empty.failed.action.test")}})
       :emptyState({mark:"ᚱ",title:T("mods.empty.unscanned.title"),
           reason:T("mods.empty.unscanned.reason"),
           action:{name:"scanMods",label:T("mods.empty.unscanned.action")}})}</td></tr>`;
@@ -3261,7 +3342,8 @@ function renderMods(){
     /* Two whole sentences rather than a stem and two endings: a language that says the
        state before the thing it is a state of has nowhere to put "scanning". */
     $("#modsSub").textContent=S.modsScanning
-      ?T("mods.index.line.scanning"):T("mods.index.line.not_scanned");
+      ?T("mods.index.line.scanning")
+      :failed?T("mods.index.line.failed"):T("mods.index.line.not_scanned");
     /* Nothing has been read, so the note saying which address answered goes with it. */
     $("#modsSub").title="";
     renderModShowing(0,0);
@@ -4180,17 +4262,43 @@ function bepInExAskOnce(next){
    found nothing and a host watching the mod's own page saw a version BakaLoader would not
    admit to. Each client keeps its own short cooldown, so two presses in a row are still
    one trip out. */
+/* The longest the page waits for a scan before it says so. The native side is bounded at
+   two minutes for a whole index read and answers whatever happens, so this is the backstop
+   for the case where no answer arrives at all rather than the ordinary way a scan ends. A
+   host sitting in front of a spinner that will never stop is the thing it exists to end. */
+const SCAN_CEILING_MS=60000;
 async function scanMods(){
   if(!Native.available||S.modsScanning||S.modsUpdating) return;
-  S.modsScanning=true; renderMods();
+  S.modsScanning=true; S.modsScanError=null; renderMods();
   toast("ᛋ "+T("mods.scan.begun.toast"));
   logLine("info","[Thunderstore] reading the community listing index…");
-  const r=await rpc("mods.scan",{force:true});
+  /* The ceiling. Whichever settles first wins, and a scan that never comes back leaves the
+     page saying the site could not be read rather than spinning for ever. */
+  const TIMED_OUT={timedOut:true};
+  const r=await Promise.race([
+    rpc("mods.scan",{force:true}),
+    new Promise(done=>setTimeout(()=>done(TIMED_OUT),SCAN_CEILING_MS)),
+  ]);
   S.modsScanning=false;
+  if(r===TIMED_OUT){
+    S.modsScanError="timeout";
+    logLine("warn","[Thunderstore] the scan did not answer within 60 seconds");
+    renderMods();
+    toast("ᚦ "+T("mods.scan.timeout.toast"));
+    return;
+  }
   /* The bridge answers with the rows and what it read them from. A plain array is still
      accepted so nothing here depends on the two shipping in lockstep. */
   const rows=Array.isArray(r)?r:(r&&r!==FAIL&&Array.isArray(r.mods)?r.mods:null);
-  if(r===FAIL||!rows){renderMods();return;}
+  if(r===FAIL||!rows){
+    /* A refusal is a failure with a reason, and the hall says so. Before this it fell back
+       to the state that means nothing has been read yet, which reads as "press Scan" to a
+       host who has just pressed Scan. */
+    S.modsScanError="failed";
+    renderMods();
+    return;
+  }
+  S.modsScanError=null;
   const idx=(r&&!Array.isArray(r))?r.index:null;
   S.mods=rows; S.modsScanned=true; S.lastScan=clock();
   /* The time the LIST was read, which a press that reused a fresh one leaves where it
@@ -4705,7 +4813,7 @@ const palLabel=it=>[...it.childNodes].filter(n=>n.nodeType===3).map(n=>n.nodeVal
    start/stop follow canStart/canStop. Browser preview keeps everything clickable.
    Keyed on the command's NAME, never on its label: a translated label would have
    walked straight past a gate keyed on English. */
-const PAL_NEEDS_RUNNING={save_world:1,kill_monsters:1,broadcast:1,console_command:1};
+const PAL_NEEDS_RUNNING={save_world:1,kill_monsters:1,clear_cheat_marks:1,broadcast:1,console_command:1};
 function updatePalGating(){
   if(!Native.available) return;
   const st=S.state||{}, running=st.status==="Running";
@@ -4864,6 +4972,119 @@ function killAllCommand(s){
   return {cmd:"baka_killall"};
 }
 /* KILLALL-END */
+
+/* CLEANSE-BEGIN
+   ------------------------------------------------------------------------------------
+   Clearing the cheat marks, and what the server said about it.
+
+   WHY THE COMMAND EXISTS. From 1.0.9 to 1.1.2 BakaLoader's own plugins marked every spawn
+   with the game's cheated flag, because that is what the vanilla spawn command does. The
+   game then spreads the mark on its own: a marked item merged into a stack marks the whole
+   stack, crafting with a marked ingredient marks what comes out, a marked weapon marks what
+   it kills and what that drops. New spawns have been clean since 1.2.0, and nothing in the
+   game ever takes a mark back off, so a host who handed somebody a replacement axe in 1.1.x
+   still has a world full of marked things. baka_cleanse is the way back.
+
+   WHY THE REPLY IS READ RATHER THAN ASSUMED. The command has six things it can say: it
+   cleared some marks and counts them, it found none, somebody is still connected and it
+   names them, the world is still loading, it could not read the world's object index, or
+   the server is running a plugin old enough not to know the verb at all. Five of those are
+   not a cleanse, and a toast that said "cleared" for any of them would be the same defect
+   the kick and the kill sweep above were both fixed for.
+*/
+
+/** The three counts out of a result line, or null when it is not one. */
+function cleanseCounts(said){
+  const m=/(\d+)\s+world objects?\s+cleared,\s*(\d+)\s+containers?\s+rewritten,\s*(\d+)\s+items?\s+cleared/i
+    .exec(String(said==null?"":said));
+  return m?{zdos:+m[1],containers:+m[2],items:+m[3]}:null;
+}
+
+/**
+ * What baka_cleanse just said, read rather than assumed.
+ * @returns {{kind:string,zdos?:number,containers?:number,items?:number,count?:number,who?:string}}
+ *   done       it cleared marks, and the three counts are on the answer
+ *   clean      it ran and there was nothing in the world to clear
+ *   connected  somebody is still on the server, and who
+ *   unsupported the server's plugin does not know the verb
+ *   refused    it said no for any other reason
+ *   silent     nothing came back at all
+ *   unknown    a shape this version has not met
+ */
+function cleanseReply(reply){
+  const said=String(reply==null?"":reply).trim();
+  if(!said) return {kind:"silent"};
+
+  /* An older Commander forwards a verb it does not know to the game console, which either
+     answers "Unknown command" or swallows it and says it forwarded it. Both mean the same
+     thing to a host: the plugin on that server is not new enough. */
+  if(/^Unknown command:/i.test(said)||/^Forwarded to console:/i.test(said))
+    return {kind:"unsupported"};
+
+  /* The names are read greedily up to the LAST bracket before the full stop, because the
+     plugin writes "(unnamed)" for a peer that has no name yet and a lazy read would stop
+     inside it and hand the host half a list. */
+  const who=/^Error:\s*(\d+)\s+players?\s+(?:is|are)\s+still connected(?:\s*\((.*)\))?\./i.exec(said);
+  if(who) return {kind:"connected",count:+who[1],who:(who[2]||"").trim()};
+
+  if(/^Error:/i.test(said)||/^Cleanse failed:/i.test(said)) return {kind:"refused"};
+
+  if(/^Cleanse complete:/i.test(said)){
+    const counts=cleanseCounts(said);
+    if(counts) return {kind:"done",zdos:counts.zdos,containers:counts.containers,items:counts.items};
+    if(/nothing in this world carries a cheat mark/i.test(said)) return {kind:"clean"};
+    return {kind:"unknown"};
+  }
+
+  return {kind:"unknown"};
+}
+/* CLEANSE-END */
+
+/** The toast for a cleanse reply, worded. Split from the reading above for the same reason
+    the kill sweep's is: the table test drives the reading with no catalog behind it. */
+function cleanseToast(read){
+  switch(read.kind){
+    case "done": return "ᛉ "+T("vikings.cleanse.done.toast",
+      {zdos:read.zdos,containers:read.containers,items:read.items});
+    case "clean": return "ᛉ "+T("vikings.cleanse.clean.toast");
+    case "connected": return "ᚦ "+T("vikings.cleanse.connected.toast",{who:read.who||""});
+    case "unsupported": return "ᚦ "+T("vikings.cleanse.unsupported.toast");
+    case "refused": return "ᚦ "+T("vikings.cleanse.refused.toast");
+    case "silent": return "ᚦ "+T("vikings.cleanse.silent.toast");
+    default: return "ᚦ "+T("vikings.cleanse.unknown.toast");
+  }
+}
+
+/* The question, which is four sentences because there are four things a host has to know
+   before they press it: what it clears, what it cannot reach and what to do about that,
+   that it needs an empty server, and the one character nobody can clear. */
+function cleanseModal(){
+  confirmModal(
+    ()=>T("vikings.cleanse.confirm.title"),
+    ()=>`<div class="subval">${esc(T("vikings.cleanse.confirm.what"))}</div>`+
+        `<div class="subval" style="margin-top:8px">${esc(T("vikings.cleanse.confirm.backpack"))}</div>`+
+        `<div class="subval" style="margin-top:8px">${esc(T("vikings.cleanse.confirm.empty"))}</div>`+
+        `<div class="subval" style="margin-top:8px">${esc(T("vikings.cleanse.confirm.console"))}</div>`,
+    ()=>T("vikings.cleanse.confirm.ok"),
+    ()=>doCleanse());
+}
+
+async function doCleanse(){
+  if(!Native.available){toast("ᛉ "+T("vikings.cleanse.preview.toast"));return;}
+
+  logLine("cmd","> baka_cleanse");
+  const r=await rpc("players.cleanse");
+  if(r===FAIL) return;
+  if(!r.ok){
+    toast("ᚦ "+T("pal.console.undelivered.toast"));
+    logLine("warn","[RCON] baka_cleanse did not get through. Is the server running with RCON enabled?");
+    return;
+  }
+
+  const said=(r.response||"").trim();
+  if(said) said.split(/\r?\n/).forEach(l=>logLine("ok",l));
+  toast(cleanseToast(cleanseReply(said)));
+}
 
 /** The toast for a reply, worded. Split from the reading above so the table test can
     drive the reading with no catalog, and so one sentence has one owner. */
@@ -5057,6 +5278,10 @@ function invokePal(){
         :"ᛉ "+T("pal.save_world.done.toast"));
     }else if(cmd==="kill_monsters"){
       killAllModal();
+    }else if(cmd==="clear_cheat_marks"){
+      /* The same question the Players hall asks, from the same dialog, so there is no
+         route to the sweep that skips it. */
+      cleanseModal();
     }else if(cmd==="broadcast"){
       promptModal(()=>T("vikings.broadcast.title"),()=>T("vikings.broadcast.placeholder"),m=>{
         rpc("server.broadcast",{message:m}).then(r=>{
@@ -5382,6 +5607,9 @@ function renderCaps(){
     :T("saga.term.placeholder");
 }
 let capsInstallBusy=false;
+/* The Players hall's own way to the cleanse. The same dialog the palette opens, so the
+   question is asked once and in one place. */
+$("#cleanseBtn")?.addEventListener("click",()=>cleanseModal());
 $("#capsInstallBtn")?.addEventListener("click",async()=>{
   if(capsInstallBusy||!Native.available) return;
   capsInstallBusy=true;
@@ -5470,6 +5698,10 @@ async function initUpkeep(){
     /* The Mods header names the sites a scan reads, so it has to be told on load and not
        only when the switch moves under a host's finger. */
     setHexiumSource(up.UseHexiumSource);
+    /* The two connection switches. Both default off, and what is drawn here is what is
+       stored rather than what the document shipped with, the same as every other row. */
+    setT("tNoProxy",!!up.BypassSystemProxy);
+    setT("tIPv4",!!up.ForceIPv4);
     setT("tStartWin",up.StartWithWindows);
     setT("tStartMin",up.StartMinimized);
     setT("tShareStats",up.ShareAnonymousStats);
@@ -5507,7 +5739,7 @@ async function initUpkeep(){
      there. Moving it by hand counts as answering, which the host side records as well. */
   const bepSaved=()=>BEP_ANSWERED
     ?{BepInExMaintained:swOn("tBepMaint"),BepInExMaintenanceAsked:true}:{};
-  const save=()=>loaded&&rpc("userprefs.save",{prefs:Object.assign({CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),UseHexiumSource:swOn("tUseHexium"),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")},bepSaved())});
+  const save=()=>loaded&&rpc("userprefs.save",{prefs:Object.assign({CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),UseHexiumSource:swOn("tUseHexium"),BypassSystemProxy:swOn("tNoProxy"),ForceIPv4:swOn("tIPv4"),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")},bepSaved())});
   $("#tCheckUpd").addEventListener("click",()=>{
     save();
     /* the standing update row says whether it installs itself, and with checking off it
@@ -5553,10 +5785,81 @@ async function initUpkeep(){
       ?T("hearth.upkeep.hexium.on.toast")
       :T("hearth.upkeep.hexium.off.toast")));
   });
+  /* The two connection switches. Nothing else follows them: HttpClientProvider reads the
+     preference again on the next CreateClient, so the next request out takes the new shape
+     without anything here having to tell it. */
+  $("#tNoProxy")?.addEventListener("click",save);
+  $("#tIPv4")?.addEventListener("click",save);
+  $("#btnNetTest")?.addEventListener("click",runConnectionTest);
   $("#tStartWin").addEventListener("click",save);
   $("#tStartMin").addEventListener("click",save);
   $("#tShareStats").addEventListener("click",save);
   $("#tPlainTerms").addEventListener("click",()=>{PLAIN=!swOn("tPlainTerms");save();applyTerms();});
+}
+
+/* ---------- THE CONNECTION TEST ----------
+   Asks thunderstore.io the way BakaLoader asks it, one step at a time, and says which of
+   the two switches above would have made the difference. The native side does the asking
+   off the UI thread and answers with data rather than sentences: a stage name this words
+   from the catalog, and a detail that is addresses, a status and a byte count, which are
+   not language and are not translated. */
+/* Every step the native side can report, and the sentence that words it. A table rather
+   than a composed id, so the ids are named once, the copy gate holds all of them, and a
+   step this build has no sentence for is a miss this can see rather than an id on screen. */
+const NET_STAGES={
+  proxy:       {lineId:"hearth.upkeep.connection.stage.proxy"},
+  dns:         {lineId:"hearth.upkeep.connection.stage.dns"},
+  tcp:         {lineId:"hearth.upkeep.connection.stage.tcp"},
+  tls:         {lineId:"hearth.upkeep.connection.stage.tls"},
+  http:        {lineId:"hearth.upkeep.connection.stage.http"},
+  http_noproxy:{lineId:"hearth.upkeep.connection.stage.http_noproxy"},
+  http_ipv4:   {lineId:"hearth.upkeep.connection.stage.http_ipv4"},
+  http_both:   {lineId:"hearth.upkeep.connection.stage.http_both"},
+};
+/* And what to do about it. "none" is the fallback as well as an answer in its own right. */
+const NET_VERDICTS={
+  ok:      {lineId:"hearth.upkeep.connection.verdict.ok"},
+  noproxy: {lineId:"hearth.upkeep.connection.verdict.noproxy"},
+  ipv4:    {lineId:"hearth.upkeep.connection.verdict.ipv4"},
+  both:    {lineId:"hearth.upkeep.connection.verdict.both"},
+  none:    {lineId:"hearth.upkeep.connection.verdict.none"},
+};
+let NET_TEST_RUNNING=false;
+async function runConnectionTest(){
+  const out=$("#netTestOut"); if(!out) return;
+  if(NET_TEST_RUNNING) return;
+
+  if(!Native.available){out.textContent=T("hearth.upkeep.connection.unavailable");return;}
+
+  NET_TEST_RUNNING=true;
+  const btn=$("#btnNetTest"); if(btn) btn.disabled=true;
+  out.textContent=T("hearth.upkeep.connection.testing");
+
+  try{
+    const r=await rpc("net.diagnose");
+    if(r===FAIL||!r||!Array.isArray(r.stages)){
+      out.textContent=T("hearth.upkeep.connection.failed");
+      return;
+    }
+    const lines=r.stages.map(s=>{
+      const detail=String(s.detail==null?"":s.detail);
+      const row=NET_STAGES[String(s.stage||"")];
+      /* A step this build has no sentence for says the raw pair, which is better than an
+         id on screen in front of a host who is already stuck. */
+      const body=row?T(row.lineId,{detail}):String(s.stage)+": "+detail;
+      return (s.ok?"ᛉ ":"ᚦ ")+body+"  ("+(s.ms==null?"?":s.ms)+" ms)";
+    });
+    const verdict=NET_VERDICTS[String(r.verdict||"none")]||NET_VERDICTS.none;
+    lines.push("");
+    lines.push(T(verdict.lineId));
+    out.textContent=lines.join("\n");
+    logLine("ok","[BakaLoader] connection test: "+String(r.verdict||"none"));
+  }catch(_){
+    out.textContent=T("hearth.upkeep.connection.failed");
+  }finally{
+    NET_TEST_RUNNING=false;
+    if(btn) btn.disabled=false;
+  }
 }
 
 /* ---------- HERALD (Discord sharing · one self-editing status post) ----------
@@ -6295,6 +6598,12 @@ window.BakaPreview={
     return Object.assign({},KILL_SCOPE);
   },
   killAllSaid:reply=>({read:killAllReply(reply),toast:killAllToast(killAllReply(reply))}),
+  /* The cleanse's two seams, the same pair for the same reason: the dialog is all page
+     and can be opened by name, and a reply can be read and worded without a server.
+       cleanse        opens the question, as the palette and the Players hall do
+       cleanseSaid    one reply, read and worded, exactly as the real path words it */
+  cleanse:()=>{cleanseModal();return modalIsOpen();},
+  cleanseSaid:reply=>({read:cleanseReply(reply),toast:cleanseToast(cleanseReply(reply))}),
   /* The roster the radius scope is measured from. A walk wants the EMPTY case as much as
      the full one: with nobody online the dialog cannot serve a radius at all, and the
      preview's own four players can never show that state. */
@@ -7087,6 +7396,7 @@ const CONSOLE_CMDS=[
   {cmd:"save",args:"",descId:"pal.console.cmd.save"},
   {cmd:"playerlist",args:"",descId:"pal.console.cmd.playerlist"},
   {cmd:"baka_killall",args:"",descId:"pal.console.cmd.killall",asks:"killall"},
+  {cmd:"baka_cleanse",args:"",descId:"pal.console.cmd.cleanse",asks:"cleanse"},
   {cmd:"broadcast center ",args:"<message>",descId:"pal.console.cmd.broadcast"},
   {cmd:"dmg ",args:"<player> <amount>",descId:"pal.console.cmd.dmg"},
   {cmd:"tp ",args:"<player> <x,z,y | player>",descId:"pal.console.cmd.tp"},
@@ -7120,6 +7430,7 @@ function consoleModal(){
     /* The sweep asks first, wherever it is started from, and the dialog it opens is the
        one that reads the server's answer afterwards. */
     if(r.dataset.asks==="killall"){modalClose();killAllModal();return;}
+    if(r.dataset.asks==="cleanse"){modalClose();cleanseModal();return;}
     if(r.dataset.complete){modalClose();sendConsole(r.dataset.cmd);return;}
     inp.value=r.dataset.cmd;
     inp.dispatchEvent(new Event("input"));
@@ -8559,8 +8870,23 @@ function renderWorldDirs(){
     if(box) box.placeholder=fallback?T("world.dir.placeholder",{path:fallback}):T(d.placeholderId);
     renderPathNote(d);
   }
+  /* And why this realm's boxes look the way they do. A realm with its own install and its
+     own save folder keeps its mods and its worlds to itself; the first realm on a machine
+     uses the shared install, which is the whole reason its two boxes show the defaults and
+     a host who had just duplicated one was left wondering. Nothing to say in the browser
+     preview, where there is no profile behind the card. */
+  const note=$("#dirIsolationNote");
+  if(note){
+    const isolated=!!p.IsolatedInstall&&p[WORLD_DIR_SAVE_SOURCE]==="profile";
+    const known=Native.available&&!!S.prefs;
+    note.textContent=!known?"":isolated?T("world.dir.isolated_note"):T("world.dir.shared_note");
+    note.style.display=known?"block":"none";
+  }
   syncDirsSection();
 }
+/* Which answer says the save folder is this realm's own. Named rather than spelled at the
+   one place that reads it, because it is the same key the table above reads. */
+const WORLD_DIR_SAVE_SOURCE="SaveDataFolderPathSource";
 /* The one line under a box. Nothing typed means nothing to say: the note under the whole
    section already explains what an empty box does, and repeating it twice more would
    make the common case the noisy one. */
@@ -8662,6 +8988,15 @@ const WORLD_FORM_TOGGLES=["tPublic","tCrossplay","tEmpty","tSched","tRcon","tLog
 /* Which control's field wears the marker for a key that is not a control of its own. */
 const WORLD_FORM_MARKER={world:"fWorld"};
 function worldFormMarkerFor(key){return WORLD_FORM_MARKER[key]||key;}
+/* The controls the difficulty write owns: the five dials and the five world switches, by
+   the id of the control itself, which is the key they are read under below. Named once so
+   the save handler can put exactly these back when that write is the half that failed. */
+function worldGenFormControlIds(){
+  const out=[];
+  for(const key in WORLDGEN) out.push(WORLDGEN[key].sel);
+  for(const key of WORLDGEN_SWITCH_KEYS) out.push(WORLDGEN_SWITCHES[key].sw);
+  return out;
+}
 /* The whole form as a flat map of strings, which is the only shape two moments of it can
    be compared in. A toggle answers "1" or "0" rather than a class list. */
 function worldFormRead(){
@@ -9730,6 +10065,13 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   const typedProblem=worldNewProblem();
   if(typedProblem){toast("ᚦ "+typedProblem);$("#fWorldNew")?.focus();return;}
   if(!Native.available){toast("ᛉ "+T("world.saved.preview.toast"));return;}
+  /* The clean state as it stands BEFORE anything is written. It is kept because the
+     difficulty write can fail on its own while the profile write lands, and a dial that
+     was not written is still unsaved: the snapshot at the foot of this handler would
+     otherwise declare it saved, take the notice down and stop the button breathing. The
+     saved values for those controls are the ones in here, so on a failure they go back. */
+  const snapBefore=WORLD_SNAP?Object.assign({},WORLD_SNAP):null;
+  let worldGenFailed=false;
   const name=S.profileName||S.prefs?.ProfileName||"Default";
   // fetch fresh, mutate only form-controlled fields, send the WHOLE object back
   const cur=await rpc("profiles.get",{name});
@@ -9787,6 +10129,12 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
        line and the toggles on screen are what was really stored rather than what the page
        assumed would be. Reading one half and assuming the other is how the two would
        quietly part company the day the host side starts storing something else. */
+    /* And a FAIL is the host side saying the difficulty was NOT written. It used to be
+       read for nothing but the two lists above, so a refused write passed in silence and
+       the snapshot at the foot of this handler then declared the dials saved. The host
+       walked away from a notice that had just gone out with a difficulty still on screen
+       that is not the one on disk. */
+    if(saved===FAIL) worldGenFailed=true;
     if(saved!==FAIL&&saved&&Array.isArray(saved.passThrough)){
       S.worldMods.passThrough=saved.passThrough.slice();
       renderWorldCarried();
@@ -9828,6 +10176,15 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
      already said so; this is said again here because "after a successful save" is the
      rule, and a later change to how the form is redrawn must not be able to lose it. */
   worldFormSnapshot();
+  /* The difficulty half did not land, so the dials and the five world switches are put
+     back to the values that ARE saved. Every one the host moved stays marked, the notice
+     stays up, the button goes on breathing, and Save Config can be pressed again. Only
+     those controls are touched: the profile write landed and its boxes really are saved. */
+  if(worldGenFailed&&snapBefore){
+    for(const id of worldGenFormControlIds())
+      if(Object.prototype.hasOwnProperty.call(snapBefore,id)) WORLD_SNAP[id]=snapBefore[id];
+    renderWorldDirty();
+  }
   /* Whether the running server is now behind what is saved is the native side's answer, and
      nothing about a save moves the server's status, so ask for the state again rather than
      leaving the row to wait for the next start or stop. */
@@ -9835,7 +10192,10 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   if(after!==FAIL) applyState(after);
   /* A save while the world is up is real and on disk, and it is still not what the players are
      playing. Say that instead of a plain confirmation the host would read as "in force now". */
-  if(cfgServerIsUp()) toast("ᛉ "+T("world.saved.running.toast"));
+  /* And when the difficulty write was refused, that is what the host is told, instead of a
+     confirmation that would cover a hall still carrying unsaved dials. */
+  if(worldGenFailed) toast("ᚦ "+T("world.difficulty.save_failed.toast"));
+  else if(cfgServerIsUp()) toast("ᛉ "+T("world.saved.running.toast"));
   else toast("ᛉ "+T("world.saved.toast",{profile:r.ProfileName}));
   logLine("ok","[BakaLoader] profile '"+r.ProfileName+"' saved");
 });

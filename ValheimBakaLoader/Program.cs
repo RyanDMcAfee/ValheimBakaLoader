@@ -81,6 +81,10 @@ namespace ValheimBakaLoader
             services.AddSingleton<IExceptionHandler, ExceptionHandler>();
             services.AddSingleton<IFileProvider, JsonFileProvider>();
             services.AddSingleton<IProcessProvider, ProcessProvider>();
+            // One seam for every remote client: the two connection switches are read here
+            // and the handler they shape is what Thunderstore, GitHub, the language packs,
+            // BepInEx, Hexium, Discord, the heartbeat and the IP lookup all send through.
+            services.AddSingleton<IHttpTransportSettings, HttpTransportSettings>();
             services.AddSingleton<IHttpClientProvider, HttpClientProvider>();
             services.AddSingleton<IRestClientContext, RestClientContext>();
             services.AddSingleton<IIpAddressProvider, IpAddressProvider>();

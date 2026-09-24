@@ -1009,6 +1009,13 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
+        /// The commit marker that sits beside a given "_main.{N}.fwl2", in the same folder.
+        /// Its presence is what says the game finished writing that generation.
+        /// </summary>
+        private static string NeighbourOk(string metaPath, string number) => System.IO.Path.Combine(
+            System.IO.Path.GetDirectoryName(metaPath) ?? string.Empty, $"_main.{number}.ok");
+
+        /// <summary>
         /// Picks the live generation of a chunked world directory: the HIGHEST N whose .fwl2,
         /// .db2, .chunks and .ok all exist. When nothing is committed yet (a world created but
         /// never saved) the highest .fwl2 is returned with IsCommitted false and no .db2, so
@@ -1203,7 +1210,27 @@ namespace ValheimBakaLoader.Tools
         /// </para>
         /// </summary>
         /// <returns>The folder the copy now lives in.</returns>
-        public static string CopyWorldAs(WorldInfo world, string targetName)
+        public static string CopyWorldAs(WorldInfo world, string targetName) =>
+            CopyWorldAs(world, targetName, null);
+
+        /// <summary>
+        /// The same copy, landing in ANOTHER save folder. This is what a duplicated server
+        /// needs: the new realm has its own save folder, and the world that goes into it is
+        /// the source realm's world under whatever name the new realm calls its own.
+        /// <para>
+        /// Everything about it is the copy above: the whole tree or the pair of files, the
+        /// header rewritten so the copy names itself, the staging thrown away on any refusal,
+        /// and the source untouched. The two differences are where it lands and what counts
+        /// as the name being taken, which is the DESTINATION folder rather than the source's.
+        /// Keeping the same name is allowed here, because a world of that name in a save
+        /// folder of its own is not the same world twice.
+        /// </para>
+        /// </summary>
+        /// <param name="destSaveFolder">
+        /// The save folder to copy into, or null to copy beside the source the way
+        /// <see cref="CopyWorldAs(WorldInfo, string)"/> does.
+        /// </param>
+        public static string CopyWorldAs(WorldInfo world, string targetName, string destSaveFolder)
         {
             if (world == null) throw new ArgumentNullException(nameof(world));
 
@@ -1219,17 +1246,53 @@ namespace ValheimBakaLoader.Tools
                     "That is not a name a world can be saved under.",
                     ("target", targetName));
 
-            var worldsDir = SourceWorldsDir(world);
-            if (string.IsNullOrWhiteSpace(worldsDir) || !Directory.Exists(worldsDir))
+            // Where the source really is, which is what the copy reads from either way.
+            var sourceWorldsDir = SourceWorldsDir(world);
+            if (string.IsNullOrWhiteSpace(sourceWorldsDir) || !Directory.Exists(sourceWorldsDir))
                 throw new HostFacingException("worlds.copyFailed",
                     $"'{world.Name}' is not in a worlds folder any more, so nothing was copied.",
                     ("world", world.Name));
 
+            var intoAnotherFolder = !string.IsNullOrWhiteSpace(destSaveFolder);
+            string worldsDir;
+            string checkedSaveFolder;
+
+            if (intoAnotherFolder)
+            {
+                // A dedicated server reads its worlds from worlds_local, which is where a copy
+                // into another save folder lands, exactly as CopyWorld puts one there.
+                EnsureSaveFolderLayout(destSaveFolder);
+                worldsDir = System.IO.Path.Combine(destSaveFolder, WorldSubfolders[0]);
+                Directory.CreateDirectory(worldsDir);
+                checkedSaveFolder = destSaveFolder;
+
+                // Copying a world onto itself is the one call that can only destroy.
+                if (SameDirectory(sourceWorldsDir, worldsDir) &&
+                    string.Equals(world.Name, targetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new HostFacingException("worlds.copyTargetExists",
+                        $"'{world.Name}' is already in that save folder under that name, so nothing was copied.",
+                        ("target", targetName));
+                }
+            }
+            else
+            {
+                worldsDir = sourceWorldsDir;
+                checkedSaveFolder = world.SaveFolder;
+
+                // Beside itself, the source's own name is the one name that cannot be used.
+                if (string.Equals(world.Name, targetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new HostFacingException("worlds.copyTargetExists",
+                        $"A world called '{targetName}' is already in that save folder, so nothing was copied.",
+                        ("target", targetName));
+                }
+            }
+
             // Every way the name can already be spoken for, including the ones the world
             // list refuses to return: a backup shaped folder holds its name just as hard as
             // a world does, and a copy landing on one would mix two saves together.
-            if (string.Equals(world.Name, targetName, StringComparison.OrdinalIgnoreCase)
-                || FindWorldFilesOnDisk(world.SaveFolder, targetName) != null
+            if (FindWorldFilesOnDisk(checkedSaveFolder, targetName) != null
                 || DirectoryHasAnything(System.IO.Path.Combine(worldsDir, targetName)))
             {
                 throw new HostFacingException("worlds.copyTargetExists",
@@ -1257,9 +1320,31 @@ namespace ValheimBakaLoader.Tools
                 : CopyLegacyWorldAs(world, worldsDir, targetName);
 
             // The game keys the cache on the name inside the header, which is the new one
-            // now, so the copy gets its own cache rather than reading the source's.
-            CopyBiomeCacheAs(world.SaveFolder, cacheKey, targetName);
+            // now, so the copy gets its own cache rather than reading the source's. Into
+            // another save folder it is the destination's cache folder that gets it, and the
+            // source's is left exactly as it was.
+            if (intoAnotherFolder) CopyBiomeCacheInto(world.SaveFolder, cacheKey, destSaveFolder, targetName);
+            else CopyBiomeCacheAs(world.SaveFolder, cacheKey, targetName);
             return landed;
+        }
+
+        /// <summary>
+        /// A world's biome data cache copied into ANOTHER save folder under another name,
+        /// which is the shape a duplicated realm needs. Best effort like its two siblings:
+        /// the game rebuilds the cache, and a copy must never fail over one.
+        /// </summary>
+        public static void CopyBiomeCacheInto(
+            string sourceSaveFolder, string sourceWorldName, string destSaveFolder, string targetWorldName)
+        {
+            try
+            {
+                var source = BiomeCachePath(sourceSaveFolder, sourceWorldName);
+                var destination = BiomeCachePath(destSaveFolder, targetWorldName);
+                if (source == null || destination == null || !File.Exists(source)) return;
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destination));
+                File.Copy(source, destination, overwrite: true);
+            }
+            catch { /* the game regenerates the cache; never fail a copy over it */ }
         }
 
         /// <summary>
@@ -1286,12 +1371,29 @@ namespace ValheimBakaLoader.Tools
                 var rewritten = 0;
                 foreach (var meta in Directory.EnumerateFiles(staged, "*", SearchOption.AllDirectories))
                 {
-                    if (!MainFwl2.IsMatch(System.IO.Path.GetFileName(meta))) continue;
-                    if (!FwlNameRewriter.TryRewriteWorldName(meta, targetName))
-                        throw new HostFacingException("worlds.copyUnreadable",
-                            $"The world file for '{world.Name}' could not be read, so nothing was copied.",
-                            ("world", world.Name));
-                    rewritten++;
+                    var match = MainFwl2.Match(System.IO.Path.GetFileName(meta));
+                    if (!match.Success) continue;
+
+                    if (FwlNameRewriter.TryRewriteWorldName(meta, targetName))
+                    {
+                        rewritten++;
+                        continue;
+                    }
+
+                    // It would not rewrite. Whether that is a reason to refuse the whole copy
+                    // depends on whether the game would ever read this generation, and the .ok
+                    // marker beside it is the answer: the game writes it LAST and deletes the
+                    // generation before it once it is down, so a generation with no .ok is one
+                    // the game was in the middle of writing and will discard itself. The world
+                    // this copy is of read fine at the precheck; refusing the copy over a torn
+                    // extra generation loses the host their committed world for a file nothing
+                    // will ever open. It is carried across as it is and left uncounted, so a
+                    // tree with nothing BUT torn generations still ends at the guard below.
+                    if (!File.Exists(NeighbourOk(meta, match.Groups[1].Value))) continue;
+
+                    throw new HostFacingException("worlds.copyUnreadable",
+                        $"The world file for '{world.Name}' could not be read, so nothing was copied.",
+                        ("world", world.Name));
                 }
 
                 if (rewritten == 0)

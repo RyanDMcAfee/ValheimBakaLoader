@@ -311,6 +311,12 @@ namespace ValheimBakaLoader.Tests.Forms
                 // The loader's own nothing, which is a different nothing from "no mods":
                 // with BepInEx missing the hall is empty because nothing could load, and
                 // the button that fills it installs the loader rather than adding a mod.
+                // And a third nothing, which is the one issue 18 added: the scan ran and
+                // Thunderstore did not answer. Its reason sentence is chosen from a table
+                // rather than named at the call site, so only its title and its two buttons
+                // are literals here.
+                "mods.empty.failed.action", "mods.empty.failed.action.test",
+                "mods.empty.failed.title",
                 "mods.empty.no_bepinex.action", "mods.empty.no_bepinex.reason",
                 "mods.empty.no_bepinex.title",
                 "mods.empty.no_match.action", "mods.empty.no_match.title",
@@ -333,7 +339,8 @@ namespace ValheimBakaLoader.Tests.Forms
             // instead of quietly leaving the haystack.
             var aroundTheTable = new[]
             {
-                "mods.index.line.not_scanned", "mods.index.line.scanning", "mods.up_to_date",
+                "mods.index.line.failed", "mods.index.line.not_scanned",
+                "mods.index.line.scanning", "mods.up_to_date",
             };
             var drawn = IdsAskedIn(RenderMods())
                 .Where(id => !rowTips.Contains(id) && !aroundTheTable.Contains(id)).ToArray();

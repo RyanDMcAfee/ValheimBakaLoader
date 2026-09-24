@@ -108,7 +108,10 @@ namespace ValheimBakaLoader.Tests.Forms
         // realm 63 and waystone.wiz 46 after the last slice: the realm dialogs' own
         // buttons and toasts, and the four Waystone sentences that used to be built from
         // fragments either side of an address.
-        [InlineData("realm.", 63)]
+        // realm 68 after issue 17: the forge's copy-the-world switch, what it says when it
+        // is on, what the world section says when it is off, and the seed note that goes
+        // with a copied world.
+        [InlineData("realm.", 68)]
         [InlineData("barrow.", 54)]
         [InlineData("waystone.wiz.", 46)]
         [InlineData("world.wg.", 65)]
@@ -166,8 +169,11 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // 18 with the loader's own empty state, which is the hall saying a different
             // nothing: no BepInEx rather than no mods.
-            Assert.Equal(18, calls.Count);
+            // 19 with the Mods hall's third nothing: the scan ran and Thunderstore did not
+            // answer, which is not the same nothing as a hall that has never been scanned.
+            Assert.Equal(19, calls.Count);
             var composed = 0;
+            var fromTable = 0;
             foreach (Match call in calls)
             {
                 var text = call.Value;
@@ -177,12 +183,37 @@ namespace ValheimBakaLoader.Tests.Forms
                     if (at < 0) continue;
                     var rest = text.Substring(at + field.Length);
                     if (rest.StartsWith("TT(", StringComparison.Ordinal)) { composed++; continue; }
+                    // A literal id is the ordinary shape and is answered first. Asking the
+                    // table question before this one would count every field that happens to
+                    // be followed later in the same call by the one that reads a table.
+                    if (rest.StartsWith("T(\"", StringComparison.Ordinal)) continue;
+                    // A panel that has more than one thing to say picks its id out of a
+                    // named table rather than writing two whole panels, and the table is a
+                    // catalog id either way: what this rule is about is English spelled at
+                    // a call site, and a table holds no English at all. The ids in it are
+                    // checked against the catalog below, so the widening buys nothing to a
+                    // sentence written here in plain words.
+                    if (rest.StartsWith("T(", StringComparison.Ordinal)
+                        && rest.Contains("reasonId", StringComparison.Ordinal)) { fromTable++; continue; }
                     Assert.True(rest.StartsWith("T(\"", StringComparison.Ordinal),
                                 "an empty state still spells its own " + field + " " + rest.Substring(0, Math.Min(60, rest.Length)));
                 }
             }
 
             Assert.Equal(0, composed);
+            // Exactly one: the Mods hall's failed scan, which says a different sentence for
+            // a refusal and for a scan that ran out of time.
+            Assert.Equal(1, fromTable);
+            var reasons = Regex.Matches(
+                Between(source, "const MODS_SCAN_FAIL={", "\n};"), "reasonId:\"([a-z][a-z0-9_.]*)\"");
+            Assert.Equal(2, reasons.Count);
+            foreach (Match reason in reasons)
+            {
+                Assert.True(Catalog().ContainsKey(reason.Groups[1].Value),
+                            "the catalog has no " + reason.Groups[1].Value
+                            + ", so the failed-scan panel would show the id");
+            }
+
             Assert.Contains("reason:T(\"mods.empty.no_match.reason\",{count:mods.length})", source);
         }
 
@@ -492,7 +523,8 @@ namespace ValheimBakaLoader.Tests.Forms
             // loader takeover put in front of a write: the question every write over an
             // install BakaLoader did not make asks, the one a "this install is newer"
             // refusal turns into, and the one the saved-copy button asks.
-            Assert.Equal(23, sites);
+            // 24 with the question baka_cleanse asks before it sweeps a world.
+            Assert.Equal(24, sites);
             Assert.True(frozen.Count == 0,
                 "a dialog would keep its wording through a language switch:\n  "
                 + string.Join("\n  ", frozen));

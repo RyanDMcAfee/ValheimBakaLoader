@@ -70,7 +70,8 @@ namespace ValheimBakaLoader.Tests.Forms
                               .Select(m => (Id: m.Groups[1].Value, Word: m.Groups[2].Value))
                               .ToList();
 
-            Assert.Equal(21, badges.Count);
+            // 22 with Clear cheat marks, which is a viking row like the kick beside it.
+            Assert.Equal(22, badges.Count);
             Assert.DoesNotContain("<span class=\"k\">", palette);   // none left unkeyed
 
             foreach (var (id, word) in badges)

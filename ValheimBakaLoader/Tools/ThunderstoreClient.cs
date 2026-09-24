@@ -96,6 +96,46 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>Which of the two addresses the held index came from, or null.</summary>
         string IndexSource { get; }
+
+        /// <summary>
+        /// The last read that failed, or null when the last one worked. A scan reads this to
+        /// tell a host WHY nothing came back, and the window in it is what keeps twenty-two
+        /// mods from each paying for their own stalled trip to the site.
+        /// </summary>
+        ThunderstoreFailureMemo LastFailure { get; }
+    }
+
+    /// <summary>
+    /// A read of the index that did not work: when, what kind of failure it was, and how
+    /// long every caller is refused the trip for.
+    /// <para>
+    /// This exists because of one host's log. Their machine could not reach thunderstore.io
+    /// through .NET at all, and a failed read cached nothing, so each of their twenty-two
+    /// installed mods asked for the index in turn, waited out the listing-index timeout,
+    /// waited out the full-listing timeout, and handed the lock to the next one. The scan
+    /// took ninety minutes and finished with nothing. A failure has to be remembered for
+    /// exactly the same reason a success is.
+    /// </para>
+    /// </summary>
+    public sealed class ThunderstoreFailureMemo
+    {
+        /// <summary>When the read failed.</summary>
+        public DateTime LastFailureUtc { get; init; }
+
+        /// <summary>
+        /// What kind of failure it was, as a short stable name rather than a sentence:
+        /// timeout, connect, http, read, or the exception's own type when it is none of those.
+        /// </summary>
+        public string Reason { get; init; }
+
+        /// <summary>How many reads in a row have failed. The backoff is chosen off this.</summary>
+        public int Streak { get; init; }
+
+        /// <summary>How long from the failure until another read is allowed.</summary>
+        public TimeSpan BackOff { get; init; }
+
+        /// <summary>The first moment a read is allowed again.</summary>
+        public DateTime RetryAtUtc => LastFailureUtc + BackOff;
     }
 
     /// <summary>
@@ -162,13 +202,32 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         public static readonly TimeSpan ForceCooldown = TimeSpan.FromSeconds(60);
 
-        private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(120);
+        /// <summary>
+        /// How long a failed read stands before another one is allowed, by how many have
+        /// failed in a row. The last step is the cap: a site that has been unreachable for an
+        /// hour is asked once a quarter of an hour, not once a scan.
+        /// </summary>
+        public static readonly IReadOnlyList<TimeSpan> BackoffSteps = new[]
+        {
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMinutes(1),
+            TimeSpan.FromMinutes(2),
+            TimeSpan.FromMinutes(5),
+            TimeSpan.FromMinutes(10),
+            TimeSpan.FromMinutes(15),
+        };
 
         // --- Held index (per instance; the app holds one of these) ---
         private Dictionary<string, ThunderstorePackage> Index;
         private DateTime? FetchedUtc;
         private string Source;
         private readonly SemaphoreSlim IndexLock = new(1, 1);
+
+        // --- The failure memo, and which kinds of failure have already been written down ---
+        private ThunderstoreFailureMemo Failure;
+        private readonly HashSet<string> Explained = new(StringComparer.OrdinalIgnoreCase);
+        private int FailureNotes;
+        private string PendingReason;
 
         public ThunderstoreClient(IRestClientContext context) : base(context)
         {
@@ -192,9 +251,61 @@ namespace ValheimBakaLoader.Tools
         /// <summary>The most chunk addresses the listing index may name.</summary>
         public int MaxChunks { get; set; } = 256;
 
+        // --- How long each stage may take. Settable because a test that has to prove a
+        // stalled site costs seconds cannot wait out the real numbers to do it. ---
+
+        /// <summary>How long the headers of any one request may take to arrive.</summary>
+        public TimeSpan HeaderTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+        /// <summary>
+        /// How long one whole document may take, headers and body together: the listing
+        /// index itself, one chunk, or one package page.
+        /// </summary>
+        public TimeSpan DocumentTimeout { get; set; } = TimeSpan.FromSeconds(20);
+
+        /// <summary>
+        /// The longest the full listing may go without a byte arriving. It is a hundred and
+        /// fifty megabytes, so it cannot be held to the document timeout, but a connection
+        /// that has stopped delivering is not a slow one.
+        /// </summary>
+        public TimeSpan ListingIdleTimeout { get; set; } = TimeSpan.FromSeconds(20);
+
+        /// <summary>The longest the full listing may take from the first byte to the last.</summary>
+        public TimeSpan ListingTotalTimeout { get; set; } = TimeSpan.FromSeconds(120);
+
+        /// <summary>
+        /// The most one whole read of the index may cost, both paths together. Worst case is
+        /// the listing index stalling out and the full listing stalling out after it, and
+        /// this is the ceiling over the pair.
+        /// </summary>
+        public TimeSpan RefreshBudget { get; set; } = TimeSpan.FromMinutes(2);
+
+        /// <summary>
+        /// The longest a caller will wait for the one read slot before giving up on it.
+        /// <para>
+        /// A bare wait on the slot is how one stalled read became everybody's stall: the
+        /// request its holder is stuck on carries its own deadlines, but every caller queued
+        /// behind it carried none, so a single package lookup taken during a stalled index read
+        /// waited the whole of that read out. It is held to one request's budget, because
+        /// waiting for a turn should never cost more than taking one. A wait that runs out is
+        /// a failed read like any other: it writes the memo, so the callers behind it are
+        /// answered from the memo instead of queueing too.
+        /// </para>
+        /// </summary>
+        public TimeSpan LockWait { get; set; } = TimeSpan.FromSeconds(20);
+
         public DateTime? IndexFetchedUtc => FetchedUtc;
 
         public string IndexSource => Source;
+
+        public ThunderstoreFailureMemo LastFailure => Failure;
+
+        /// <summary>
+        /// True while the last failure's backoff is still running, which is the answer to
+        /// "should this caller go out to the site at all".
+        /// </summary>
+        private bool InsideFailureWindow() =>
+            Failure != null && UtcNow() < Failure.RetryAtUtc;
 
         public async Task<ThunderstorePackage> GetLatestAsync(string author, string modName)
         {
@@ -229,6 +340,16 @@ namespace ValheimBakaLoader.Tools
             if (string.IsNullOrWhiteSpace(author) || string.IsNullOrWhiteSpace(modName))
                 return new ThunderstoreLiveLookup { Answered = false };
 
+            // The memo gates this one too, and leaving it out is what kept the ninety minutes
+            // in place after the index path was fixed. The memo only ever stood in front of
+            // EnsureIndexAsync, and Update all asks this per PACKAGE: twenty-two mods on a
+            // machine that cannot reach the site is twenty-two page requests, each one waiting
+            // out the document timeout, with the memo saying all along that the site is down.
+            // The machine is unreachable or it is not; which URL is being asked for does not
+            // change that.
+            if (InsideFailureWindow())
+                return new ThunderstoreLiveLookup { Answered = false };
+
             try
             {
                 using var client = NewClient();
@@ -240,7 +361,8 @@ namespace ValheimBakaLoader.Tools
                     return new ThunderstoreLiveLookup { Answered = false };
                 }
 
-                using var response = await client.GetAsync(url);
+                using var deadline = Deadline(DocumentTimeout, CancellationToken.None);
+                using var response = await client.GetAsync(url, deadline.Token);
 
                 // A plain no is an answer, and the only one that means the package is not
                 // there. Anything else is the site failing to speak, which says nothing
@@ -283,14 +405,25 @@ namespace ValheimBakaLoader.Tools
             }
             catch (Exception e)
             {
-                Logger.Warning(e, "Thunderstore live lookup for {0}-{1} did not answer.", author, modName);
+                // Explained, never remembered: the memo and its backoff are about the INDEX,
+                // and one package page that would not answer is not a reason to stop reading
+                // the index for a quarter of an hour.
+                ExplainFailure("live package lookup", e,
+                    string.Format(PackageUrlFormat, author?.Trim(), modName?.Trim()));
                 return new ThunderstoreLiveLookup { Answered = false };
             }
         }
 
         public async Task<ThunderstoreIndexState> RefreshAsync()
         {
-            await IndexLock.WaitAsync();
+            // Bounded like every other wait on this slot. A press of Scan while a stalled read
+            // holds it used to hang the page for as long as that read took.
+            if (!await IndexLock.WaitAsync(LockWait))
+            {
+                RememberFailure("busy", ListingIndexUrl);
+                return State(fetched: false, reusedFresh: false);
+            }
+
             try
             {
                 // Only just read: there is nothing newer to find, and asking again would
@@ -298,12 +431,18 @@ namespace ValheimBakaLoader.Tools
                 if (Index != null && FetchedUtc is { } read && UtcNow() - read < ForceCooldown)
                     return State(fetched: false, reusedFresh: true);
 
+                // A press of Scan is a host saying "try it now", so the backoff a run of
+                // failures built up is put down. It is the one thing that does put it down:
+                // everything else waits the window out.
+                ClearFailure();
+
                 var fresh = await FetchIndexAsync();
                 return State(fetched: fresh, reusedFresh: false);
             }
             catch (Exception e)
             {
-                Logger.Warning(e, "Thunderstore index refresh failed.");
+                ExplainFailure("refresh", e, ListingIndexUrl);
+                RememberFailure("refresh", ListingIndexUrl);
                 return State(fetched: false, reusedFresh: false);
             }
             finally
@@ -330,11 +469,29 @@ namespace ValheimBakaLoader.Tools
         {
             if (IsFresh()) return Index;
 
-            await IndexLock.WaitAsync();
+            // The last read failed and its window has not run out, so this one is answered
+            // with whatever is held (usually nothing) and no request goes out. Asked BEFORE
+            // the lock on purpose: the whole cost of the ninety-minute scan was twenty-two
+            // callers queueing behind a lock to each make the same failing trip.
+            if (InsideFailureWindow()) return Index;
+
+            // Bounded, and that is the other half of the same lesson. Skipping the queue when a
+            // memo is already written does nothing for the callers who arrive while the read
+            // that will WRITE that memo is still stalling, and those are the ones that made a
+            // scan take ninety minutes. A turn that does not come is a failed read: the memo is
+            // written here too, so everyone behind is answered rather than queued.
+            if (!await IndexLock.WaitAsync(LockWait))
+            {
+                RememberFailure("busy", ListingIndexUrl);
+                return Index;
+            }
+
             try
             {
-                // Somebody else may have read it while this call waited.
+                // Somebody else may have read it while this call waited, or failed while
+                // this call waited, and both answers stand.
                 if (IsFresh()) return Index;
+                if (InsideFailureWindow()) return Index;
 
                 await FetchIndexAsync();
                 return Index;
@@ -348,6 +505,120 @@ namespace ValheimBakaLoader.Tools
         private bool IsFresh() =>
             Index != null && FetchedUtc is { } read && UtcNow() - read < CacheTtl;
 
+        // ------------------------------------------------------------ the failure memo
+
+        /// <summary>A read worked, so the run of failures is over and so is the backoff.</summary>
+        private void ClearFailure()
+        {
+            Failure = null;
+            Explained.Clear();
+            PendingReason = null;
+        }
+
+        /// <summary>
+        /// Says in the log what went wrong, once per kind of failure per window. Once per
+        /// kind, because the alternative on the host this was written for is twenty-two
+        /// identical lines a scan, and remembers the reason for the memo the read writes when
+        /// it gives up.
+        /// <para>
+        /// What goes in the line is the three things an exception message on its own does not
+        /// carry: the exception TYPE, the INNERMOST message (an HttpRequestException's own
+        /// text is usually "An error occurred while sending the request" and the reason is a
+        /// SocketException two levels down), and what the Windows proxy settings make of the
+        /// address. The reporter's curl worked and .NET stalled, and the proxy is the
+        /// difference between those two that nothing in the log used to name.
+        /// </para>
+        /// </summary>
+        private void ExplainFailure(string kind, Exception problem, string url)
+        {
+            FailureNotes++;
+            PendingReason = ReasonFor(problem, kind);
+
+            if (!Explained.Add(kind)) return;
+
+            Logger.Warning(problem,
+                "Thunderstore {0} failed: {1} ({2}). The proxy for {3} resolves to {4}.",
+                kind,
+                problem?.GetType().Name ?? "no exception",
+                Innermost(problem),
+                url,
+                HttpClientProvider.ProxyFor(url));
+        }
+
+        /// <summary>
+        /// One read gave up, so one memo is written and one step of the backoff is spent. The
+        /// two paths inside a read are two attempts at the same question, not two failures:
+        /// counting them separately is how a host who pressed Scan once would land on the
+        /// two-minute step before they had pressed it twice.
+        /// </summary>
+        private void RememberFailure(string fallbackReason, string url)
+        {
+            var streak = (Failure?.Streak ?? 0) + 1;
+            var step = BackoffSteps[Math.Min(streak - 1, BackoffSteps.Count - 1)];
+
+            Failure = new ThunderstoreFailureMemo
+            {
+                LastFailureUtc = UtcNow(),
+                Reason = PendingReason ?? fallbackReason,
+                Streak = streak,
+                BackOff = step,
+            };
+
+            PendingReason = null;
+
+            Logger.Information(
+                "Thunderstore was not reachable ({0}), so nothing is asked of {1} for {2}.",
+                Failure.Reason, url, Describe(step));
+        }
+
+        /// <summary>The innermost message, which is where the real reason usually is.</summary>
+        private static string Innermost(Exception problem)
+        {
+            if (problem == null) return "no message";
+            var walk = problem;
+            while (walk.InnerException != null) walk = walk.InnerException;
+            return walk.Message;
+        }
+
+        /// <summary>A short stable name for what went wrong, for the memo and the page.</summary>
+        private static string ReasonFor(Exception problem, string fallback)
+        {
+            var walk = problem;
+            while (walk != null)
+            {
+                switch (walk)
+                {
+                    case OperationCanceledException: return "timeout";
+                    case System.Net.Sockets.SocketException: return "connect";
+                    case System.Security.Authentication.AuthenticationException: return "tls";
+                    case HttpRequestException: return "http";
+                    case IOException: return "read";
+                }
+
+                walk = walk.InnerException;
+            }
+
+            return problem?.GetType().Name ?? fallback;
+        }
+
+        private static string Describe(TimeSpan span) =>
+            span < TimeSpan.FromMinutes(1)
+                ? ((int)span.TotalSeconds) + " seconds"
+                : ((int)span.TotalMinutes) + " minutes";
+
+        // ------------------------------------------------------------ the stage timeouts
+
+        /// <summary>
+        /// A token that gives up after <paramref name="after"/>, linked to whatever budget the
+        /// caller is already working inside, so the tighter of the two wins.
+        /// </summary>
+        private static CancellationTokenSource Deadline(TimeSpan after, CancellationToken outer)
+        {
+            var source = CancellationTokenSource.CreateLinkedTokenSource(outer);
+            source.CancelAfter(after);
+            return source;
+        }
+
         /// <summary>
         /// Reads the index: the listing index first, the full listing when that path does
         /// not answer in full. Records what was read and where it came from. Returns true
@@ -357,19 +628,35 @@ namespace ValheimBakaLoader.Tools
         {
             FetchCount++;
 
-            var (fresh, source) = await FetchViaListingIndexAsync();
+            // The ceiling over the whole read. Every stage below is bounded on its own as
+            // well; this is the one that holds when the stages are made to run one after
+            // another and their sum is what a host is waiting out.
+            using var budget = new CancellationTokenSource(RefreshBudget);
+            var notesBefore = FailureNotes;
+
+            var (fresh, source) = await FetchViaListingIndexAsync(budget.Token);
             if (fresh == null)
             {
                 Logger.Information("Thunderstore listing index did not answer in full; reading the full listing instead.");
-                fresh = await FetchViaV1Async();
+                fresh = await FetchViaV1Async(budget.Token);
                 source = V1Source;
             }
 
-            if (fresh == null) return false;
+            if (fresh == null)
+            {
+                // Nothing came back, and this is what stops the next twenty-one callers
+                // paying the same price. A stage that threw has written its own memo; this
+                // covers the stages that answer with a plain null (an HTTP status, a body
+                // that is not a package list), because a window has to open either way.
+                if (FailureNotes == notesBefore) ExplainFailure("index read", null, ListingIndexUrl);
+                RememberFailure("index read", ListingIndexUrl);
+                return false;
+            }
 
             Index = fresh;
             FetchedUtc = UtcNow();
             Source = source;
+            ClearFailure();
             return true;
         }
 
@@ -378,13 +665,14 @@ namespace ValheimBakaLoader.Tools
         /// answer fails the whole path, because half a package list would read as though
         /// mods had been delisted. Returns null when that happens.
         /// </summary>
-        private async Task<(Dictionary<string, ThunderstorePackage> Index, string Source)> FetchViaListingIndexAsync()
+        private async Task<(Dictionary<string, ThunderstorePackage> Index, string Source)> FetchViaListingIndexAsync(
+            CancellationToken budget)
         {
             try
             {
                 using var client = NewClient();
 
-                var document = await GetBytesAsync(client, ListingIndexUrl, MaxDocumentBytes);
+                var document = await GetBytesAsync(client, ListingIndexUrl, MaxDocumentBytes, budget);
                 if (document == null) return (null, null);
 
                 var chunkUrls = ReadChunkList(Unpack(document, MaxUnpackedBytes));
@@ -413,7 +701,7 @@ namespace ValheimBakaLoader.Tools
                         return (null, null);
                     }
 
-                    var packed = await GetBytesAsync(client, chunkUrl, MaxChunkBytes);
+                    var packed = await GetBytesAsync(client, chunkUrl, MaxChunkBytes, budget);
                     if (packed == null) return (null, null);
 
                     if (!ReadPackagesInto(map, Unpack(packed, MaxUnpackedBytes)))
@@ -426,7 +714,7 @@ namespace ValheimBakaLoader.Tools
             }
             catch (Exception e)
             {
-                Logger.Warning(e, "Thunderstore listing index read failed.");
+                ExplainFailure("listing index", e, ListingIndexUrl);
                 return (null, null);
             }
         }
@@ -436,21 +724,29 @@ namespace ValheimBakaLoader.Tools
         /// (case-insensitive). Only versions[0] (the latest) is kept per package.
         /// Returns null on any transport/HTTP/parse failure.
         /// </summary>
-        private async Task<Dictionary<string, ThunderstorePackage>> FetchViaV1Async()
+        private async Task<Dictionary<string, ThunderstorePackage>> FetchViaV1Async(CancellationToken budget)
         {
             try
             {
                 using var client = NewClient();
 
-                using var response = await client.GetAsync(V1IndexUrl, HttpCompletionOption.ResponseHeadersRead);
+                using var headers = Deadline(HeaderTimeout, budget);
+                using var response = await client.GetAsync(
+                    V1IndexUrl, HttpCompletionOption.ResponseHeadersRead, headers.Token);
                 if (!response.IsSuccessStatusCode)
                 {
                     Logger.Warning("Thunderstore full listing fetch failed: HTTP {0}", (int)response.StatusCode);
                     return null;
                 }
 
-                using var stream = await response.Content.ReadAsStreamAsync();
-                using var streamReader = new StreamReader(stream);
+                // The body is the whole community and can be a hundred and fifty megabytes, so
+                // it gets two clocks rather than one: a total, and a watchdog that gives up when
+                // nothing has arrived for a while. A connection that has stopped delivering is
+                // not a slow one, and it is the shape this host was stuck in.
+                using var whole = Deadline(ListingTotalTimeout, budget);
+                using var stream = await response.Content.ReadAsStreamAsync(whole.Token);
+                await using var watched = new IdleWatchdogStream(stream, ListingIdleTimeout, whole.Token);
+                using var streamReader = new StreamReader(watched);
                 using var jsonReader = new JsonTextReader(streamReader);
 
                 var map = new Dictionary<string, ThunderstorePackage>(StringComparer.OrdinalIgnoreCase);
@@ -464,7 +760,7 @@ namespace ValheimBakaLoader.Tools
             }
             catch (Exception e)
             {
-                Logger.Warning(e, "Thunderstore full listing fetch error.");
+                ExplainFailure("full listing", e, V1IndexUrl);
                 return null;
             }
         }
@@ -472,9 +768,73 @@ namespace ValheimBakaLoader.Tools
         private HttpClient NewClient()
         {
             var client = Context.HttpClientProvider.CreateClient();
-            client.Timeout = RequestTimeout;
+            // Every stage below carries its own deadline, and HttpClient.Timeout is one clock
+            // over the whole call that cannot tell a slow connect from a slow download. One
+            // hundred and twenty seconds of it, per request, per mod, is the ninety minutes.
+            client.Timeout = Timeout.InfiniteTimeSpan;
             client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgentName);
             return client;
+        }
+
+        /// <summary>
+        /// A read-only wrapper that fails the read when nothing has arrived for a while. Each
+        /// Read is given its own deadline, so a stream that keeps delivering never trips it
+        /// however long the whole download takes, and one that stops delivering is over in
+        /// <see cref="ListingIdleTimeout"/> instead of in two minutes.
+        /// </summary>
+        private sealed class IdleWatchdogStream : Stream
+        {
+            private readonly Stream Inner;
+            private readonly TimeSpan Idle;
+            private readonly CancellationToken Outer;
+
+            public IdleWatchdogStream(Stream inner, TimeSpan idle, CancellationToken outer)
+            {
+                Inner = inner;
+                Idle = idle;
+                Outer = outer;
+            }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            // StreamReader over a synchronous read path, which is what JsonTextReader drives.
+            public override int Read(byte[] buffer, int offset, int count) =>
+                ReadAsync(buffer, offset, count, CancellationToken.None).GetAwaiter().GetResult();
+
+            public override async Task<int> ReadAsync(
+                byte[] buffer, int offset, int count, CancellationToken token)
+            {
+                using var deadline = Deadline(Idle, Outer);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, token);
+                return await Inner.ReadAsync(buffer.AsMemory(offset, count), linked.Token).ConfigureAwait(false);
+            }
+
+            public override async ValueTask<int> ReadAsync(
+                Memory<byte> buffer, CancellationToken token = default)
+            {
+                using var deadline = Deadline(Idle, Outer);
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, token);
+                return await Inner.ReadAsync(buffer, linked.Token).ConfigureAwait(false);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                // The response body is owned by the caller's using, not by this.
+                base.Dispose(disposing);
+            }
         }
 
         /// <summary>
@@ -489,9 +849,15 @@ namespace ValheimBakaLoader.Tools
         /// anywhere but Thunderstore, and no credentials are sent at all.
         /// </para>
         /// </summary>
-        private async Task<byte[]> GetBytesAsync(HttpClient client, string url, long cap, int maxHops = 4)
+        private async Task<byte[]> GetBytesAsync(
+            HttpClient client, string url, long cap, CancellationToken budget, int maxHops = 4)
         {
             var current = url;
+
+            // One clock over the whole document, headers and body, and a tighter one inside
+            // it for the headers alone: a site that answers and then stops sending and a site
+            // that never answers at all are both over in seconds rather than in two minutes.
+            using var document = Deadline(DocumentTimeout, budget);
 
             for (var hop = 0; hop <= maxHops; hop++)
             {
@@ -501,7 +867,9 @@ namespace ValheimBakaLoader.Tools
                     return null;
                 }
 
-                using var response = await client.GetAsync(current, HttpCompletionOption.ResponseHeadersRead);
+                using var headers = Deadline(HeaderTimeout, document.Token);
+                using var response = await client.GetAsync(
+                    current, HttpCompletionOption.ResponseHeadersRead, headers.Token);
 
                 var status = (int)response.StatusCode;
                 if (status is >= 300 and < 400)
@@ -533,21 +901,22 @@ namespace ValheimBakaLoader.Tools
                     return null;
                 }
 
-                return await ReadCappedAsync(response, cap);
+                return await ReadCappedAsync(response, cap, document.Token);
             }
 
             Logger.Warning("Thunderstore redirected more times than allowed for {0}", url);
             return null;
         }
 
-        private static async Task<byte[]> ReadCappedAsync(HttpResponseMessage response, long cap)
+        private static async Task<byte[]> ReadCappedAsync(
+            HttpResponseMessage response, long cap, CancellationToken token)
         {
             using var buffer = new MemoryStream();
-            await using var raw = await response.Content.ReadAsStreamAsync();
+            await using var raw = await response.Content.ReadAsStreamAsync(token);
 
             var chunk = new byte[81920];
             int read;
-            while ((read = await raw.ReadAsync(chunk, 0, chunk.Length)) > 0)
+            while ((read = await raw.ReadAsync(chunk.AsMemory(0, chunk.Length), token)) > 0)
             {
                 if (buffer.Length + read > cap)
                     throw new IOException($"A Thunderstore response passed {cap} bytes, so it was not read.");

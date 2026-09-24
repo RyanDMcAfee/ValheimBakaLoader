@@ -281,6 +281,58 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         /// <summary>
+        /// A generation the game was in the middle of writing does not cost the host their
+        /// world.
+        /// <para>
+        /// The precheck reads the COMMITTED generation, and it read fine, so the copy went
+        /// ahead. The rewrite then walked the whole staged tree and refused the lot over an
+        /// extra "_main.5.fwl2" with no .ok beside it, which is a generation the game has not
+        /// finished writing and will discard itself. The committed world is what was being
+        /// copied and it is what lands; the torn file comes across untouched and uncounted.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void A_torn_generation_beside_a_committed_one_does_not_stop_the_copy()
+        {
+            var dir = MakeChunkedWorld("Midgard", number: 4);
+
+            // Half a header and no commit marker: exactly what is on disk if the game is
+            // interrupted part way through a save.
+            File.WriteAllBytes(Path.Combine(dir, "_main.5.fwl2"), new byte[] { 9, 9, 9, 9, 1, 2 });
+            Assert.False(File.Exists(Path.Combine(dir, "_main.5.ok")));
+
+            var landed = WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.Equal("Second Midgard", StoredName(Path.Combine(landed, "_main.4.fwl2")));
+
+            // The torn one is still there, still torn, and it is not what the copy is read by.
+            Assert.True(File.Exists(Path.Combine(landed, "_main.5.fwl2")));
+            Assert.Null(StoredName(Path.Combine(landed, "_main.5.fwl2")));
+
+            // The source came out of it untouched, as it does in every test here.
+            Assert.Equal("Midgard", StoredName(Path.Combine(dir, "_main.4.fwl2")));
+        }
+
+        /// <summary>
+        /// The other side of the same rule: a COMMITTED generation that will not rewrite is
+        /// still a refusal, because that one is a generation the game really will read.
+        /// </summary>
+        [Fact]
+        public void A_committed_generation_that_will_not_rewrite_still_refuses_the_copy()
+        {
+            var dir = MakeChunkedWorld("Midgard", number: 4);
+
+            File.WriteAllBytes(Path.Combine(dir, "_main.5.fwl2"), new byte[] { 9, 9, 9, 9, 1, 2 });
+            File.WriteAllBytes(Path.Combine(dir, "_main.5.ok"), BitConverter.GetBytes(41));
+
+            var refused = Assert.Throws<HostFacingException>(() =>
+                WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard"));
+
+            Assert.Equal("worlds.copyUnreadable", refused.MessageId);
+            Assert.False(Directory.Exists(Path.Combine(WorldsDir(), "Second Midgard")));
+        }
+
+        /// <summary>
         /// The copy is a world the moment it is there: it is what the world list answers
         /// with, which is what the World field on the Settings hall paints from.
         /// </summary>

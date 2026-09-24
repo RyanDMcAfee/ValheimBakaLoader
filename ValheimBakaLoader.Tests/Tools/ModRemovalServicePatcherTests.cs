@@ -143,6 +143,103 @@ namespace ValheimBakaLoader.Tests.Tools
             }
         }
 
+        /// <summary>
+        /// A folder named after a protected patcher, sitting in plugins, is a mod a host
+        /// installed there. It loads nothing from that folder and the Mods page offers to remove
+        /// it like any other row, so the removal has to go through. The protected names are about
+        /// the patchers folder; reading them as a name that can never be removed from anywhere
+        /// left a host with a HookGenPatcher folder in plugins and no way to get rid of it.
+        /// </summary>
+        [Fact]
+        public void A_hookgen_folder_under_plugins_removes_like_any_other_mod()
+        {
+            var bep = NewBepInEx(out var plugins, out var patchers);
+            var root = Directory.GetParent(bep).FullName;
+            try
+            {
+                var pluginDir = MakeFolder(plugins, "valheimmodding-hookgenpatcher", "HookGenPatcher.dll");
+                var mod = new InstalledMod
+                {
+                    Author = "ValheimModding",
+                    ModName = "HookGenPatcher",
+                    PluginDirectory = pluginDir,
+                };
+
+                var result = NewService().RemoveMod(mod, includeConfig: false);
+
+                Assert.True(result.Removed, result.Error);
+                Assert.False(Directory.Exists(pluginDir));
+                Assert.True(Directory.Exists(Path.Combine(result.BackupDirectory, "plugin", "valheimmodding-hookgenpatcher")));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        /// <summary>
+        /// The same name under patchers is the loader's own, and that one is still refused.
+        /// </summary>
+        [Fact]
+        public void A_hookgen_folder_under_patchers_is_still_refused()
+        {
+            var bep = NewBepInEx(out var plugins, out var patchers);
+            var root = Directory.GetParent(bep).FullName;
+            try
+            {
+                var patcherDir = MakeFolder(patchers, "valheimmodding-hookgenpatcher", "HookGenPatcher.dll");
+                var mod = new InstalledMod
+                {
+                    Author = "ValheimModding",
+                    ModName = "HookGenPatcher",
+                    PatcherDirectory = patcherDir,
+                    IsPatcher = true,
+                };
+
+                var result = NewService().RemoveMod(mod, includeConfig: false);
+
+                Assert.False(result.Removed);
+                Assert.True(Directory.Exists(patcherDir));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        /// <summary>
+        /// Both at once: the plugins copy is the host's and goes, the patchers copy is the
+        /// loader's and stays. Removing the row must not take the loader's patcher with it.
+        /// </summary>
+        [Fact]
+        public void A_hookgen_folder_in_both_places_loses_only_the_plugins_one()
+        {
+            var bep = NewBepInEx(out var plugins, out var patchers);
+            var root = Directory.GetParent(bep).FullName;
+            try
+            {
+                var pluginDir = MakeFolder(plugins, "valheimmodding-hookgenpatcher", "HookGenPatcher.dll");
+                var patcherDir = MakeFolder(patchers, "valheimmodding-hookgenpatcher", "HookGenPatcher.dll");
+                var mod = new InstalledMod
+                {
+                    Author = "ValheimModding",
+                    ModName = "HookGenPatcher",
+                    PluginDirectory = pluginDir,
+                };
+
+                var result = NewService().RemoveMod(mod, includeConfig: false);
+
+                Assert.True(result.Removed, result.Error);
+                Assert.False(Directory.Exists(pluginDir));
+                Assert.True(Directory.Exists(patcherDir));
+                Assert.False(Directory.Exists(Path.Combine(result.BackupDirectory, "patcher")));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
         [Fact]
         public void A_mod_with_neither_folder_present_fails_cleanly()
         {

@@ -2423,6 +2423,14 @@ namespace ValheimBakaLoader.Forms
         /// updates: the server that is restarting is down, so the only question left is
         /// whether any OTHER server on this install is up. One that is means the write waits,
         /// and the condition bar says so rather than the update silently never happening.
+        /// <para>
+        /// Every step in here is on the unattended clock, and it has to be: ResumeAfterStopAsync
+        /// AWAITS this step and relaunches after it, so a machine that cannot reach Thunderstore
+        /// kept a host's server DOWN for as long as the version lookup's own deadlines allowed,
+        /// on every restart. The lookup below is handed UnattendedResolveTimeout for that
+        /// reason, and when it runs out the version reads as unknown, which the rule already
+        /// answers with Skip. The loader is left as it is and the relaunch goes ahead.
+        /// </para>
         /// </summary>
         private async Task ApplyBepInExUpdateAsync(string profile)
         {
@@ -2455,7 +2463,8 @@ namespace ValheimBakaLoader.Forms
                 var plan = await Tools.BepInExUnattended.PlanAsync(
                     consent,
                     () => BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), installs),
-                    package => BepInEx.LatestVersionAsync(package),
+                    // Bounded: the relaunch is waiting on this one. See the note above.
+                    package => BepInEx.LatestVersionAsync(package, BepInEx.UnattendedResolveTimeout),
                     () => Tools.BepInExService.ProfilesBlockingWrite(baseExe, installs).Count > 0);
 
                 var decision = plan.Action;
@@ -3876,6 +3885,48 @@ namespace ValheimBakaLoader.Forms
                 var world = (p.Value<string>("world") ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(world)) world = InstallIsolationService.MakeSafeName(name);
 
+                // OPTIONAL: the new realm starts with a copy of another realm's world rather
+                // than with an empty one. This is what Duplicate always looked like it did and
+                // never did: it switched profile and opened the forge, so the second realm came
+                // up on a brand new empty world and the host found out by walking into it.
+                //
+                // The pair names a PROFILE and a world, never a folder: the folder is read off
+                // that profile's own preferences here, so nothing the page sends can point a
+                // copy at a directory BakaLoader does not own.
+                var copyFrom = p["copyWorldFrom"] as JObject;
+                var copySourceProfile = (copyFrom?.Value<string>("profile") ?? "").Trim();
+                var copySourceWorldName = (copyFrom?.Value<string>("world") ?? "").Trim();
+                var wantsCopy = copyFrom != null && copySourceWorldName.Length > 0;
+
+                WorldInfo copySource = null;
+                if (wantsCopy)
+                {
+                    if (!WorldStore.IsSafeReferenceToken(copySourceWorldName))
+                        throw new HostFacingException("servers.create.copyBadSourceRef",
+                            "That is not a world name BakaLoader can copy from.",
+                            ("world", copySourceWorldName));
+
+                    var sourcePrefs = string.IsNullOrWhiteSpace(copySourceProfile)
+                        ? null
+                        : ServerPrefsProvider.LoadPreferences(copySourceProfile);
+                    var sourceFolder = ResolveSaveDataFolder(sourcePrefs?.SaveDataFolderPath);
+                    if (string.IsNullOrWhiteSpace(sourceFolder))
+                        throw new HostFacingException("servers.create.copyNoSourceFolder",
+                            $"'{copySourceProfile}' has no save folder BakaLoader can read, so its world could not be copied.",
+                            ("profile", copySourceProfile));
+
+                    // Asked BEFORE anything is created. A missing source that was noticed
+                    // afterwards would leave a realm standing over a world it does not have.
+                    copySource = WorldStore.Find(sourceFolder, copySourceWorldName);
+                    if (copySource == null)
+                        throw new HostFacingException("servers.create.copySourceMissing",
+                            $"There is no world named '{copySourceWorldName}' in the save folder of '{copySourceProfile}', so nothing was copied.",
+                            ("world", copySourceWorldName), ("profile", copySourceProfile));
+
+                    // The Barrow's own rule, and the same method it uses.
+                    RefuseWhileTheWorldIsBeingWritten(copySourceWorldName, sourceFolder);
+                }
+
                 // Ports: explicit values (validated free) else auto-suggested.
                 var (suggestedGame, suggestedRcon) = SuggestFreePorts();
                 var gamePort = p.Value<int?>("port") ?? suggestedGame;
@@ -3906,6 +3957,15 @@ namespace ValheimBakaLoader.Forms
                 // exists - a created world's seed is immutable. Blank = let the game
                 // roll a random seed itself on first launch.
                 var worldSeed = (p.Value<string>("worldSeed") ?? "").Trim();
+                if (worldSeed.Length > 0 && wantsCopy)
+                {
+                    // A copied world already has a seed: the one it was made with, which is
+                    // what the world IS. Writing another over it is not a thing that can
+                    // happen, so it is refused here rather than half-done further down.
+                    throw new HostFacingException("servers.create.copySeedConflict",
+                        "A copied world keeps the seed it was made with, so a seed cannot be set for it.");
+                }
+
                 if (worldSeed.Length > 0)
                 {
                     var targetSaveFolder = isolateSaveFolder
@@ -3918,6 +3978,27 @@ namespace ValheimBakaLoader.Forms
                     var written = FwlWriter.WriteNewWorld(targetSaveFolder, world, worldSeed);
                     Logger.Information("Pre-created world '{0}' with seed '{1}' ({2}).",
                         world, written.SeedName, written.Seed);
+                }
+
+                // The copy, and it lands BEFORE the first meeting below. That order is the
+                // whole point: the header the copy carries is what ImportWorldKeysOnFirstMeeting
+                // reads, so the copied world's own dials and switches become the new realm's
+                // rather than the realm coming up Normal over somebody else's difficulty.
+                if (wantsCopy)
+                {
+                    var targetSaveFolder = isolateSaveFolder
+                        ? created.SaveDataFolderPath
+                        : ResolveSaveDataFolder(created.SaveDataFolderPath);
+                    if (string.IsNullOrWhiteSpace(targetSaveFolder))
+                        throw new HostFacingException("servers.create.copyNoTargetFolder",
+                            "No save folder is configured, so the world could not be copied.");
+
+                    // A 1.0 world is a whole directory tree, so the copy goes off the UI thread.
+                    // A name already taken at the destination is refused from inside this, with
+                    // the same sentence the Barrow's copy gives, and nothing is left behind.
+                    var landed = await Task.Run(() => WorldStore.CopyWorldAs(copySource, world, targetSaveFolder));
+                    Logger.Information("Copied world '{source}' from '{profile}' into {folder} as '{target}'.",
+                        copySourceWorldName, copySourceProfile, landed, world);
                 }
 
                 if (isolateInstall)
@@ -4158,6 +4239,30 @@ namespace ValheimBakaLoader.Forms
             // --- User preferences ---
             RegisterRpc("userprefs.get", p => Task.FromResult<object>(BuildUserPrefsDto()));
 
+            // What this machine can and cannot reach, one step at a time. A host whose curl
+            // works and whose BakaLoader does not has nothing to look at but "did not answer",
+            // and the difference between those two is invisible from inside an exception. Runs
+            // off the UI thread, gives up on each step in turn, and never throws to the page:
+            // the page this is pressed from is the one a stuck host is already on.
+            RegisterRpc("net.diagnose", async p =>
+            {
+                var report = await Task.Run(() => ConnectionDiagnostics.RunAsync());
+
+                Logger.Information("Connection test for {host}: {verdict}. {stages}",
+                    report.Host, report.Verdict,
+                    string.Join(" | ", report.Stages.Select(s =>
+                        s.Stage + "=" + (s.Ok ? "ok" : "no") + " " + s.Detail + " (" + s.Ms + "ms)")));
+
+                return (object)new
+                {
+                    host = report.Host,
+                    verdict = report.Verdict,
+                    stages = report.Stages
+                        .Select(s => new { stage = s.Stage, ok = s.Ok, detail = s.Detail, ms = s.Ms })
+                        .ToList(),
+                };
+            });
+
             RegisterRpc("userprefs.save", p =>
             {
                 var dto = p["prefs"] as JObject ?? throw new ArgumentException("prefs is required");
@@ -4194,6 +4299,12 @@ namespace ValheimBakaLoader.Forms
                         prefs.BepInExMaintenanceAsked = true;
                     });
                     Apply("BepInExMaintenanceAsked", v => prefs.BepInExMaintenanceAsked = v.Value<bool>());
+                    // The two connection switches. They shape the handler every remote client
+                    // in the app sends through, and HttpClientProvider reads them again on the
+                    // next CreateClient, so a switch moved here takes effect on the next
+                    // request rather than on the next launch.
+                    Apply("BypassSystemProxy", v => prefs.BypassSystemProxy = v.Value<bool>());
+                    Apply("ForceIPv4", v => prefs.ForceIPv4 = v.Value<bool>());
                     Apply("StartWithWindows", v => prefs.StartWithWindows = v.Value<bool>());
                     Apply("ShareAnonymousStats", v => prefs.ShareAnonymousStats = v.Value<bool>());
                     Apply("StartMinimized", v => prefs.StartMinimized = v.Value<bool>());
@@ -4845,22 +4956,7 @@ namespace ValheimBakaLoader.Forms
                     saveFolder = Path.GetFullPath(folder);
                 }
 
-                var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
-                foreach (var session in Sessions.Values)
-                {
-                    if (session.Server.Status == ServerStatus.Stopped) continue;
-
-                    var live = session.Server.Options;
-                    var liveFolder = string.IsNullOrWhiteSpace(live?.SaveDataFolderPath)
-                        ? userSave
-                        : live.SaveDataFolderPath;
-
-                    if (string.Equals(live?.WorldName, source, StringComparison.OrdinalIgnoreCase)
-                        && SameFolder(liveFolder, saveFolder))
-                        throw new HostFacingException("worlds.copyServerRunning",
-                            $"'{session.ProfileName}' is running world '{source}' right now. Stop it before copying the world.",
-                            ("profile", session.ProfileName), ("world", source));
-                }
+                RefuseWhileTheWorldIsBeingWritten(source, saveFolder);
 
                 var world = string.IsNullOrWhiteSpace(sub)
                     ? WorldStore.Find(saveFolder, source)
@@ -5807,6 +5903,20 @@ namespace ValheimBakaLoader.Forms
             // and the kick goes out by name, exactly as it always did.
             RegisterRpc("players.kick", async p =>
                 await Server.KickAsync(RequireTarget(p), p.Value<string>("hostId")));
+            // Takes the cheat marks back off the world. It is a players.* method because it
+            // is the Players hall's own command and because what it cannot reach is a player's
+            // own inventory, which is the sentence the confirm has to carry.
+            //
+            // It has an RPC of its own rather than going through server.command because the
+            // sweep is one pass over every object in the world: a normal console line is
+            // answered in milliseconds, and this one can take a moment on a long-lived world.
+            // The reply is handed back exactly as the plugin said it, and the page reads it.
+            RegisterRpc("players.cleanse", async p =>
+            {
+                var response = await Server.SendRconCommandAsync("baka_cleanse");
+                return new { ok = response != null, response };
+            });
+
             RegisterRpc("players.heal", async p => await Server.HealAsync(RequireTarget(p)));
             RegisterRpc("players.smite", async p => await Server.SmiteAsync(RequireTarget(p)));
 
@@ -8449,6 +8559,8 @@ namespace ValheimBakaLoader.Forms
                 prefs.LogsFolderPath,
                 DefaultLogsFolderPath = Environment.ExpandEnvironmentVariables(Resources.LogsFolderPath),
                 prefs.EnablePasswordValidation,
+                prefs.BypassSystemProxy,
+                prefs.ForceIPv4,
                 prefs.DarkMode,
                 prefs.PlainTerminology,
                 prefs.SetupCompleted,
@@ -8715,6 +8827,39 @@ namespace ValheimBakaLoader.Forms
         /// start goes ahead exactly as it does today.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// How the Barrow decides a world is safe to copy, in one place so everything that
+        /// copies one decides it the same way.
+        /// <para>
+        /// A live server rewrites its world as it saves, so a copy taken from underneath one
+        /// is a copy of half a save. The test is the pair, not the name alone: a running
+        /// server counts only when the world it is running is this world AND the folder it is
+        /// running it out of is this folder, because two realms can hold worlds of one name
+        /// in save folders of their own. A session's own save folder falls back to the
+        /// app-wide one when the profile overrides nothing, which is how a realm on the
+        /// shared folder is recognised at all.
+        /// </para>
+        /// </summary>
+        private void RefuseWhileTheWorldIsBeingWritten(string world, string saveFolder)
+        {
+            var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
+            foreach (var session in Sessions.Values)
+            {
+                if (session.Server.Status == ServerStatus.Stopped) continue;
+
+                var live = session.Server.Options;
+                var liveFolder = string.IsNullOrWhiteSpace(live?.SaveDataFolderPath)
+                    ? userSave
+                    : live.SaveDataFolderPath;
+
+                if (string.Equals(live?.WorldName, world, StringComparison.OrdinalIgnoreCase)
+                    && SameFolder(liveFolder, saveFolder))
+                    throw new HostFacingException("worlds.copyServerRunning",
+                        $"'{session.ProfileName}' is running world '{world}' right now. Stop it before copying the world.",
+                        ("profile", session.ProfileName), ("world", world));
+            }
+        }
+
         private void ImportWorldKeysOnFirstMeeting(string world, string saveFolderHint)
         {
             try

@@ -131,9 +131,35 @@ namespace ValheimBakaLoader.Tools.Logging
                 if (line == null) return;
             }
 
-            Sink.Write(logEvent.Level, line);
+            // The exception, when there is one, goes to the file with the line. RenderMessage
+            // does not carry it and the old write handed the sink a bare string, so every
+            // Logger.Warning(ex, ...) in the app wrote its sentence and threw the reason away:
+            // the host whose machine could not reach Thunderstore had a log full of "did not
+            // answer" and nothing saying whether that was a proxy, a name lookup or a timeout.
+            // The line is passed as a VALUE rather than as the template it used to be, so a
+            // sentence carrying braces cannot be read as a property token.
+            if (logEvent.Exception != null) Sink.Write(logEvent.Level, logEvent.Exception, "{Line}", line);
+            else Sink.Write(logEvent.Level, "{Line}", line);
+
+            // What the window and the in-memory tail show gains the exception's own type and
+            // innermost message, because that is the copy a host reads and pastes into a
+            // report. The file gets the whole stack through the template below.
+            if (logEvent.Exception != null) line += " [" + Summarise(logEvent.Exception) + "]";
+
             History.Add(line);
             LogReceived?.Invoke(line);
+        }
+
+        /// <summary>The exception in one bracket: its type, and the message at the bottom of it.</summary>
+        private static string Summarise(Exception problem)
+        {
+            var innermost = problem;
+            while (innermost.InnerException != null) innermost = innermost.InnerException;
+
+            return innermost == problem
+                ? problem.GetType().Name + ": " + problem.Message
+                : problem.GetType().Name + ": " + problem.Message
+                    + " <- " + innermost.GetType().Name + ": " + innermost.Message;
         }
 
         private ILogger BuildSink()
@@ -165,7 +191,7 @@ namespace ValheimBakaLoader.Tools.Logging
                     config.WriteTo.File(path,
                         rollingInterval: Rolling,
                         retainedFileTimeLimit: TimeSpan.FromDays(30),
-                        outputTemplate: "{Message:lj}{NewLine}",
+                        outputTemplate: "{Message:lj}{NewLine}{Exception}",
                         shared: true); // The app and a server can share one file.
                 }
                 catch

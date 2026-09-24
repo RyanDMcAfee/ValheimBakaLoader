@@ -69,16 +69,17 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.1 and 1.2.2
+## What is new in 1.2.3
 
-- **Updating from inside the app works again.** From 1.2.0 the updater could pick a language pack instead of the app and give up, so hosts on 1.2.0 or 1.2.1 got a download error and stayed where they were. It now picks the app by name. [Updating BakaLoader](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-BakaLoader)
-- **Language packs load.** A pack you pick from the globe is read back and used, in Russian, Japanese, Simplified Chinese or Traditional Chinese. [Languages](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Languages)
-- **The five world switches are in the app**: No build cost, Player based raids, Passive enemies, No map and Fire hazards, under the difficulty dials on Settings. [World modifiers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-modifiers)
-- **A world that already has settings keeps them.** The first time BakaLoader starts a world it has not met, it reads that world's own settings instead of clearing them. [World modifiers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-modifiers)
-- **Tables keep sorting** after you switch servers. [Players (Vikings)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29)
-- **Nothing is asked of Thunderstore about BepInEx until you have said yes** to BakaLoader looking after it. [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx)
+- **A scan that cannot reach Thunderstore is over in seconds**, not ninety minutes, and the screen says the site did not answer instead of looking unscanned. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
+- **A connection test in the Upkeep card**, with two switches for a machine .NET cannot get out of: skip the Windows proxy, or connect over IPv4 only. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting)
+- **A server start is never held up** by the BepInEx version check. It has ten seconds, then the server starts with the loader that is already there. [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx)
+- **Duplicate really duplicates.** Duplicating a server offers to copy its world into the new one, on by default, and says what you get if you turn it off. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
+- **Clear cheat marks.** Takes the 1.0.9 to 1.1.2 spawn marks back off every object in a world, on an empty server. [Players (Vikings)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29)
+- **A refused world difficulty no longer looks saved**, and the Directories card says whether this server has its own install and save folder. [Settings (World)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-%28World%29)
 
-If you are on 1.2.0 or 1.2.1, the in-app update works now, or you can download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+This release carries no language packs of its own, so the new sentences are shown in English until the next release that cuts packs. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
 ---
 
 ## Valheim 1.0

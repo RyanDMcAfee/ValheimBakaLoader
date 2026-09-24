@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.7.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.8.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -104,7 +104,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.7.0";
+        private const string PluginVersion = "1.8.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -478,6 +478,7 @@ namespace BakaLoaderCommander
                 case "kick": return CmdKick(text);
                 case "baka_spawn": return CmdSpawn(tokens);
                 case "baka_killall": return CmdKillAll(tokens);
+                case "baka_cleanse": return CmdCleanse();
                 default: return CmdFallback(text);
             }
         }
@@ -1112,6 +1113,20 @@ namespace BakaLoaderCommander
         // N candidates" when it does not. Pump(), at the bottom of Update(), carries the
         // rest and puts the real "KillAll complete" line in the server log.
 
+        // ---- clear the cheat marks a 1.0.9 to 1.1.2 spawn left behind ----------
+        //
+        // One pass over every ZDO in the world, on the main thread, refused while anybody
+        // is connected. It is not sliced the way the kill-all sweep is: the server is empty
+        // by the time it runs, so a frame it takes to itself costs nobody anything, and a
+        // host wants the counts in the answer rather than in a line that lands later. A
+        // world big enough for the pass to outlast this client's patience still finishes,
+        // and the same counts go to the server log, which is what a timed-out host reads.
+
+        private static string CmdCleanse()
+        {
+            return CleanseSweep.Run(delegate(string line) { Log.LogInfo(line); });
+        }
+
         private static string CmdKillAll(string[] tokens)
         {
             return KillAllSweep.Start(
@@ -1139,7 +1154,7 @@ namespace BakaLoaderCommander
                 return "Error forwarding '" + text + "' to console: " + ex.Message;
             }
 
-            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall)";
+            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_cleanse)";
         }
     }
 }

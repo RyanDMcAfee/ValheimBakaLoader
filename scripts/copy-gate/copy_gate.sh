@@ -284,5 +284,63 @@ else
   echo "  the world switches selftest is missing: $SWITCH_SELFTEST"; fail=1
 fi
 
+echo "== 18. a refused difficulty write leaves the dials unsaved =="
+# Save Config writes twice, and the second reply was read for two lists and nothing else. A
+# FAIL from worldgen.save therefore passed in silence, the snapshot at the foot of the
+# handler declared the whole form saved, and the notice, the markers and the breathing Save
+# button all went out over a difficulty that is not on disk. The rules hold the flag, the
+# restore, and that the restore happens AFTER the snapshot rather than before it.
+WGFAIL_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/worldgen_save_fail_selftest.js"
+if [ -f "$WGFAIL_SELFTEST" ]; then
+  if out=$(node "$WGFAIL_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the worldgen save fail selftest is missing: $WGFAIL_SELFTEST"; fail=1
+fi
+
+echo "== 19. a scan that could not reach the site says so, and says what to do =="
+# Issue 18. A host whose machine could not reach thunderstore.io pressed Scan, waited, and
+# got back the panel that says mods have not been scanned yet with a Scan button on it. The
+# rules hold the one-minute ceiling, the failure state and its two buttons, the Upkeep card's
+# two connection switches and its test, and that every step and verdict the native test can
+# report has a sentence on both sides of the seam.
+NETCONN_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/connection_selftest.js"
+if [ -f "$NETCONN_SELFTEST" ]; then
+  if out=$(node "$NETCONN_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the connection selftest is missing: $NETCONN_SELFTEST"; fail=1
+fi
+
+echo "== 20. Duplicate really duplicates =="
+# Issue 17. Duplicate switched profile and opened the forge, and the forge makes a brand new
+# EMPTY world: the second realm came up with the first one's mods and none of its map, and
+# the host found that out by walking into it. The rules hold the source the forge is handed,
+# the switch and its default, the payload key riding only when the switch is on, the two
+# sentences the world section says, the bridge's own refusals, and the ONE ordering that
+# makes the feature work: the copy lands before the first meeting reads the world's header.
+DUP_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/duplicate_world_selftest.js"
+if [ -f "$DUP_SELFTEST" ]; then
+  if out=$(node "$DUP_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the duplicate world selftest is missing: $DUP_SELFTEST"; fail=1
+fi
+
+echo "== 21. what a cleanse actually did, read rather than assumed =="
+# The same rule as 13 and 14, on the command that takes the cheat marks back off a world.
+# baka_cleanse has six things it can say and five of them are not a cleanse; a toast that
+# said "cleared" for any of those would send a host away believing a world had been cleaned
+# that had not been touched. The table drives the real reader out of app.js against every
+# reply the plugin can give, and the rules beside it hold the four-sentence confirm, both
+# ways in, and the bridge method the page calls.
+CLEANSE_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/cleanse_reply_selftest.js"
+if [ -f "$CLEANSE_SELFTEST" ]; then
+  if out=$(node "$CLEANSE_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the cleanse reply table is missing: $CLEANSE_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

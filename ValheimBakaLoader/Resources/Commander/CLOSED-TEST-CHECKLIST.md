@@ -329,6 +329,66 @@ work, and the name must be set on the character, not on the account.
       build is repaired at the next launch, so a host upgrading should see their old broken
       rows come back to life rather than doubling: one row per player, not two.
 
+## Taking the old marks back off (1.2.3, `baka_cleanse`)
+
+The section above says that items and creatures spawned before 1.2.0 keep their mark and
+that nothing in the game ever takes one off. `baka_cleanse` is the way back, and this is the
+walk for it. **Everything here needs a world with marks already on it**, so do the first
+three steps on a throwaway world with 1.1.2's plugins, then put 1.2.3's in and carry on.
+
+Plugin versions for this pass: Commander 1.8.0, KillAll 1.8.0.
+
+### Making a world with marks in it (on 1.1.2's plugins)
+
+- [ ] `baka_spawn SwordIron <x,z,y>`, pick it up, and read the tooltip: it MUST carry the
+      "summoned through cheating means" line. Without that line the rest of this walk proves
+      nothing.
+- [ ] Put the sword in a chest. Put a spawned stack of `Wood` in the same chest.
+- [ ] `baka_spawn Boar <x,z,y>` and kill it with the marked sword, so the drops are marked
+      the way vanilla spreads it. Leave the drops on the ground.
+- [ ] Put an `Ore` into a smelter and something into a cooking station, both spawned, so the
+      queue flags are set as well.
+- [ ] Build a piece out of spawned materials.
+
+### The refusal (1.2.3's plugins, one player still on)
+
+- [ ] With one player connected, press **Clear cheat marks** in the Players hall. The toast
+      must name that player and say the server has to be empty. Nothing in the world changes.
+- [ ] Same command over RCON: the reply is
+      `Error: 1 player is still connected (<name>). Cheat marks can only be cleared on an empty server.`
+- [ ] Ask the player to log out. With the server empty, the command goes through.
+
+### The sweep
+
+- [ ] The confirm dialog says all four things before it runs: what it clears, that players
+      have to put what they carry into a chest first and take it back out afterwards, that it
+      needs an empty server, and that a character the game has flagged for console use cannot
+      be cleared by anyone.
+- [ ] Press it. The toast reads `Cheat marks cleared · N world objects · M containers · K items`
+      and all three numbers are above zero on the world built above.
+- [ ] The result line is in the Saga log as well as in the toast.
+- [ ] Log back in. The sword out of the chest has **no** cheated line. The wood stack has
+      none. The boar drops on the ground have none. The built piece is clean. The smelter and
+      the cooking station finish their queues and what comes out is clean.
+- [ ] The achievements screen is **running** again for that character, with nothing marked in
+      its inventory.
+- [ ] Run it a second time on the same world. It must answer
+      `Cleanse complete: nothing in this world carries a cheat mark.` and the toast must say so
+      rather than reading like a fresh sweep.
+
+### What it cannot do, which is checked here so nobody reports it as a bug
+
+- [ ] A marked item carried in a player's own inventory, never put in a chest, is STILL
+      marked afterwards. That inventory lives in the character file on their machine and no
+      server command can reach it. The confirm says so; check that it does.
+- [ ] A character the game has flagged for console use stays flagged. BakaLoader never writes
+      to a character file.
+- [ ] On a server running an older Commander, `baka_cleanse` answers `Unknown command: ...`
+      and the toast says the plugin is older than the command rather than claiming a cleanse.
+- [ ] A very large, long-lived world: the sweep is one pass on the main thread, so the RCON
+      client can give up waiting before it finishes. The sweep still completes and still puts
+      its counts in the server log. Note the world size and the time if that happens.
+
 ## Sign-off
 
 When all items pass, the third-party trio can be permanently removed from the

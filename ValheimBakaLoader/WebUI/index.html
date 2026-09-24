@@ -17,7 +17,7 @@
 -->
 <script>
 (function(){
-  var v = window.BAKA_VERSION || "1.2.2";
+  var v = window.BAKA_VERSION || "1.2.3";
   window.BAKA_ASSET_VERSION = v;
   window.BAKA_ASSET = function(name){ return name + "?v=" + encodeURIComponent(v); };
   window.BAKA_ASSET_PLAIN = function(el){
@@ -125,7 +125,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.2</span><!--
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.3</span><!--
              The partial-translation mark. A standing fact about the words on screen, so it
              stands here rather than arriving as a toast; app.js lights it and writes the
              same sentence the globe menu carries onto its tooltip. -->
@@ -272,6 +272,23 @@
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.bepinex.note">Installs BepInEx when it is missing, and at a scheduled restart replaces the core and the loader files with the current Thunderstore pack. A BepInEx that is already here is brought into its care the same way, with a copy of everything replaced kept beside the install; your mods, mod configs and BepInEx.cfg are left as they are, and so is your doorstop_config.ini unless the new pack needs a different one. An install another mod manager drives is never touched. Every server on this install shares one BepInEx, so this covers all of them.</div>
                 <div class="togglerow"><span class="tl" id="hexiumSwitchLabel">Also check Hexium</span><span class="toggle" id="tUseHexium" data-t></span></div>
                 <div class="subval" id="hexiumHelp" style="margin:2px 0 4px">Hexium is a second mod site. Whoever runs it is not named on the site, and its accounts are Discord sign-ins, so BakaLoader cannot tell you that an author there is the same person as the author of the same name on Thunderstore. With this on, your machine contacts hexium.gg about four times an hour while BakaLoader is open, and that site says it keeps request logs for up to ninety days. Nothing is installed from Hexium unless you ask for it and accept what it is.</div>
+                <!-- CONNECTION. Two switches and a test, for the machine where .NET cannot
+                     reach Thunderstore while curl on the same box can. Both switches are off
+                     by default: a machine where the ordinary way works must not be pushed off
+                     it, and the test is what says which one to turn on rather than leaving a
+                     host to guess. The result line is written by app.js, so it carries no id;
+                     everything the walker owns here is static both ways. -->
+                <div class="microlabel" style="margin:10px 0 2px" data-i18n="hearth.upkeep.connection.head"><span class="r">ᛗ</span>Connection</div>
+                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.connection.note">How BakaLoader reaches Thunderstore, GitHub and the language packs. Leave both off unless the test below tells you otherwise.</div>
+                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.connection.no_proxy">Do not use the Windows proxy for Thunderstore</span><span class="toggle" id="tNoProxy" data-t></span></div>
+                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.connection.no_proxy.note">BakaLoader follows the proxy settings Windows holds, including automatic detection. A proxy entry nothing is listening on makes every request sit and wait. With this on, BakaLoader goes straight out.</div>
+                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.connection.ipv4">Connect over IPv4 only</span><span class="toggle" id="tIPv4" data-t></span></div>
+                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.connection.ipv4.note">Some networks hand out an IPv6 address that goes nowhere, and a connection to one hangs instead of failing. With this on, BakaLoader asks for IPv4 addresses and nothing else.</div>
+                <div class="togglerow" style="height:auto;padding:6px 0">
+                  <span class="tl" data-i18n="hearth.upkeep.connection.test.label">Test the connection</span>
+                  <button class="btn btn-ghost btn-sm" id="btnNetTest" title="Asks thunderstore.io the way BakaLoader does, and says which of the two switches would have helped" data-i18n="hearth.upkeep.connection.test" data-i18n-title="hearth.upkeep.connection.test.title">Test connection</button>
+                </div>
+                <div class="subval" id="netTestOut" style="margin:2px 0 4px;white-space:pre-wrap"></div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_windows">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_minimized">Start minimized</span><span class="toggle" id="tStartMin" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.start_minimized.note">The window opens minimized to the taskbar. BakaLoader has no tray icon, so it waits there rather than in the notification area.</div>
@@ -314,6 +331,11 @@
             <span class="hnorse" data-i18n="common.norse.vikings">Vikings</span>
             <span class="sub" id="vikSub">2 of 10 online · right-click a player for actions</span>
             <span class="sub" id="vikColsNote"></span>
+            <!-- The hall's one command that is about the WORLD rather than about a person,
+                 which is why it stands here and not in the right-click menu. It opens the
+                 same question the command palette opens, from the same dialog, so there is
+                 no route to the sweep that skips it. Static both ways: the walker owns it. -->
+            <button class="btn btn-ghost btn-sm" id="cleanseBtn" style="margin-left:auto" title="Clears the cheat marks BakaLoader 1.0.9 to 1.1.2 left on things it spawned. Needs an empty server." data-i18n="vikings.cleanse.label" data-i18n-title="vikings.cleanse.title">Clear cheat marks</button>
           </div>
           <!-- missing required-mods banner (native only; hidden when all mods present) -->
           <div class="capsbanner" id="capsBanner" style="display:none">
@@ -575,6 +597,11 @@
               <div class="field" style="grid-column:1/-1"><label data-i18n="world.field.args">Additional Launch Args</label><input type="text" id="fArgs" value=""></div>
             </div>
             <div class="setupreset-note" style="display:block;margin-top:8px" data-i18n="world.dir.empty_note">Leave a box empty and BakaLoader uses the path on the line above it. A path typed here applies to this server only, and nothing is written until Save Config.</div>
+            <!-- Why THIS server's boxes look the way they do. It depends on the profile, so
+                 renderWorldDirs writes it and it carries no data-i18n: one owner per element.
+                 A host who duplicated a realm and then found the first one's boxes showing
+                 defaults had nothing on the page telling them that was the shared install. -->
+            <div class="setupreset-note" id="dirIsolationNote" style="display:none;margin-top:6px"></div>
             </div>
 
             <div class="setupreset">
@@ -856,7 +883,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.2</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.3</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg"><span data-i18n="status.rcon.label">RCON</span> <span class="em" id="sbRcon">bound</span></span>
@@ -885,6 +912,7 @@
         <div class="pitem" data-cmd="stop_server" data-i18n="pal.cmd.stop_server"><span class="r">ᛪ</span>Stop server<span class="k" data-i18n="pal.k.hearth">hearth</span></div>
         <div class="pitem" data-cmd="save_world" data-i18n="pal.cmd.save_world"><span class="r">ᛉ</span>Save world now<span class="k" data-i18n="pal.k.rite">rite</span></div>
         <div class="pitem" data-cmd="kill_monsters" data-i18n="pal.cmd.kill_monsters"><span class="r">ᚦ</span>Kill all monsters<span class="k" data-i18n="pal.k.rite">rite</span></div>
+        <div class="pitem" data-cmd="clear_cheat_marks" data-i18n="pal.cmd.clear_cheat_marks"><span class="r">ᛉ</span>Clear cheat marks<span class="k" data-i18n="pal.k.viking">viking</span></div>
         <div class="pitem" data-cmd="broadcast" data-i18n="pal.cmd.broadcast"><span class="r">ᛒ</span>Broadcast message…<span class="k" data-i18n="pal.k.saga">saga</span></div>
         <div class="pitem" data-cmd="console_command" data-i18n="pal.cmd.console_command"><span class="r">ᛊ</span>Send console command…<span class="k" data-i18n="pal.k.rcon">rcon</span></div>
         <div class="pitem" data-cmd="kick_player" data-i18n="pal.cmd.kick_player"><span class="r">ᚲ</span>Kick player…<span class="k" data-i18n="pal.k.viking">viking</span></div>

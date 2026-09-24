@@ -375,7 +375,11 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // The native side is the one that answers for certain, and it answers per save
             // folder, which is the boundary the page is now cutting on.
-            Assert.Contains("FindWorldFilesOnDisk(world.SaveFolder, targetName)", Store());
+            // checkedSaveFolder is the source's own folder for a copy beside itself and the
+            // destination's for one into another save folder, which is the same rule said
+            // once for both shapes.
+            Assert.Contains("FindWorldFilesOnDisk(checkedSaveFolder, targetName)", Store());
+            Assert.Contains("checkedSaveFolder = world.SaveFolder;", Store());
         }
 
         /// <summary>
@@ -448,8 +452,12 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("WorldStore.IsSafeReferenceToken(source)", body);
             Assert.Contains("WorldStore.WorldNameProblem(target)", body);
             Assert.Contains("KnownSaveFolders().Any(k => SameFolder(k, folder))", body);
-            Assert.Contains("session.Server.Status == ServerStatus.Stopped", body);
-            Assert.Contains("worlds.copyServerRunning", body);
+            // The live-server rule left this handler and became a method of its own, because
+            // forging a realm over a copy of somebody else's world has to decide it the same
+            // way. What is held here is that this route still asks it.
+            Assert.Contains("RefuseWhileTheWorldIsBeingWritten(source, saveFolder)", body);
+            Assert.Contains("session.Server.Status == ServerStatus.Stopped", bridge);
+            Assert.Contains("worlds.copyServerRunning", bridge);
             Assert.Contains("WorldStore.CopyWorldAs(world, target)", body);
 
             // Off the UI thread, because a 1.0 world is a whole directory tree.

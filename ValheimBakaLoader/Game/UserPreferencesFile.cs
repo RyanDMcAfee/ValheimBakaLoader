@@ -31,6 +31,12 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("writeApplicationLogsToFile")] public bool? WriteApplicationLogsToFile { get; set; }
         [JsonProperty("logsFolderPath")] public string LogsFolderPath { get; set; }
         [JsonProperty("enablePasswordValidation")] public bool? EnablePasswordValidation { get; set; }
+
+        // -- Connection --
+        // How the remote clients reach the internet; see UserPreferences.BypassSystemProxy
+        // and UserPreferences.ForceIPv4.
+        [JsonProperty("bypassSystemProxy")] public bool? BypassSystemProxy { get; set; }
+        [JsonProperty("forceIPv4")] public bool? ForceIPv4 { get; set; }
         [JsonProperty("darkMode")] public bool? DarkMode { get; set; }
         [JsonProperty("plainTerminology")] public bool? PlainTerminology { get; set; }
         [JsonProperty("setupCompleted")] public bool? SetupCompleted { get; set; }

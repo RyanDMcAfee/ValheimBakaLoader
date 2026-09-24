@@ -101,14 +101,33 @@ namespace ValheimBakaLoader.Tools
                 return ModRemovalResult.Failed(mod, $"Mod folder not found: {mod.PluginDirectory ?? mod.PatcherDirectory}");
             }
 
-            // The folder name identifies the mod. Companion plugins and framework/auto-generated
-            // patchers are managed by BakaLoader and never appear in the list, but reject removal
-            // defensively anyway so a malformed request can never touch them.
+            // The folder name identifies the mod. Companion plugins are managed by BakaLoader and
+            // never appear in the list, but reject removal defensively anyway so a malformed
+            // request can never touch them.
             var primaryDir = hasPlugin ? mod.PluginDirectory : patcherDir;
             var folderName = new DirectoryInfo(primaryDir).Name;
-            if (ModScanner.IsCompanionFolder(folderName) || ModScanner.IsProtectedPatcher(folderName))
+            if (ModScanner.IsCompanionFolder(folderName))
             {
                 return ModRemovalResult.Failed(mod, "This plugin is managed by BakaLoader and cannot be removed here.");
+            }
+
+            // The protected-patcher names are about a FOLDER UNDER patchers/, which is the
+            // framework and the generated patcher the loader itself needs. A mod that happens to
+            // carry one of those names under plugins/ is a mod a host installed, and refusing it
+            // left the host with a HookGenPatcher folder in plugins that nothing here would remove
+            // and that the BepInEx row already offers to move out of the way. So the rule is asked
+            // only when the folder being removed really is the patchers one.
+            if (hasPatcher && !hasPlugin && ModScanner.IsProtectedPatcher(folderName))
+            {
+                return ModRemovalResult.Failed(mod, "This plugin is managed by BakaLoader and cannot be removed here.");
+            }
+
+            // And when a folder of that name sits in BOTH places, the two are not one mod. The
+            // plugins copy is what the host installed and it goes; the patchers copy is the
+            // loader's own and it stays, so removing the first cannot take the second with it.
+            if (hasPlugin && hasPatcher && ModScanner.IsProtectedPatcher(folderName))
+            {
+                hasPatcher = false;
             }
 
             var configs = includeConfig ? FindConfigFiles(mod) : new List<string>();
