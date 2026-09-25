@@ -31,6 +31,7 @@ namespace ValheimBakaLoader.Tests.Tools
     /// the client's own patience.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class BepInExStartNotBlockedTests : IDisposable
     {
         private readonly string Root =

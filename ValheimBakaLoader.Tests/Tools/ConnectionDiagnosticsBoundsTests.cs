@@ -18,6 +18,7 @@ namespace ValheimBakaLoader.Tests.Tools
     /// and password sitting in it.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ConnectionDiagnosticsBoundsTests : BaseTest
     {
         /// <summary>

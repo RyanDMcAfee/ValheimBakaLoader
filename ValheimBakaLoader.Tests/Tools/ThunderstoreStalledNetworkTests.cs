@@ -26,6 +26,7 @@ namespace ValheimBakaLoader.Tests.Tools
     /// that the callers after the first one never went out.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ThunderstoreStalledNetworkTests : BaseTest
     {
         /// <summary>
