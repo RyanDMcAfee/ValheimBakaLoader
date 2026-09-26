@@ -611,22 +611,33 @@ namespace ValheimBakaLoader.Tests.Forms
         /// <summary>
         /// A scan that kept the host's own rows marks the STATUS column `Not checked`; the
         /// Latest column shows a dash with a tooltip. The README is the first thing most
-        /// hosts read about a release, so it has to name the column they will actually look at.
+        /// hosts read about a release, so any line it carries about that has to name the
+        /// column a host will actually look at.
+        /// <para>
+        /// The README's "What is new" section is replaced at every release, so the sentence
+        /// this was written for moves from release to release. It may not stand in the same
+        /// bullet twice, and it may not say the same thing twice, but the README has to go on
+        /// carrying ONE line about what a failed scan leaves behind: it is the first thing
+        /// most hosts read, and a release that drops the line leaves the behaviour undescribed
+        /// wherever else it is written. So the line is required, not merely checked when it
+        /// happens to be there.
+        /// </para>
         /// </summary>
         [Fact]
         public void The_readme_names_the_column_a_failed_scan_really_marks()
         {
-            var readme = AppSourceTree.Read("README.md");
-            var at = readme.IndexOf("A failed mod scan keeps your mod table", StringComparison.Ordinal);
-            Assert.True(at > 0, "the README no longer carries the failed-scan line");
-            var line = readme.Substring(at, readme.IndexOf("\n", at, StringComparison.Ordinal) - at);
-
-            Assert.DoesNotContain("Latest column reads", line);
-            Assert.Contains("Status column", line);
-
-            // And the page really does put that wording in the Status cell.
+            // The page really does put that wording in the Status cell.
             Assert.Contains("T(\"mods.status.unchecked\")", AppJs());
             Assert.Equal("Not checked", Lore(Catalog(), "mods.status.unchecked"));
+
+            var readme = AppSourceTree.Read("README.md");
+            Assert.DoesNotContain("Latest column reads", readme);
+
+            var at = readme.IndexOf("failed mod scan", StringComparison.Ordinal);
+            Assert.True(at >= 0, "the README no longer carries a line about a failed mod scan");
+
+            var line = readme.Substring(at, readme.IndexOf("\n", at, StringComparison.Ordinal) - at);
+            Assert.Contains("Status column", line);
         }
     }
 }

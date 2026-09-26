@@ -283,6 +283,21 @@ const S={
      minutes, so a page where nothing moves is a page a host presses again. */
   cleansing:false,
   hexium:false,           // the host's "Also check Hexium" switch, mirrored from userprefs
+  /* The id of the note under Start with Windows, the last time the host side named one, or
+     null for nothing to say. Kept here the way a failed scan's reason is, and for the same
+     reason: the sentence is drawn with T(), so the language switch has to be able to draw
+     it again from state alone, long after the answer that named it has gone. */
+  startWinNotice:null,
+  /* And the path that note names, for the two notes that name one. It arrives beside the id
+     rather than inside the sentence, so the sentence stays the catalog's. */
+  startWinNoticePath:"",
+  /* The SECOND note, drawn under the first, and the path it names. The machine wide Run key
+     and this account's own Run key are separate facts, and both of them can be wrong at the
+     same time: Windows starting a different copy for every account does not stop Windows also
+     refusing to write or to remove this account's entry. Until 1.2.5 the machine sentence won
+     and the refusal was said once by the save that met it and gone by the next open. */
+  startWinNoticeAlso:null,
+  startWinNoticeAlsoPath:"",
 
   modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
   /* What is typed in the Mods search box. It lives here rather than in the DOM so a
@@ -600,6 +615,7 @@ function repaintBootCopy(){
   try{renderSaveAvg();}catch(_){}         /* the rolling write-time average */
   try{renderServerChips();}catch(_){}     /* the sidebar strip's chip tooltips */
   try{renderHexiumCopy();}catch(_){}      /* the Upkeep card's second-mod-site switch */
+  try{renderStartWinNote();}catch(_){}    /* and the note under Start with Windows */
   try{heraldRenderIntro();}catch(_){}     /* the Discord hall's opening sentence */
   try{heraldRenderPost();}catch(_){}      /* whether a status post is placed */
   try{heraldRenderUrlStat();}catch(_){}   /* and the line under the webhook box */
@@ -1616,10 +1632,11 @@ function goPage(name){
   if(name==="atlas"){try{atlasEnter();}catch(_){}} // also drives the mock preview
   if(name==="skald"){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
   if(Native.available){
-    if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods();
+    if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods({force:false});
     if(name==="vikings"){refreshPlayers();refreshJournal(true);}
     if(name==="runes") refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
     if(name==="herald") refreshHerald();      // re-read prefs so the hall always shows the saved truth
+    if(name==="hearth") refreshStartWinNote(); // and the notes under Start with Windows, which a trip to Task Manager can have cleared
   }
 }
 $$(".navitem").forEach(n=>n.addEventListener("click",()=>goPage(n.dataset.page)));
@@ -1925,7 +1942,7 @@ async function switchServer(name){
   if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length) sbuf.slice(-200).forEach(logRaw);
   logLine("info","[BakaLoader] switched to profile '"+name+"'");
   toast("ᛒ "+T("realm.switched.toast",{name:prefs.ProfileName}));
-  if(currentPage==="mods") scanMods();
+  if(currentPage==="mods") scanMods({force:false});
   if(currentPage==="runes") refreshCfgList(true);
   renderSaveBars();
 }
@@ -2637,7 +2654,9 @@ function renderSaveBars(){
 /* Named empty-state actions. Each one is a command the interface already offers,
    so an empty panel can hand the host the same button the toolbar would. */
 Object.assign(ES_ACTIONS,{
-  scanMods:()=>{ if(Native.available) scanMods(); else toast("ᛋ "+T("mods.scan.preview.toast")); },
+  /* Try again on the failed panel, and Scan on the unscanned one. Both are the host's
+     own finger, so both put the backoff down and ask the site now. */
+  scanMods:()=>{ if(Native.available) scanMods({force:true}); else toast("ᛋ "+T("mods.scan.preview.toast")); },
   addMod:()=>addModFlow(),
   installBepInEx:()=>{ if(Native.available) bepInExInstallFlow(null);
     else toast("ᛋ "+T("mods.add.preview.toast")); },
@@ -4387,17 +4406,29 @@ function bepInExAskOnce(next){
   bepInExFirstStartModal(go);
   onModalDismissed(go);
 }
-/* A scan always asks the sites again rather than reading whatever BakaLoader was holding.
+/* A PRESSED scan asks the sites again rather than reading whatever BakaLoader was holding.
    It used to hold a package list for fifteen minutes, so a scan a minute after a release
    found nothing and a host watching the mod's own page saw a version BakaLoader would not
    admit to. Each client keeps its own short cooldown, so two presses in a row are still
-   one trip out. */
+   one trip out.
+
+   A scan nobody pressed is the other half of that, and until 1.2.5 it was missing. Opening
+   the Mods hall, switching realm and the re-scan after an install all called this, and all
+   of them sent the forced shape, which puts down the backoff a run of failures built up. On
+   a machine that cannot reach thunderstore.io that is the one thing the backoff exists to
+   prevent: walking into the hall asked the site again, every time, and waited out the whole
+   timeout for it. So force belongs to the host's finger. Everything else asks for whatever
+   is held, and the hall draws the kept rows with Not checked and says when the site will be
+   asked again. */
 /* The longest the page waits for a scan before it says so. The native side is bounded at
    two minutes for a whole index read and answers whatever happens, so this is the backstop
    for the case where no answer arrives at all rather than the ordinary way a scan ends. A
    host sitting in front of a spinner that will never stop is the thing it exists to end. */
 const SCAN_CEILING_MS=60000;
-async function scanMods(){
+/* @param {{force?:boolean}} [opts] force is a host pressing Scan, Try again or the empty
+   panel's button. It is never true for a scan the page started by itself. */
+async function scanMods(opts){
+  const force=!!(opts&&opts.force);
   if(!Native.available||S.modsScanning||S.modsUpdating) return;
   S.modsScanning=true; S.modsScanError=null; S.modsScanReason=null;
   S.modsIndexBlind=false; renderMods();
@@ -4407,7 +4438,7 @@ async function scanMods(){
      page saying the site could not be read rather than spinning for ever. */
   const TIMED_OUT={timedOut:true};
   const r=await Promise.race([
-    rpc("mods.scan",{force:true}),
+    rpc("mods.scan",{force:force}),
     new Promise(done=>setTimeout(()=>done(TIMED_OUT),SCAN_CEILING_MS)),
   ]);
   S.modsScanning=false;
@@ -4500,7 +4531,7 @@ async function doUpdateAll(){
   toast(errN
     ?"ᚦ "+T("mods.update_all.failed.toast",{ok:okN,failed:errN})
     :"ᚱ "+T("mods.update_all.done.toast",{count:okN}));
-  await scanMods(); // re-render from a fresh scan
+  await scanMods({force:false}); // re-render from what is held, not another trip out
 }
 $("#updAllBtn").addEventListener("click",()=>{
   if(Native.available){
@@ -4519,7 +4550,7 @@ $("#updAllBtn").addEventListener("click",()=>{
   logLine("info","[Thunderstore] downloading WorldEditCommands 1.66.0 …");
 });
 $("#scanBtn").addEventListener("click",()=>{
-  if(Native.available){scanMods();return;}
+  if(Native.available){scanMods({force:true});return;}
   toast("ᛋ "+T("mods.scan.begun.toast"));
   logLine("info","[Thunderstore] reading the community listing index…");
 });
@@ -4681,7 +4712,7 @@ async function doUpdateOne(mod){
   toast(r.Updated?("ᚱ "+T("mods.update_one.done.toast",{mod:r.mod}))
     :(r.Error?("ᚦ "+T("mods.update_one.failed.toast",{mod:r.mod}))
              :("ᚱ "+T("mods.update_one.current.toast",{mod:r.mod}))));
-  await scanMods();
+  await scanMods({force:false});
 }
 $("#modTable").addEventListener("contextmenu",e=>{
   if(!Native.available) return;
@@ -4749,7 +4780,7 @@ async function doRemoveMod(mod,includeConfig,dependents){
     ?T("mods.remove.failed.detail.toast",{ok:okN,failed:failN,detail:lastErr})
     :T("mods.remove.failed.toast",{ok:okN,failed:failN})));
   else toast("ᛪ "+T("mods.remove.done.toast",{count:okN}));
-  scanMods();
+  scanMods({force:false});
 }
 /* ---- The second mod site: ask first, then fetch ----
    Nothing on this path ever installs on its own. The host is shown exactly what the
@@ -4825,7 +4856,7 @@ async function doInstallFromHexium(pay){
     if(Array.isArray(r.Dependencies)&&r.Dependencies.length)
       logLine("info","[Hexium] "+full+" says it needs: "+r.Dependencies.join(", "));
     if(S.state?.status==="Running") logLine("warn","[Hexium] server is running, so "+full+" loads on the next restart");
-    await scanMods();
+    await scanMods({force:false});
   }else{
     hexiumFailToast(r);
     renderMods();
@@ -4919,7 +4950,7 @@ async function doAddMod(url){
     toast("ᛒ "+T("bepinex.add.pack_installed.toast"));
     logLine("ok","[BepInEx] the pasted link was the loader pack, and it was installed");
     await refreshBepInEx();
-    await scanMods();
+    await scanMods({force:false});
     return;
   }
   if(r.Reason==="noBepInEx"){
@@ -4949,7 +4980,7 @@ async function doAddMod(url){
       :T("mods.add.installed.noversion.toast",{name:full})));
     logLine("ok","[Thunderstore] installed "+full+" v"+(r.Version||"?")+(r.Replaced?" (previous copy backed up)":""));
     if(S.state?.status==="Running") logLine("warn","[Thunderstore] server is running, so "+full+" loads on the next restart");
-    await scanMods();
+    await scanMods({force:false});
   }else{
     /* A refusal that named itself is said in the reader's own language here too. The add
        carries the id in Reason and the sentence's named values in ErrorParams, so a
@@ -5896,6 +5927,23 @@ $$("[data-t]").forEach(t=>t.addEventListener("click",()=>{t.classList.toggle("on
 /* ---------- UPKEEP (app self-update + start with Windows) ---------- */
 wireCollapsible("upkeepHead",$("#upkeepBody"),$("#upkeepCard"));
 
+/* The card opens collapsed, so "the card opens" is this header and not only the walk into
+   the hall: a host who never left the Hearth gets the notes re-read too. The header's own
+   toggle is wired on the line above and both listeners run in the order they were added, so
+   by the time this one fires the card already carries the class that says which way it went.
+   Keyboard as well as mouse, because the header answers Enter and Space by calling its
+   toggle directly rather than by producing a click. */
+if($("#upkeepHead")){
+  const upkeepOpened=()=>{
+    const card=$("#upkeepCard");
+    if(card&&card.classList.contains("open")) refreshStartWinNote();
+  };
+  $("#upkeepHead").addEventListener("click",upkeepOpened);
+  $("#upkeepHead").addEventListener("keydown",e=>{
+    if(e.key==="Enter"||e.key===" "||e.key==="Spacebar") upkeepOpened();
+  });
+}
+
 /* Auto-update has nothing to work from while update checking is off: C# reads the pair
    the same way (AppUpdateService.MaySelfUpdate), so the switch is dimmed and the click is
    turned away rather than storing a choice that would not be honoured. The guard sits on
@@ -5968,6 +6016,93 @@ renderHexiumCopy();
   const el=document.getElementById(id);
   wireCollapsible(id,el?el.nextElementSibling:null,el);
 });
+/* The note under Start with Windows, and the closed list of things the host side can say
+   there. The reply carries an ID and never a sentence, the same way a failed scan's reason
+   does: a phrase written in C# would arrive on a Japanese host's screen in English. An id
+   this page has no words for draws nothing at all rather than showing the id. */
+const START_WIN_NOTES={
+  /* An entry for every account on this PC, naming this copy, that outlived the switch.
+     Removing it needs a run as administrator, which is why it is a note and not a fix. */
+  machine:{noticeId:"hearth.upkeep.start_windows.note.machine",
+    textId:"hearth.upkeep.start_windows.note.machine"},
+  /* The same hive, naming a DIFFERENT copy of BakaLoader. Windows will start that one for
+     every account here whatever this switch says, so the note names the path it will start. */
+  machineOther:{noticeId:"hearth.upkeep.start_windows.note.machine_other",
+    textId:"hearth.upkeep.start_windows.note.machine_other"},
+  /* This account's own entry, naming another copy that is STILL installed. Which of two
+     copies Windows should start is the host's to say, so nothing is moved for them. */
+  otherCopy:{noticeId:"hearth.upkeep.start_windows.note.other_copy",
+    textId:"hearth.upkeep.start_windows.note.other_copy"},
+  /* The same two copies, with this PC already starting THIS one for every account. Both roads
+     ask Windows to take the stale entry away, so one still standing is one Windows refused,
+     and the remedy above, off and on again, walks straight back into that refusal. */
+  otherCopyStuck:{noticeId:"hearth.upkeep.start_windows.note.other_copy_stuck",
+    textId:"hearth.upkeep.start_windows.note.other_copy_stuck"},
+  /* And the write Windows refused. The preference is saved, so the switch reads on: without
+     this note it would read on while nothing started. */
+  refused:{noticeId:"hearth.upkeep.start_windows.note.refused",
+    textId:"hearth.upkeep.start_windows.note.refused"},
+  /* The same refusal on the way out: Windows would not take this account's entry away, so
+     the switch reads off while Windows goes on starting BakaLoader. */
+  refusedOff:{noticeId:"hearth.upkeep.start_windows.note.refused_off",
+    textId:"hearth.upkeep.start_windows.note.refused_off"},
+};
+/* One box, one note. Draws the catalog sentence for an id this page has words for, and takes
+   the box out of the layout for anything else, so an id we have no words for shows nothing at
+   all rather than showing the id.
+   @param {string} sel the box
+   @param {string} id  the notice id the host side named, or null
+   @param {string} path the folder that note names, for the two notes that name one */
+function drawStartWinNote(sel,id,path){
+  const el=$(sel); if(!el) return;
+  const k=Object.keys(START_WIN_NOTES).find(n=>START_WIN_NOTES[n].noticeId===id);
+  /* The path goes in as a named slot, so the sentence around it is written once per language
+     rather than assembled here out of pieces that do not join up in every one of them. */
+  el.textContent=k?T(START_WIN_NOTES[k].textId,{path:path}):"";
+  el.style.display=k?"":"none";
+}
+/* @param {object} given the userprefs answer, from the read on load or from a save. Left out
+   entirely by a repaint, which has no answer to hand and draws what the last one said. */
+function renderStartWinNote(given){
+  /* Recorded BEFORE the elements are looked for, so a call that lands while the card is not
+     in the document still leaves the repaint something true to draw.
+     ONLY A REAL REPLY MOVES IT. A save that failed hands back the FAIL sentinel, and a save
+     that failed changed nothing on this machine, so whatever was standing under the switch is
+     still the true sentence. Clearing it here used to take a live warning off the card on the
+     strength of a save that never happened. */
+  if(arguments.length&&given&&given!==FAIL){
+    S.startWinNotice=given.StartupNoticeId||null;
+    S.startWinNoticePath=given.StartupNoticePath||"";
+    S.startWinNoticeAlso=given.StartupAlsoNoticeId||null;
+    S.startWinNoticeAlsoPath=given.StartupAlsoNoticePath||"";
+  }
+  drawStartWinNote("#startWinNote",S.startWinNotice,S.startWinNoticePath);
+  drawStartWinNote("#startWinNoteAlso",S.startWinNoticeAlso,S.startWinNoticeAlsoPath);
+}
+/* Whether the Upkeep card has ever been painted from an answer that arrived. The re-read
+   below waits for it, so the walk into the Hearth that happens while the page is still being
+   evaluated does not ask for preferences the card is about to ask for anyway. Declared with var
+   on purpose: that first walk runs goPage while the script is still being evaluated, thousands
+   of lines above this line, and a let here would be in its dead zone and throw. */
+var UPKEEP_PAINTED=false;
+/* The notes WORKED OUT AGAIN, which is the one thing a repaint cannot do. A repaint draws
+   what the last answer said; these sentences are facts about the Windows registry, and the
+   registry changes while BakaLoader is running. Every one of them names a way out that leads
+   the host OUT of this window: the Startup tab in Task Manager, the Startup apps page in
+   Settings, a copy of BakaLoader in another folder. They do the thing the note asked for,
+   they come back, and a card that had only ever asked once would still be showing them the
+   warning they just cleared, with no way to tell whether it worked.
+   So it is asked again on every walk into the Hearth and on every opening of the Upkeep
+   card, the way the Herald hall re-reads its own preferences when it is opened. Native only:
+   the preview has no registry to read and keeps whatever it was last drawn from. */
+async function refreshStartWinNote(){
+  if(!Native.available||!UPKEEP_PAINTED) return;
+  const up=await rpc("userprefs.get");
+  /* Only a real reply moves it, the same rule the save answer follows: a read that failed
+     changed nothing on this machine, so the sentence standing under the switch is still the
+     true one. */
+  if(up!==FAIL&&up) renderStartWinNote(up);
+}
 async function initUpkeep(){
   const up=await rpc("userprefs.get");
   /* Every switch on this card rides in on one save, so a click on any one of them writes
@@ -6001,6 +6136,16 @@ async function initUpkeep(){
     setT("tDetailedLog",DETAILED_LOG_FORCED||DETAILED_LOG_PREF);
     syncDetailedLogGate();
     setT("tStartWin",up.StartWithWindows);
+    /* The notes under it, for any of the six things that leave the switch saying one
+       thing while Windows does another. Drawn on load as well as after a save: the host
+       who has the problem is usually not the host who is watching a save go through, and
+       five of the six are standing facts a read of the registry finds again every time,
+       rather than something a save just did. Two can stand at once, one about the machine
+       wide key and one about this account's own, so there are two boxes. */
+    renderStartWinNote(up);
+    /* From here the card holds sentences that a later read can contradict, so the walks
+       back into this hall re-read them. */
+    UPKEEP_PAINTED=true;
     setT("tStartMin",up.StartMinimized);
     setT("tShareStats",up.ShareAnonymousStats);
     /* Lives on the World hall beside the password box, but it is a user setting and it
@@ -6037,7 +6182,7 @@ async function initUpkeep(){
      there. Moving it by hand counts as answering, which the host side records as well. */
   const bepSaved=()=>BEP_ANSWERED
     ?{BepInExMaintained:swOn("tBepMaint"),BepInExMaintenanceAsked:true}:{};
-  const save=()=>loaded&&rpc("userprefs.save",{prefs:Object.assign({CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),UseHexiumSource:swOn("tUseHexium"),BypassSystemProxy:swOn("tNoProxy"),ForceIPv4:swOn("tIPv4"),DetailedLog:detailedLogSaved(),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")},bepSaved())});
+  const save=()=>loaded&&rpc("userprefs.save",{prefs:Object.assign({CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),UseHexiumSource:swOn("tUseHexium"),BypassSystemProxy:swOn("tNoProxy"),ForceIPv4:swOn("tIPv4"),DetailedLog:detailedLogSaved(),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")},bepSaved())}).then(renderStartWinNote);
   $("#tCheckUpd").addEventListener("click",()=>{
     save();
     /* the standing update row says whether it installs itself, and with checking off it

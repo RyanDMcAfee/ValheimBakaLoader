@@ -34,6 +34,7 @@ namespace ValheimBakaLoader
             using var container = services.BuildServiceProvider();
 
             AnnounceLogLevel(container);
+            RepointStartupEntry(container);
 
             try
             {
@@ -68,6 +69,51 @@ namespace ValheimBakaLoader
             catch
             {
                 // Nothing about the level of the log is worth failing a launch over.
+            }
+        }
+
+        /// <summary>
+        /// The Windows startup entry, checked once a run and put right when the switch is on
+        /// and this account's entry names a copy of BakaLoader that is no longer on disk.
+        /// <para>
+        /// It is here, and not on the save of the Upkeep card, because that card posts all of
+        /// its switches together: applying this preference whenever the key arrived is what made
+        /// an ordinary save write to the registry for something nobody had touched, and 1.2.5
+        /// closed that road. Closing it took the re-point with it, and a host who renames or
+        /// moves the folder is not a host who then goes and flips the switch off and on. A
+        /// launch is the first thing that happens after the folder moves, so the check belongs
+        /// here.
+        /// </para>
+        /// <para>
+        /// It is deliberately NOT last-launched-wins. An entry naming a copy that is still
+        /// installed is left exactly where it is, because opening an old copy once must not
+        /// quietly take startup away from the one the host moved to; the Upkeep card names that
+        /// copy instead, and the host says which one they meant. A missing entry with the
+        /// switch on IS written, because the switch reading on while Windows knows nothing
+        /// about it is the thing this whole road exists to end.
+        /// </para>
+        /// <para>
+        /// With the switch off nothing is looked at at all. Neither read needs elevation and
+        /// neither of them writes a line, and the answer is discarded because the card works
+        /// out the same notes for itself: StartupHelper.NotesFor re-derives four of the five
+        /// from the registry, and StartupEntry remembers a refused write, the fifth, for the
+        /// rest of the run so the card draws that one too. A launch that met a refusal and said
+        /// nothing anywhere but the log is the shape this whole road exists to end, so if a note
+        /// is ever added that neither a read nor that memory can reach, this answer stops being
+        /// one to throw away.
+        /// </para>
+        /// </summary>
+        private static void RepointStartupEntry(IServiceProvider container)
+        {
+            try
+            {
+                var prefs = container.GetRequiredService<IUserPreferencesProvider>().LoadPreferences();
+                StartupHelper.RepointMovedEntry(
+                    prefs.StartWithWindows, container.GetRequiredService<ILogger>());
+            }
+            catch
+            {
+                // A startup entry that could not be looked at is not a reason to refuse to start.
             }
         }
 

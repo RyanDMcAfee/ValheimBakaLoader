@@ -17,7 +17,7 @@
 -->
 <script>
 (function(){
-  var v = window.BAKA_VERSION || "1.2.4";
+  var v = window.BAKA_VERSION || "1.2.5";
   window.BAKA_ASSET_VERSION = v;
   window.BAKA_ASSET = function(name){ return name + "?v=" + encodeURIComponent(v); };
   window.BAKA_ASSET_PLAIN = function(el){
@@ -125,7 +125,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.4</span><!--
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.5</span><!--
              The partial-translation mark. A standing fact about the words on screen, so it
              stands here rather than arriving as a toast; app.js lights it and writes the
              same sentence the globe menu carries onto its tooltip. -->
@@ -299,6 +299,20 @@
                 </div>
                 <div class="subval" id="netTestOut" style="margin:2px 0 4px;white-space:pre-wrap"></div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_windows">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
+                <!-- The notes under that switch. Empty and out of the layout unless the
+                     host side answers with a notice id. Six of them have words: an entry for
+                     every account on this PC that an ordinary run cannot take away, one that
+                     names a different copy of BakaLoader, this account's own entry naming
+                     another copy that is still installed, that same entry standing over a PC
+                     wide one for this copy because Windows would not take it away, a write
+                     Windows refused, and this
+                     account's entry still standing with the switch off. app.js fills them from
+                     the catalog, path and all.
+                     There are two boxes because the machine wide key and this account's own key
+                     are separate facts and both can be wrong at once: the second holds this
+                     account's half when the first is already carrying the machine's. -->
+                <div class="subval" id="startWinNote" style="display:none;margin:2px 0 4px"></div>
+                <div class="subval" id="startWinNoteAlso" style="display:none;margin:2px 0 4px"></div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_minimized">Start minimized</span><span class="toggle" id="tStartMin" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.start_minimized.note">The window opens minimized to the taskbar. BakaLoader has no tray icon, so it waits there rather than in the notification area.</div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.share_stats">Share anonymous usage stats</span><span class="toggle" id="tShareStats" data-t></span></div>
@@ -892,7 +906,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.4</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.5</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg"><span data-i18n="status.rcon.label">RCON</span> <span class="em" id="sbRcon">bound</span></span>

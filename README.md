@@ -69,13 +69,11 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.4
+## What is new in 1.2.5
 
-- **A detailed log for a machine that cannot reach Thunderstore.** `Detailed log` in the Upkeep card writes a line into the application log when a web request goes out and a line when it comes back, and `--verbose` does the same for one session. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting)
-- **The connection test goes into the log**, every step and the verdict, so you can paste the log instead of describing the card. [Dashboard](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-%28Hearth%29)
-- **A duplicated world is its own world.** The copy is written with its own world id, so each player's own map of it starts blank instead of being shared with the world it came from. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
-- **A failed mod scan keeps your mod table and says why**: the Status column reads `Not checked` rather than level, the Latest column shows a dash, and a toast and the Saga log name the kind of failure and how long BakaLoader will leave the site alone. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
-- **Clear cheat marks works on a big world.** The sweep runs in slices so the server keeps ticking, and the new `baka_cleanse_status` says how far it has got. [Players (Vikings)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29)
+- **Start with Windows is a per user setting.** The entry goes under your own account, reads no longer ask Windows for write access, and a save of any other switch on the Upkeep card writes nothing to the registry, which ends the `Could not read the startup entry under HKEY_LOCAL_MACHINE` line in the log. Move BakaLoader and the next launch points the entry at the new place, as long as the copy it named is gone. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting)
+- **The switch says so when it cannot finish.** An entry written during a run as administrator cannot be removed by an ordinary run, so a note under the switch names the two ways to clear it instead of the switch reading off while Windows goes on starting the app. A note appears the same way when Windows starts a different copy of BakaLoader, or when Windows refuses to write the entry or to take it away again. [Dashboard](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-%28Hearth%29)
+- **Opening the Mods screen no longer walks past the wait a failed scan sets.** Only `Scan Thunderstore` and `Try again` ask the site again inside that wait; until then a failed mod scan keeps your mod table with the Status column reading `Not checked`. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 

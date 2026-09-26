@@ -477,6 +477,91 @@ test("every reason name the host can write is a sentence the catalog owns", () =
     + " refusing to answer");
 });
 
+/* --------------------- rule 8: only a host's own finger walks past the backoff */
+test("a scan nobody pressed asks for what is held rather than a fresh trip out", () => {
+  /* WHY. force clears the failure memo on the host side, which is right for a press of
+     Scan and wrong for everything else. Until 1.2.5 scanMods sent force:true always, and
+     it is called on hall entry, on a realm switch and after every install and removal, so
+     merely opening the Mods hall put the backoff down and went at a site the machine
+     cannot reach. That is the one thing the backoff exists to prevent. */
+
+  // Every call site says which kind of scan it is. A bare scanMods() would take the
+  // default, and a default is what nobody reads when they add the next call site.
+  const sites = SOURCE.split(/[\r\n]+/)
+    .map((line, i) => ({ line, n: i + 1 }))
+    .filter(row => /(?<!function )scanMods\(/.test(row.line));
+  assert.ok(sites.length >= 10, "app.js lost call sites: " + sites.length);
+  sites.forEach(row => {
+    assert.ok(/scanMods\(\{force:(true|false)\}\)/.test(row.line),
+      "app.js line " + row.n + " calls scanMods without saying which kind of scan it is: "
+      + row.line.trim());
+  });
+
+  const forced = sites.filter(row => /scanMods\(\{force:true\}\)/.test(row.line));
+  assert.strictEqual(forced.length, 2,
+    "exactly two call sites are a host's own finger (the Scan button, and Scan or Try again"
+    + " on the empty panel); these are forced: "
+    + forced.map(row => row.line.trim()).join(" | "));
+
+  // And they are those two, named rather than counted.
+  assert.ok(forced.some(row => /^\s*scanMods:\(\)=>/.test(row.line)),
+    "the empty panel's action (Try again, and Scan on the unscanned panel) no longer forces");
+  assert.ok(forced.some(row => /Native\.available\)\{scanMods\(\{force:true\}\);return;\}/
+    .test(row.line)), "the Scan button no longer forces");
+
+  // The roads the page walks on its own.
+  assert.ok(/name==="mods"&&!S\.modsScanned&&!S\.modsScanning\) scanMods\(\{force:false\}\)/
+    .test(SOURCE), "walking into the Mods hall still asks the site again");
+  assert.ok(/currentPage==="mods"\) scanMods\(\{force:false\}\)/.test(SOURCE),
+    "a realm switch still asks the site again");
+  assert.ok(SOURCE.indexOf("await scanMods({force:true})") < 0,
+    "a re-scan after an install or a removal still asks the site again");
+});
+
+/* ------------------------ rule 8b: the kind of scan really reaches the wire */
+test("what the page asks the bridge for is the kind of scan it was given", () => {
+  const body = fn("async function scanMods(");
+  const asked = [];
+  const S = { mods: null, modsScanned: false, modsScanning: false, modsUpdating: false,
+    modsScanError: null, modsScanReason: null, modsIndexBlind: false,
+    lastScan: null, modIndexAt: null, modIndexSource: null };
+  const context = {
+    S, Native: { available: true }, FAIL: Symbol("FAIL"), SCAN_CEILING_MS: 60000,
+    rpc: async (method, params) => { asked.push({ method, params }); return context.REPLY; },
+    renderMods() {}, toast() {}, logLine() {},
+    modsScanFailReason: () => "the site was not reached",
+    T: id => id, clock: () => "12:00", hhmm: () => "12:00",
+    setTimeout, console, window: {}, REPLY: null,
+  };
+  vm.createContext(context);
+  vm.runInContext(body + "\n}\nthis.scanMods=scanMods;", context,
+    { filename: "app.js#scanMods" });
+
+  context.REPLY = { mods: [], index: { fetchedUtc: null, source: null, refreshed: false },
+    ok: true, reasonId: null, reasonParams: null };
+
+  return context.scanMods({ force: false })
+    .then(() => context.scanMods({ force: true }))
+    .then(() => context.scanMods())
+    .then(() => {
+      assert.deepStrictEqual(asked.map(a => a.method),
+        ["mods.scan", "mods.scan", "mods.scan"],
+        "the three drives did not each reach the bridge once");
+      assert.strictEqual(asked[0].params.force, false,
+        "a scan the page started for itself still asks the host side to refresh");
+      assert.strictEqual(asked[1].params.force, true,
+        "a press of Scan no longer asks the host side to refresh");
+      assert.strictEqual(asked[2].params.force, false,
+        "a call with no option at all forces, which is the shape this rule exists to end");
+
+      // And the host side still only puts the memo down on a forced press.
+      assert.ok(/var force = p\?\.Value<bool\?>\("force"\) \?\? false;/.test(HOST),
+        "the bridge no longer reads the force the page sends");
+      assert.ok(/if \(force\) indexState = await ThunderstoreClient\.RefreshAsync\(\);/.test(HOST),
+        "the bridge refreshes whatever the page asked for, so the option is a no-op");
+    });
+});
+
 Promise.all(pending).then(() => {
   console.log("");
   if (failures.length) {

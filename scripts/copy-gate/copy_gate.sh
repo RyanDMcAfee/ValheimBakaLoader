@@ -358,5 +358,23 @@ else
   echo "  the scan reason selftest is missing: $SCAN_REASON_SELFTEST"; fail=1
 fi
 
+echo "== 23. the notes under Start with Windows, drawn rather than described =="
+# Issue 18's side finding. An entry written while BakaLoader ran as administrator lives in the
+# machine wide Run key, an ordinary run cannot remove it, and so turning the switch off left the
+# switch reading off while Windows went on starting the app with nothing in the window to say
+# so. The rules drive the real reader out of app.js over every shape the host's answer can come
+# in, keep the id in the catalog on both sides of the seam, keep the element under the switch it
+# is about, and keep the Run key WRITE behind a save that actually MOVED that switch. They
+# also keep a save that FAILED from clearing a note it never changed, keep the second note
+# from being hidden by the first, and count the notes against the catalog so no comment that
+# says how many there are can rot.
+STARTWIN_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/start_with_windows_selftest.js"
+if [ -f "$STARTWIN_SELFTEST" ]; then
+  if out=$(node "$STARTWIN_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the start with windows selftest is missing: $STARTWIN_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

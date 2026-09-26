@@ -1,8 +1,8 @@
 {
   "_meta": {
     "language": "en",
-    "appVersion": "1.2.4",
-    "catalog": 4
+    "appVersion": "1.2.5",
+    "catalog": 5
   },
   "keys": {
     "pal.cmd.restart_server": { "lore": "Restart server" },
@@ -270,6 +270,12 @@
     "hearth.upkeep.connection.verdict.both": { "lore": "It worked only with both changes. Turn on both switches." },
     "hearth.upkeep.connection.verdict.none": { "lore": "Nothing got through. Neither switch would help, so look at a firewall, a security tool or the network itself." },
     "hearth.upkeep.start_windows": { "lore": "Start BakaLoader with Windows" },
+    "hearth.upkeep.start_windows.note.machine": { "lore": "Windows is still set to start BakaLoader for every account on this PC. That entry was written while BakaLoader was running as administrator, and an ordinary run cannot take it away. Run BakaLoader as administrator once with this switch off, or open the Startup tab in Task Manager and turn the BakaLoader entry off there. The Startup apps page in Windows Settings shows the same list." },
+    "hearth.upkeep.start_windows.note.machine_other": { "lore": "Windows starts BakaLoader for every account on this PC, from {path}, which is not the copy you are using now. That entry was written while BakaLoader was running as administrator, so an ordinary run cannot take it away. Turn the BakaLoader entry off in the Startup tab in Task Manager, or on the Startup apps page in Windows Settings, which shows the same list, or run that copy as administrator once with its switch off." },
+    "hearth.upkeep.start_windows.note.other_copy": { "lore": "Windows starts a different copy of BakaLoader for this account, from {path}, and that copy is still there. Turn this switch off and then on again to point Windows at the copy you are using now." },
+    "hearth.upkeep.start_windows.note.other_copy_stuck": { "lore": "Windows starts a different copy of BakaLoader for this account, from {path}, as well as the copy this PC starts for every account. Turn the BakaLoader entry off in the Startup tab in Task Manager, or on the Startup apps page in Windows Settings, which shows the same list, and neither of them needs administrator rights." },
+    "hearth.upkeep.start_windows.note.refused": { "lore": "Windows refused to write the start entry for this account. The switch is on in BakaLoader, but nothing will start with Windows. The application log carries the reason Windows gave." },
+    "hearth.upkeep.start_windows.note.refused_off": { "lore": "The switch is off in BakaLoader, but Windows is still set to start it for this account. Turn the BakaLoader entry off in the Startup tab in Task Manager, or on the Startup apps page in Windows Settings, which shows the same list, and neither of them needs administrator rights. Turning this switch on and then off again lets BakaLoader try to take that entry away once more." },
     "hearth.upkeep.start_minimized": { "lore": "Start minimized" },
     "hearth.upkeep.start_minimized.note": { "lore": "The window opens minimized to the taskbar. BakaLoader has no tray icon, so it waits there rather than in the notification area." },
     "hearth.upkeep.share_stats": { "lore": "Share anonymous usage stats" },

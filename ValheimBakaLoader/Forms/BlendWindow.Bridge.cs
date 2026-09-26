@@ -4292,6 +4292,11 @@ namespace ValheimBakaLoader.Forms
                 // after the write lands, so the line that says the level changed is the first
                 // one in the log a host is about to go and read.
                 var detailedLogMoved = false;
+                // And whether it carried a MOVED "Start with Windows". Same rule, same reason:
+                // the card posts every switch together, and until 1.2.5 the Run key was opened
+                // on the key's presence, so every save of any switch on this card went at the
+                // registry for a preference nobody had touched.
+                var startWithWindowsMoved = false;
                 UserPrefsProvider.Mutate(current =>
                 {
                     prefs = current;
@@ -4325,7 +4330,10 @@ namespace ValheimBakaLoader.Forms
                     // request rather than on the next launch.
                     Apply("BypassSystemProxy", v => prefs.BypassSystemProxy = v.Value<bool>());
                     Apply("ForceIPv4", v => prefs.ForceIPv4 = v.Value<bool>());
-                    Apply("StartWithWindows", v => prefs.StartWithWindows = v.Value<bool>());
+                    Apply("StartWithWindows", v =>
+                    {
+                        if (StartupHelper.ApplySavedValue(prefs, v)) startWithWindowsMoved = true;
+                    });
                     Apply("ShareAnonymousStats", v => prefs.ShareAnonymousStats = v.Value<bool>());
                     Apply("StartMinimized", v => prefs.StartMinimized = v.Value<bool>());
                     Apply("SaveProfileOnStart", v => prefs.SaveProfileOnStart = v.Value<bool>());
@@ -4405,8 +4413,6 @@ namespace ValheimBakaLoader.Forms
                     DiscordStatus.RequestUpdate();
                 }
 
-                // When the "start with Windows" toggle was part of this save, mirror it into the
-                // Windows Run registry key so the choice actually takes effect (mirrors MainWindow).
                 // A save that touched either language preference changes which catalog the
                 // countdown and the Discord post are written from.
                 if (dto.TryGetValue("Language", StringComparison.OrdinalIgnoreCase, out _)
@@ -4415,9 +4421,13 @@ namespace ValheimBakaLoader.Forms
                     RefreshHostCatalog();
                 }
 
-                if (dto.TryGetValue("StartWithWindows", StringComparison.OrdinalIgnoreCase, out _))
+                // The Run key, and only when the switch actually MOVED. The card posts every
+                // switch on it together, so a save that came from any of the other ten used to
+                // open the registry for a preference the host never touched.
+                StartupNotes startupNotes = null;
+                if (startWithWindowsMoved)
                 {
-                    try { StartupHelper.ApplyStartupSetting(prefs.StartWithWindows, Logger); }
+                    try { startupNotes = StartupHelper.ApplyStartupSetting(prefs.StartWithWindows, Logger).Notes; }
                     catch (Exception e) { AppLogger.Error(e, "Failed to apply the 'start with Windows' setting."); }
                 }
 
@@ -4429,7 +4439,7 @@ namespace ValheimBakaLoader.Forms
                     catch (Exception e) { AppLogger.Debug("Could not move the log level: {0}", e.Message); }
                 }
 
-                return Task.FromResult<object>(BuildUserPrefsDto());
+                return Task.FromResult<object>(BuildUserPrefsDto(startupNotes));
             });
 
             // --- Language ---
@@ -8853,9 +8863,23 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private static readonly TimeSpan CleansePollCeiling = TimeSpan.FromMinutes(10);
 
-        private object BuildUserPrefsDto()
+        /// <param name="startupNotes">
+        /// What the save that just ran had to say about the Windows Run key, when it was a
+        /// save that moved that switch. Null on every other road, and then the standing state
+        /// is read instead, so a host who turned the switch off in an earlier session still
+        /// finds the note under it when they open the card. Both roads READ the Run key and
+        /// neither of them writes it: an ordinary save changes nothing in the registry.
+        /// <para>
+        /// The two roads cannot disagree. A save works its notes out by asking
+        /// StartupEntry.NotesFor once the registry has been moved, which is the same method
+        /// the read below asks, on the same one StartupEntry, so the sentence the save shows
+        /// is the sentence the next open of the card shows.
+        /// </para>
+        /// </param>
+        private object BuildUserPrefsDto(StartupNotes startupNotes = null)
         {
             var prefs = UserPrefsProvider.LoadPreferences();
+            var startup = startupNotes ?? StartupHelper.NotesFor(prefs.StartWithWindows);
             return new
             {
                 prefs.ServerExePath,
@@ -8872,6 +8896,28 @@ namespace ValheimBakaLoader.Forms
                 prefs.BepInExMaintained,
                 prefs.BepInExMaintenanceAsked,
                 prefs.StartWithWindows,
+                // The note under that switch, or null when there is nothing to say. An entry
+                // written while BakaLoader ran as administrator lives in the machine hive, and
+                // an ordinary run cannot take it away, so the switch can read off while Windows
+                // goes on starting the app. The card says so rather than letting the switch lie.
+                // The same road carries the other five: a machine entry naming a different
+                // copy, this account's entry naming a copy that is still installed, that same
+                // entry standing over a PC wide one for this copy because Windows would not
+                // take it away, a write Windows refused, and this account's entry still
+                // standing with the switch off.
+                StartupNoticeId = startup?.Notice?.Id,
+                // The path that note names, for the two notes that name one. It rides beside
+                // the id because the sentence around it belongs to the catalog: a host reading
+                // the window in Japanese reads the whole note in Japanese, path and all.
+                StartupNoticePath = startup?.Notice?.Path,
+                // And the second note, drawn under the first, because the machine wide key and
+                // this account's own key are separate facts and both of them can be wrong at
+                // once: Windows starting a different copy for every account does not stop
+                // Windows also refusing to write or to remove this account's entry. Null
+                // whenever there is only one thing to say, which is nearly always.
+                StartupAlsoNoticeId = startup?.Also?.Id,
+                // The path THAT one names, on the same terms as the first.
+                StartupAlsoNoticePath = startup?.Also?.Path,
                 prefs.ShareAnonymousStats,
                 prefs.StartMinimized,
                 prefs.SaveProfileOnStart,
