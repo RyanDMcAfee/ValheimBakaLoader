@@ -1,4 +1,5 @@
 using Serilog;
+using Serilog.Core;
 using Serilog.Events;
 using System;
 using System.Collections.Generic;
@@ -112,6 +113,28 @@ namespace ValheimBakaLoader.Tools.Logging
         /// </summary>
         protected virtual void PruneOldLogs(string folder) { }
 
+        /// <summary>
+        /// The dial this logger's detail is turned with, or null for a logger that has none
+        /// and keeps the level it was compiled with.
+        /// <para>
+        /// It is read on every write, so it is answered from a field rather than from the
+        /// container. Only the application log has one: a server's own log is the game's
+        /// output and there is no detail to add to it.
+        /// </para>
+        /// </summary>
+        protected virtual LoggingLevelSwitch LevelSwitch => null;
+
+        /// <summary>
+        /// Whether an event at this level is wanted at all. Serilog's own default answers
+        /// yes to everything, which is why a Verbose line used to reach the window and the
+        /// in-memory tail however the file sink was configured.
+        /// </summary>
+        public bool IsEnabled(LogEventLevel level)
+        {
+            var dial = LevelSwitch;
+            return dial == null || level >= dial.MinimumLevel;
+        }
+
         /// <summary>Tears down the sink so the next write reflects new settings.</summary>
         protected void Rebuild()
         {
@@ -120,6 +143,11 @@ namespace ValheimBakaLoader.Tools.Logging
 
         public void Write(LogEvent logEvent)
         {
+            // The dial is in front of everything, not only in front of the file. The tail the
+            // window shows and the live stream are written here rather than by the sink, so a
+            // level check on the sink alone would have let every Verbose line through to both.
+            if (logEvent == null || !IsEnabled(logEvent.Level)) return;
+
             // Built lazily on first write so DI has finished wiring by then.
             Sink ??= BuildSink();
 
@@ -166,11 +194,28 @@ namespace ValheimBakaLoader.Tools.Logging
         {
             var config = new LoggerConfiguration();
 
+            // A logger with a dial follows it, and the dial can move while the app is open,
+            // so the sink is told to read it rather than to bake a level in. Without one the
+            // level is the one this build was compiled with, exactly as before.
+            //
+            // The dial's own floor is the level this #if would have chosen
+            // (LogLevelControl.DefaultLevel), so taking this branch does not quietly turn a
+            // DEBUG build's Verbose into Debug. It did once: the branch below is the only
+            // place the build's level was ever named, and a dial that started at Debug
+            // shadowed it for every logger that had one.
+            var dial = LevelSwitch;
+            if (dial != null)
+            {
+                config.MinimumLevel.ControlledBy(dial);
+            }
+            else
+            {
 #if DEBUG
-            config.MinimumLevel.Verbose();
+                config.MinimumLevel.Verbose();
 #else
-            config.MinimumLevel.Debug();
+                config.MinimumLevel.Debug();
 #endif
+            }
 
             var fileName = ResolveLogFile();
             if (!string.IsNullOrWhiteSpace(fileName))

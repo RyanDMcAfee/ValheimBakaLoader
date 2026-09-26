@@ -33,6 +33,8 @@ namespace ValheimBakaLoader
             ConfigureServices(services, args);
             using var container = services.BuildServiceProvider();
 
+            AnnounceLogLevel(container);
+
             try
             {
                 // SplashForm routes startup (update check, player data, auto-start profiles,
@@ -43,6 +45,29 @@ namespace ValheimBakaLoader
             {
                 container.GetRequiredService<IExceptionHandler>()
                     .HandleException(e, "Application Run Exception");
+            }
+        }
+
+        /// <summary>
+        /// The first line of the session: how much detail the log is going to carry, and
+        /// which of the two answers decided it.
+        /// <para>
+        /// It is written before the splash screen opens, so a host who turned Detailed log on
+        /// and then could not reproduce the problem can tell from the top of the file whether
+        /// the log in front of them is the detailed one. A logger that will not write is not a
+        /// reason to refuse to start.
+        /// </para>
+        /// </summary>
+        private static void AnnounceLogLevel(IServiceProvider container)
+        {
+            try
+            {
+                var said = container.GetRequiredService<ILogLevelControl>().Apply();
+                container.GetRequiredService<ILogger>().Information("{Line:l}", said);
+            }
+            catch
+            {
+                // Nothing about the level of the log is worth failing a launch over.
             }
         }
 
@@ -78,6 +103,10 @@ namespace ValheimBakaLoader
             services.AddSingleton<ApplicationLogger>();
             services.AddSingleton<ILogger>(sp => sp.GetRequiredService<ApplicationLogger>());
             services.AddSingleton<IApplicationLogger>(sp => sp.GetRequiredService<ApplicationLogger>());
+            // How much detail the application log carries. The logger reads the dial on every
+            // write and the file sink is told to follow it, so Detailed log takes effect the
+            // moment it is saved rather than at the next launch.
+            services.AddSingleton<ILogLevelControl, LogLevelControl>();
             services.AddSingleton<IExceptionHandler, ExceptionHandler>();
             services.AddSingleton<IFileProvider, JsonFileProvider>();
             services.AddSingleton<IProcessProvider, ProcessProvider>();

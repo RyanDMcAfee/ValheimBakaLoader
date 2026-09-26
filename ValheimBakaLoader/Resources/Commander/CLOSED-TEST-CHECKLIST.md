@@ -336,7 +336,7 @@ that nothing in the game ever takes one off. `baka_cleanse` is the way back, and
 walk for it. **Everything here needs a world with marks already on it**, so do the first
 three steps on a throwaway world with 1.1.2's plugins, then put 1.2.3's in and carry on.
 
-Plugin versions for this pass: Commander 1.8.0, KillAll 1.8.0.
+Plugin versions for this pass: Commander 1.8.1, KillAll 1.8.1.
 
 ### Making a world with marks in it (on 1.1.2's plugins)
 
@@ -385,9 +385,80 @@ Plugin versions for this pass: Commander 1.8.0, KillAll 1.8.0.
       to a character file.
 - [ ] On a server running an older Commander, `baka_cleanse` answers `Unknown command: ...`
       and the toast says the plugin is older than the command rather than claiming a cleanse.
-- [ ] A very large, long-lived world: the sweep is one pass on the main thread, so the RCON
-      client can give up waiting before it finishes. The sweep still completes and still puts
-      its counts in the server log. Note the world size and the time if that happens.
+- [ ] A marked item carried in a player's own inventory is still marked, which is the line
+      above; nothing below changes that.
+
+## The sliced sweep (1.2.4, plugins 1.8.1)
+
+Until 1.2.4 the cleanse was one uninterrupted pass on the Unity main thread. On a
+long-lived world that pass outlasts the RCON client's patience, so the host was told the
+command had timed out while it carried on and did every bit of its work, and the server did
+not tick for as long as the pass took: anybody connected would have been frozen and anybody
+connecting would have been refused. The walk now takes about eight milliseconds a frame,
+`baka_cleanse` answers the moment it knows what it is about to walk, and
+`baka_cleanse_status` says how far it has got.
+
+**This needs a big world.** A few hours of play is not enough; a world that has been lived
+in for weeks, or one whose `.db` is over a couple of hundred megabytes, is what shows it.
+A small world finishes inside the first slice and answers exactly as 1.2.3 did, which is the
+first thing to check.
+
+### A small world still behaves the way it always did
+
+- [ ] On a fresh or small world, press **Clear cheat marks**. The toast is the counts, or
+      the "nothing carries a cheat mark" one, and it lands at once. Nothing says "started".
+- [ ] Over RCON, `baka_cleanse` on that world answers with the whole
+      `Cleanse complete: ...` line in one reply.
+
+### A big world answers first and finishes afterwards
+
+- [ ] Over RCON, `baka_cleanse` on the big world answers
+      `Cleanse started: N objects to check.` within a second or two, with N in the tens or
+      hundreds of thousands. Write N down.
+- [ ] While it runs, `baka_cleanse_status` answers `Cleanse running: X of N objects checked.`
+      and X goes UP between two reads.
+- [ ] While it runs, the server keeps ticking: a second RCON command (`playerlist`) answers
+      normally, and the server window's own output does not stop.
+- [ ] Press **Clear cheat marks** in the Players hall on that same big world. The window
+      waits, and when the sweep lands the toast is the counts, exactly as on a small world.
+      It must NOT say the command failed or timed out.
+- [ ] After it lands, `baka_cleanse_status` still answers with the counts, and goes on doing
+      so until another cleanse is started.
+- [ ] `baka_cleanse_status` on a server where nothing has been run answers
+      `Cleanse status: nothing is running.`
+- [ ] Start a second `baka_cleanse` while the first is still walking. It is refused with
+      `Cleanse is already running: M objects still to check.` and the counts of the first one
+      are unaffected.
+- [ ] While the window is waiting on the big world, the **Clear cheat marks** button is
+      greyed out and a second press does nothing. It comes back the moment the toast lands,
+      whichever way the sweep ended.
+- [ ] Send that second `baka_cleanse` from the console while the window is waiting. The
+      window's toast for it says a cleanse is already running and how much is left, and NOT
+      that the server answered with something this version does not recognise.
+- [ ] Restart the server while the window is waiting on a big world. The window says nothing
+      is running and to run it again on an empty server, in those words, rather than reading
+      the idle status as an unknown shape.
+
+### Somebody walking in mid sweep
+
+- [ ] Start the sweep on the big world with the server empty, then have a player connect
+      while `baka_cleanse_status` still says running.
+- [ ] The sweep stops. `baka_cleanse_status` and the server log say
+      `Cleanse stopped: 1 player connected while it was running (<name>). Up to that point: ...
+      Run it again when the server is empty.`
+- [ ] The toast in the window says the same thing and does NOT read like a finished cleanse.
+- [ ] Ask them to log out and run it again. A second run walks the WHOLE world again from
+      the start, which is what it is meant to do: it is not carrying on from where it stopped,
+      and the marks the first run already cleared are simply not found this time.
+- [ ] Nothing was half-written: the containers it did rewrite are clean, and the ones it did
+      not are exactly as they were.
+
+### The ten-minute ceiling
+
+- [ ] If the sweep somehow runs past ten minutes, the window stops asking and the toast says
+      the cleanse is still running and that its counts land in the server log. Nothing about
+      that is a failure: check the server log afterwards and the counts are there. Note the
+      world size and the time if this happens at all.
 
 ## Sign-off
 

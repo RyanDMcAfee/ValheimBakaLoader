@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
@@ -409,7 +410,8 @@ namespace ValheimBakaLoader.Tools
                 // and one package page that would not answer is not a reason to stop reading
                 // the index for a quarter of an hour.
                 ExplainFailure("live package lookup", e,
-                    string.Format(PackageUrlFormat, author?.Trim(), modName?.Trim()));
+                    string.Format(PackageUrlFormat, author?.Trim(), modName?.Trim()),
+                    remember: false);
                 return new ThunderstoreLiveLookup { Answered = false };
             }
         }
@@ -420,7 +422,10 @@ namespace ValheimBakaLoader.Tools
             // holds it used to hang the page for as long as that read took.
             if (!await IndexLock.WaitAsync(LockWait))
             {
-                RememberFailure("busy", ListingIndexUrl);
+                // "busy" and nothing else. This press never left the machine, so whatever
+                // reason the read holding the lock has written down is that read's and not
+                // this one's.
+                RememberFailure("busy", ListingIndexUrl, takePendingReason: false);
                 return State(fetched: false, reusedFresh: false);
             }
 
@@ -442,7 +447,7 @@ namespace ValheimBakaLoader.Tools
             catch (Exception e)
             {
                 ExplainFailure("refresh", e, ListingIndexUrl);
-                RememberFailure("refresh", ListingIndexUrl);
+                RememberFailure("read", ListingIndexUrl);
                 return State(fetched: false, reusedFresh: false);
             }
             finally
@@ -482,7 +487,9 @@ namespace ValheimBakaLoader.Tools
             // written here too, so everyone behind is answered rather than queued.
             if (!await IndexLock.WaitAsync(LockWait))
             {
-                RememberFailure("busy", ListingIndexUrl);
+                // The same rule as the press above: a turn that did not come is a busy press,
+                // never the reason belonging to the read that is still holding the lock.
+                RememberFailure("busy", ListingIndexUrl, takePendingReason: false);
                 return Index;
             }
 
@@ -529,10 +536,14 @@ namespace ValheimBakaLoader.Tools
         /// difference between those two that nothing in the log used to name.
         /// </para>
         /// </summary>
-        private void ExplainFailure(string kind, Exception problem, string url)
+        private void ExplainFailure(string kind, Exception problem, string url,
+            string reasonWhenNothingThrew = "read", bool remember = true)
         {
             FailureNotes++;
-            PendingReason = ReasonFor(problem, kind);
+            // Only a read of the INDEX leaves a reason behind for the memo. A package page
+            // that would not answer writes no memo of its own, so a reason left here by one
+            // would be consumed by the next index failure and shown as ITS reason.
+            if (remember) PendingReason = ReasonFor(problem, reasonWhenNothingThrew);
 
             if (!Explained.Add(kind)) return;
 
@@ -551,20 +562,41 @@ namespace ValheimBakaLoader.Tools
         /// counting them separately is how a host who pressed Scan once would land on the
         /// two-minute step before they had pressed it twice.
         /// </summary>
-        private void RememberFailure(string fallbackReason, string url)
+        private void RememberFailure(string fallbackReason, string url) =>
+            RememberFailure(fallbackReason, url, takePendingReason: true);
+
+        /// <summary>
+        /// The same, for a memo whose reason is its own and not the read's.
+        /// </summary>
+        /// <param name="takePendingReason">
+        /// False for a press that never asked the site anything.
+        /// <para>
+        /// The two busy sites are the only callers that write a memo WITHOUT having made a
+        /// request: they gave up waiting for the lock. The read that holds that lock is on
+        /// another thread and may already have logged an index-stage exception, which leaves
+        /// its reason behind for the memo it is going to write; taking it here would hand a
+        /// press that timed out on a queue inside BakaLoader the reason a different read had
+        /// for failing on the network, and send a host looking at their router for it. So a
+        /// busy press writes "busy", and it leaves the reason where it found it for the read
+        /// that is still going to need it.
+        /// </para>
+        /// </param>
+        private void RememberFailure(string fallbackReason, string url, bool takePendingReason)
         {
+            // The name is what the page words its sentence from, so it is one of the closed
+            // list or it is nothing a host is shown. A stage name is not a reason.
             var streak = (Failure?.Streak ?? 0) + 1;
             var step = BackoffSteps[Math.Min(streak - 1, BackoffSteps.Count - 1)];
 
             Failure = new ThunderstoreFailureMemo
             {
                 LastFailureUtc = UtcNow(),
-                Reason = PendingReason ?? fallbackReason,
+                Reason = (takePendingReason ? PendingReason : null) ?? fallbackReason,
                 Streak = streak,
                 BackOff = step,
             };
 
-            PendingReason = null;
+            if (takePendingReason) PendingReason = null;
 
             Logger.Information(
                 "Thunderstore was not reachable ({0}), so nothing is asked of {1} for {2}.",
@@ -579,6 +611,24 @@ namespace ValheimBakaLoader.Tools
             while (walk.InnerException != null) walk = walk.InnerException;
             return walk.Message;
         }
+
+        /// <summary>
+        /// Every short name a failure is allowed to carry. The page keeps one sentence for
+        /// each of them, so a reason travels as a NAME and is worded where the words live.
+        /// A word that is not on this list never reaches a host: the slot it would land in
+        /// sits inside a translated sentence, and an internal stage name there is neither a
+        /// reason nor a language anybody reads.
+        /// </summary>
+        public static readonly string[] ReasonNames =
+            { "timeout", "connect", "tls", "http", "read", "answered", "busy" };
+
+        /// <summary>
+        /// A memo's reason as one of those names, or "unknown". The page keeps one sentence
+        /// for each of them and words it there; anything off the list is worded as the
+        /// general one rather than travelling to a host as the word it is.
+        /// </summary>
+        public static string ReasonName(string reason) =>
+            Array.IndexOf(ReasonNames, reason ?? "") >= 0 ? reason : "unknown";
 
         /// <summary>A short stable name for what went wrong, for the memo and the page.</summary>
         private static string ReasonFor(Exception problem, string fallback)
@@ -598,7 +648,11 @@ namespace ValheimBakaLoader.Tools
                 walk = walk.InnerException;
             }
 
-            return problem?.GetType().Name ?? fallback;
+            // An exception none of those matched is still a read that went wrong, and its
+            // type name is not a reason: it would land in a slot inside a sentence the
+            // packs translate, in English, saying nothing to the host reading it. With no
+            // exception at all the caller says which of the names fits.
+            return problem == null ? fallback : "read";
         }
 
         private static string Describe(TimeSpan span) =>
@@ -648,8 +702,14 @@ namespace ValheimBakaLoader.Tools
                 // paying the same price. A stage that threw has written its own memo; this
                 // covers the stages that answer with a plain null (an HTTP status, a body
                 // that is not a package list), because a window has to open either way.
-                if (FailureNotes == notesBefore) ExplainFailure("index read", null, ListingIndexUrl);
-                RememberFailure("index read", ListingIndexUrl);
+                // Nothing threw: the site was reached and what came back was not a package
+                // list, which is what a captive portal and a 503 both look like from here.
+                // "Answered" is the truthful name for that, and "index read" was the name of
+                // the STAGE, which is how a host came to read "could not reach Thunderstore
+                // (index read)" about a site that had answered them.
+                if (FailureNotes == notesBefore)
+                    ExplainFailure("index read", null, ListingIndexUrl, "answered");
+                RememberFailure("answered", ListingIndexUrl);
                 return false;
             }
 
@@ -726,6 +786,17 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         private async Task<Dictionary<string, ThunderstorePackage>> FetchViaV1Async(CancellationToken budget)
         {
+            // Three lines at most, all at Verbose: the read opening, the watchdog if it ever
+            // trips, and what the whole body came to. The full listing is the one read in the
+            // app that can take minutes and be a hundred and fifty megabytes, and a host
+            // chasing a stall needs to know whether the bytes were arriving at all.
+            var clock = Stopwatch.StartNew();
+            // Asked BEFORE the sentence is built. Say() asks it again and would drop the
+            // line either way, but the address and the two joins in front of it are work
+            // this read pays for on every scan of every install whose log is at Debug.
+            if (WireTrace.Wanted(Logger))
+                WireTrace.Say(Logger, "Thunderstore listing read started: " + ListingAddress());
+
             try
             {
                 using var client = NewClient();
@@ -745,7 +816,7 @@ namespace ValheimBakaLoader.Tools
                 // not a slow one, and it is the shape this host was stuck in.
                 using var whole = Deadline(ListingTotalTimeout, budget);
                 using var stream = await response.Content.ReadAsStreamAsync(whole.Token);
-                await using var watched = new IdleWatchdogStream(stream, ListingIdleTimeout, whole.Token);
+                await using var watched = new IdleWatchdogStream(stream, ListingIdleTimeout, whole.Token, Logger);
                 using var streamReader = new StreamReader(watched);
                 using var jsonReader = new JsonTextReader(streamReader);
 
@@ -755,6 +826,10 @@ namespace ValheimBakaLoader.Tools
                 // so the whole 150MB+ payload is never held in memory.
                 if (!ReadPackagesInto(map, jsonReader)) return null;
 
+                if (WireTrace.Wanted(Logger))
+                    WireTrace.Say(Logger, "Thunderstore listing read finished: "
+                        + WireTrace.Count(watched.BytesRead) + " bytes in "
+                        + WireTrace.Count(clock.ElapsedMilliseconds) + " ms");
                 Logger.Information("Thunderstore full listing loaded: {0} packages.", map.Count);
                 return map;
             }
@@ -764,6 +839,15 @@ namespace ValheimBakaLoader.Tools
                 return null;
             }
         }
+
+        /// <summary>
+        /// The full listing's address as the trace writes every address: scheme, host and
+        /// path, and nothing that could carry a term a host did not choose to publish.
+        /// </summary>
+        private static string ListingAddress() =>
+            Uri.TryCreate(V1IndexUrl, UriKind.Absolute, out var uri)
+                ? WireTrace.Address(uri)
+                : V1IndexUrl;
 
         private HttpClient NewClient()
         {
@@ -787,13 +871,20 @@ namespace ValheimBakaLoader.Tools
             private readonly Stream Inner;
             private readonly TimeSpan Idle;
             private readonly CancellationToken Outer;
+            private readonly Serilog.ILogger Tracer;
+            private bool Tripped;
 
-            public IdleWatchdogStream(Stream inner, TimeSpan idle, CancellationToken outer)
+            public IdleWatchdogStream(
+                Stream inner, TimeSpan idle, CancellationToken outer, Serilog.ILogger tracer = null)
             {
                 Inner = inner;
                 Idle = idle;
                 Outer = outer;
+                Tracer = tracer;
             }
+
+            /// <summary>How many bytes of the body have arrived so far.</summary>
+            public long BytesRead { get; private set; }
 
             public override bool CanRead => true;
             public override bool CanSeek => false;
@@ -819,7 +910,17 @@ namespace ValheimBakaLoader.Tools
             {
                 using var deadline = Deadline(Idle, Outer);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, token);
-                return await Inner.ReadAsync(buffer.AsMemory(offset, count), linked.Token).ConfigureAwait(false);
+                try
+                {
+                    var read = await Inner.ReadAsync(buffer.AsMemory(offset, count), linked.Token).ConfigureAwait(false);
+                    BytesRead += read;
+                    return read;
+                }
+                catch (OperationCanceledException) when (deadline.Token.IsCancellationRequested)
+                {
+                    Trip();
+                    throw;
+                }
             }
 
             public override async ValueTask<int> ReadAsync(
@@ -827,7 +928,32 @@ namespace ValheimBakaLoader.Tools
             {
                 using var deadline = Deadline(Idle, Outer);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, token);
-                return await Inner.ReadAsync(buffer, linked.Token).ConfigureAwait(false);
+                try
+                {
+                    var read = await Inner.ReadAsync(buffer, linked.Token).ConfigureAwait(false);
+                    BytesRead += read;
+                    return read;
+                }
+                catch (OperationCanceledException) when (deadline.Token.IsCancellationRequested)
+                {
+                    Trip();
+                    throw;
+                }
+            }
+
+            /// <summary>
+            /// The one line the watchdog writes, and it writes it once. A stream that has
+            /// stopped delivering is the shape the stalled host was stuck in, and how many
+            /// bytes had arrived before it stopped is what tells a slow site apart from a
+            /// connection that died in the middle of the body.
+            /// </summary>
+            private void Trip()
+            {
+                if (Tripped) return;
+                Tripped = true;
+                WireTrace.Say(Tracer, "Thunderstore listing stalled: nothing arrived for "
+                    + WireTrace.Count((long)Idle.TotalSeconds) + " s after "
+                    + WireTrace.Count(BytesRead) + " bytes");
             }
 
             protected override void Dispose(bool disposing)

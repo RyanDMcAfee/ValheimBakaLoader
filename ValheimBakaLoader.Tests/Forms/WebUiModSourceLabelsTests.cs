@@ -428,7 +428,10 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains(
                 ":m.notListed?`<span class=\"pill grey\" title=\"${esc(T(\"mods.status.not_listed.tip\"))}\">",
                 render);
-            Assert.Contains("${m.notListed?` title=\"${esc(T(\"mods.status.not_listed.tip\"))}\"`:\"\"}", render);
+            Assert.Contains(
+                "${blind?` title=\"${esc(T(\"mods.status.unchecked.tip\"))}\"`"
+                + ":(m.notListed?` title=\"${esc(T(\"mods.status.not_listed.tip\"))}\"`:\"\")}",
+                render);
 
             // And it is still read before the up-to-date reading, so a row whose Latest
             // nobody knows never says CURRENT.
@@ -439,6 +442,17 @@ namespace ValheimBakaLoader.Tests.Forms
 
             Assert.Equal("not listed", Lore("mods.status.not_listed"));
             Assert.Equal("not listed on Thunderstore right now", Lore("mods.status.not_listed.tip"));
+
+            // A scan that never reached the site is the whole table's version of the same
+            // rule, and it is read BEFORE both of the readings that claim to know a latest
+            // version, so no row says CURRENT against a site that was never asked.
+            Assert.Contains(
+                ":blind?`<span class=\"pill grey\" title=\"${esc(T(\"mods.status.unchecked.tip\"))}\">",
+                render);
+            Assert.True(
+                render.IndexOf(":blind?`<span class=\"pill grey\"", StringComparison.Ordinal)
+                < render.IndexOf("m.notListed?`<span class=\"pill grey\"", StringComparison.Ordinal),
+                "the unchecked pill must be read before the not-listed one");
         }
     }
 }

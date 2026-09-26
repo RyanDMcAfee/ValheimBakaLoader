@@ -174,6 +174,7 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal(19, calls.Count);
             var composed = 0;
             var fromTable = 0;
+            var fromHelper = 0;
             foreach (Match call in calls)
             {
                 var text = call.Value;
@@ -195,23 +196,62 @@ namespace ValheimBakaLoader.Tests.Forms
                     // sentence written here in plain words.
                     if (rest.StartsWith("T(", StringComparison.Ordinal)
                         && rest.Contains("reasonId", StringComparison.Ordinal)) { fromTable++; continue; }
+                    // A panel whose sentence is CHOSEN rather than named hands in a helper
+                    // that takes nothing at all. A call with no arguments cannot carry
+                    // English by construction, which is the whole of what this rule is
+                    // about, and the helper itself is held to the catalog below. The Mods
+                    // hall's failed scan is the one: since 1.2.4 the host side names the
+                    // reason for the failure it actually met, and the page's own kind table
+                    // is the floor under that, so the choice is one function rather than two
+                    // expressions spelled into the panel.
+                    if (Regex.IsMatch(rest, @"^[A-Za-z_$][A-Za-z0-9_$]*\(\)")) { fromHelper++; continue; }
                     Assert.True(rest.StartsWith("T(\"", StringComparison.Ordinal),
                                 "an empty state still spells its own " + field + " " + rest.Substring(0, Math.Min(60, rest.Length)));
                 }
             }
 
             Assert.Equal(0, composed);
-            // Exactly one: the Mods hall's failed scan, which says a different sentence for
-            // a refusal and for a scan that ran out of time.
-            Assert.Equal(1, fromTable);
+            // Nothing reads a table straight into a panel any more: the one that used to is
+            // the Mods hall's failed scan, and its choice moved into modsScanFailReason.
+            Assert.Equal(0, fromTable);
+            // Exactly one: that same failed scan, which now chooses between the sentence the
+            // host named and the page's own kind table.
+            Assert.Equal(1, fromHelper);
+
+            // And the helper really is the chooser, rather than a name with English behind
+            // it: it reads the host's reason first and falls back to the kind table.
+            var chooser = Between(source, "function modsScanFailReason(){", "\n}");
+            Assert.Contains("modsScanReasonText()", chooser);
+            Assert.Contains("MODS_SCAN_FAIL[S.modsScanError]", chooser);
+
             var reasons = Regex.Matches(
                 Between(source, "const MODS_SCAN_FAIL={", "\n};"), "reasonId:\"([a-z][a-z0-9_.]*)\"");
             Assert.Equal(2, reasons.Count);
-            foreach (Match reason in reasons)
+            // The ids the HOST side may name on a failed scan, held to the catalog the same
+            // way: a reply carrying an id nothing has words for would show the id.
+            var named = Regex.Matches(
+                Between(source, "const MODS_SCAN_REASONS={", "\n};"), "reasonId:\"([a-z][a-z0-9_.]*)\"");
+            // Three since 1.2.4: the site could not be reached; a press that ran out of time
+            // waiting for another scan's turn, which never asked the site anything and must
+            // not be worded as the site refusing to answer; and a site that ANSWERED with
+            // something that was not its package list, which has a frame of its own because
+            // the unreachable one asserts the site could not be reached and would have been
+            // contradicting its own bracket.
+            Assert.Equal(3, named.Count);
+            foreach (Match reason in reasons.Concat(named))
             {
                 Assert.True(Catalog().ContainsKey(reason.Groups[1].Value),
                             "the catalog has no " + reason.Groups[1].Value
                             + ", so the failed-scan panel would show the id");
+            }
+
+            // Both sides of that seam name the same id. The bridge sends it as a literal and
+            // the page holds the only list of the ones it can word, so a rename on one side
+            // and not the other is a panel that falls back in silence.
+            var bridge = AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindow.Bridge.cs");
+            foreach (Match reason in named)
+            {
+                Assert.Contains("\"" + reason.Groups[1].Value + "\"", bridge);
             }
 
             Assert.Contains("reason:T(\"mods.empty.no_match.reason\",{count:mods.length})", source);

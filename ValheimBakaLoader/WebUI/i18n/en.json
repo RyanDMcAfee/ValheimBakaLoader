@@ -1,8 +1,8 @@
 {
   "_meta": {
     "language": "en",
-    "appVersion": "1.2.3",
-    "catalog": 3
+    "appVersion": "1.2.4",
+    "catalog": 4
   },
   "keys": {
     "pal.cmd.restart_server": { "lore": "Restart server" },
@@ -58,6 +58,7 @@
     "pal.gate.not_running": { "lore": "Server not running" },
     "pal.gate.already_running": { "lore": "Server already running" },
     "pal.gate.unavailable": { "lore": "Unavailable right now" },
+    "pal.gate.cleanse_running": { "lore": "A cleanse is already running on this server" },
     "pal.console.undelivered.toast": { "lore": "Command not delivered · server running & RCON bound?", "mark": "ᚦ" },
     "pal.start.unavailable.toast": { "lore": "Start unavailable · already running?", "mark": "ᚦ" },
     "pal.stop.unavailable.toast": { "lore": "Stop unavailable · server not running", "mark": "ᚦ" },
@@ -246,6 +247,9 @@
     "hearth.upkeep.connection.no_proxy.note": { "lore": "BakaLoader follows the proxy settings Windows holds, including automatic detection. A proxy entry nothing is listening on makes every request sit and wait. With this on, BakaLoader goes straight out." },
     "hearth.upkeep.connection.ipv4": { "lore": "Connect over IPv4 only" },
     "hearth.upkeep.connection.ipv4.note": { "lore": "Some networks hand out an IPv6 address that goes nowhere, and a connection to one hangs instead of failing. With this on, BakaLoader asks for IPv4 addresses and nothing else." },
+    "hearth.upkeep.connection.detailed_log": { "lore": "Detailed log" },
+    "hearth.upkeep.connection.detailed_log.note": { "lore": "Writes a line into the application log when a request goes out and a line when it comes back: the address and the proxy in front of it, then the status, the size and how long the answer took to start arriving, or the exception when it failed. No header, no body, no query string and no webhook key goes in with it, so the file stays safe to attach to a bug report. Leave it off unless you are chasing a problem, because the log grows fast." },
+    "hearth.upkeep.connection.detailed_log.forced": { "lore": "BakaLoader was started with --verbose, so the detailed log stays on until you close it. The switch follows that and cannot be moved here." },
     "hearth.upkeep.connection.test.label": { "lore": "Test the connection" },
     "hearth.upkeep.connection.test": { "lore": "Test connection" },
     "hearth.upkeep.connection.test.title": { "lore": "Asks thunderstore.io the way BakaLoader does, and says which of the two switches would have helped" },
@@ -405,6 +409,19 @@
     "vikings.cleanse.done.toast": { "lore": "Cheat marks cleared · {zdos} world objects · {containers} containers · {items} items", "params": { "zdos": "number", "containers": "number", "items": "number" }, "mark": "ᛉ" },
     "vikings.cleanse.clean.toast": { "lore": "Nothing in this world carries a cheat mark.", "mark": "ᛉ" },
     "vikings.cleanse.connected.toast": { "lore": "Still connected: {who}. Cheat marks can only be cleared on an empty server.", "params": { "who": "text" }, "mark": "ᚦ" },
+    "vikings.cleanse.stopped.toast": { "lore": "Somebody connected while the cleanse was running ({who}), so it stopped: {zdos} world objects, {containers} containers, {items} items. Run it again when the server is empty.", "params": { "who": "text", "zdos": "number", "containers": "number", "items": "number" }, "mark": "ᚦ" },
+    "vikings.cleanse.running.toast": { "lore": "The cleanse is running on the server. Its counts land in the log when it finishes.", "mark": "ᛉ" },
+    "vikings.cleanse.still_running.toast": { "lore": "The cleanse is still running after ten minutes. It finishes on its own, and its counts land in the server log; the console command baka_cleanse_status answers with them too.", "mark": "ᛉ" },
+    "vikings.cleanse.unreachable.toast": { "lore": "The server stopped answering, so BakaLoader stopped waiting for the cleanse. If the server went down, the cleanse went with it: start it again once the server is back up and empty.", "mark": "ᚦ" },
+    "vikings.cleanse.already.toast": {
+      "lore": { "one": "A cleanse is already running: {count} object still to check. Its counts land in the log when it finishes.", "other": "A cleanse is already running: {count} objects still to check. Its counts land in the log when it finishes." },
+      "plural": "count",
+      "mark": "ᛊ"
+    },
+    "vikings.cleanse.idle.toast": {
+      "lore": "The server says nothing is running. If it restarted while BakaLoader was waiting, the cleanse went with it. Run it again on an empty server.",
+      "mark": "ᚦ"
+    },
     "vikings.cleanse.unsupported.toast": { "lore": "This server is running an older BakaLoader plugin that does not know the command. Restart the server to load the one that ships with this version.", "mark": "ᚦ" },
     "vikings.cleanse.refused.toast": { "lore": "The server refused the cleanse. The Saga log holds what it said.", "plain": "The server refused the cleanse. The log holds what it said.", "mark": "ᚦ" },
     "vikings.cleanse.silent.toast": { "lore": "The server said nothing back, so whether anything was cleared is not known.", "mark": "ᚦ" },
@@ -610,6 +627,9 @@
       "params": { "world": "text" }
     },
     "world.copy.placeholder": { "lore": "the new world's name" },
+    "world.copy.note.map": {
+      "lore": "The copy is a world of its own, so each player's map of it starts blank: explored ground and personal pins are kept per world inside a player's own character file. What was written on a cartography table is part of the world save and comes across with the copy."
+    },
     "world.copy.block.no_world": { "lore": "there is no world here to copy" },
     "world.copy.block.running": {
       "lore": "'{owner}' is running this world right now. Stop the server first.",
@@ -1154,7 +1174,7 @@
     "realm.new.seed.copied.note": { "lore": "the copied world keeps the seed it was made with, so this cannot be set" },
     "realm.new.copy_world.label": { "lore": "Copy the world from {source}", "params": { "source": "text" } },
     "realm.new.copy_world.title": { "lore": "ON: the new realm starts with a copy of that world, under the world name above, in its own save folder. The world it was copied from is left exactly as it is.\n\nOFF: the new realm starts on a brand new, empty world.", "plain": "ON: the new server starts with a copy of that world, under the world name above, in its own save folder. The world it was copied from is left exactly as it is.\n\nOFF: the new server starts on a brand new, empty world." },
-    "realm.new.copy_world.on.note": { "lore": "The new realm starts with a copy of {source}: the same map, the same buildings, the same chests. Its seed, its difficulty and its world switches come from the copy. {source} itself is not touched.", "plain": "The new server starts with a copy of {source}: the same map, the same buildings, the same chests. Its seed, its difficulty and its world switches come from the copy. {source} itself is not touched.", "params": { "source": "text" } },
+    "realm.new.copy_world.on.note": { "lore": "The new realm starts with a copy of {source}: the same map, the same buildings, the same chests. Its seed, its difficulty and its world switches come from the copy. {source} itself is not touched. The copy is a world of its own, so each player's map of it starts blank: explored ground and personal pins are kept per world inside a player's own character file. What was written on a cartography table is part of the world save and comes across with the copy.", "plain": "The new server starts with a copy of {source}: the same map, the same buildings, the same chests. Its seed, its difficulty and its world switches come from the copy. {source} itself is not touched. The copy is a world of its own, so each player's map of it starts blank: explored ground and personal pins are kept per world inside a player's own character file. What was written on a cartography table is part of the world save and comes across with the copy.", "params": { "source": "text" } },
     "realm.new.world.empty.note": { "lore": "A new world name and a save folder of its own mean a new, empty world. Nothing is carried over from any realm you already have.", "plain": "A new world name and a save folder of its own mean a new, empty world. Nothing is carried over from any server you already have." },
     "realm.new.difficulty.note": { "lore": "World difficulty · leave on Normal for the standard game, or set it now so the realm is born this way on its first launch", "plain": "World difficulty · leave on Normal for the standard game, or set it now so the world is born this way on its first launch" },
     "realm.new.iso.label": { "lore": "Separate install (own mods)" },
@@ -1296,6 +1316,7 @@
     "mods.add.preview.toast": { "lore": "Installing runs in the app.", "mark": "ᛋ" },
     "mods.scan.begun.toast": { "lore": "Thunderstore scan begun", "mark": "ᛋ" },
     "mods.scan.timeout.toast": { "lore": "The scan did not answer within a minute, so it was given up on.", "mark": "ᚦ" },
+    "mods.scan.failed.toast": { "lore": "Thunderstore was not read, so nothing was checked for a newer version.", "mark": "ᚦ" },
     "mods.scan.done.toast": { "lore": { "one": "Scan complete · {count} mods · {updates} update", "other": "Scan complete · {count} mods · {updates} updates" }, "plural": "updates", "mark": "ᛋ" },
     "mods.check_one.cooldown.toast": { "lore": "that one was just checked; give it a moment", "mark": "ᛋ" },
     "mods.check_one.bad_name.toast": { "lore": "this folder does not name a Thunderstore package", "mark": "ᚦ" },
@@ -1541,6 +1562,24 @@
     "mods.empty.failed.title": { "lore": "Thunderstore could not be read" },
     "mods.empty.failed.reason": { "lore": "The scan read this server's BepInEx folder, but Thunderstore did not answer, so nothing could be checked for a newer version. Your mods are untouched." },
     "mods.empty.failed.reason.timeout": { "lore": "Thunderstore did not answer within a minute, so the scan was given up on and nothing could be checked for a newer version. Your mods are untouched." },
+    "mods.empty.failed.reason.unreachable": { "lore": "BakaLoader read this server's BepInEx folder, then could not reach Thunderstore ({detail}), so nothing could be checked for a newer version. Your mods are untouched.", "params": { "detail": "text" } },
+    "mods.empty.failed.reason.answered": { "lore": "BakaLoader read this server's BepInEx folder, and Thunderstore answered with something that was not its package list, so nothing could be checked for a newer version. A sign-in page on the network in front of it looks like this, and so does the site having a bad minute. Your mods are untouched." },
+    "mods.empty.failed.reason.busy": { "lore": "BakaLoader read this server's BepInEx folder, but another scan was already reading Thunderstore and this one ran out of time waiting its turn, so nothing could be checked for a newer version. Your mods are untouched." },
+    "mods.scan.reason.timeout": { "lore": "the site did not answer in time" },
+    "mods.scan.reason.connect": { "lore": "the connection to the site could not be opened" },
+    "mods.scan.reason.tls": { "lore": "the secure handshake with the site did not complete" },
+    "mods.scan.reason.http": { "lore": "the request to the site failed" },
+    "mods.scan.reason.read": { "lore": "the answer from the site could not be read" },
+    "mods.scan.reason.answered": { "lore": "the site answered with something that was not its package list" },
+    "mods.scan.reason.busy": { "lore": "another scan was already holding the site's turn" },
+    "mods.scan.reason.unknown": { "lore": "the reason was not written down" },
+    "mods.scan.retry.waiting": { "lore": "The site will not be asked again for {retry}, and Try again asks it straight away.", "params": { "retry": "text" } },
+    "mods.scan.retry.ready": { "lore": "The site can be asked again now: press Try again." },
+    "mods.scan.retry.moment": { "lore": "a moment" },
+    "mods.scan.retry.seconds": { "lore": { "one": "{count} second", "other": "{count} seconds" }, "plural": "count" },
+    "mods.scan.retry.minutes": { "lore": { "one": "{count} minute", "other": "{count} minutes" }, "plural": "count" },
+    "mods.status.unchecked": { "lore": "Not checked" },
+    "mods.status.unchecked.tip": { "lore": "Thunderstore was not reached on this scan, so nothing is known about a newer version of this mod. What is installed is untouched." },
     "mods.empty.failed.action": { "lore": "Try again" },
     "mods.empty.failed.action.test": { "lore": "Test the connection" },
     "mods.empty.no_match.title": { "lore": "No mod matches that search" },

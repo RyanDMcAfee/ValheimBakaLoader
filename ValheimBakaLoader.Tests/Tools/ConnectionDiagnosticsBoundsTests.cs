@@ -1,4 +1,8 @@
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
@@ -58,6 +62,86 @@ namespace ValheimBakaLoader.Tests.Tools
                 }
 
                 Assert.All(report.Stages, s => Assert.False(string.IsNullOrWhiteSpace(s.Detail)));
+            }
+            finally
+            {
+                ConnectionDiagnostics.StageTimeout = stage;
+                ConnectionDiagnostics.OverallTimeout = overall;
+            }
+        }
+
+        /// <summary>
+        /// A Serilog logger that keeps what it was written and answers IsEnabled off a dial,
+        /// which is the application logger's shape without its file sink.
+        /// </summary>
+        private sealed class Remembering : ILogger
+        {
+            public LoggingLevelSwitch Dial { get; } = new(LogEventLevel.Debug);
+
+            public List<string> Lines { get; } = new();
+
+            public void Write(LogEvent logEvent)
+            {
+                if (logEvent == null || !IsEnabled(logEvent.Level)) return;
+                Lines.Add(logEvent.RenderMessage());
+            }
+
+            public bool IsEnabled(LogEventLevel level) => level >= Dial.MinimumLevel;
+        }
+
+        /// <summary>
+        /// Troubleshooting, the FAQ and the Hearth page all tell a host that with Detailed log
+        /// on, every web request BakaLoader makes writes one line into the application log.
+        /// The connection test is the button the failed mod scan puts beside Try again, and
+        /// the FAQ tells the host to turn Detailed log on before pressing it, so it is the
+        /// last client in the app that may be silent.
+        /// </summary>
+        [Fact(Timeout = 120000)]
+        public async Task The_connection_test_writes_a_request_line_like_every_other_client()
+        {
+            var stage = ConnectionDiagnostics.StageTimeout;
+            var overall = ConnectionDiagnostics.OverallTimeout;
+
+            try
+            {
+                // Nothing here opens a connection: the address cannot resolve, so each web
+                // step fails on its own short clock. What is asserted is that it SAID so.
+                ConnectionDiagnostics.StageTimeout = TimeSpan.FromSeconds(2);
+                ConnectionDiagnostics.OverallTimeout = TimeSpan.FromSeconds(60);
+
+                var logger = new Remembering();
+                logger.Dial.MinimumLevel = LogEventLevel.Verbose;
+
+                await ConnectionDiagnostics.RunAsync(
+                    "https://a-host-that-cannot-resolve.invalid/listing.json", logger);
+
+                var sent = logger.Lines
+                    .Where(l => l.StartsWith(
+                        "HTTP GET https://a-host-that-cannot-resolve.invalid/listing.json",
+                        StringComparison.Ordinal))
+                    .ToList();
+
+                // The plain read and at least the first of the two the switches shape: "it
+                // does not work" and "it does not work THIS way" are different answers and
+                // the log has to carry both of them.
+                Assert.True(sent.Count >= 2,
+                    "the connection test wrote " + sent.Count + " request lines: "
+                    + string.Join(" / ", logger.Lines));
+
+                // Each one names where the bytes were going to go, which is the half of the
+                // answer an exception message never carries.
+                Assert.All(sent, line => Assert.Contains(" via ", line, StringComparison.Ordinal));
+
+                // And the failure is written too, with the reason at the bottom of it.
+                Assert.Contains(logger.Lines, l => l.StartsWith(
+                    "HTTP FAILED https://a-host-that-cannot-resolve.invalid/listing.json",
+                    StringComparison.Ordinal));
+
+                // With the dial where every release has it, the same run says nothing at all.
+                var quiet = new Remembering();
+                await ConnectionDiagnostics.RunAsync(
+                    "https://a-host-that-cannot-resolve.invalid/listing.json", quiet);
+                Assert.Empty(quiet.Lines);
             }
             finally
             {

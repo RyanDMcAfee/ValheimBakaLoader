@@ -291,7 +291,17 @@ namespace ValheimBakaLoader.Tests.Forms
             // up on and says that.
             // 203 with the eight the cleanse answers with: the six things the server can
             // say back, the shape this version has not met, and the browser preview.
-            Assert.Equal(203, marked.Count);
+            // 206 once the cleanse was sliced: a sweep that stopped part way because
+            // somebody connected, a sweep that is still walking, and the one the window says
+            // when it has waited ten minutes and stopped asking.
+            // 208 with the two answers the sliced sweep made reachable: a second press
+            // while one is already walking, and a status verb that says nothing is running
+            // because the server restarted while the window was waiting.
+            // 210 with the two the second pass over 1.2.4 added: a scan that could not read
+            // Thunderstore now has a toast of its own rather than raising the failed panel's
+            // whole paragraph, and a wait that ends because the server stopped answering is
+            // said in its own words instead of being worded as the ten-minute ceiling.
+            Assert.Equal(210, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

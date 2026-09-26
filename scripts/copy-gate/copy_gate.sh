@@ -342,5 +342,21 @@ else
   echo "  the cleanse reply table is missing: $CLEANSE_SELFTEST"; fail=1
 fi
 
+echo "== 22. why a scan came back with nothing, read rather than guessed =="
+# The panel that says a scan failed has had its own sentence since 1.2.3, and the sentence was
+# the same one whether the site could not be reached, the backoff was still running or the
+# server path was missing. The host side knows which of those it was and now says so. The
+# rules hold the reply's two new fields, that a scan which checked NOTHING lands on the
+# failed state rather than on a table of dashes, that the page renders the host's sentence
+# only when it has words for it, and that every id either side can name is in the catalog
+# with the slots it declares.
+SCAN_REASON_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/mods_scan_reason_selftest.js"
+if [ -f "$SCAN_REASON_SELFTEST" ]; then
+  if out=$(node "$SCAN_REASON_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the scan reason selftest is missing: $SCAN_REASON_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

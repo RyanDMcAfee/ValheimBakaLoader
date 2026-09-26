@@ -17,6 +17,10 @@
  *      nothing else writes, the switches ride in and out on userprefs, and the RPC the test
  *      calls is one the bridge registers.
  *   5. The test's own stage and verdict sentences are a table too, and all of them exist.
+ *   6. The Detailed log switch is on that same card, rides in and out on userprefs like the
+ *      other two, and is GATED rather than movable when the command line already set the
+ *      level: a switch offering a choice the command line has already made is a lie about
+ *      what the window can do.
  *
  * Prints one line per rule and exits non zero on the first failure.
  *
@@ -205,6 +209,80 @@ test("every step and every verdict the test can report has a sentence", () => {
   for (const key of wantVerdicts)
     assert.ok(diagnostics.indexOf('"' + key + '"') > 0,
       "the native test never answers with the verdict " + key);
+});
+
+/* ------------------------------------- rule 6: the third switch, and when it cannot be moved */
+test("the Detailed log switch is on the card, saved, and gated under --verbose", () => {
+  ['id="rowDetailedLog"', 'id="tDetailedLog"', 'id="detailedLogForced"'].forEach(needle => {
+    assert.ok(MARKUP.indexOf(needle) >= 0, "index.html no longer carries " + needle);
+  });
+
+  // Both sentences on the row are the walker's, so the card reads correctly on the frame
+  // before the catalog lands, exactly like the two switches above it.
+  ["hearth.upkeep.connection.detailed_log",
+   "hearth.upkeep.connection.detailed_log.note",
+   "hearth.upkeep.connection.detailed_log.forced"].forEach(id => {
+    assert.ok(KEYS[id], "the catalog has no " + id);
+    assert.ok(MARKUP.indexOf('data-i18n="' + id + '"') >= 0,
+      "index.html does not word " + id + " on the first frame");
+  });
+
+  // Drawn from what is stored, and saved when it moves, the same as the other two.
+  assert.ok(/setT\("tDetailedLog"/.test(SOURCE),
+    "the switch is never drawn from what is stored, so it shows whatever the document"
+    + " shipped with");
+  assert.ok(/DetailedLog:detailedLogSaved\(\)/.test(SOURCE),
+    "the switch is never saved, so moving it is forgotten at the next launch");
+
+  // The command line wins for the session, so the row is gated rather than movable and the
+  // PREFERENCE is left exactly as the host set it.
+  assert.ok(/DETAILED_LOG_FORCED=!!up\.DetailedLogForcedByCommandLine/.test(SOURCE),
+    "the page never reads whether the command line set the level");
+  assert.ok(/function detailedLogSaved\(\)\{[\s\S]{0,200}DETAILED_LOG_FORCED\?DETAILED_LOG_PREF/.test(SOURCE),
+    "a save under --verbose writes the drawn state back, which turns a host's off into on");
+  assert.ok(/row\.classList\.toggle\("gated",DETAILED_LOG_FORCED\)/.test(SOURCE),
+    "the row is not gated under --verbose, so it offers a choice that is not there");
+  assert.ok(/closest\("#tDetailedLog"\)[\s\S]{0,240}preventDefault\(\)/.test(SOURCE),
+    "nothing stops a click on the gated switch, and the generic [data-t] handler flips it"
+    + " before any listener of ours runs");
+
+  // The row's tooltip is worded from the catalog ONCE, at init, so a language switch has
+  // to re-word it the way it re-words every other painted-from-state surface. Without
+  // that, a host who switches language reads the gate's note in the language they left.
+  assert.ok(/try\{syncDetailedLogGate\(\);\}catch\(_\)\{\}/.test(SOURCE),
+    "the gated row's tooltip is never drawn again, so a language switch leaves the old"
+    + " wording on it");
+  const repaint = SOURCE.slice(SOURCE.indexOf("function repaintBootCopy(){"));
+  assert.ok(repaint.indexOf("syncDetailedLogGate()") > 0
+    && repaint.indexOf("syncDetailedLogGate()") < repaint.indexOf("\n}"),
+    "the redraw that every language switch goes through does not include the gated row");
+
+  // And the far side really sends the flag the page reads.
+  const bridge = fs.readFileSync(BRIDGE, "utf8");
+  assert.ok(bridge.indexOf("DetailedLogForcedByCommandLine") > 0,
+    "the bridge never tells the page the command line set the level");
+  assert.ok(bridge.indexOf('Apply("DetailedLog"') > 0,
+    "userprefs.save ignores DetailedLog, so the switch saves nothing");
+});
+
+/* ------------------------------------------- rule 7: the copy says what the switch does */
+test("the switch's own note describes the lines it really writes", () => {
+  const note = KEYS["hearth.upkeep.connection.detailed_log.note"].lore;
+
+  // TWO lines per request, not one. The handler writes one when the request goes out and
+  // one when it comes back, and under IPv4 only there is a connect line as well. "One line
+  // per web request" was a number a host could count and find wrong on the first read.
+  assert.ok(!/one line per web request/i.test(note),
+    "the note still promises one line per request, and the handler writes two");
+  assert.ok(/goes out/i.test(note) && /comes back/i.test(note),
+    "the note does not say a line goes out and a line comes back");
+
+  // And it still says what is deliberately kept out, which is what makes the file safe to
+  // attach to a public issue.
+  ["header", "body", "query string", "webhook key"].forEach(word => {
+    assert.ok(note.toLowerCase().indexOf(word) >= 0,
+      "the note no longer says " + JSON.stringify(word) + " is kept out of the log");
+  });
 });
 
 console.log("");

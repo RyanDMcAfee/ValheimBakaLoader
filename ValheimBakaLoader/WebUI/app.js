@@ -234,7 +234,15 @@ function hostSentence(id,params){
   try{return T(row.textId,params||{});}catch(_){return null;}
 }
 function rpc(method,params){
-  return Native.call(method,params).catch(err=>{
+  return Native.call(method,params).then(answer=>{
+    /* The refusal the LAST call named is not this one's. These two are read by a caller
+       AFTER its own call comes back, so a name left standing from an earlier refusal
+       would be picked up and shown as the reason for a call that succeeded, or for a
+       later one that failed for something else entirely. Cleared on the way through. */
+    window.BAKA_ERR_ID=null;
+    window.BAKA_ERR_PARAMS=null;
+    return answer;
+  }).catch(err=>{
     window.BAKA_ERR_ID=err?.errorId||null;
     window.BAKA_ERR_PARAMS=err?.errorParams||null;
     /* A refusal that named itself and that this page has a sentence for is said in the
@@ -265,6 +273,15 @@ const S={
      addresses answered. Not the same thing as when Scan was pressed: a press that finds
      a list read moments ago keeps the earlier time, because that is the truthful one. */
   modIndexAt:null, modIndexSource:null,
+  /* Whether the last scan could check ANYTHING against Thunderstore, and the reason the
+     host side named when it could not. Both are cleared on a profile switch with the rows
+     they belong to: the previous realm's failure is not this realm's, and a panel wording
+     one would be saying something nobody asked about this server. */
+  modsIndexBlind:false, modsScanReason:null,
+  /* True while a cleanse is walking and the window is waiting it out. It is the gate on
+     the two ways in: the sweep is sliced on the server and the wait runs for up to ten
+     minutes, so a page where nothing moves is a page a host presses again. */
+  cleansing:false,
   hexium:false,           // the host's "Also check Hexium" switch, mirrored from userprefs
 
   modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
@@ -569,6 +586,7 @@ window.BAKA_I18N_READY=I18N_READY;
 function repaintBootCopy(){
   try{renderHearth();}catch(_){}          /* Hearth card, app bar, waiting-update pill */
   try{syncUpkeepGates();}catch(_){}       /* the gated auto-update row's tooltip */
+  try{syncDetailedLogGate();}catch(_){}   /* the gated Detailed log row's tooltip */
   try{renderSideVer();}catch(_){}         /* the sidebar version line */
   try{renderWinState();}catch(_){}        /* the maximize button, in whichever state */
   try{renderAppUpdatePill();}catch(_){}   /* the BakaLoader-update pill */
@@ -1870,7 +1888,7 @@ async function switchServer(name){
      stop being able to reach. wireSort resolves them through a getter for the same reason;
      the two together are belt and braces and they do not conflict. */
   S.mods=null; S.modsScanned=false; S.lastScan=null; sortReset(S.modSort);
-  S.modIndexAt=null; S.modIndexSource=null;
+  S.modIndexAt=null; S.modIndexSource=null; S.modsIndexBlind=false; S.modsScanReason=null;
   /* a search was typed about the previous realm's mods and scrolls, so it goes with them */
   S.modFilter=""; if($("#modSearch")) $("#modSearch").value="";
   S.runeFilter=""; if($("#runeSearch")) $("#runeSearch").value="";
@@ -3050,7 +3068,9 @@ function modSearchText(m){
     /* The pill the row draws, word for word. A search over the table has to carry the
        quiet pill too, or a host looking for the mods that were pulled is the one host
        the box cannot answer. */
-    m.Bundled?T("mods.status.bundled"):modIsHeld(m)?T("mods.status.held")
+    m.Bundled?T("mods.status.bundled")
+      :S.modsIndexBlind?T("mods.status.unchecked")
+      :modIsHeld(m)?T("mods.status.held")
       :m.notListed?T("mods.status.not_listed")
       :(m.UpdateAvailable?T("mods.status.update"):T("mods.status.current")),
     m.possiblyOutdated&&!m.IsPatcher?T("mods.possibly_outdated.yes"):"",
@@ -3298,6 +3318,109 @@ const MODS_SCAN_FAIL={
   failed:{reasonId:"mods.empty.failed.reason"},
   timeout:{reasonId:"mods.empty.failed.reason.timeout"},
 };
+/* Every reason the HOST side can name on a failed scan, and the sentence for each. The
+   kind table above is the page's own guess out of two: it knows the scan did not come
+   back, and whether the ceiling was what ended it, and nothing else. The host knows which
+   read failed, what kind of failure it was and how long it will not ask the site again
+   for, and since 1.2.4 the reply carries that as a reason id and its slots.
+   A table rather than a bare string, for the same reason MODS_SCAN_FAIL is one: the id is
+   named once, the copy gate can see it, and the selftest beside this holds it against the
+   id the bridge actually sends. */
+const MODS_SCAN_REASONS={
+  unreachable:{reasonId:"mods.empty.failed.reason.unreachable"},
+  /* The site ANSWERED, with something that was not its package list, which is what a
+     captive portal and a 503 both look like from here. It has a frame of its own because
+     the unreachable one asserts the site could not be reached, and "could not reach
+     Thunderstore (the site answered with something that was not its package list)"
+     contradicts itself inside one bracket. */
+  answered:{reasonId:"mods.empty.failed.reason.answered"},
+  /* A press that ran out of time waiting for another scan's turn never asked the site
+     anything, so it must not be worded as the site failing to answer: a host reading that
+     would go looking at their network for a queue that is inside BakaLoader. */
+  busy:{reasonId:"mods.empty.failed.reason.busy"},
+};
+/* The kinds of failure the host side can name, and the sentence for each. The host hands
+   the NAME because the words belong on this side; a name this page has no sentence for
+   falls to the last row rather than reaching a host as the word it is. A table for the
+   same reason the two above are tables: the ids are named once and the copy gate sees
+   every one of them. */
+const MODS_SCAN_DETAIL={
+  timeout:{textId:"mods.scan.reason.timeout"},
+  connect:{textId:"mods.scan.reason.connect"},
+  tls:{textId:"mods.scan.reason.tls"},
+  http:{textId:"mods.scan.reason.http"},
+  read:{textId:"mods.scan.reason.read"},
+  answered:{textId:"mods.scan.reason.answered"},
+  busy:{textId:"mods.scan.reason.busy"},
+  unknown:{textId:"mods.scan.reason.unknown"},
+};
+/* How long the site will be left alone, worded here from a number of seconds. The host
+   side hands a number and never a phrase: the words around it are translated, so "15
+   minutes" written on the other side of the bridge would arrive in English inside a
+   Japanese sentence. */
+function modsRetryWait(seconds){
+  const s=Math.max(0,Math.round(Number(seconds)||0));
+  if(s<=1) return T("mods.scan.retry.moment");
+  if(s<60) return T("mods.scan.retry.seconds",{count:s});
+  return T("mods.scan.retry.minutes",{count:Math.max(1,Math.round(s/60))});
+}
+/* How many seconds of the wait are LEFT, worked out now rather than when the reply was
+   written. The failed panel is persistent: a host who leaves the Mods hall open is still
+   reading the same sentence a quarter of an hour later, and a number the host side worked
+   out at reply time would still be telling them to wait the quarter of an hour they have
+   just spent. retryAtUtc is the moment the wait ends; retrySeconds is what a page from an
+   older build reads and is the fallback when the moment did not come through. */
+function modsRetryLeft(given){
+  const at=given&&given.retryAtUtc;
+  if(at){
+    const ends=Date.parse(at);
+    if(!isNaN(ends)) return Math.max(0,Math.round((ends-Date.now())/1000));
+  }
+  return Math.max(0,Math.round(Number(given&&given.retrySeconds)||0));
+}
+/* The sentence about the wait, which is a sentence of its own rather than a slot inside
+   the failure sentence. It has to be able to say the wait is OVER, and "it will not ask
+   the site again for <nothing>" is not a sentence. */
+function modsRetrySentence(given){
+  const left=modsRetryLeft(given);
+  return left<=0?T("mods.scan.retry.ready"):T("mods.scan.retry.waiting",{retry:modsRetryWait(left)});
+}
+/* The sentence for what the host named, or null when this page has no words for it. An id
+   is not copy: a panel that shows one has told the host nothing, so anything not on the
+   table above and not a refusal HOST_SENTENCES knows falls back to the kind table. */
+function modsScanReasonText(){
+  const named=S.modsScanReason;
+  if(!named||!named.reasonId) return null;
+  /* The host hands the two slots as DATA: an id for the kind of failure, and a number of
+     seconds for the wait. Both are worded here, so the whole sentence comes out of one
+     catalog rather than a translated frame with two English words sitting inside it. */
+  const given=named.reasonParams||{};
+  const params=Object.assign({},given);
+  if(given.detailName)
+    params.detail=T((MODS_SCAN_DETAIL[given.detailName]||MODS_SCAN_DETAIL.unknown).textId);
+  /* Kept for a refusal HOST_SENTENCES words, whose sentences take the slot directly. */
+  if(given.retrySeconds!==undefined&&given.retrySeconds!==null)
+    params.retry=modsRetryWait(modsRetryLeft(given));
+  const known=Object.keys(MODS_SCAN_REASONS).some(k=>MODS_SCAN_REASONS[k].reasonId===named.reasonId);
+  if(known){
+    /* The frame, then the wait, as two sentences. The wait is worked out again on every
+       draw of the hall and the frame is not, so they are worded separately and joined
+       here. Nothing redraws the hall on a timer, so the number is fresh whenever the host
+       comes back to the page rather than ticking down in front of them. */
+    try{return T(named.reasonId,params)+" "+modsRetrySentence(given);}catch(_){return null;}
+  }
+  /* A refusal the bridge THREW rather than answered with. hostSentence knows the ones this
+     page has words for and answers null for every other. */
+  return hostSentence(named.reasonId,params);
+}
+/* The one sentence the failed panel shows, chosen once: what the host named when it named
+   something this page can word, and the page's own kind table otherwise. It is a function
+   rather than an expression at the call site so the panel still hands emptyState a finished
+   sentence out of the catalog and never a word written here. */
+function modsScanFailReason(){
+  return modsScanReasonText()
+    ||T((MODS_SCAN_FAIL[S.modsScanError]||MODS_SCAN_FAIL.failed).reasonId);
+}
 function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
@@ -3330,7 +3453,7 @@ function renderMods(){
       ?emptyState({mark:"ᛋ",title:T("mods.empty.scanning.title"),reason:T("mods.empty.scanning.reason")})
       :failed
       ?emptyState({mark:"ᚦ",title:T("mods.empty.failed.title"),
-          reason:T((MODS_SCAN_FAIL[S.modsScanError]||MODS_SCAN_FAIL.failed).reasonId),
+          reason:modsScanFailReason(),
           action:{name:"scanMods",label:T("mods.empty.failed.action")},
           action2:{name:"openConnectionTest",label:T("mods.empty.failed.action.test")}})
       :emptyState({mark:"ᚱ",title:T("mods.empty.unscanned.title"),
@@ -3349,6 +3472,10 @@ function renderMods(){
     renderModShowing(0,0);
     return;
   }
+  /* A scan that could not reach Thunderstore knows nothing about a newer version of
+     anything, so every column that would have answered that question says so instead of
+     reading level with a site that was never asked. */
+  const blind=!!S.modsIndexBlind;
   const anyGameDate=mods.some(m=>m.gameUpdatedUtc);
   const th=$("#thPossiblyOutdated");
   if(th) th.title=(scanned&&mods.length&&!anyGameDate)
@@ -3366,6 +3493,7 @@ function renderMods(){
        it cannot read CURRENT either. It says the one thing that is known: Thunderstore is
        not listing it at the moment, and nothing has been done about that. */
     const pill=m.Bundled?`<span class="pill ember">${esc(T("mods.status.bundled"))}</span>`
+      :blind?`<span class="pill grey" title="${esc(T("mods.status.unchecked.tip"))}">${esc(T("mods.status.unchecked"))}</span>`
       :held?`<span class="pill amber" title="${esc(T("mods.status.held.tip"))}">${esc(T("mods.status.held"))}</span>`
       :m.notListed?`<span class="pill grey" title="${esc(T("mods.status.not_listed.tip"))}">${esc(T("mods.status.not_listed"))}</span>`
       :`<span class="pill ${has?"amber":"green"}">${esc(has?T("mods.status.update"):T("mods.status.current"))}</span>`;
@@ -3388,7 +3516,7 @@ function renderMods(){
     const mark=modLatestMark(m);
     return `<tr data-key="${esc(m.FullName)}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span>${patcherTag}${srcChip}</td>`+
       `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
-      `<td class="mono"${has?' style="color:var(--amber)"':""}${m.notListed?` title="${esc(T("mods.status.not_listed.tip"))}"`:""}>${esc(m.LatestVersion||"-")}${mark}</td>`+
+      `<td class="mono"${has?' style="color:var(--amber)"':""}${blind?` title="${esc(T("mods.status.unchecked.tip"))}"`:(m.notListed?` title="${esc(T("mods.status.not_listed.tip"))}"`:"")}>${esc(m.LatestVersion||"-")}${mark}</td>`+
       `<td>${statusCell}</td>`+
       po+`</tr>`;
   }).join("")||`<tr><td colspan="5">${mods.length
@@ -3415,6 +3543,8 @@ function renderMods(){
   /* A real plural rather than an English "s", and both pills escaped on the way in. */
   $("#modUpdWrap").innerHTML=upd.length
     ?`<span class="pill amber">${esc(T("mods.updates_waiting",{count:upd.length}))}</span>`
+    /* "Up to date" is a claim about a site that was never reached, so it is not made. */
+    :blind?`<span class="pill grey" title="${esc(T("mods.status.unchecked.tip"))}">${esc(T("mods.status.unchecked"))}</span>`
     :`<span class="pill green">${esc(T("mods.up_to_date"))}</span>`;
   /* waiting mod updates are a standing condition, not a toast that repeats forever */
   conditionModUpdates(upd.length);
@@ -4269,7 +4399,8 @@ function bepInExAskOnce(next){
 const SCAN_CEILING_MS=60000;
 async function scanMods(){
   if(!Native.available||S.modsScanning||S.modsUpdating) return;
-  S.modsScanning=true; S.modsScanError=null; renderMods();
+  S.modsScanning=true; S.modsScanError=null; S.modsScanReason=null;
+  S.modsIndexBlind=false; renderMods();
   toast("ᛋ "+T("mods.scan.begun.toast"));
   logLine("info","[Thunderstore] reading the community listing index…");
   /* The ceiling. Whichever settles first wins, and a scan that never comes back leaves the
@@ -4282,6 +4413,8 @@ async function scanMods(){
   S.modsScanning=false;
   if(r===TIMED_OUT){
     S.modsScanError="timeout";
+    /* The page's own ceiling, not the host's answer, so there is no named reason. */
+    S.modsScanReason=null;
     logLine("warn","[Thunderstore] the scan did not answer within 60 seconds");
     renderMods();
     toast("ᚦ "+T("mods.scan.timeout.toast"));
@@ -4293,20 +4426,54 @@ async function scanMods(){
   if(r===FAIL||!rows){
     /* A refusal is a failure with a reason, and the hall says so. Before this it fell back
        to the state that means nothing has been read yet, which reads as "press Scan" to a
-       host who has just pressed Scan. */
+       host who has just pressed Scan. A throw names itself, and the page keeps that name
+       the same way it keeps the one a reply carries. */
     S.modsScanError="failed";
+    S.modsScanReason=window.BAKA_ERR_ID
+      ?{reasonId:window.BAKA_ERR_ID,reasonParams:window.BAKA_ERR_PARAMS||{}}:null;
     renderMods();
     return;
   }
-  S.modsScanError=null;
+  /* The scan answered, and the answer says whether it could check anything. A scan that
+     read the BepInEx folder and then could not reach Thunderstore at all, with nothing
+     held from an earlier read, checked NOTHING for a newer version, and a row drawn as
+     CURRENT would be saying the site had answered.
+     What it did NOT check is the Latest column, and that is the part that says so. The
+     rows themselves are the host's own install, read off their own disk: throwing them
+     away took the whole table with them, every row action with it, and the Hexium mark,
+     which is answered by a site Thunderstore has nothing to do with, could never be
+     drawn at all. So the reply is kept and the two columns that would have claimed
+     something say they do not know instead. */
+  const blind=!!(r&&!Array.isArray(r)&&r.ok===false);
+  S.modsIndexBlind=blind;
+  S.modsScanError=blind?"failed":null;
+  S.modsScanReason=(blind&&r.reasonId)
+    ?{reasonId:r.reasonId,reasonParams:r.reasonParams||{}}:null;
+  if(blind&&!rows.length){
+    /* Nothing of the host's own to keep, so the panel that names the failure and offers
+       Try again and the connection test is the whole of what there is to show. The toast
+       has a sentence of its own: the panel's is a paragraph, and a toast is a line. */
+    renderMods();
+    logLine("warn","[Thunderstore] "+modsScanFailReason());
+    toast("ᚦ "+T("mods.scan.failed.toast"));
+    return;
+  }
   const idx=(r&&!Array.isArray(r))?r.index:null;
   S.mods=rows; S.modsScanned=true; S.lastScan=clock();
   /* The time the LIST was read, which a press that reused a fresh one leaves where it
      was. An older bridge answering with a bare array has no such time, and the press
      time is the best that is known there. */
-  S.modIndexAt=idx?hhmm(idx.fetchedUtc):S.lastScan;
-  S.modIndexSource=(idx&&idx.source)||null;
+  S.modIndexAt=blind?null:(idx?hhmm(idx.fetchedUtc):S.lastScan);
+  S.modIndexSource=blind?null:((idx&&idx.source)||null);
   renderMods();
+  /* The rows are kept, so there is no failure panel to carry the reason: the toast is one
+     line and the reason is a paragraph. It goes into the Saga log, where it stays to be
+     read and to be pasted into a report. */
+  if(blind){
+    logLine("warn","[Thunderstore] "+modsScanFailReason());
+    toast("ᚦ "+T("mods.scan.failed.toast"));
+    return;
+  }
   const u=rows.filter(m=>m.UpdateAvailable).length;
   toast("ᛋ "+T("mods.scan.done.toast",{count:rows.length,updates:u}));
 }
@@ -4836,6 +5003,10 @@ function updatePalGating(){
       if(updateBlocksStart()){dis=true;why=updBlockMsg();}
       else{dis=!st.canStart;why=T("pal.gate.already_running");}
     }
+    /* A cleanse that is already walking. The plugin refuses a second one and the window
+       is sitting on the first for up to ten minutes, so the row says so before it is
+       pressed rather than after. */
+    if(!dis&&cmd==="clear_cheat_marks"&&S.cleansing){dis=true;why=T("pal.gate.cleanse_running");}
     it.classList.toggle("disabled",dis);
     it.title=dis?why:"";
   });
@@ -5004,6 +5175,8 @@ function cleanseCounts(said){
  * What baka_cleanse just said, read rather than assumed.
  * @returns {{kind:string,zdos?:number,containers?:number,items?:number,count?:number,who?:string}}
  *   done       it cleared marks, and the three counts are on the answer
+ *   already    a sweep is already walking, and how much of it is left
+ *   idle       the status verb says nothing has been run since the server came up
  *   clean      it ran and there was nothing in the world to clear
  *   connected  somebody is still on the server, and who
  *   unsupported the server's plugin does not know the verb
@@ -5027,7 +5200,42 @@ function cleanseReply(reply){
   const who=/^Error:\s*(\d+)\s+players?\s+(?:is|are)\s+still connected(?:\s*\((.*)\))?\./i.exec(said);
   if(who) return {kind:"connected",count:+who[1],who:(who[2]||"").trim()};
 
+  /* A sweep that gave up part way because somebody walked onto the server. The counts it
+     reached are real work and are on the line, so they are read the same way a finished
+     sweep's are; what must NOT happen is reading this as "done", because the world still
+     has marks on it and the host has to run it again. Read before the Error rule below,
+     which would otherwise never see it, and before the complete rule, which would never
+     match it. */
+  if(/^Cleanse stopped:/i.test(said)){
+    const stopped=cleanseCounts(said);
+    /* Greedily to the LAST bracket before the full stop, for the same reason the connected
+       reader does it: the plugin writes "(unnamed)" for a peer with no name yet, and a lazy
+       read stops inside that and hands the host half a list. */
+    const arrived=/^Cleanse stopped:\s*(\d+)\s+players?\s+connected[^(]*(?:\((.*)\))?\./i.exec(said);
+    return Object.assign({kind:"stopped",
+      count:arrived?+arrived[1]:0,who:arrived?(arrived[2]||"").trim():""},
+      stopped?{zdos:stopped.zdos,containers:stopped.containers,items:stopped.items}:{});
+  }
+
+  /* A second press while the first sweep is still walking. It is the plugin's own
+     refusal and it carries the work left, so it is read rather than left to the sentence
+     about a shape this version has not met. Reachable since the sweep was sliced: the
+     window polls for up to ten minutes, and a host watching a page where nothing moves
+     presses again. */
+  const again=/^Cleanse is already running:\s*(\d+)\s+objects?\s+still to check/i.exec(said);
+  if(again) return {kind:"already",count:+again[1]};
+
+  /* The status verb with nothing to report. The poll meets it when the server restarted
+     while the window was waiting, which takes the sweep with it. */
+  if(/^Cleanse status:\s*nothing is running/i.test(said)) return {kind:"idle"};
+
   if(/^Error:/i.test(said)||/^Cleanse failed:/i.test(said)) return {kind:"refused"};
+
+  /* The sweep is too big to finish inside its own answer, so the plugin named what it is
+     about to walk and the window polls from here. Reaching a toast with this line on it
+     means the poll gave up, which the caller words for itself; saying "started" here is
+     still better than "a shape this version has not met". */
+  if(/^Cleanse started:/i.test(said)||/^Cleanse running:/i.test(said)) return {kind:"running"};
 
   if(/^Cleanse complete:/i.test(said)){
     const counts=cleanseCounts(said);
@@ -5048,6 +5256,15 @@ function cleanseToast(read){
       {zdos:read.zdos,containers:read.containers,items:read.items});
     case "clean": return "ᛉ "+T("vikings.cleanse.clean.toast");
     case "connected": return "ᚦ "+T("vikings.cleanse.connected.toast",{who:read.who||""});
+    case "stopped": return "ᚦ "+T("vikings.cleanse.stopped.toast",
+      {who:read.who||"",zdos:read.zdos||0,containers:read.containers||0,items:read.items||0});
+    /* A sweep that is walking. The server says so on its own line, and the page says so
+       for a second press it stopped before it was sent: both are the same fact, so both
+       are worded from here. */
+    case "running": return "ᛉ "+T("vikings.cleanse.running.toast");
+    case "gone": return "ᚦ "+T("vikings.cleanse.unreachable.toast");
+    case "already": return "ᛊ "+T("vikings.cleanse.already.toast",{count:read.count||0});
+    case "idle": return "ᚦ "+T("vikings.cleanse.idle.toast");
     case "unsupported": return "ᚦ "+T("vikings.cleanse.unsupported.toast");
     case "refused": return "ᚦ "+T("vikings.cleanse.refused.toast");
     case "silent": return "ᚦ "+T("vikings.cleanse.silent.toast");
@@ -5071,7 +5288,33 @@ function cleanseModal(){
 
 async function doCleanse(){
   if(!Native.available){toast("ᛉ "+T("vikings.cleanse.preview.toast"));return;}
+  /* One at a time. The sweep is sliced on the server and the window polls it for up to ten
+     minutes, so on a big world a host sees nothing move for a long while; without this the
+     obvious thing to do is press again, and the second press is answered by their own
+     plugin refusing it. The button says it is working instead. */
+  if(S.cleansing){
+    /* It used to return here in silence. On a page where nothing is moving, a button
+       that answers nothing is a button that did not work, and the next thing a host does
+       is press it again. This says the one true thing about it, out of the same sentence
+       the server's own refusal is worded from. */
+    logLine("warn","[RCON] a cleanse is already running; the second press was not sent.");
+    toast(cleanseToast({kind:"running"}));
+    return;
+  }
+  S.cleansing=true;
+  const btn=$("#cleanseBtn"); if(btn) btn.disabled=true;
+  /* And the palette row, which is the other way to the same command. */
+  try{updatePalGating();}catch(_){}
+  try{ await runCleanse(); }
+  finally{
+    S.cleansing=false; if(btn) btn.disabled=false;
+    try{updatePalGating();}catch(_){}
+  }
+}
 
+/* The press itself, with the button already held. Split out so the hold is one small
+   block that cannot grow a path around it. */
+async function runCleanse(){
   logLine("cmd","> baka_cleanse");
   const r=await rpc("players.cleanse");
   if(r===FAIL) return;
@@ -5083,6 +5326,23 @@ async function doCleanse(){
 
   const said=(r.response||"").trim();
   if(said) said.split(/\r?\n/).forEach(l=>logLine("ok",l));
+  /* The sweep is sliced on the server and the window polls it, so a world big enough to
+     outlast the poll's own ceiling ends here with nothing wrong: the cleanse is still
+     going and will log its counts. Wording it as a result would be the one lie this
+     toast must not tell. */
+  if(r.stillRunning){
+    logLine("warn","[RCON] the cleanse is still running. baka_cleanse_status answers with the counts when it lands.");
+    toast("ᛉ "+T("vikings.cleanse.still_running.toast"));
+    return;
+  }
+  /* The server stopped answering part way through the wait, which is not the ceiling and
+     must never be worded as one: the sweep is not walking any more, because the thing it
+     was walking on has gone. */
+  if(r.notAnswering){
+    logLine("warn","[RCON] the server stopped answering, so BakaLoader stopped waiting for the cleanse.");
+    toast(cleanseToast({kind:"gone"}));
+    return;
+  }
   toast(cleanseToast(cleanseReply(said)));
 }
 
@@ -5644,6 +5904,27 @@ wireCollapsible("upkeepHead",$("#upkeepBody"),$("#upkeepCard"));
 /* Reads the switch off the element rather than through swOn(): this runs once while the file
    is still being evaluated, and T is declared further down, which put it in the temporal
    dead zone and threw on every load. */
+/* True when the exe was started with --verbose. The level is then Verbose for the whole
+   session and the window cannot put it back, so the switch is shown on and refuses to move
+   rather than offering a choice that is not there. */
+let DETAILED_LOG_FORCED=false;
+/* What is actually on disk, which under --verbose is not what the switch is drawing. */
+let DETAILED_LOG_PREF=false;
+/* What the save carries for the switch. Under --verbose the PREFERENCE is left exactly as
+   it was: the command line is about this session, and writing the drawn state back would
+   turn a host's "off" into "on" the first time they touched any other row on the card. */
+function detailedLogSaved(){
+  return DETAILED_LOG_FORCED?DETAILED_LOG_PREF:swOn("tDetailedLog");
+}
+/* The row under --verbose: dimmed, not clickable, with the note that says who set it. */
+function syncDetailedLogGate(){
+  const row=$("#rowDetailedLog"), note=$("#detailedLogForced");
+  if(row){
+    row.classList.toggle("gated",DETAILED_LOG_FORCED);
+    row.title=DETAILED_LOG_FORCED?T("hearth.upkeep.connection.detailed_log.forced"):"";
+  }
+  if(note) note.style.display=DETAILED_LOG_FORCED?"":"none";
+}
 function syncUpkeepGates(){
   const row=$("#rowAutoUpdApp"), sw=$("#tCheckUpd");
   if(!row||!sw) return;
@@ -5660,6 +5941,16 @@ $("#upkeepBody")?.addEventListener("click",e=>{
 },true);
 $("#tCheckUpd")?.addEventListener("click",syncUpkeepGates);
 syncUpkeepGates();
+/* The same capture-phase block the gated auto-update row uses: the generic [data-t] handler
+   flips .on before any listener of ours runs, so a gated switch has to be stopped before it
+   rather than put back afterwards. */
+$("#upkeepBody")?.addEventListener("click",e=>{
+  const t=e.target;
+  if(!t||typeof t.closest!=="function"||!t.closest("#tDetailedLog")) return;
+  if(!DETAILED_LOG_FORCED) return;
+  e.stopPropagation(); e.preventDefault();
+  toast("ᚦ "+T("hearth.upkeep.connection.detailed_log.forced"));
+},true);
 
 /* ---------- THE SECOND MOD SITE (Hexium) ----------
    Turning the switch on IS the consent: there is no separate notice anywhere, so the
@@ -5702,6 +5993,13 @@ async function initUpkeep(){
        stored rather than what the document shipped with, the same as every other row. */
     setT("tNoProxy",!!up.BypassSystemProxy);
     setT("tIPv4",!!up.ForceIPv4);
+    /* The third switch on that card. Under --verbose the level is held Verbose for the
+       whole session whatever the preference says, so the switch is drawn ON and gated:
+       showing it off would be showing a host a choice the command line already made. */
+    DETAILED_LOG_FORCED=!!up.DetailedLogForcedByCommandLine;
+    DETAILED_LOG_PREF=!!up.DetailedLog;
+    setT("tDetailedLog",DETAILED_LOG_FORCED||DETAILED_LOG_PREF);
+    syncDetailedLogGate();
     setT("tStartWin",up.StartWithWindows);
     setT("tStartMin",up.StartMinimized);
     setT("tShareStats",up.ShareAnonymousStats);
@@ -5739,7 +6037,7 @@ async function initUpkeep(){
      there. Moving it by hand counts as answering, which the host side records as well. */
   const bepSaved=()=>BEP_ANSWERED
     ?{BepInExMaintained:swOn("tBepMaint"),BepInExMaintenanceAsked:true}:{};
-  const save=()=>loaded&&rpc("userprefs.save",{prefs:Object.assign({CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),UseHexiumSource:swOn("tUseHexium"),BypassSystemProxy:swOn("tNoProxy"),ForceIPv4:swOn("tIPv4"),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")},bepSaved())});
+  const save=()=>loaded&&rpc("userprefs.save",{prefs:Object.assign({CheckForUpdates:swOn("tCheckUpd"),AutoUpdateBakaLoader:swOn("tAutoUpdApp"),AutoUpdateMods:swOn("tAutoUpdMods"),UseHexiumSource:swOn("tUseHexium"),BypassSystemProxy:swOn("tNoProxy"),ForceIPv4:swOn("tIPv4"),DetailedLog:detailedLogSaved(),StartWithWindows:swOn("tStartWin"),StartMinimized:swOn("tStartMin"),ShareAnonymousStats:swOn("tShareStats"),PlainTerminology:!swOn("tPlainTerms")},bepSaved())});
   $("#tCheckUpd").addEventListener("click",()=>{
     save();
     /* the standing update row says whether it installs itself, and with checking off it
@@ -5790,6 +6088,12 @@ async function initUpkeep(){
      without anything here having to tell it. */
   $("#tNoProxy")?.addEventListener("click",save);
   $("#tIPv4")?.addEventListener("click",save);
+  /* The log's own detail. The host side moves the level the moment this save lands, so
+     nothing here has to ask for a restart or redraw anything else. */
+  $("#tDetailedLog")?.addEventListener("click",()=>{
+    if(DETAILED_LOG_FORCED) return;
+    save();
+  });
   $("#btnNetTest")?.addEventListener("click",runConnectionTest);
   $("#tStartWin").addEventListener("click",save);
   $("#tStartMin").addEventListener("click",save);
@@ -6113,7 +6417,11 @@ function onModalDismissed(fn){
    asks it again when the words change. A plain string still works and reads the same;
    it simply keeps the wording it was given. */
 const worded=v=>typeof v==="function"?String(v()):String(v==null?"":v);
-function promptModal(title,placeholder,onOk,check){
+/* note, when a caller hands one in, is a standing sentence under the box: something the
+   host needs BEFORE they press Confirm rather than a reply to a press. It is worded on
+   every redraw like the title, so a language switch re-words it, and it sits above the
+   refusal line so the two never stand in for one another. */
+function promptModal(title,placeholder,onOk,check,note){
   /* What is typed survives the redraw. Losing a half-typed name to a language switch
      would be the same class of loss a reload was rejected for. */
   let typed="";
@@ -6129,6 +6437,7 @@ function promptModal(title,placeholder,onOk,check){
     const m=modalOpen(
       `<div class="mtitle">${esc(worded(title))}</div>`+
       `<input type="text" id="mIn" placeholder="${esc(worded(placeholder))}" spellcheck="false" autocomplete="off">`+
+      (note?`<div class="subval" id="mStanding" style="padding:6px 2px 0">${esc(worded(note))}</div>`:"")+
       (problem?`<div class="subval" id="mInNote" style="color:var(--blood);padding:4px 2px 0">${esc(problem)}</div>`:"")+
       `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(T("common.button.confirm"))}</button></div>`,
       again);
@@ -7605,7 +7914,13 @@ function worldCopyModal(ctx,after){
       logLine("ok","[BakaLoader] copied world '"+ctx.world+"' as '"+target+"'");
       if(after) after(target);
     },
-    typed=>worldNameProblem(typed,ctx.taken||[]));
+    typed=>worldNameProblem(typed,ctx.taken||[]),
+    /* What the copy does NOT bring with it. From 1.2.4 the copy is written with its own
+       world id, which is what makes it a separate world to the game, and the price of
+       that is every player's own map of it. The wiki tells hosts to copy a world before
+       they try something they might regret and point a realm at the copy, so this is the
+       one thing they have to know before they press Confirm. */
+    ()=>T("world.copy.note.map"));
 }
 /* Preview stand-in for world.info, so the card and its delete control can be walked
    without the app behind them. */

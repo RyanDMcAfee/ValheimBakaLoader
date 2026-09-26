@@ -1,3 +1,4 @@
+using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -81,8 +82,14 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// Runs the whole test against Thunderstore's listing index. Never throws.
+        /// <para>
+        /// The logger is the one the wire trace writes through. With Detailed log on, each of
+        /// the four web steps here writes its own request line like every other client in the
+        /// app, which is what Troubleshooting and the FAQ say happens: the button a stuck host
+        /// is pointed at is the last one that should answer only on the page.
+        /// </para>
         /// </summary>
-        public static async Task<ConnectionReport> RunAsync(string url = null)
+        public static async Task<ConnectionReport> RunAsync(string url = null, ILogger tracer = null)
         {
             url ??= ThunderstoreClient.ListingIndexUrl;
 
@@ -125,7 +132,7 @@ namespace ValheimBakaLoader.Tools
 
             var plain = OutOfTime()
                 ? Skipped("http")
-                : await HttpAsync("http", url, HttpTransportOptions.Default);
+                : await HttpAsync("http", url, HttpTransportOptions.Default, tracer);
             stages.Add(plain);
 
             // The same request again with each switch in turn, because "it does not work" and
@@ -133,12 +140,14 @@ namespace ValheimBakaLoader.Tools
             // a host which switch to reach for.
             var noProxy = OutOfTime()
                 ? Skipped("http_noproxy")
-                : await HttpAsync("http_noproxy", url, new HttpTransportOptions { BypassProxy = true });
+                : await HttpAsync("http_noproxy", url,
+                    new HttpTransportOptions { BypassProxy = true }, tracer);
             stages.Add(noProxy);
 
             var ipv4 = OutOfTime()
                 ? Skipped("http_ipv4")
-                : await HttpAsync("http_ipv4", url, new HttpTransportOptions { IPv4Only = true });
+                : await HttpAsync("http_ipv4", url,
+                    new HttpTransportOptions { IPv4Only = true }, tracer);
             stages.Add(ipv4);
 
             string verdict;
@@ -150,7 +159,7 @@ namespace ValheimBakaLoader.Tools
                 var both = OutOfTime()
                     ? Skipped("http_both")
                     : await HttpAsync("http_both", url,
-                        new HttpTransportOptions { BypassProxy = true, IPv4Only = true });
+                        new HttpTransportOptions { BypassProxy = true, IPv4Only = true }, tracer);
                 stages.Add(both);
                 verdict = both.Ok ? "both" : "none";
             }
@@ -298,10 +307,15 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        private static async Task<ConnectionStage> HttpAsync(string stage, string url, HttpTransportOptions options)
+        private static async Task<ConnectionStage> HttpAsync(
+            string stage, string url, HttpTransportOptions options, ILogger tracer = null)
         {
             var watch = Stopwatch.StartNew();
-            using var handler = HttpClientProvider.NewHandler(options);
+            // The traced handler, the same one every other client in the app is handed. This
+            // step builds its own because the shape of the switches is the question it asks,
+            // but a host who turned Detailed log on before pressing the button gets a request
+            // line out of it like they get one out of everything else.
+            using var handler = HttpClientProvider.NewTracedHandler(options, tracer);
             using var client = new HttpClient(handler, disposeHandler: false)
             {
                 Timeout = Timeout.InfiniteTimeSpan,

@@ -268,12 +268,119 @@ namespace BakaLoaderKillAll
         /// <summary>The result line, with the three counts a host can check the work against.</summary>
         internal static string Reply(int zdosCleared, int containersRewritten, int itemsCleared)
         {
-            var text = new StringBuilder("Cleanse complete: ");
+            var text = new StringBuilder(CompletePrefix);
+            text.Append(" ").Append(Counts(zdosCleared, containersRewritten, itemsCleared)).Append(".");
+            text.Append(" Anything a player is carrying lives on their own machine and was not touched.");
+            return text.ToString();
+        }
+
+        /// <summary>
+        /// The three counts as one phrase, with no full stop on the end. It is written once
+        /// because two lines carry it now: the one that says the cleanse finished, and the one
+        /// that says it stopped part way because somebody connected. The page reads both with
+        /// the same expression, so a second spelling of these words would be a reply the host
+        /// can see and the window cannot read.
+        /// </summary>
+        internal static string Counts(int zdosCleared, int containersRewritten, int itemsCleared)
+        {
+            var text = new StringBuilder();
             text.Append(zdosCleared).Append(zdosCleared == 1 ? " world object cleared, " : " world objects cleared, ");
             text.Append(containersRewritten)
                 .Append(containersRewritten == 1 ? " container rewritten, " : " containers rewritten, ");
-            text.Append(itemsCleared).Append(itemsCleared == 1 ? " item cleared." : " items cleared.");
-            text.Append(" Anything a player is carrying lives on their own machine and was not touched.");
+            text.Append(itemsCleared).Append(itemsCleared == 1 ? " item cleared" : " items cleared");
+            return text.ToString();
+        }
+
+        // ------------------------------------------------------------------
+        //  The sliced sweep: what it says while it is running
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// The opening of the line a finished cleanse answers with. Both the page and the
+        /// window read replies by their opening words, so the four openings below are named
+        /// here rather than spelled out at each side.
+        /// </summary>
+        internal const string CompletePrefix = "Cleanse complete:";
+
+        /// <summary>The opening of the line a cleanse answers with the moment it starts.</summary>
+        internal const string StartedPrefix = "Cleanse started:";
+
+        /// <summary>The opening of the status line while a sweep is still walking.</summary>
+        internal const string RunningPrefix = "Cleanse running:";
+
+        /// <summary>The opening of the line a sweep that gave up part way answers with.</summary>
+        internal const string StoppedPrefix = "Cleanse stopped:";
+
+        /// <summary>
+        /// What a cleanse says the moment it starts, when it is too big to finish inside the
+        /// answer.
+        /// <para>
+        /// RCON is why this line exists, exactly as it is why the kill sweep has one. The
+        /// window's client gives up after a few seconds and Commander stops waiting before
+        /// that, and until this was written a sweep over a long-lived world ran past both:
+        /// the host was told the command had timed out while the cleanse went on and did
+        /// every bit of its work. Worse, the whole pass held the main thread, so the server
+        /// did not tick for as long as it took. The sweep now answers the moment it knows
+        /// what it is about to walk, does the walk a few milliseconds a frame, and puts the
+        /// result line in the server log.
+        /// </para>
+        /// </summary>
+        internal static string Started(int total)
+        {
+            return StartedPrefix + " " + total + (total == 1 ? " object" : " objects") +
+                   " to check. The counts follow in the server log when it finishes, and" +
+                   " baka_cleanse_status says how far it has got.";
+        }
+
+        /// <summary>
+        /// The answer to a second baka_cleanse while the first is still walking. Two sweeps
+        /// over one snapshot would count every cleared mark twice and rewrite half the
+        /// containers under each other.
+        /// </summary>
+        internal static string AlreadyRunning(int remaining)
+        {
+            return "Cleanse is already running: " + remaining +
+                   (remaining == 1 ? " object" : " objects") +
+                   " still to check. Wait for its result line before starting another.";
+        }
+
+        /// <summary>Nothing has been run since the server came up.</summary>
+        internal static string StatusIdle()
+        {
+            return "Cleanse status: nothing is running. Run baka_cleanse on an empty server" +
+                   " to clear the cheat marks a 1.0.9 to 1.1.2 spawn left behind.";
+        }
+
+        /// <summary>How far along the walk is, which is the whole of what a waiting host wants.</summary>
+        internal static string StatusRunning(int checkedSoFar, int total)
+        {
+            return RunningPrefix + " " + checkedSoFar + " of " + total +
+                   (total == 1 ? " object" : " objects") + " checked.";
+        }
+
+        /// <summary>
+        /// What a sweep says when somebody connected while it was walking.
+        /// <para>
+        /// The start check refuses a cleanse while anybody is on the server, and for a sweep
+        /// that takes minutes that check has to go on being asked: a container rewrites itself
+        /// from the world record only when nobody has it open, so a chest somebody walked up
+        /// to mid sweep would take the rewrite and have it written straight back over by their
+        /// client. The counts it reached are real work that really happened, so they are
+        /// reported rather than thrown away, and the line does not open with "Cleanse
+        /// complete" because it is not one.
+        /// </para>
+        /// </summary>
+        internal static string StoppedForPeers(
+            int count, string names, int zdosCleared, int containersRewritten, int itemsCleared)
+        {
+            var text = new StringBuilder(StoppedPrefix);
+            text.Append(" ").Append(count)
+                .Append(count == 1 ? " player connected" : " players connected")
+                .Append(" while it was running");
+            if (!string.IsNullOrEmpty(names)) text.Append(" (").Append(names).Append(")");
+            text.Append(". Up to that point: ")
+                .Append(Counts(zdosCleared, containersRewritten, itemsCleared)).Append(".");
+            text.Append(" Run it again when the server is empty.");
             return text.ToString();
         }
 
@@ -291,5 +398,120 @@ namespace BakaLoaderKillAll
         internal const string NoIndex =
             "Error: this build of Valheim keeps its world objects somewhere the cleanse cannot read,"
             + " so nothing was touched. The plugin needs rebuilding against it.";
+    }
+
+    /// <summary>
+    /// One cleanse, from the moment its snapshot is taken to its result line: how far along
+    /// the walk is, what it has cleared, and whether anything ended it early.
+    /// <para>
+    /// It names no Valheim type at all, which is the point: the walk it describes is the half
+    /// that can be driven by a test, and the records it walks are handed to it by index.
+    /// </para>
+    /// </summary>
+    internal sealed class CleanseRun
+    {
+        /// <summary>How many records the snapshot held when it was taken.</summary>
+        internal int Total;
+
+        /// <summary>How far along the snapshot the walk has got.</summary>
+        internal int Index;
+
+        internal int ZdosCleared;
+        internal int ContainersRewritten;
+        internal int ItemsCleared;
+
+        /// <summary>True once the walk is over, however it ended.</summary>
+        internal bool Finished;
+
+        /// <summary>True when something ended it before it reached the end of the snapshot.</summary>
+        internal bool Stopped;
+
+        /// <summary>Who was on the server when it stopped, and how many of them.</summary>
+        internal int PeerCount;
+
+        internal string PeerNames = "";
+
+        internal int Remaining
+        {
+            get { return Total - Index; }
+        }
+    }
+
+    /// <summary>
+    /// The walk itself, with no game in it.
+    /// <para>
+    /// A cleanse used to be one uninterrupted pass over every object in the world. On a
+    /// long-lived world that pass outlasts the RCON client's patience, so the host was told
+    /// the command had timed out while it carried on; and because it ran on the Unity main
+    /// thread, the server did not tick for the whole of it. Anybody still connected would
+    /// have been frozen, and anybody trying to connect would have been refused.
+    /// </para>
+    /// <para>
+    /// So the pass is cut into slices with a budget per frame, exactly as the kill sweep
+    /// beside it already is. The budget is asked AFTER each record rather than before one,
+    /// so a slice always makes at least one record's worth of progress and a sweep can never
+    /// stall however slow one record turns out to be.
+    /// </para>
+    /// </summary>
+    internal static class CleanseWalk
+    {
+        /// <summary>
+        /// How much of a frame one slice may spend. Eight milliseconds of a frame that is
+        /// meant to last about thirty, which is what keeps the server ticking while the walk
+        /// goes on.
+        /// <para>
+        /// Nothing here measures how long a sweep takes, and nothing can: the walk gets about
+        /// eight milliseconds of work per frame, so a world of N records takes roughly N
+        /// divided by however many records a slice gets through, in frames. How many that is
+        /// depends on the records, and a container with a full items blob costs a great deal
+        /// more than an empty tree. The point of the budget is the tick, not the total.
+        /// </para>
+        /// </summary>
+        internal const long SliceMilliseconds = 8;
+
+        /// <summary>
+        /// One slice of the walk.
+        /// </summary>
+        /// <param name="run">The sweep in flight. Its counts and its position are moved here.</param>
+        /// <param name="step">Handed the index of each record to work on.</param>
+        /// <param name="budgetSpent">
+        /// Asked after each record: true when this slice is over. Null walks the whole
+        /// snapshot in one go, which is what a test that is not about slicing wants.
+        /// </param>
+        /// <param name="stopNow">
+        /// Asked once at the top of every slice, before any record is touched: true when the
+        /// sweep must end now. The caller is what records WHY, because the reason is about the
+        /// world and this knows nothing about one.
+        /// </param>
+        /// <returns>True when the walk is over, however it ended.</returns>
+        internal static bool Advance(
+            CleanseRun run, Action<int> step, Func<bool> budgetSpent, Func<bool> stopNow)
+        {
+            if (run == null) return true;
+            if (run.Finished) return true;
+
+            // Before the slice rather than during it. Somebody who connected between two
+            // slices must not have a container rewritten under them, and finding that out
+            // half way through a slice would leave the counts saying otherwise.
+            if (stopNow != null && stopNow())
+            {
+                run.Stopped = true;
+                run.Finished = true;
+                return true;
+            }
+
+            while (run.Index < run.Total)
+            {
+                if (step != null) step(run.Index);
+                run.Index++;
+
+                if (budgetSpent != null && budgetSpent()) break;
+            }
+
+            if (run.Index < run.Total) return false;
+
+            run.Finished = true;
+            return true;
+        }
     }
 }

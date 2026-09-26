@@ -194,7 +194,171 @@ namespace ValheimBakaLoader.Tests.Tools
             var copy = FwlReader.TryRead(Path.Combine(dir, "Second Midgard.fwl"));
             Assert.Equal(source.SeedName, copy.SeedName);
             Assert.Equal(source.Seed, copy.Seed);
-            Assert.Equal(source.Uid, copy.Uid);
+
+            // And the uid is the one thing it must NOT keep. It is how the game tells two
+            // worlds apart: a character file keys its map exploration and its pins on it, so
+            // a copy carrying the source's uid comes up with the source's map already drawn
+            // and shares every pin either world ever gets. Until 1.2.4 it did.
+            Assert.NotEqual(source.Uid, copy.Uid);
+            Assert.NotEqual(0L, copy.Uid);
+
+            // The world version and the worldgen version are identity too, and they travel.
+            Assert.Equal(source.WorldVersion, copy.WorldVersion);
+            Assert.Equal(source.WorldGenVersion, copy.WorldGenVersion);
+        }
+
+        /// <summary>
+        /// The 1.0 layout, and the same rule. A world directory can hold several committed
+        /// generations of ONE world, so every "_main.{N}.fwl2" in the copy takes the SAME new
+        /// uid: they are saves of one world, not several worlds.
+        /// </summary>
+        [Fact]
+        public void A_chunked_copy_gets_one_world_uid_of_its_own_across_every_generation()
+        {
+            var dir = MakeChunkedWorld("Midgard");
+            // A second committed generation beside the first, which is what a world that has
+            // been saved more than once looks like on disk.
+            File.WriteAllBytes(Path.Combine(dir, "_main.2.fwl2"), BuildFwl(41, "Midgard", "chunkyseed"));
+            File.WriteAllBytes(Path.Combine(dir, "_main.2.db2"), BuildDbHeader(41, 1900));
+            File.WriteAllText(Path.Combine(dir, "_main.2.ok"), "");
+
+            var landed = WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            var source = FwlReader.TryRead(Path.Combine(dir, "_main.1.fwl2"));
+            var first = FwlReader.TryRead(Path.Combine(landed, "_main.1.fwl2"));
+            var second = FwlReader.TryRead(Path.Combine(landed, "_main.2.fwl2"));
+
+            // The copy reads back as itself: the new name, a new uid, the same seed.
+            Assert.Equal("Second Midgard", first.WorldName);
+            Assert.Equal("Second Midgard", second.WorldName);
+            Assert.Equal(source.SeedName, first.SeedName);
+            Assert.Equal(source.Seed, first.Seed);
+
+            Assert.NotEqual(source.Uid, first.Uid);
+            Assert.NotEqual(0L, first.Uid);
+            // One world, so one uid across its generations.
+            Assert.Equal(first.Uid, second.Uid);
+
+            // And the source keeps its own, byte for byte.
+            Assert.Equal(1234567890123L, source.Uid);
+            Assert.Equal("Midgard", source.WorldName);
+        }
+
+        /// <summary>
+        /// The source is not touched by the uid rewrite either. The rewrite happens on the
+        /// staging copy, before anything takes the new name, so a refusal leaves the source
+        /// exactly as it was and so does a success.
+        /// </summary>
+        [Fact]
+        public void A_chunked_copy_leaves_the_source_generation_byte_identical()
+        {
+            var dir = MakeChunkedWorld("Midgard");
+            var before = File.ReadAllBytes(Path.Combine(dir, "_main.1.fwl2"));
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.Equal(before, File.ReadAllBytes(Path.Combine(dir, "_main.1.fwl2")));
+        }
+
+        /// <summary>
+        /// The realm Duplicate path: the copy lands in ANOTHER save folder, under whatever
+        /// name the new realm calls its own, and it gets a world uid of its own there too.
+        /// <para>
+        /// This is the overload the wiki sentence is actually about. "Duplicate a server and
+        /// take the world with it" is the one place a host ends up with two live realms on
+        /// one map, and it is the one place two worlds sharing a uid is worst: both realms
+        /// are running, both are being played, and every client that opens either one is
+        /// writing its map and its pins into the same slot of its own character file. The
+        /// other overload is reached through COPY AS and is tested above; neither may be the
+        /// one that was missed.
+        /// </para>
+        /// <para>
+        /// Keeping the SAME name is allowed here, and it is the case worth driving: a world
+        /// of one name in a save folder of its own is not the same world twice, so a name
+        /// that has not changed is the shape in which nothing but the uid tells them apart.
+        /// </para>
+        /// </summary>
+        [Theory]
+        [InlineData("Midgard")]              // the realm form's default: the same name
+        [InlineData("Second Midgard")]
+        public void A_copy_into_another_save_folder_gets_its_own_world_uid(string targetName)
+        {
+            var dir = MakeChunkedWorld("Midgard");
+            var sourceBytes = File.ReadAllBytes(Path.Combine(dir, "_main.1.fwl2"));
+            var sourceRead = FwlReader.TryRead(Path.Combine(dir, "_main.1.fwl2"));
+
+            // The new realm's own save folder, which is what a duplicated server is given.
+            var destSaveFolder = Path.Combine(SaveFolder, "realm-two");
+            Directory.CreateDirectory(destSaveFolder);
+
+            var landed = WorldStore.CopyWorldAs(
+                WorldStore.Find(SaveFolder, "Midgard"), targetName, destSaveFolder);
+
+            // It landed in the DESTINATION folder and not beside the source.
+            Assert.StartsWith(destSaveFolder, landed, StringComparison.OrdinalIgnoreCase);
+
+            var copy = FwlReader.TryRead(Path.Combine(landed, "_main.1.fwl2"));
+            Assert.Equal(targetName, copy.WorldName);
+
+            // The same map, a different world.
+            Assert.Equal(sourceRead.SeedName, copy.SeedName);
+            Assert.Equal(sourceRead.Seed, copy.Seed);
+            Assert.NotEqual(sourceRead.Uid, copy.Uid);
+            Assert.NotEqual(0L, copy.Uid);
+
+            // And the realm it was taken from is untouched, byte for byte.
+            Assert.Equal(sourceBytes, File.ReadAllBytes(Path.Combine(dir, "_main.1.fwl2")));
+        }
+
+        /// <summary>
+        /// The pre-1.0 pair through the same overload, because the two formats take two
+        /// different code paths through CopyWorldAs and only one of them is a directory walk.
+        /// </summary>
+        [Fact]
+        public void A_legacy_copy_into_another_save_folder_gets_its_own_world_uid()
+        {
+            MakeLegacyWorld("Midgard");
+            var source = Path.Combine(WorldsDir(), "Midgard.fwl");
+            var sourceBytes = File.ReadAllBytes(source);
+            var sourceRead = FwlReader.TryRead(source);
+
+            var destSaveFolder = Path.Combine(SaveFolder, "realm-two");
+            Directory.CreateDirectory(destSaveFolder);
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Midgard", destSaveFolder);
+
+            var copy = FwlReader.TryRead(
+                Path.Combine(destSaveFolder, "worlds_local", "Midgard.fwl"));
+
+            Assert.Equal("Midgard", copy.WorldName);
+            Assert.Equal(sourceRead.Seed, copy.Seed);
+            Assert.NotEqual(sourceRead.Uid, copy.Uid);
+            Assert.NotEqual(0L, copy.Uid);
+
+            Assert.Equal(sourceBytes, File.ReadAllBytes(source));
+        }
+
+        /// <summary>
+        /// Two copies of one world are two worlds, not one world twice. Nothing about the
+        /// fix works if the new uid is drawn once and reused.
+        /// </summary>
+        [Fact]
+        public void Two_copies_of_one_world_do_not_share_a_uid_with_each_other()
+        {
+            MakeLegacyWorld("Midgard");
+            var dir = WorldsDir();
+
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Copy One");
+            WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Copy Two");
+
+            var one = FwlReader.TryRead(Path.Combine(dir, "Copy One.fwl"));
+            var two = FwlReader.TryRead(Path.Combine(dir, "Copy Two.fwl"));
+
+            Assert.NotEqual(one.Uid, two.Uid);
+            Assert.NotEqual(0L, one.Uid);
+            Assert.NotEqual(0L, two.Uid);
+            // Both are still the same world to LOOK at, which is what a duplicate is for.
+            Assert.Equal(one.SeedName, two.SeedName);
         }
 
         [Fact]
@@ -740,6 +904,72 @@ namespace ValheimBakaLoader.Tests.Tools
             var names = WorldStore.Enumerate(SaveFolder).Select(w => w.Name).ToList();
             Assert.Equal(new[] { "Midgard" }, names);
             Assert.Null(WorldStore.Find(SaveFolder, "Second Midgard"));
+        }
+
+        /// <summary>
+        /// The new uid resets the PLAYER side of the map, which lives in a character file
+        /// keyed by the world uid. It does not reset the world side: what anybody wrote on
+        /// a cartography table is inside the world save, and the world save is copied byte
+        /// for byte. So the Atlas on the copy shows the same recorded ground and the same
+        /// table pins as the world it came from, and the first player to read that table in
+        /// game gets that ground back.
+        /// <para>
+        /// This is the fact the wording on both surfaces has to match, so it is pinned here
+        /// rather than left to a sentence.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_world_save_itself_lands_on_the_copy_byte_for_byte()
+        {
+            var dir = MakeChunkedWorld("Midgard");
+            var save = File.ReadAllBytes(Path.Combine(dir, "_main.1.db2"));
+            var chunks = File.ReadAllBytes(Path.Combine(dir, "_main.1.chunks"));
+            var tile = File.ReadAllBytes(Path.Combine(dir, "00_00__0_41.chunk"));
+
+            var landed = WorldStore.CopyWorldAs(WorldStore.Find(SaveFolder, "Midgard"), "Second Midgard");
+
+            Assert.Equal(save, File.ReadAllBytes(Path.Combine(landed, "_main.1.db2")));
+            Assert.Equal(chunks, File.ReadAllBytes(Path.Combine(landed, "_main.1.chunks")));
+            Assert.Equal(tile, File.ReadAllBytes(Path.Combine(landed, "00_00__0_41.chunk")));
+
+            // Only the header moved, which is the whole of what this change touches.
+            Assert.NotEqual(
+                File.ReadAllBytes(Path.Combine(dir, "_main.1.fwl2")),
+                File.ReadAllBytes(Path.Combine(landed, "_main.1.fwl2")));
+        }
+
+        /// <summary>
+        /// COPY AS runs the same CopyWorldAs the Duplicate form runs, so the same world id
+        /// is written on a surface the wiki recommends as a safety net: copy the world,
+        /// point a realm at the copy, let people loose on that one. On 1.2.3 that kept
+        /// everyone's map; from 1.2.4 it does not, and the dialog has to say so BEFORE
+        /// Confirm rather than after.
+        /// <para>
+        /// It has to say both halves. "The map starts unexplored" on its own is not true of
+        /// the product: the table record travels with the copy and the Atlas draws it.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_copy_dialog_says_what_the_copy_does_not_bring_with_it()
+        {
+            var catalog = AppSourceTree.Read(
+                "ValheimBakaLoader", "WebUI", "i18n", "en.json");
+            Assert.Contains("\"world.copy.note.map\"", catalog);
+
+            var note = Newtonsoft.Json.Linq.JObject
+                .Parse(catalog)["keys"]["world.copy.note.map"]["lore"].ToString();
+
+            // The half a host loses.
+            Assert.Contains("character file", note, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("blank", note, StringComparison.OrdinalIgnoreCase);
+            // The half they keep, which is the half the first wording left out.
+            Assert.Contains("cartography table", note, StringComparison.OrdinalIgnoreCase);
+
+            // And the dialog hands it in, so the sentence is on the surface rather than
+            // only in the catalog.
+            var page = AppSourceTree.Web("app.js");
+            Assert.Contains("()=>T(\"world.copy.note.map\")", page);
+            Assert.Contains("function promptModal(title,placeholder,onOk,check,note){", page);
         }
 
         /// <summary>

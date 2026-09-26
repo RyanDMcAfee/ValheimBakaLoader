@@ -296,8 +296,8 @@ namespace ValheimBakaLoader.Tests.Forms
             var expected = new[]
             {
                 "mods.possibly_outdated.yes", "mods.status.bundled", "mods.status.current",
-                "mods.status.held", "mods.status.not_listed", "mods.status.update",
-                "mods.tag.hexium", "mods.tag.patcher",
+                "mods.status.held", "mods.status.not_listed", "mods.status.unchecked",
+                "mods.status.update", "mods.tag.hexium", "mods.tag.patcher",
             };
             Assert.Equal(expected, IdsAskedIn(text).ToArray());
 
@@ -331,7 +331,8 @@ namespace ValheimBakaLoader.Tests.Forms
             var rowTips = new[]
             {
                 "mods.col.possibly_outdated.tip", "mods.col.possibly_outdated.tip.unknown",
-                "mods.status.held.tip", "mods.status.not_listed.tip", "mods.tag.hexium.tip",
+                "mods.status.held.tip", "mods.status.not_listed.tip",
+                "mods.status.unchecked.tip", "mods.tag.hexium.tip",
             };
             // Words the render draws AROUND the table rather than on a row: the pill above
             // it and the two lines under the heading. Subtracted by name for the same
@@ -355,6 +356,10 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal("Current", Lore("mods.status.current"));
             Assert.Equal("held", Lore("mods.status.held"));
             Assert.Equal("not listed", Lore("mods.status.not_listed"));
+            // The whole-table version of the same rule: a scan that never reached the site
+            // knows nothing about a newer version of anything, and a host looking for the
+            // rows that were not checked can type the pill the way they can type the others.
+            Assert.Equal("Not checked", Lore("mods.status.unchecked"));
             Assert.Equal("Yes", Lore("mods.possibly_outdated.yes"));
         }
 

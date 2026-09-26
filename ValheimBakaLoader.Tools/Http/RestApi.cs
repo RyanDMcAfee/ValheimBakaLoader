@@ -1,7 +1,9 @@
 using Newtonsoft.Json;
 using Serilog;
+using Serilog.Events;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net;
@@ -79,17 +81,28 @@ namespace ValheimBakaLoader.Tools.Http
     public class HttpClientProvider : IHttpClientProvider, IDisposable
     {
         private readonly IHttpTransportSettings Settings;
+        private readonly ILogger Tracer;
         private readonly object Gate = new();
-        private SocketsHttpHandler Handler;
+        private HttpMessageHandler Handler;
         private HttpTransportOptions Built;
 
-        public HttpClientProvider() : this(null)
+        public HttpClientProvider() : this(null, null)
         {
         }
 
-        public HttpClientProvider(IHttpTransportSettings settings)
+        public HttpClientProvider(IHttpTransportSettings settings) : this(settings, null)
+        {
+        }
+
+        /// <summary>
+        /// The same provider, with the logger the wire trace writes to. The app registers
+        /// this shape; a test that does not care about the trace uses the shorter one and
+        /// gets a handler with no trace on it at all.
+        /// </summary>
+        public HttpClientProvider(IHttpTransportSettings settings, ILogger tracer)
         {
             Settings = settings;
+            Tracer = tracer;
         }
 
         public HttpClient CreateClient() => new(CurrentHandler(), disposeHandler: false);
@@ -116,7 +129,7 @@ namespace ValheimBakaLoader.Tools.Http
                 if (Handler != null && Built.SameAs(wanted)) return Handler;
 
                 var replaced = Handler;
-                Handler = NewHandler(wanted);
+                Handler = NewTracedHandler(wanted, Tracer);
                 Built = wanted;
                 // Whatever was in flight on the old handler keeps its own reference to it,
                 // so this only releases the pooled connections nothing is using.
@@ -129,7 +142,14 @@ namespace ValheimBakaLoader.Tools.Http
         /// A handler shaped by the two switches. Public because the shape is what the
         /// tests assert: there is no way to ask a live request which of these it took.
         /// </summary>
-        public static SocketsHttpHandler NewHandler(HttpTransportOptions options)
+        public static SocketsHttpHandler NewHandler(HttpTransportOptions options) =>
+            NewHandler(options, null);
+
+        /// <summary>
+        /// The same handler, with the logger its connect callback writes to. Only the IPv4
+        /// path says anything, and only at Verbose, so a Debug log looks exactly as it did.
+        /// </summary>
+        public static SocketsHttpHandler NewHandler(HttpTransportOptions options, ILogger tracer)
         {
             options ??= HttpTransportOptions.Default;
 
@@ -150,10 +170,24 @@ namespace ValheimBakaLoader.Tools.Http
 
             if (options.IPv4Only)
             {
-                handler.ConnectCallback = ConnectOverIPv4Async;
+                handler.ConnectCallback = (context, token) =>
+                    ConnectOverIPv4Async(context, token, tracer);
             }
 
             return handler;
+        }
+
+        /// <summary>
+        /// The handler every client in the app is actually handed: the shaped
+        /// <see cref="NewHandler(HttpTransportOptions, ILogger)"/> with the wire trace
+        /// wrapped around it. With no logger, or with the log at Debug, the wrapper stands
+        /// aside and the bytes take exactly the path they always did.
+        /// </summary>
+        public static HttpMessageHandler NewTracedHandler(HttpTransportOptions options, ILogger tracer)
+        {
+            options ??= HttpTransportOptions.Default;
+            var inner = NewHandler(options, tracer);
+            return tracer == null ? inner : new WireTraceHandler(inner, tracer, options);
         }
 
         /// <summary>
@@ -161,10 +195,11 @@ namespace ValheimBakaLoader.Tools.Http
         /// for at all, so a machine that has them and cannot route them never waits on one.
         /// </summary>
         private static async ValueTask<Stream> ConnectOverIPv4Async(
-            SocketsHttpConnectionContext context, CancellationToken token)
+            SocketsHttpConnectionContext context, CancellationToken token, ILogger tracer = null)
         {
             var host = context.DnsEndPoint.Host;
             var port = context.DnsEndPoint.Port;
+            var clock = Stopwatch.StartNew();
 
             IPAddress[] addresses;
             if (IPAddress.TryParse(host, out var literal))
@@ -191,10 +226,26 @@ namespace ValheimBakaLoader.Tools.Http
             try
             {
                 await socket.ConnectAsync(addresses, port, token).ConfigureAwait(false);
+
+                // What was actually dialled, which is the half of an IPv4-only stall that no
+                // exception message carries. Verbose only, so the ordinary log is unchanged.
+                if (WireTrace.Wanted(tracer))
+                {
+                    var landed = socket.RemoteEndPoint?.ToString() ?? host + ":" + port;
+                    WireTrace.Say(tracer,
+                        "HTTP connect " + landed + " in " + WireTrace.Count(clock.ElapsedMilliseconds) + " ms");
+                }
+
                 return new NetworkStream(socket, ownsSocket: true);
             }
-            catch
+            catch (Exception problem)
             {
+                // A connect that did not land is worth a line at Debug: this is the switch a
+                // host is told to turn on, and "it still does not work" needs a reason beside it.
+                tracer?.Debug("{Trace:l}",
+                    "HTTP connect failed for " + host + ":" + port + " after "
+                    + WireTrace.Count(clock.ElapsedMilliseconds) + " ms: "
+                    + problem.GetType().Name + ": " + WireTrace.Innermost(problem));
                 socket.Dispose();
                 throw;
             }
@@ -267,6 +318,212 @@ namespace ValheimBakaLoader.Tools.Http
             }
 
             GC.SuppressFinalize(this);
+        }
+    }
+
+    /// <summary>
+    /// The words the wire trace is written in, and the one question it asks before it writes
+    /// any of them.
+    /// <para>
+    /// Everything here is at Verbose and nothing here is anywhere else, which is the whole
+    /// arrangement: with the log at its ordinary Debug level a host's file carries exactly
+    /// what it carried before, and with Detailed log on it carries one line per request.
+    /// </para>
+    /// <para>
+    /// An address is written as scheme, host and path and as nothing else, and the path is
+    /// read for secrets before it is written. A query string carries search terms, tokens and
+    /// package names a host did not choose to publish, and a webhook address carries the key
+    /// to a channel inside the path; this text is what a host pastes into a bug report, so
+    /// neither of them goes in.
+    /// </para>
+    /// </summary>
+    public static class WireTrace
+    {
+        /// <summary>True when the log is open wide enough for a trace line to be worth building.</summary>
+        public static bool Wanted(ILogger logger)
+        {
+            if (logger == null) return false;
+            try { return logger.IsEnabled(LogEventLevel.Verbose); }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// One trace line. The sentence is passed as a VALUE with the literal format, so a
+        /// path carrying braces is text rather than a template, and nothing comes out quoted.
+        /// </summary>
+        public static void Say(ILogger logger, string line)
+        {
+            if (logger == null || string.IsNullOrEmpty(line)) return;
+            try { logger.Verbose("{Trace:l}", line); }
+            catch { /* a line about a request must never be what fails the request */ }
+        }
+
+        /// <summary>
+        /// Scheme, host and path. No query, no fragment, no user information, and no secret
+        /// that lives in the path itself.
+        /// <para>
+        /// A Discord webhook carries its key as a path segment rather than in the query:
+        /// https://discord.com/api/webhooks/{id}/{key}. Anyone holding that key can post to
+        /// the channel, and this text is what a host attaches to a bug report, so dropping
+        /// the query alone would not have been enough.
+        /// </para>
+        /// </summary>
+        public static string Address(Uri uri)
+        {
+            if (uri == null) return "(no address)";
+            try
+            {
+                return uri.IsAbsoluteUri
+                    ? uri.Scheme + "://" + uri.Host + (uri.IsDefaultPort ? "" : ":" + uri.Port.ToString(CultureInfo.InvariantCulture)) + SafePath(uri.AbsolutePath)
+                    : "(a relative address)";
+            }
+            catch { return "(an address that would not come apart)"; }
+        }
+
+        /// <summary>
+        /// The path with any secret segment taken out of it. The one shape this app sends
+        /// that holds a secret in its path is a webhook: the segment after "webhooks" is the
+        /// channel's own number, and the one after that is the key that lets anybody post
+        /// there. The key is the one that goes. Whatever follows it stays, because
+        /// /messages/{id} is what tells an edit from a new post.
+        /// </summary>
+        public static string SafePath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return path;
+            if (path.IndexOf("webhooks", StringComparison.OrdinalIgnoreCase) < 0) return path;
+
+            var parts = path.Split('/');
+            for (var here = 0; here < parts.Length; here++)
+            {
+                if (!string.Equals(parts[here], "webhooks", StringComparison.OrdinalIgnoreCase)) continue;
+                for (var secret = here + 2; secret < parts.Length; secret++)
+                {
+                    if (parts[secret].Length == 0) continue;
+                    parts[secret] = "(the webhook key)";
+                    return string.Join("/", parts);
+                }
+                break;
+            }
+            return path;
+        }
+
+        /// <summary>A whole number with thousands separators, the same in every locale.</summary>
+        public static string Count(long value) => value.ToString("N0", CultureInfo.InvariantCulture);
+
+        /// <summary>The message at the bottom of an exception, which is where the reason usually is.</summary>
+        public static string Innermost(Exception problem)
+        {
+            if (problem == null) return "no reason given";
+            var innermost = problem;
+            while (innermost.InnerException != null) innermost = innermost.InnerException;
+            return innermost.Message;
+        }
+    }
+
+    /// <summary>
+    /// A line when a request goes out and a line when it comes back, at Verbose, wrapped
+    /// around the one handler every remote client in the app sends through.
+    /// <para>
+    /// It exists for the host whose machine cannot reach Thunderstore while curl on the same
+    /// box goes straight out. The log used to say the read failed and nothing else: not which
+    /// address, not whether a proxy was in front of it, not how long it sat there. The pair
+    /// of lines answers all of that, and they are only written when a host has turned
+    /// Detailed log on, because on a busy install they arrive fast.
+    /// </para>
+    /// <para>
+    /// Nothing from a header and nothing from a body ever reaches the log. The request may
+    /// carry an Authorization header, and a Discord webhook keeps the key to a channel in its
+    /// path rather than in its query, so the trace names the method, the address with its
+    /// query dropped and its webhook key replaced, the proxy, the status, the size and the
+    /// clock.
+    /// </para>
+    /// </summary>
+    public sealed class WireTraceHandler : DelegatingHandler
+    {
+        private readonly ILogger Tracer;
+        private readonly HttpTransportOptions Options;
+
+        public WireTraceHandler(HttpMessageHandler inner, ILogger tracer, HttpTransportOptions options)
+            : base(inner)
+        {
+            Tracer = tracer;
+            Options = options ?? HttpTransportOptions.Default;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            // Asked once, before anything is built. At Debug this handler costs one call.
+            if (!WireTrace.Wanted(Tracer))
+                return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+
+            var where = WireTrace.Address(request.RequestUri);
+            var method = request.Method?.Method ?? "GET";
+
+            WireTrace.Say(Tracer, "HTTP " + method + " " + where + " via " + Via(request.RequestUri)
+                + (Options.IPv4Only ? ", IPv4 only" : ""));
+
+            var clock = Stopwatch.StartNew();
+            try
+            {
+                var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                var length = Length(response);
+                // "to headers", because that is what this clock measures and nothing else.
+                // A handler hands its answer back the moment the status line and the headers
+                // are in; the body is read afterwards, by HttpClient for a caller that asked
+                // for the whole thing and by the caller itself for one that streams. The
+                // full package listing is the read where the difference is minutes, and it
+                // already writes its own start and finish lines with the total bytes and the
+                // total milliseconds on them, so the honest word here is enough.
+                WireTrace.Say(Tracer, "HTTP " + (int)response.StatusCode + " " + where + " "
+                    + length + " " + WireTrace.Count(clock.ElapsedMilliseconds) + " ms to headers");
+                return response;
+            }
+            catch (Exception problem)
+            {
+                WireTrace.Say(Tracer, "HTTP FAILED " + where + " after "
+                    + WireTrace.Count(clock.ElapsedMilliseconds) + " ms: "
+                    + problem.GetType().Name + ": " + WireTrace.Innermost(problem));
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// The proxy this request would go through, by scheme, host and port, or the word for
+        /// going straight out. With the no-proxy switch on there is nothing to ask.
+        /// </summary>
+        private string Via(Uri uri)
+        {
+            if (Options.BypassProxy) return "direct (the Windows proxy is switched off)";
+            if (uri == null || !uri.IsAbsoluteUri) return "direct";
+
+            // Asked once per host and then remembered. The machine this whole trace exists
+            // for is one whose automatic proxy detection is the thing that does not answer,
+            // and asking it again on every request would put that wait into every line.
+            var key = uri.Scheme + "://" + uri.Host;
+            lock (Proxies)
+            {
+                if (Proxies.TryGetValue(key, out var held)) return held;
+            }
+
+            var answer = HttpClientProvider.ProxyFor(key + "/");
+            if (string.Equals(answer, "(direct)", StringComparison.Ordinal)) answer = "direct";
+
+            lock (Proxies)
+            {
+                Proxies[key] = answer;
+            }
+            return answer;
+        }
+
+        /// <summary>What the proxy settings said about a host, kept for the life of the handler.</summary>
+        private readonly Dictionary<string, string> Proxies = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The body's size when the answer named one, and the truth when it did not.</summary>
+        private static string Length(HttpResponseMessage response)
+        {
+            var declared = response?.Content?.Headers?.ContentLength;
+            return declared.HasValue ? WireTrace.Count(declared.Value) + " bytes" : "size unknown";
         }
     }
 

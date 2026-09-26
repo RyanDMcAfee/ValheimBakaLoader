@@ -50,6 +50,14 @@ namespace ValheimBakaLoader.Game
 
         public bool WriteApplicationLogsToFile { get; set; } = true;
 
+        // A line in the application log when a web request goes out and a line when it comes
+        // back: the address and the proxy in front of it, then the status, the size and the
+        // clock. Off by default, because it is a lot of lines on a busy install and nobody
+        // who is not chasing a problem wants them. The
+        // dial it moves is ILogLevelControl, and that follows the moment this is saved, so
+        // there is no restart between turning it on and the next request being written down.
+        public bool DetailedLog { get; set; }
+
         // Custom folder for app + server log files; null/blank = the default
         // %USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\logs.
         public string LogsFolderPath { get; set; }
@@ -152,6 +160,7 @@ namespace ValheimBakaLoader.Game
                 StartMinimized = file.StartMinimized ?? defaults.StartMinimized,
                 SaveProfileOnStart = file.SaveProfileOnStart ?? defaults.SaveProfileOnStart,
                 WriteApplicationLogsToFile = file.WriteApplicationLogsToFile ?? defaults.WriteApplicationLogsToFile,
+                DetailedLog = file.DetailedLog ?? defaults.DetailedLog,
                 LogsFolderPath = file.LogsFolderPath ?? defaults.LogsFolderPath,
                 EnablePasswordValidation = file.EnablePasswordValidation ?? defaults.EnablePasswordValidation,
                 BypassSystemProxy = file.BypassSystemProxy ?? defaults.BypassSystemProxy,
@@ -205,6 +214,7 @@ namespace ValheimBakaLoader.Game
             StartMinimized = StartMinimized,
             SaveProfileOnStart = SaveProfileOnStart,
             WriteApplicationLogsToFile = WriteApplicationLogsToFile,
+            DetailedLog = DetailedLog,
             LogsFolderPath = LogsFolderPath,
             EnablePasswordValidation = EnablePasswordValidation,
             BypassSystemProxy = BypassSystemProxy,

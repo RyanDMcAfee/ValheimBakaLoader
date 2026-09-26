@@ -1192,8 +1192,17 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// Copies one world beside itself under a NEW name, in either save format, and
-        /// rewrites the name stored inside the copy's own header so the copy is a real
-        /// rename rather than the same world wearing two names at once.
+        /// rewrites the name AND the world uid stored inside the copy's own header so the
+        /// copy is a world of its own rather than the same world wearing two names at once.
+        /// <para>
+        /// The name is what a host sees and the uid is what the GAME goes by. A character
+        /// file keys its map exploration and its own pins on the uid, so a copy that kept the
+        /// source's would come up with the source's map already drawn on it and every pin
+        /// either world gained afterwards would appear on both. Both halves of the rewrite
+        /// happen here, on every copy, in both save formats:
+        /// <see cref="FwlNameRewriter"/> for the name and <see cref="FwlUidRewriter"/> for
+        /// the uid. The seed is not touched, so the copy is the same map.
+        /// </para>
         /// <para>
         /// The source is never touched, and neither are its backup layers: they belong to
         /// the world that is still there. The copy lands in the same worlds folder the
@@ -1219,9 +1228,10 @@ namespace ValheimBakaLoader.Tools
         /// the source realm's world under whatever name the new realm calls its own.
         /// <para>
         /// Everything about it is the copy above: the whole tree or the pair of files, the
-        /// header rewritten so the copy names itself, the staging thrown away on any refusal,
-        /// and the source untouched. The two differences are where it lands and what counts
-        /// as the name being taken, which is the DESTINATION folder rather than the source's.
+        /// header rewritten so the copy names itself and carries its own world uid, the
+        /// staging thrown away on any refusal, and the source untouched. The two differences
+        /// are where it lands and what counts as the name being taken, which is the
+        /// DESTINATION folder rather than the source's.
         /// Keeping the same name is allowed here, because a world of that name in a save
         /// folder of its own is not the same world twice.
         /// </para>
@@ -1360,6 +1370,13 @@ namespace ValheimBakaLoader.Tools
 
             TryDeleteDirectory(staged);
 
+            // One new world uid for the whole tree. The generations under a 1.0 world
+            // directory are saves of ONE world, so they all take the same one; what they must
+            // not keep is the source's, because the uid is how a character file keys its map
+            // exploration and its pins, and a copy carrying it is the same world to every
+            // client that opens it.
+            var uid = FwlUidRewriter.NewUid();
+
             try
             {
                 CopyDirectory(world.Folder, staged);
@@ -1374,7 +1391,14 @@ namespace ValheimBakaLoader.Tools
                     var match = MainFwl2.Match(System.IO.Path.GetFileName(meta));
                     if (!match.Success) continue;
 
-                    if (FwlNameRewriter.TryRewriteWorldName(meta, targetName))
+                    // The name first and then the uid, both on the staging copy. The uid is
+                    // eight bytes at a fixed place behind the two names, so rewriting it after
+                    // the name is rewritten costs one more pass over a header of a few hundred
+                    // bytes and nothing else. A uid that will not take is treated exactly as a
+                    // name that will not take: the checks below decide whether that is a
+                    // reason to refuse the whole copy.
+                    if (FwlNameRewriter.TryRewriteWorldName(meta, targetName)
+                        && FwlUidRewriter.TryGiveOwnUid(meta, uid))
                     {
                         rewritten++;
                         continue;
@@ -1453,7 +1477,13 @@ namespace ValheimBakaLoader.Tools
 
                 var meta = staged.FirstOrDefault(
                     s => s.Final.EndsWith(".fwl", StringComparison.OrdinalIgnoreCase));
-                if (meta.Temp == null || !FwlNameRewriter.TryRewriteWorldName(meta.Temp, targetName))
+                // The name and the uid, both on the staging copy and both before anything
+                // takes the new name. The uid is what a character file keys its map
+                // exploration and its pins on, so a copy that kept the source's would be the
+                // same world to every client that opened it, however different the name.
+                if (meta.Temp == null
+                    || !FwlNameRewriter.TryRewriteWorldName(meta.Temp, targetName)
+                    || !FwlUidRewriter.TryGiveOwnUid(meta.Temp, FwlUidRewriter.NewUid()))
                     throw new HostFacingException("worlds.copyUnreadable",
                         $"The world file for '{world.Name}' could not be read, so nothing was copied.",
                         ("world", world.Name));

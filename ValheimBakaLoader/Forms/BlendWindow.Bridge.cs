@@ -55,6 +55,9 @@ namespace ValheimBakaLoader.Forms
         private ILanguagePackService LanguagePacks;
         private IApplicationLogger AppLogger;
 
+        /// <summary>The Detailed log dial, so the switch on the Upkeep card can move it.</summary>
+        private ILogLevelControl LogLevel;
+
         // One cancellation source per profile with an update in flight. It is the app's own
         // shutdown handle and NOTHING else: cancelling it used to be how "Stop waiting for Steam"
         // worked, and because the service links it into the steamcmd run, that stopped BakaLoader
@@ -293,6 +296,9 @@ namespace ValheimBakaLoader.Forms
             SessionRegistry = serviceProvider.GetRequiredService<IServerSessionRegistry>();
             LanguagePacks = serviceProvider.GetRequiredService<ILanguagePackService>();
             AppLogger = appLogger;
+            // Resolved rather than taken through the window's constructor, for the same
+            // reason the Hexium reader is: nothing else in the app has to know it is there.
+            LogLevel = serviceProvider.GetRequiredService<ILogLevelControl>();
 
             // The sentences the people on the server read are written on this side, so the
             // catalog they come out of is picked before anything can send one.
@@ -4246,10 +4252,20 @@ namespace ValheimBakaLoader.Forms
             // the page this is pressed from is the one a stuck host is already on.
             RegisterRpc("net.diagnose", async p =>
             {
-                var report = await Task.Run(() => ConnectionDiagnostics.RunAsync());
+                var report = await Task.Run(() => ConnectionDiagnostics.RunAsync(null, Logger));
 
-                Logger.Information("Connection test for {host}: {verdict}. {stages}",
+                // The whole result as ONE block, so a host can paste the log instead of the
+                // page. Every stage with its outcome and its milliseconds, then the verdict
+                // both as the short name the page keys on and as the sentence it shows: a
+                // reader of the log should not have to own the page to know what "noproxy"
+                // was asking them to do.
+                // The verdict sentence is written with :l, which is Serilog's "literal": a
+                // string scalar without it comes out wrapped in quotation marks, and a
+                // sentence inside a bracket inside quotation marks is not what a host pastes
+                // into an issue.
+                Logger.Information("Connection test for {host}: {verdict} ({sentence:l}). {stages}",
                     report.Host, report.Verdict,
+                    HostCatalog.EmbeddedEnglish.Say("hearth.upkeep.connection.verdict." + report.Verdict),
                     string.Join(" | ", report.Stages.Select(s =>
                         s.Stage + "=" + (s.Ok ? "ok" : "no") + " " + s.Detail + " (" + s.Ms + "ms)")));
 
@@ -4272,6 +4288,10 @@ namespace ValheimBakaLoader.Forms
                 // launch record had landed in between would put those back the way they were, so the
                 // load, the edits and the write all happen under the one gate.
                 UserPreferences prefs = null;
+                // Whether this save carried the Detailed log switch. The dial itself is moved
+                // after the write lands, so the line that says the level changed is the first
+                // one in the log a host is about to go and read.
+                var detailedLogMoved = false;
                 UserPrefsProvider.Mutate(current =>
                 {
                     prefs = current;
@@ -4310,6 +4330,15 @@ namespace ValheimBakaLoader.Forms
                     Apply("StartMinimized", v => prefs.StartMinimized = v.Value<bool>());
                     Apply("SaveProfileOnStart", v => prefs.SaveProfileOnStart = v.Value<bool>());
                     Apply("WriteApplicationLogsToFile", v => prefs.WriteApplicationLogsToFile = v.Value<bool>());
+                    // Detailed log. The dial is moved AFTER the write lands, below, so the one
+                    // line that says the level moved is written into the log the host is about
+                    // to read rather than into the one they are leaving. The card posts every
+                    // switch on it together, so the key arriving is not the switch moving:
+                    // only a save that changed the value counts as a move.
+                    Apply("DetailedLog", v =>
+                    {
+                        if (LogLevelControl.ApplySavedValue(prefs, v)) detailedLogMoved = true;
+                    });
                     Apply("LogsFolderPath", v =>
                     {
                         // Blank = back to the default folder. A custom path must be
@@ -4390,6 +4419,14 @@ namespace ValheimBakaLoader.Forms
                 {
                     try { StartupHelper.ApplyStartupSetting(prefs.StartWithWindows, Logger); }
                     catch (Exception e) { AppLogger.Error(e, "Failed to apply the 'start with Windows' setting."); }
+                }
+
+                // The log's own detail, moved here and not at the next launch: a host who has
+                // just turned it on is about to reproduce the thing they are chasing.
+                if (detailedLogMoved && LogLevel != null)
+                {
+                    try { AppLogger.Information("{Line:l}", LogLevel.Toggled(prefs.DetailedLog)); }
+                    catch (Exception e) { AppLogger.Debug("Could not move the log level: {0}", e.Message); }
                 }
 
                 return Task.FromResult<object>(BuildUserPrefsDto());
@@ -5913,8 +5950,36 @@ namespace ValheimBakaLoader.Forms
             // The reply is handed back exactly as the plugin said it, and the page reads it.
             RegisterRpc("players.cleanse", async p =>
             {
-                var response = await Server.SendRconCommandAsync("baka_cleanse");
-                return new { ok = response != null, response };
+                var outcome = await RunCleanseAsync(
+                    command => Server.SendRconCommandAsync(command, quiet: command != "baka_cleanse"),
+                    CleansePollEvery,
+                    CleansePollCeiling,
+                    // Straight into the application log, which is what the Saga hall draws:
+                    // a sweep over a big world takes minutes, and a page where nothing moves
+                    // for minutes is a page a host presses again.
+                    line => AppLogger.Information("{Line:l}", "[RCON] " + line));
+
+                if (outcome.StillRunning)
+                {
+                    AppLogger.Information(
+                        "The cleanse is still running after {0} minutes. Its counts land in the server log, "
+                        + "and baka_cleanse_status answers with them.", (int)CleansePollCeiling.TotalMinutes);
+                }
+
+                if (outcome.NotAnswering)
+                {
+                    AppLogger.Warning(
+                        "The server stopped answering while the cleanse was running, so BakaLoader "
+                        + "stopped waiting for it.");
+                }
+
+                return new
+                {
+                    ok = outcome.Ok,
+                    response = outcome.Response,
+                    stillRunning = outcome.StillRunning,
+                    notAnswering = outcome.NotAnswering,
+                };
             });
 
             RegisterRpc("players.heal", async p => await Server.HealAsync(RequireTarget(p)));
@@ -6063,6 +6128,20 @@ namespace ValheimBakaLoader.Forms
                     // row (it is the same game for all of them). Null when there is no manifest.
                     var gameUpdatedUtc = ReadGameLastUpdatedUtc();
 
+                    // Whether this scan could check anything at all, and why not when it
+                    // could not. Both fields are additive: a page from an older build reads
+                    // the rows and the index exactly as it always did.
+                    //
+                    // A scan that read this server's BepInEx folder and then could not reach
+                    // Thunderstore, with nothing held from an earlier read, has checked
+                    // nothing for a newer version. It used to answer like a success, and the
+                    // hall drew every row with a dash in the Latest column as though the site
+                    // had said so. The reporter's machine could not reach the site at all,
+                    // and the panel they got back was the one that says the mods have not
+                    // been scanned yet.
+                    var failure = ThunderstoreClient.LastFailure;
+                    var blind = failure != null && ThunderstoreClient.IndexFetchedUtc == null;
+
                     return new
                     {
                         mods = mods.Select(m => BuildModDto(m, gameUpdatedUtc)).ToList(),
@@ -6070,6 +6149,9 @@ namespace ValheimBakaLoader.Forms
                         // the two addresses answered, so the page can say so instead of
                         // showing the time the button was pressed.
                         index = BuildIndexStateDto(indexState),
+                        ok = !blind,
+                        reasonId = blind ? ScanFailureId(failure) : null,
+                        reasonParams = blind ? ScanFailureParams(failure) : null,
                     };
                 }
                 finally
@@ -8533,6 +8615,244 @@ namespace ValheimBakaLoader.Forms
 
         #endregion
 
+        /// <summary>
+        /// Which sentence a failed scan is worded from. "Could not reach Thunderstore" is
+        /// only true of a read that left the machine. A press that ran out of time waiting
+        /// for another scan's turn never asked the site anything, and telling a host the
+        /// site did not answer would send them looking at their network for a queue that is
+        /// inside BakaLoader.
+        /// </summary>
+        public static string ScanFailureId(ThunderstoreFailureMemo failure)
+        {
+            var reason = failure?.Reason;
+
+            // A press that ran out of time waiting for another scan's turn never asked the
+            // site anything.
+            if (string.Equals(reason, "busy", StringComparison.Ordinal))
+                return "mods.empty.failed.reason.busy";
+
+            // And the site ANSWERING with something that was not its package list is not a
+            // site that could not be reached. Framing it as one put "could not reach
+            // Thunderstore (the site answered with something that was not its package list)"
+            // on the screen, which contradicts itself inside one bracket. A captive portal
+            // and a 503 both look like this from here, and both are worth telling apart from
+            // a machine that cannot get out at all.
+            if (string.Equals(reason, "answered", StringComparison.Ordinal))
+                return "mods.empty.failed.reason.answered";
+
+            return "mods.empty.failed.reason.unreachable";
+        }
+
+        /// <summary>
+        /// The slots the failure sentence has: WHICH kind of failure the last read was, and
+        /// when every caller stops being refused the trip.
+        /// <para>
+        /// All of them travel as data and none of them travels as English. The kind is one of
+        /// <see cref="Tools.ThunderstoreClient.ReasonNames"/>, which the page keeps a
+        /// sentence for, and the wait travels both as the moment it ends and as the seconds
+        /// that were left when this was written. A phrase written here would have landed
+        /// inside a translated sentence in English, which is exactly what the four packs this
+        /// release carries exist to stop.
+        /// </para>
+        /// </summary>
+        private static object ScanFailureParams(ThunderstoreFailureMemo failure)
+        {
+            if (failure == null)
+                return new
+                {
+                    detailName = Tools.ThunderstoreClient.ReasonName(null),
+                    retrySeconds = 0,
+                    retryAtUtc = (string)null,
+                };
+
+            return new
+            {
+                detailName = Tools.ThunderstoreClient.ReasonName(failure.Reason),
+                // Kept for a page from an older build, which reads only this.
+                retrySeconds = ScanRetrySeconds(failure, DateTime.UtcNow),
+                // WHEN the wait is over rather than how long was left when this was written.
+                retryAtUtc = ScanRetryAtUtc(failure),
+            };
+        }
+
+        /// <summary>
+        /// How many whole seconds of a memo's backoff are left at <paramref name="nowUtc"/>,
+        /// never below zero. A wait that has run out is nought seconds rather than a negative
+        /// number, because the page words "none left" as a sentence of its own.
+        /// </summary>
+        public static int ScanRetrySeconds(ThunderstoreFailureMemo failure, DateTime nowUtc)
+        {
+            if (failure == null) return 0;
+            var left = failure.RetryAtUtc - nowUtc;
+            return left <= TimeSpan.Zero ? 0 : (int)Math.Round(left.TotalSeconds);
+        }
+
+        /// <summary>
+        /// The moment a memo's backoff ends, as the page parses it, or null when there is no
+        /// memo.
+        /// <para>
+        /// The panel that shows this is persistent: a host who leaves the Mods hall open is
+        /// still reading the same sentence a quarter of an hour later. A number of seconds
+        /// worked out when the reply was written would by then be telling them to wait a
+        /// quarter of an hour they have just spent, so the moment travels as well and the
+        /// page words the remaining wait on every draw.
+        /// </para>
+        /// </summary>
+        public static string ScanRetryAtUtc(ThunderstoreFailureMemo failure) =>
+            failure == null
+                ? null
+                : failure.RetryAtUtc.ToUniversalTime().ToString(
+                    "yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>
+        /// What a cleanse came to, from the window's side of the RCON socket.
+        /// </summary>
+        public sealed class CleanseOutcome
+        {
+            /// <summary>False only when the command did not get through at all.</summary>
+            public bool Ok { get; init; }
+
+            /// <summary>The last line the server said, exactly as it said it.</summary>
+            public string Response { get; init; }
+
+            /// <summary>
+            /// True when the window stopped asking before the sweep finished. Nothing has
+            /// gone wrong: the sweep is on the server and will finish and log its counts.
+            /// </summary>
+            public bool StillRunning { get; init; }
+
+            /// <summary>
+            /// True when the server stopped answering part way through the wait.
+            /// <para>
+            /// This is NOT the ceiling above, and wording it as one told a host their cleanse
+            /// was still going when the thing it was running on had gone. A status read
+            /// answers null when RCON is off, when the server is not Running, or when the
+            /// socket would not open, and on a wait that has already started a sweep every
+            /// one of those means the sweep is not walking any more.
+            /// </para>
+            /// </summary>
+            public bool NotAnswering { get; init; }
+        }
+
+        /// <summary>
+        /// Starts a cleanse and waits it out.
+        /// <para>
+        /// From plugin 1.8.1 the sweep is sliced across frames, so baka_cleanse answers the
+        /// moment it knows what it is about to walk rather than when it has finished. A world
+        /// small enough to be walked inside the first slice still answers with its whole
+        /// result line, and a refusal still answers with the refusal: both of those are the
+        /// 1.2.3 shape and go straight back to the page. Anything opening with
+        /// "Cleanse started" is a sweep that is still going, and this then asks
+        /// baka_cleanse_status until it says something other than "Cleanse running", which is
+        /// the result line.
+        /// </para>
+        /// <para>
+        /// A status read that did not get through is NOT a finished sweep and is not read as
+        /// one. It is the server no longer answering at all, which on a wait that has already
+        /// started a sweep means the sweep is not walking any more, so the wait ends and says
+        /// that rather than sitting out the ceiling and then wording it as "still running".
+        /// </para>
+        /// <para>
+        /// Public and handed its transport so the loop can be driven against a fake RCON: a
+        /// wait that only ever ran against a real server is a wait nothing can hold to its
+        /// own rules.
+        /// </para>
+        /// </summary>
+        /// <param name="send">Sends one RCON line and answers with the reply, or null.</param>
+        /// <param name="pollEvery">How long between two status reads.</param>
+        /// <param name="ceiling">How long to keep asking before giving up on the answer.</param>
+        /// <param name="progress">
+        /// Handed the plugin's own opening line and then each status line whose counts have
+        /// MOVED, so a host watching the Saga log sees the sweep walk instead of a page where
+        /// nothing happens for ten minutes. Optional: a caller that wants none of them hands
+        /// nothing and the wait behaves exactly as it did.
+        /// </param>
+        public static async Task<CleanseOutcome> RunCleanseAsync(
+            Func<string, Task<string>> send, TimeSpan pollEvery, TimeSpan ceiling,
+            Action<string> progress = null)
+        {
+            if (send == null) return new CleanseOutcome { Ok = false };
+
+            var started = await send("baka_cleanse");
+            if (started == null) return new CleanseOutcome { Ok = false };
+
+            if (!started.TrimStart().StartsWith(
+                    BakaLoaderKillAll.CleansePlan.StartedPrefix, StringComparison.OrdinalIgnoreCase))
+                return new CleanseOutcome { Ok = true, Response = started };
+
+            // The line that says what is about to be walked goes into the log the host is
+            // watching, not only into the server's own.
+            Tell(progress, started);
+
+            // CLOCKED, not counted. A count of polls is a count of ROUND TRIPS, and each one
+            // is a socket opened, a command sent, an answer read and the socket closed on top
+            // of the wait between them: twelve hundred of those add up to a good deal more
+            // than the ten minutes they were meant to, and the ceiling is the promise the
+            // toast and the wiki both make.
+            var clock = Stopwatch.StartNew();
+
+            var last = started;
+            var told = started;
+
+            while (clock.Elapsed < ceiling)
+            {
+                if (pollEvery > TimeSpan.Zero) await Task.Delay(pollEvery);
+
+                var status = await send("baka_cleanse_status");
+
+                // Nothing came back at all. On a wait that has already started a sweep the
+                // live reason for that is the server going down under it, and reading it as
+                // "still going" is how a host came to be told their cleanse was walking a
+                // world on a server that had stopped, for the ten minutes it then took to
+                // give up.
+                if (status == null)
+                    return new CleanseOutcome { Ok = true, Response = last, NotAnswering = true };
+
+                last = status;
+                if (!status.TrimStart().StartsWith(
+                        BakaLoaderKillAll.CleansePlan.RunningPrefix, StringComparison.OrdinalIgnoreCase))
+                    return new CleanseOutcome { Ok = true, Response = status };
+
+                // One line per CHANGED count. A status that says exactly what the last one
+                // said is the same frame read twice, and a log filling with identical lines
+                // is the shape of movement rather than movement itself.
+                if (!string.Equals(status, told, StringComparison.Ordinal))
+                {
+                    told = status;
+                    Tell(progress, status);
+                }
+            }
+
+            return new CleanseOutcome { Ok = true, Response = last, StillRunning = true };
+        }
+
+        /// <summary>
+        /// Hands one line to a listener that may not be there. A note about the wait must
+        /// never be what ends the wait.
+        /// </summary>
+        private static void Tell(Action<string> listener, string line)
+        {
+            if (listener == null || string.IsNullOrWhiteSpace(line)) return;
+            try { listener(line); }
+            catch { /* a line in the log is not worth a cleanse */ }
+        }
+
+        /// <summary>
+        /// How often the window asks the plugin how far the cleanse has got. Half a second is
+        /// one RCON round trip against a walk that takes minutes: often enough that the toast
+        /// lands with the sweep, rare enough to be nothing next to a frame of the server's own
+        /// work.
+        /// </summary>
+        private static readonly TimeSpan CleansePollEvery = TimeSpan.FromMilliseconds(500);
+
+        /// <summary>
+        /// How long the window waits for a cleanse before it stops asking. Nothing has gone
+        /// wrong at the end of it: the sweep is on the server, it will finish, and its counts
+        /// go to the server log and to baka_cleanse_status. This is the point at which the
+        /// page says that instead of waiting for ever.
+        /// </summary>
+        private static readonly TimeSpan CleansePollCeiling = TimeSpan.FromMinutes(10);
+
         private object BuildUserPrefsDto()
         {
             var prefs = UserPrefsProvider.LoadPreferences();
@@ -8556,6 +8876,11 @@ namespace ValheimBakaLoader.Forms
                 prefs.StartMinimized,
                 prefs.SaveProfileOnStart,
                 prefs.WriteApplicationLogsToFile,
+                prefs.DetailedLog,
+                // True when --verbose was on the command line. It holds Verbose for the whole
+                // session and the window cannot put it back, so the page draws the switch on
+                // and refuses to move it rather than offering a choice that is not there.
+                DetailedLogForcedByCommandLine = LogLevel?.ForcedByCommandLine ?? false,
                 prefs.LogsFolderPath,
                 DefaultLogsFolderPath = Environment.ExpandEnvironmentVariables(Resources.LogsFolderPath),
                 prefs.EnablePasswordValidation,

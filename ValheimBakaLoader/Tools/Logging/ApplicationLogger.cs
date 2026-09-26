@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Serilog.Core;
 using System;
 using ValheimBakaLoader.Game;
 
@@ -17,6 +18,8 @@ namespace ValheimBakaLoader.Tools.Logging
     {
         private readonly IServiceProvider Services;
         private IUserPreferencesProvider Prefs;
+        private ILogLevelControl Level;
+        private bool LevelAsked;
 
         public ApplicationLogger(IServiceProvider services)
         {
@@ -26,6 +29,26 @@ namespace ValheimBakaLoader.Tools.Logging
 
             Use(LogSteps.TagSeverity());
             Use(LogSteps.Timestamp());
+        }
+
+        /// <summary>
+        /// The Detailed log dial. Asked of the container once and then held, because this is
+        /// read on every single write: the control's own constructor takes nothing but the
+        /// container and logs nothing, so resolving it here cannot come back round into here.
+        /// </summary>
+        protected override LoggingLevelSwitch LevelSwitch
+        {
+            get
+            {
+                if (!LevelAsked)
+                {
+                    LevelAsked = true;
+                    try { Level = Services?.GetService<ILogLevelControl>(); }
+                    catch { Level = null; }
+                }
+
+                return Level?.Switch;
+            }
         }
 
         protected override string ResolveLogFile()

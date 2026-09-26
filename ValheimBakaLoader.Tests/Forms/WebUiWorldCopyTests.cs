@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -314,7 +314,7 @@ namespace ValheimBakaLoader.Tests.Forms
             var start = js.IndexOf("function worldCopyModal(ctx,after){", StringComparison.Ordinal);
             var body = js.Substring(start, 2400);
 
-            Assert.Contains("typed=>worldNameProblem(typed,ctx.taken||[]));", body);
+            Assert.Contains("typed=>worldNameProblem(typed,ctx.taken||[]),", body);
             Assert.Single(Regex.Matches(body, @"worldNameProblem\(typed,ctx\.taken\|\|\[\]\)"));
             Assert.Contains("rpc(\"worlds.copyAs\",", body);
             Assert.Contains("{source:ctx.world,target,folder:ctx.folder||\"\",sub:ctx.sub||\"\"}", body);
@@ -334,9 +334,11 @@ namespace ValheimBakaLoader.Tests.Forms
             var js = AppJs();
 
             // The dialog takes a rule, and the copy hands it one.
-            Assert.Contains("function promptModal(title,placeholder,onOk,check){", js);
+            // Five arguments since 1.2.4: the fifth is the standing note under the box,
+            // which is what the copy uses to say what the copy does not bring with it.
+            Assert.Contains("function promptModal(title,placeholder,onOk,check,note){", js);
             var start = js.IndexOf("function worldCopyModal(ctx,after){", StringComparison.Ordinal);
-            Assert.Contains("typed=>worldNameProblem(typed,ctx.taken||[]));", js.Substring(start, 2400));
+            Assert.Contains("typed=>worldNameProblem(typed,ctx.taken||[]),", js.Substring(start, 2400));
 
             // The press asks the rule, and a refusal draws the dialog again rather than
             // shutting it: modalClose and onOk are both behind the refusal, not in front.
@@ -570,6 +572,61 @@ namespace ValheimBakaLoader.Tests.Forms
             var barrow = js.IndexOf("function barrowCopyWorld(g,groups){", StringComparison.Ordinal);
             Assert.True(barrow > 0, "the Barrow no longer has barrowCopyWorld");
             Assert.Contains("barrowModal();", js.Substring(barrow, 1900));
+        }
+
+        // ================================================= D. the copy that lands from the Forge
+
+        /// <summary>
+        /// The Forge's `Duplicate` runs the SAME copy the `COPY AS` chip runs, so from 1.2.4
+        /// it lands a world with a uid of its own and every player's map of it starts blank.
+        /// The chip warns about that before `Confirm`; the Forge's note has to say it too, or
+        /// a host presses `Forge realm` on the strength of "the same map" and walks into a
+        /// black one, on two live realms at once rather than one.
+        /// <para>
+        /// Read from both ends of the seam: the bridge calls the destination-folder overload,
+        /// that overload draws a new uid, the page paints this id for the switch, and the
+        /// catalog answers it with the two halves a host needs, the loss and what survives it.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_forges_copy_world_note_says_the_map_of_the_copy_starts_blank()
+        {
+            // The bridge's Duplicate copies through the save-folder overload ...
+            Assert.Contains("WorldStore.CopyWorldAs(copySource, world, targetSaveFolder)", Bridge());
+            // ... and that copy draws a uid of its own, which is what costs the map.
+            Assert.Contains("var uid = FwlUidRewriter.NewUid();", Store());
+
+            // The page paints this one id under the copy switch.
+            Assert.Contains("?T(\"realm.new.copy_world.on.note\",{source:source?source.world:\"\"})", AppJs());
+
+            var note = Catalog()["realm.new.copy_world.on.note"];
+            foreach (var variant in new[] { "lore", "plain" })
+            {
+                var text = note.GetProperty(variant).GetString();
+                Assert.Contains("starts blank", text);
+                Assert.Contains("cartography table", text);
+            }
+        }
+
+        /// <summary>
+        /// A scan that kept the host's own rows marks the STATUS column `Not checked`; the
+        /// Latest column shows a dash with a tooltip. The README is the first thing most
+        /// hosts read about a release, so it has to name the column they will actually look at.
+        /// </summary>
+        [Fact]
+        public void The_readme_names_the_column_a_failed_scan_really_marks()
+        {
+            var readme = AppSourceTree.Read("README.md");
+            var at = readme.IndexOf("A failed mod scan keeps your mod table", StringComparison.Ordinal);
+            Assert.True(at > 0, "the README no longer carries the failed-scan line");
+            var line = readme.Substring(at, readme.IndexOf("\n", at, StringComparison.Ordinal) - at);
+
+            Assert.DoesNotContain("Latest column reads", line);
+            Assert.Contains("Status column", line);
+
+            // And the page really does put that wording in the Status cell.
+            Assert.Contains("T(\"mods.status.unchecked\")", AppJs());
+            Assert.Equal("Not checked", Lore(Catalog(), "mods.status.unchecked"));
         }
     }
 }

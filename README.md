@@ -69,16 +69,15 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.3
+## What is new in 1.2.4
 
-- **A scan that cannot reach Thunderstore is over in seconds**, not ninety minutes, and the screen says the site did not answer instead of looking unscanned. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
-- **A connection test in the Upkeep card**, with two switches for a machine .NET cannot get out of: skip the Windows proxy, or connect over IPv4 only. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting)
-- **A server start is never held up** by the BepInEx version check. It has ten seconds, then the server starts with the loader that is already there. [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx)
-- **Duplicate really duplicates.** Duplicating a server offers to copy its world into the new one, on by default, and says what you get if you turn it off. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
-- **Clear cheat marks.** Takes the 1.0.9 to 1.1.2 spawn marks back off every object in a world, on an empty server. [Players (Vikings)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29)
-- **A refused world difficulty no longer looks saved**, and the Directories card says whether this server has its own install and save folder. [Settings (World)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-%28World%29)
+- **A detailed log for a machine that cannot reach Thunderstore.** `Detailed log` in the Upkeep card writes a line into the application log when a web request goes out and a line when it comes back, and `--verbose` does the same for one session. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting)
+- **The connection test goes into the log**, every step and the verdict, so you can paste the log instead of describing the card. [Dashboard](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-%28Hearth%29)
+- **A duplicated world is its own world.** The copy is written with its own world id, so each player's own map of it starts blank instead of being shared with the world it came from. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
+- **A failed mod scan keeps your mod table and says why**: the Status column reads `Not checked` rather than level, the Latest column shows a dash, and a toast and the Saga log name the kind of failure and how long BakaLoader will leave the site alone. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
+- **Clear cheat marks works on a big world.** The sweep runs in slices so the server keeps ticking, and the new `baka_cleanse_status` says how far it has got. [Players (Vikings)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29)
 
-This release carries no language packs of its own, so the new sentences are shown in English until the next release that cuts packs. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 
 ---
 

@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.8.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.8.1 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -104,7 +104,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.8.0";
+        private const string PluginVersion = "1.8.1";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -459,6 +459,7 @@ namespace BakaLoaderCommander
             // thread is waiting on, and holding it open for the rest of a sweep would put
             // every other command behind the very timeout this arrangement exists to cure.
             KillAllSweep.Pump();
+            CleanseSweep.Pump();
         }
 
         private string ExecuteCommand(string text)
@@ -479,6 +480,7 @@ namespace BakaLoaderCommander
                 case "baka_spawn": return CmdSpawn(tokens);
                 case "baka_killall": return CmdKillAll(tokens);
                 case "baka_cleanse": return CmdCleanse();
+                case "baka_cleanse_status": return CleanseSweep.Status();
                 default: return CmdFallback(text);
             }
         }
@@ -1115,16 +1117,25 @@ namespace BakaLoaderCommander
 
         // ---- clear the cheat marks a 1.0.9 to 1.1.2 spawn left behind ----------
         //
-        // One pass over every ZDO in the world, on the main thread, refused while anybody
-        // is connected. It is not sliced the way the kill-all sweep is: the server is empty
-        // by the time it runs, so a frame it takes to itself costs nobody anything, and a
-        // host wants the counts in the answer rather than in a line that lands later. A
-        // world big enough for the pass to outlast this client's patience still finishes,
-        // and the same counts go to the server log, which is what a timed-out host reads.
+        // A pass over every ZDO in the world, refused while anybody is connected, and from
+        // 1.8.1 SLICED the way the kill-all sweep is. Until then it ran whole inside this
+        // call: on a long-lived world that outlasted DispatchToMainThread's own timeout, so
+        // the host read "Error: command timed out" while the cleanse went on and finished,
+        // and the server did not tick for the length of the pass. Start() answers with the
+        // result line when the walk fits inside one slice and with "Cleanse started: N
+        // objects to check" when it does not; Pump(), at the bottom of Update(), carries the
+        // rest and puts the counts in the server log. baka_cleanse_status answers how far it
+        // has got, which is the line the window polls while it waits.
+        //
+        // The empty-server check is asked again at the top of every slice, because a sweep
+        // that spans frames can have somebody walk into it: a container they have open would
+        // take the rewrite and have it written straight back over by their client.
 
         private static string CmdCleanse()
         {
-            return CleanseSweep.Run(delegate(string line) { Log.LogInfo(line); });
+            // The log is the report as well: one ending is one line, and a second handler
+            // here would write it twice.
+            return CleanseSweep.Start(delegate(string line) { Log.LogInfo(line); }, null);
         }
 
         private static string CmdKillAll(string[] tokens)
@@ -1154,7 +1165,7 @@ namespace BakaLoaderCommander
                 return "Error forwarding '" + text + "' to console: " + ex.Message;
             }
 
-            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_cleanse)";
+            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_cleanse, baka_cleanse_status)";
         }
     }
 }

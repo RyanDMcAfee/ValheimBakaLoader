@@ -1,4 +1,4 @@
-// BakaLoader KillAll v1.8.0 - compiled against SERVER assembly_valheim
+// BakaLoader KillAll v1.8.1 - compiled against SERVER assembly_valheim
 //
 // Registers "baka_killall" as an in-game console command, so a host standing at the
 // server's own console window can clear hostiles without going anywhere near RCON.
@@ -20,6 +20,12 @@
 // sweep that outran Commander's RCON timeout used to be reported as a failure while it
 // went on and killed everything. Update() drives the rest of the walk a few milliseconds
 // at a time.
+//
+// From 1.8.1 the cleanse answers the same way for the same reason. A pass over every object
+// in a long-lived world outlasts any RCON client's patience AND holds the main thread for as
+// long as it takes, so the server stops ticking; baka_cleanse now answers "Cleanse started: N
+// objects to check", Update() walks the rest a few milliseconds a frame, and
+// baka_cleanse_status says how far it has got.
 using System;
 using System.Collections.Concurrent;
 using BepInEx;
@@ -30,7 +36,7 @@ namespace BakaLoaderKillAll
     [BepInPlugin("com.baka.killall", "BakaLoader KillAll", PluginVersion)]
     public class KillAllPlugin : BaseUnityPlugin
     {
-        private const string PluginVersion = "1.8.0";
+        private const string PluginVersion = "1.8.1";
 
         private static ManualLogSource Log;
 
@@ -107,7 +113,35 @@ namespace BakaLoaderKillAll
                 hideBehindDevCommands: false
             );
 
-            Log.LogInfo("BakaLoader KillAll v" + PluginVersion + " loaded. 'baka_killall' and 'baka_cleanse' commands registered.");
+            // How far the cleanse in flight has got, or the counts of the last one. It reads
+            // plain fields and touches nothing in the game, so it answers on the thread the
+            // line arrived on rather than being queued for the main thread: a host asking
+            // "is it still going" is asking for an answer now, not next frame.
+            new Terminal.ConsoleCommand(
+                "baka_cleanse_status",
+                "baka_cleanse_status: say whether a cleanse is running, how far it has got, "
+                + "and the counts of the last one.",
+                delegate(Terminal.ConsoleEventArgs args)
+                {
+                    string said;
+                    try
+                    {
+                        said = CleanseSweep.Status();
+                    }
+                    catch (Exception ex)
+                    {
+                        said = "Error: the cleanse status could not be read: " + ex.Message;
+                    }
+
+                    if (args.Context != null) args.Context.AddString(said);
+                },
+                isCheat: false,
+                isNetwork: false,
+                onlyServer: true,
+                hideBehindDevCommands: false
+            );
+
+            Log.LogInfo("BakaLoader KillAll v" + PluginVersion + " loaded. 'baka_killall', 'baka_cleanse' and 'baka_cleanse_status' commands registered.");
         }
 
         private void Update()
@@ -144,9 +178,14 @@ namespace BakaLoaderKillAll
                 string said;
                 try
                 {
-                    // One pass, on this thread, with the counts in the answer. The server is
-                    // empty by the time it runs, so a frame it takes to itself costs nobody.
-                    said = CleanseSweep.Run(null);
+                    // The first slice runs here, so a small world still answers with its whole
+                    // result line. A big one answers "Cleanse started" and the report below
+                    // carries the counts to this console when the walk lands, however many
+                    // frames later that is. The log is left to Announce so one ending is one
+                    // line rather than two.
+                    said = CleanseSweep.Start(
+                        null,
+                        delegate(string line) { Announce(line, where); });
                 }
                 catch (Exception ex)
                 {
@@ -158,8 +197,10 @@ namespace BakaLoaderKillAll
             }
 
             // A sweep too big to finish inside its answer carries on here, a few
-            // milliseconds a frame, and announces its result line when it lands.
+            // milliseconds a frame, and announces its result line when it lands. Both of them
+            // do, and both sit outside the drain loops above for the same reason.
             KillAllSweep.Pump();
+            CleanseSweep.Pump();
         }
 
         /// <summary>

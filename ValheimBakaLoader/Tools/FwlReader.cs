@@ -516,7 +516,7 @@ namespace ValheimBakaLoader.Tools
         /// <paramref name="limit"/>, which is where the payload ends rather than where the
         /// file does, so a prefix is never read out of bytes the header never claimed.
         /// </summary>
-        private static bool TryReadLength(byte[] header, int at, int limit, out int length, out int prefixLength)
+        internal static bool TryReadLength(byte[] header, int at, int limit, out int length, out int prefixLength)
         {
             length = 0;
             prefixLength = 0;
@@ -550,6 +550,231 @@ namespace ValheimBakaLoader.Tools
             }
             bytes.Add((byte)left);
             return bytes.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Rewrites the world uid stored INSIDE a .fwl or a .fwl2 header, so a copy of a world
+    /// is a world of its own rather than the same world wearing two names.
+    /// <para>
+    /// WHY A COPY NEEDS ONE. The uid is the int64 sitting right behind the seed, and it is
+    /// how the GAME tells two worlds apart. It is not the world's name and it is not its
+    /// seed: a character file keys its map exploration, its pins and the rest of its
+    /// per-world state on the uid, so two worlds carrying the same one are one world as far
+    /// as every client is concerned. Duplicate copied the header byte for byte and changed
+    /// only the name, which meant the copy came up with the source's map already explored
+    /// and the source's pins on it, and anything drawn on either went onto both.
+    /// </para>
+    /// <para>
+    /// The field is eight bytes wide however long the names in front of it are, so nothing
+    /// moves: the offset is found by walking the two length-prefixed strings and the seed,
+    /// and the eight bytes there are overwritten in a copy of the buffer. Everything else in
+    /// the header, the tail included, comes out byte for byte identical by construction.
+    /// </para>
+    /// <para>
+    /// It refuses rather than guesses, on the same bounds <see cref="FwlNameRewriter"/>
+    /// holds: a declared payload that does not fit inside the file, a worldVersion that is
+    /// not plausible, a name or a seed name that does not parse inside that payload, or a
+    /// payload with no room for the seed and the uid behind them. A header in any of those
+    /// shapes is left exactly as it was and answered with false.
+    /// </para>
+    /// <para>
+    /// Nothing else in a world carries the uid. The header is the only place it is written;
+    /// the "next uid" in a world database is ZDOMan's own object counter, which the game
+    /// recomputes on load from world version 31 onwards (the same note sits over the field in
+    /// Tools/Atlas/WorldDbReader.cs, and every world this build will open is well past 31),
+    /// and the chunk files hold terrain and objects rather than identity.
+    /// A 1.0 world directory can hold several committed generations, and every
+    /// "_main.{N}.fwl2" in the copy is rewritten with the SAME new uid, exactly as the name
+    /// rewrite already walks them: they are generations of one world, not several worlds.
+    /// </para>
+    /// </summary>
+    public static class FwlUidRewriter
+    {
+        /// <summary>The suffix a rebuilt header is written under before it takes its place.</summary>
+        private const string WritingSuffix = ".reuid";
+
+        /// <summary>
+        /// A world uid nothing else is likely to hold. Never zero: that is what
+        /// <see cref="FwlReader.TryRead"/> answers with for a header it could not follow that
+        /// far, and a real uid must not be mistakable for "there was nothing there".
+        /// </summary>
+        public static long NewUid()
+        {
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                // The WHOLE of int64, negatives included. The game writes a signed field and
+                // the worlds on this machine carry both signs; drawing from the non-negative
+                // half only would have thrown away a bit of the space for nothing.
+                var candidate = Random.Shared.NextInt64(long.MinValue, long.MaxValue);
+                if (candidate != 0) return candidate;
+            }
+
+            // Eight zeroes in a row is not a thing that happens; this is here so the method
+            // has no path at all that can answer zero.
+            return 1;
+        }
+
+        /// <summary>
+        /// Writes the header at <paramref name="metaPath"/> back with <paramref name="uid"/>
+        /// as the world uid it stores. False when the header could not be read, in which case
+        /// the file on disk is exactly as it was.
+        /// </summary>
+        public static bool TryRewriteWorldUid(string metaPath, long uid)
+        {
+            var original = ReadOrNull(metaPath);
+            if (original == null) return false;
+
+            var rebuilt = Rebuild(original, uid);
+            if (rebuilt == null) return false;
+
+            var staging = metaPath + WritingSuffix;
+            try
+            {
+                File.WriteAllBytes(staging, rebuilt);
+                File.Move(staging, metaPath, overwrite: true);
+                return true;
+            }
+            catch
+            {
+                try { if (File.Exists(staging)) File.Delete(staging); } catch { /* best effort */ }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The rule a COPY follows, which is one step softer than the rewrite above.
+        /// <para>
+        /// A header this can read and that carries a uid takes the new one, and a failure to
+        /// write it is a refusal. A header this can read that is too short to carry a uid at
+        /// all is left exactly as it is and answered true: there is no uid in it for the copy
+        /// to be sharing, so refusing the copy over one would lose a host their world for a
+        /// field that is not there. Bytes that are not a header at all are still a no.
+        /// </para>
+        /// <para>
+        /// "Too short" means the FILE is too short, not the declared payload. A header whose
+        /// uid sits past the payload it declares but inside the file it sits in has a uid in
+        /// it and this cannot reach it, so that one is refused: answering true there would
+        /// hand back a copy carrying the source's own identity and call it a world of its
+        /// own.
+        /// </para>
+        /// </summary>
+        public static bool TryGiveOwnUid(string metaPath, long uid)
+        {
+            var original = ReadOrNull(metaPath);
+            if (original == null) return false;
+
+            if (!TryFindUid(original, out _, out var readable, out var uidInFile))
+            {
+                // There ARE eight bytes where the uid lives, and the payload the header
+                // declares simply does not reach them. Leaving them is leaving the SOURCE's
+                // uid on the copy, and a copy that kept the source's uid is the same world
+                // to every client that opens it: the one thing this whole rewrite exists to
+                // stop. So that shape is a refusal, not a pass.
+                if (uidInFile) return false;
+
+                return readable;
+            }
+
+            return TryRewriteWorldUid(metaPath, uid);
+        }
+
+        /// <summary>The file's bytes, or null for one that is not there or will not open.</summary>
+        private static byte[] ReadOrNull(string metaPath)
+        {
+            if (string.IsNullOrWhiteSpace(metaPath)) return null;
+            try
+            {
+                return File.Exists(metaPath) ? File.ReadAllBytes(metaPath) : null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// The bytes of a header with its world uid swapped, or null when the bytes are not a
+        /// header this can read. Public so the rewrite can be held against a file built by
+        /// hand, byte for byte, without going near a save folder.
+        /// </summary>
+        public static byte[] Rebuild(byte[] header, long uid)
+        {
+            if (!TryFindUid(header, out var at, out _, out _)) return null;
+
+            var rebuilt = (byte[])header.Clone();
+            BinaryPrimitives.WriteInt64LittleEndian(rebuilt.AsSpan(at, 8), uid);
+            return rebuilt;
+        }
+
+        /// <summary>
+        /// The world uid a header carries, read the same way the rewrite finds it. False for
+        /// a header this cannot follow that far.
+        /// </summary>
+        public static bool TryReadUid(byte[] header, out long uid)
+        {
+            uid = 0;
+            if (!TryFindUid(header, out var at, out _, out _)) return false;
+            uid = BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(at, 8));
+            return true;
+        }
+
+        /// <summary>
+        /// Where the eight bytes of the uid begin: past the payload size, the world version,
+        /// the two length-prefixed strings and the seed. Every step is bounded by where the
+        /// payload the header declares ENDS rather than by where the file does.
+        /// </summary>
+        /// <param name="headerReadable">
+        /// True when the front of the header parsed: the size, the world version, the name
+        /// and the seed name. It is the difference between "this is not a header" and "this
+        /// is a header with nothing behind the seed name", and a copy treats those two
+        /// differently.
+        /// </param>
+        /// <param name="uidInFile">
+        /// True when the eight bytes the uid would occupy are inside the FILE, whatever the
+        /// declared payload says about them. A header that parses and whose uid is in the
+        /// file but outside the payload has a uid this refuses to touch, and a copy of it
+        /// would carry the source's; a header whose file simply stops before those bytes has
+        /// no uid in it at all. Those are the two halves of a false answer here, and they are
+        /// not the same answer for a copy.
+        /// </param>
+        private static bool TryFindUid(
+            byte[] header, out int at, out bool headerReadable, out bool uidInFile)
+        {
+            at = 0;
+            headerReadable = false;
+            uidInFile = false;
+            if (header == null || header.Length < 12) return false;
+
+            var payloadSize = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(0, 4));
+            if (payloadSize <= 0 || payloadSize > header.Length - 4) return false;
+            var payloadEnds = 4 + payloadSize;
+
+            var worldVersion = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(4, 4));
+            if (worldVersion <= 0 || worldVersion > 10_000) return false;
+
+            if (!FwlNameRewriter.TryReadLength(header, 8, payloadEnds, out var nameBytes, out var namePrefix))
+                return false;
+            // In long, for the same reason the name rewrite adds up in long: a length prefix
+            // is free to encode a byte count near int.MaxValue, and in int that sum wraps past
+            // zero and passes a bound it should have failed.
+            var nameEnds = 8L + namePrefix + nameBytes;
+            if (nameEnds > payloadEnds) return false;
+
+            if (!FwlNameRewriter.TryReadLength(header, (int)nameEnds, payloadEnds, out var seedBytes, out var seedPrefix))
+                return false;
+            var seedEnds = nameEnds + seedPrefix + seedBytes;
+            if (seedEnds > payloadEnds) return false;
+
+            // Everything a header needs to be one has parsed. Whatever is decided below, the
+            // bytes ARE a world header.
+            headerReadable = true;
+
+            // int32 seed, then the eight bytes this is here for. Both have to be inside the
+            // payload the header itself declares, or there is no uid to rewrite.
+            var uidAt = seedEnds + 4;
+            uidInFile = uidAt + 8 <= header.Length;
+            if (uidAt + 8 > payloadEnds) return false;
+
+            at = (int)uidAt;
+            return true;
         }
     }
 }
