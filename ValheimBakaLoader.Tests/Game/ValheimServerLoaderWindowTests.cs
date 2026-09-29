@@ -34,6 +34,7 @@ namespace ValheimBakaLoader.Tests.Game
     /// launch is the mock provider's, and every download is served from memory.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ValheimServerLoaderWindowTests : BaseTest, IDisposable
     {
         private readonly ValheimServer Server;

@@ -22,6 +22,7 @@ namespace ValheimBakaLoader.Tests.Game
     /// because that string is the whole of what the game is told.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ValheimServerRelaunchSettingsTests : BaseTest, IDisposable
     {
         private readonly ValheimServer Server;

@@ -25,6 +25,7 @@ namespace ValheimBakaLoader.Tests.Tools
     /// no relaunch, and nobody told.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class UpdateGateTests : BaseTest, IDisposable
     {
         private readonly List<ValheimServer> Servers = new();

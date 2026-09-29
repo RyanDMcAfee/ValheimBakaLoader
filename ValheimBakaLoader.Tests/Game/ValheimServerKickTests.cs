@@ -30,6 +30,7 @@ namespace ValheimBakaLoader.Tests.Game
     /// already rewritten.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ValheimServerKickTests : IDisposable
     {
         private readonly ServiceProvider Services;

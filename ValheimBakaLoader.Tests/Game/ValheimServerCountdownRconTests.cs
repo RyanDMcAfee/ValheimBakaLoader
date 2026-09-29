@@ -31,6 +31,7 @@ namespace ValheimBakaLoader.Tests.Game
     /// every other caller takes.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ValheimServerCountdownRconTests : IDisposable
     {
         private readonly ServiceProvider Services;

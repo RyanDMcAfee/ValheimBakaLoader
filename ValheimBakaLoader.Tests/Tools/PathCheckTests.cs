@@ -21,6 +21,7 @@ namespace ValheimBakaLoader.Tests.Tools
     /// these tests touches a disk, and none of them needs a Valheim install to run.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class PathCheckTests
     {
         private const string Exe = PathCheck.KindExe;

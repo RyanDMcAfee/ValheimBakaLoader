@@ -14,6 +14,7 @@ namespace ValheimBakaLoader.Tests.Game
     /// stopped it. A generic sentence sends the host looking through a log for the half of the
     /// answer the snapshot already worked out.
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ValheimServerPreLaunchBackupTests : BaseTest, IDisposable
     {
         private readonly ValheimServer Server;

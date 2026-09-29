@@ -14,6 +14,7 @@ namespace ValheimBakaLoader.Tests.Game
     /// wired behaves exactly as it always did, and that what a launched server ran gets
     /// recorded against the profile.
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ValheimServerLaunchGuardTests : BaseTest, IDisposable
     {
         private readonly ValheimServer Server;

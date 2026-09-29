@@ -17,6 +17,7 @@ namespace ValheimBakaLoader.Tests.Game
     /// must not give the launch claim back before the start has taken hold, because everything
     /// that asks "may I start?" sees a free flag for the whole of that window.
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ValheimServerLaunchBlockedTests : BaseTest, IDisposable
     {
         private readonly ValheimServer Server;
