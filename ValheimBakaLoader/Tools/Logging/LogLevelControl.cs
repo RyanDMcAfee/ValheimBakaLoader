@@ -75,36 +75,24 @@ namespace ValheimBakaLoader.Tools.Logging
         }
 
         /// <summary>
-        /// Where the dial stands with nothing turned on.
+        /// Where the dial stands with nothing turned on: Debug, in every build configuration.
         /// <para>
-        /// A release has always written at Debug and still does. A DEBUG build has always
-        /// written at Verbose and still does too, which is the half that needs saying: the
-        /// sink used to be given that level by an <c>#if DEBUG</c> inside
-        /// <see cref="LoggerCore"/>, and once the dial stood in front of it the branch that
-        /// read the dial shadowed the branch that read the <c>#if</c>. So the floor lives
-        /// here now, and both the dial's starting point and the level a switched-off
-        /// Detailed log puts it back to are this.
+        /// The zip a host downloads is built in the Debug configuration (the release recipe
+        /// has always used it, and the bundled plugins are verified against it), so a floor
+        /// that read the DEBUG symbol put every host at Verbose the moment the wire trace
+        /// existed: 1.2.4 shipped that way, and the Detailed log switch on a host's machine
+        /// did nothing, because the log was already open. The build symbol is not a fact
+        /// about who is running the app. Verbose is reached by --verbose or the switch, and
+        /// nothing else.
         /// </para>
         /// </summary>
-        public static readonly LogEventLevel DefaultLevel =
-#if DEBUG
-            LogEventLevel.Verbose;
-#else
-            LogEventLevel.Debug;
-#endif
+        public static readonly LogEventLevel DefaultLevel = LogEventLevel.Debug;
 
         /// <summary>
         /// What the first line says when neither the command line nor the preference has
-        /// opened the log up. On a release that is the sentence it always was; on a DEBUG
-        /// build it names the build, because "Log level Verbose" with no reason beside it
-        /// would leave a reader looking for a switch nobody moved.
+        /// opened the log up. The same sentence in every build, for the same reason.
         /// </summary>
-        public static readonly string DefaultSentence =
-#if DEBUG
-            "Log level Verbose (debug build)";
-#else
-            "Log level Debug";
-#endif
+        public static readonly string DefaultSentence = "Log level Debug";
 
         /// <summary>Where a build with nothing switched on writes, which a release has always had at Debug.</summary>
         public LoggingLevelSwitch Switch { get; } = new(DefaultLevel);

@@ -47,15 +47,11 @@ namespace ValheimBakaLoader.Tests.Tools
         /// that half that went missing when the dial first stood in front of the sink.
         /// </para>
         /// </summary>
-#if DEBUG
-        private const LogEventLevel OffLevel = LogEventLevel.Verbose;
-        private const string OffLine = "Log level Verbose (debug build)";
-        private const string OffToggleLine = "Log level Verbose (Detailed log turned off)";
-#else
+        // Debug in EVERY build configuration: the zip a host downloads is a Debug-configuration
+        // build, so a floor that read the symbol would open every host's log (1.2.4 shipped so).
         private const LogEventLevel OffLevel = LogEventLevel.Debug;
         private const string OffLine = "Log level Debug";
         private const string OffToggleLine = "Log level Debug (Detailed log turned off)";
-#endif
 
         /// <summary>
         /// The dial STARTS where this build writes, before anything has applied anything.
@@ -67,7 +63,7 @@ namespace ValheimBakaLoader.Tests.Tools
         /// </para>
         /// </summary>
         [Fact]
-        public void The_dial_starts_where_this_build_has_always_written()
+        public void The_dial_starts_at_Debug_in_every_build_configuration()
         {
             var services = new ServiceCollection();
             services.AddSingleton<IStartupArgsProvider>(new StartupArgsProvider(Array.Empty<string>()));
