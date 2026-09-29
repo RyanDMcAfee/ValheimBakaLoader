@@ -26,6 +26,7 @@ namespace ValheimBakaLoader.Tests.Tools
     /// router for a queue that is inside BakaLoader.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class ThunderstoreBusyReasonTests : BaseTest
     {
         /// <summary>

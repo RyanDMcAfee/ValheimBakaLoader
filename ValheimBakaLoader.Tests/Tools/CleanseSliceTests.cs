@@ -19,6 +19,7 @@ namespace ValheimBakaLoader.Tests.Tools
     /// that runs out on demand.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class CleanseSliceTests
     {
         // ------------------------------------------------------------------ the walk

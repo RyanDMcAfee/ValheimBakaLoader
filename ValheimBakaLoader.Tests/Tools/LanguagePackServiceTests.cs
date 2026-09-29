@@ -32,6 +32,7 @@ namespace ValheimBakaLoader.Tests.Tools
     /// two switch tests: an empty list is a stronger statement than any flag the code could set.
     /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class LanguagePackServiceTests : IDisposable
     {
         private const string AppVersion = "1.2.0";
