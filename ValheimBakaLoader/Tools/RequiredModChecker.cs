@@ -4,7 +4,9 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
+using ValheimBakaLoader.Tools.Http;
 using ValheimBakaLoader.Tools.Logging;
 
 namespace ValheimBakaLoader.Tools
@@ -78,11 +80,29 @@ namespace ValheimBakaLoader.Tools
             }
         };
 
-        public RequiredModChecker(IApplicationLogger logger, IThunderstoreClient thunderstore)
+        public RequiredModChecker(
+            IApplicationLogger logger, IThunderstoreClient thunderstore, IHttpClientProvider httpClientProvider)
         {
             Logger = logger;
             Thunderstore = thunderstore;
+            HttpClientProvider = httpClientProvider;
         }
+
+        private readonly IHttpClientProvider HttpClientProvider;
+
+        /// <summary>
+        /// The clocks this download is held to, and the most it may weigh. It used to be an
+        /// HttpClient of its own with a two minute timeout and GetByteArrayAsync, which means
+        /// it missed the Connection card's two switches, the fifteen second connect timeout
+        /// and the wire trace, and took the whole body into memory with no cap at all.
+        /// </summary>
+        public DownloadBudget DownloadBudget { get; set; } = new()
+        {
+            HeaderTimeout = TimeSpan.FromSeconds(30),
+            TotalTimeout = TimeSpan.FromMinutes(5),
+            IdleTimeout = TimeSpan.FromSeconds(30),
+            MaxBytes = 256L * 1024 * 1024,
+        };
 
         public List<RequiredMod> GetMissingMods(string pluginsDir)
         {
@@ -125,51 +145,102 @@ namespace ValheimBakaLoader.Tools
 
                 Logger.Information("Downloading {author}/{mod} v{version}...", mod.Author, mod.ModName, package.LatestVersion);
 
-                // Download the zip
-                using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
-                var zipBytes = await http.GetByteArrayAsync(package.DownloadUrl);
-                if (zipBytes == null || zipBytes.Length == 0)
-                {
-                    Logger.Error("Downloaded empty file for {author}/{mod}.", mod.Author, mod.ModName);
-                    return false;
-                }
+                // The app's own client, so the Connection card's two switches, the connect
+                // timeout and the wire trace reach this download like every other one, and to a
+                // file under a declared cap rather than into one unbounded byte array.
+                using var http = HttpClientProvider.CreateClient();
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("ValheimBakaLoader");
 
-                Logger.Information("Downloaded {size} bytes. Extracting...", zipBytes.Length);
+                var tempZip = Path.Combine(
+                    Path.GetTempPath(), $"BakaLoader_ModInstall_{Guid.NewGuid():N}.zip");
 
-                // Extract to a temp dir first
-                var tempDir = Path.Combine(Path.GetTempPath(), $"BakaLoader_ModInstall_{Guid.NewGuid():N}");
-                Directory.CreateDirectory(tempDir);
-
+                // The finally below owns the temp zip from the moment the name is chosen. A
+                // download that threw part way through still wrote a file, and the stall
+                // watchdog, the size cap and a connection that died in the middle of the body
+                // all end that way: whatever had arrived used to sit in the temp folder until
+                // Windows cleaned it out, once per failed press.
                 try
                 {
-                    using (var ms = new MemoryStream(zipBytes))
-                    using (var zip = new ZipArchive(ms, ZipArchiveMode.Read))
+                    var written = await BoundedDownload.ToFileAsync(
+                        http, package.DownloadUrl, tempZip, DownloadBudget, CancellationToken.None,
+                        tracer: Logger, what: "mod download");
+
+                    if (written <= 0)
                     {
-                        ExtractSafely(zip, tempDir);
+                        Logger.Error("Downloaded empty file for {author}/{mod}.", mod.Author, mod.ModName);
+                        return false;
                     }
 
-                    // Copy to the plugins directory
-                    var targetDir = Path.Combine(pluginsDir, mod.FolderName);
-                    if (!Directory.Exists(targetDir))
-                        Directory.CreateDirectory(targetDir);
+                    // Held to the size and the digest Thunderstore published, the way the mod
+                    // update path beside it is. This path writes into the folder BepInEx loads
+                    // from and checked neither, so a package damaged in transit went in whole
+                    // and the server failed to load it with no record anywhere of why.
+                    var damaged = ModUpdateService.DescribeDamage(package.Latest, tempZip, written);
+                    if (damaged != null)
+                    {
+                        Logger.Error(
+                            "The download of {author}/{mod} did not arrive whole: {reason}. Nothing was installed.",
+                            mod.Author, mod.ModName, damaged);
+                        return false;
+                    }
 
-                    CopyDirectory(tempDir, targetDir);
+                    Logger.Information("Downloaded {size} bytes. Extracting...", written);
 
-                    Logger.Information("Installed {author}/{mod} v{version} to {dir}",
-                        mod.Author, mod.ModName, package.LatestVersion, targetDir);
+                    // Extract to a temp dir first
+                    var tempDir = Path.Combine(Path.GetTempPath(), $"BakaLoader_ModInstall_{Guid.NewGuid():N}");
+                    Directory.CreateDirectory(tempDir);
 
-                    return true;
+                    try
+                    {
+                        using (var zip = ZipFile.OpenRead(tempZip))
+                        {
+                            ExtractSafely(zip, tempDir);
+                        }
+
+                        // Copy to the plugins directory
+                        var targetDir = Path.Combine(pluginsDir, mod.FolderName);
+                        if (!Directory.Exists(targetDir))
+                            Directory.CreateDirectory(targetDir);
+
+                        CopyDirectory(tempDir, targetDir);
+
+                        Logger.Information("Installed {author}/{mod} v{version} to {dir}",
+                            mod.Author, mod.ModName, package.LatestVersion, targetDir);
+
+                        return true;
+                    }
+                    finally
+                    {
+                        try { Directory.Delete(tempDir, recursive: true); }
+                        catch { /* cleanup is best-effort */ }
+                    }
                 }
                 finally
                 {
-                    try { Directory.Delete(tempDir, recursive: true); }
-                    catch { /* cleanup is best-effort */ }
+                    TryDelete(tempZip);
                 }
             }
             catch (Exception ex)
             {
-                Logger.Error("Failed to install {author}/{mod}: {error}", mod.Author, mod.ModName, ex.Message);
+                // The exception OBJECT, not only its message. On a timeout the message names
+                // the clock and nothing else ("the configured HttpClient.Timeout elapsed"),
+                // while the type and the innermost reason are what say what actually failed,
+                // and both used to be dropped on the floor here.
+                Logger.Error(ex, "Failed to install {author}/{mod}: {error}",
+                    mod.Author, mod.ModName, Http.WireTrace.Innermost(ex));
                 return false;
+            }
+        }
+
+        private void TryDelete(string path)
+        {
+            try
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch (Exception e)
+            {
+                Logger.Debug("Could not delete {0}: {1}", path, e.Message);
             }
         }
 

@@ -26,7 +26,12 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("autoUpdateBakaLoader")] public bool? AutoUpdateBakaLoader { get; set; }
         [JsonProperty("bepInExMaintained")] public bool? BepInExMaintained { get; set; }
         [JsonProperty("bepInExMaintenanceAsked")] public bool? BepInExMaintenanceAsked { get; set; }
+        // The fact the host last closed the unattended-BepInEx notice for; see
+        // UserPreferences.BepInExNoticeSeenKey and Tools.BepInExNoticeKey.
+        [JsonProperty("bepInExNoticeSeenKey")] public string BepInExNoticeSeenKey { get; set; }
         [JsonProperty("shareAnonymousStats")] public bool? ShareAnonymousStats { get; set; }
+        // Random, made once per install, never sent; see Tools.AnalyticsSalt.
+        [JsonProperty("analyticsSalt")] public string AnalyticsSalt { get; set; }
         [JsonProperty("saveProfileOnStart")] public bool? SaveProfileOnStart { get; set; }
         [JsonProperty("writeApplicationLogsToFile")] public bool? WriteApplicationLogsToFile { get; set; }
         // A line out and a line back per web request in the log; see UserPreferences.DetailedLog.
@@ -48,6 +53,7 @@ namespace ValheimBakaLoader.Game
         // UserPreferences.Language and UserPreferences.PlayerMessageLanguage.
         [JsonProperty("language")] public string Language { get; set; }
         [JsonProperty("playerMessageLanguage")] public string PlayerMessageLanguage { get; set; }
+        [JsonProperty("textSize")] public string TextSize { get; set; }
 
         // -- Window --
         // "WIDTHxHEIGHT" in device-independent pixels (96 dpi); see UserPreferences.WindowBounds.

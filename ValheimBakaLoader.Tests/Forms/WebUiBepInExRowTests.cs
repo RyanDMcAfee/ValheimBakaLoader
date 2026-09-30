@@ -501,7 +501,11 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var js = AppJs();
 
-            Assert.Contains("bepInExAskOnce(()=>launchCheckThenGo(go));", js, StringComparison.Ordinal);
+            // 1.2.6 put one more question in front of it, and the question order is the
+            // point: a world whose files disagree with their own index is said first,
+            // because that is the one a host may want to act on before anything loads.
+            Assert.Contains("withWorldIntegrityNote(()=>bepInExAskOnce(()=>launchCheckThenGo(go)));",
+                js, StringComparison.Ordinal);
             Assert.Equal(2, Regex.Matches(js, @"withLaunchGuard\(async answer=>\{").Count);
             Assert.Single(Regex.Matches(js, @"function withLaunchGuard\(go\)\{"));
         }

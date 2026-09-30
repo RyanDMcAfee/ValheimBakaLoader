@@ -589,6 +589,83 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             Assert.Equal(1, info.ChunksSkipped);
         }
 
+        /// <summary>
+        /// A world whose committed index claims more objects than its own chunk files hold.
+        /// <para>
+        /// WHY THIS EXISTS. The index and the chunk files are written by the same save, so
+        /// they are a statement and its evidence. When a file's own header declares fewer
+        /// records than the index claims for it, the world on disk has lost exactly the
+        /// difference, and the owner's Final Sunset lost 82,563 records this way with nothing
+        /// anywhere saying so until somebody walked into the hole. The reader already reads
+        /// both numbers; this holds it to comparing them.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Synthetic_AChunkHoldingFewerThanTheIndexClaimsIsReported()
+        {
+            var shrunk = new ChunkSpec { Chunk = 1, Size = 0 };
+            shrunk.Zdos.Add(new ZdoSpec
+            {
+                Prefab = Hash("portal_wood"), X = 1f, Y = 2f, Z = 3f,
+                Strings = { (Hash("tag"), "survivor") },
+            });
+
+            var whole = new ChunkSpec { Chunk = 0x0202, Size = 0, Version = 3 };
+            for (int i = 0; i < 4; i++)
+                whole.Zdos.Add(new ZdoSpec { Prefab = Hash("Beech1"), X = i, Y = 2f, Z = 3f });
+
+            string dir = WriteWorld("Sunset", 4, 5400, new List<ChunkSpec> { shrunk, whole });
+
+            // Rewrite the index so the first chunk claims 812 objects while the file it
+            // points at still holds one. The second is left agreeing with its own file, so
+            // the reader has to tell the two apart rather than flagging the world wholesale.
+            string chunksPath = Path.Combine(dir, "_main.4.chunks");
+            using (var fs = new FileStream(chunksPath, FileMode.Create, FileAccess.Write))
+            using (var bw = new BinaryWriter(fs))
+            {
+                bw.Write((ushort)41);
+                bw.Write(816);          // totalZDOs, as the index believes it
+                bw.Write(2);
+                bw.Write((ushort)1);      bw.Write((byte)0); bw.Write(1u); bw.Write(812);
+                bw.Write((ushort)0x0202); bw.Write((byte)0); bw.Write(3u); bw.Write(4);
+            }
+
+            var info = WorldDbReader.TryReadAny(dir);
+
+            Assert.NotNull(info);
+            // Both files opened and parsed: this is not a read failure.
+            Assert.Equal(2, info.ChunksTotal);
+            Assert.Equal(0, info.ChunksSkipped);
+
+            var shortfall = Assert.Single(info.ChunkShortfalls);
+            Assert.Equal(shrunk.FileName, shortfall.FileName);
+            Assert.Equal(812, shortfall.IndexCount);
+            Assert.Equal(1, shortfall.FileCount);
+            Assert.Equal(811, shortfall.Missing);
+
+            // And the world is still read: the note is a note, never a refusal.
+            Assert.Equal("survivor", Assert.Single(info.Portals).Tag);
+        }
+
+        /// <summary>
+        /// The other half of the rule: a world whose files agree with its index says nothing,
+        /// so the note cannot become background noise every host learns to ignore.
+        /// </summary>
+        [Fact]
+        public void Synthetic_AWorldWhoseFilesAgreeWithItsIndexReportsNothing()
+        {
+            var chunk = new ChunkSpec { Chunk = 1, Size = 0 };
+            for (int i = 0; i < 3; i++)
+                chunk.Zdos.Add(new ZdoSpec { Prefab = Hash("Beech1"), X = i, Y = 2f, Z = 3f });
+
+            var info = WorldDbReader.TryReadAny(
+                WriteWorld("Agreeing", 2, 1800, new List<ChunkSpec> { chunk }));
+
+            Assert.NotNull(info);
+            Assert.Equal(3, info.ZdoCount);
+            Assert.Empty(info.ChunkShortfalls);
+        }
+
         [Fact]
         public void Synthetic_AWholeWorldReportsNothingSkipped()
         {

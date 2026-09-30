@@ -93,6 +93,20 @@ namespace ValheimBakaLoader.Game
 
         public int ScheduledRestartHours { get; set; } = 6;
 
+        /// <summary>
+        /// Clear the cheat marks off this realm's world the next time it has been empty for a
+        /// minute, then turn this back off.
+        /// <para>
+        /// The Players hall's button needs a host sitting at the window at a moment when
+        /// nobody is playing, because the sweep rewrites containers and a container somebody
+        /// has open refuses to reload itself. On a server people actually use that moment is
+        /// four in the morning. This is the same sweep, armed and left: one shot, and the app
+        /// puts it down again the moment it lands. Off by default and never turned on by
+        /// anything but a host's own press.
+        /// </para>
+        /// </summary>
+        public bool CleanseWhenEmpty { get; set; }
+
         public bool RconEnabled { get; set; }
 
         public int RconPort { get; set; } = 25575;
@@ -146,6 +160,7 @@ namespace ValheimBakaLoader.Game
                 EmptyServerRestartDelayMinutes = file.EmptyServerRestartDelayMinutes ?? defaults.EmptyServerRestartDelayMinutes,
                 ScheduledRestart = file.ScheduledRestart ?? defaults.ScheduledRestart,
                 ScheduledRestartHours = file.ScheduledRestartHours ?? defaults.ScheduledRestartHours,
+                CleanseWhenEmpty = file.CleanseWhenEmpty ?? defaults.CleanseWhenEmpty,
                 RconEnabled = file.RconEnabled ?? defaults.RconEnabled,
                 RconPort = file.RconPort ?? defaults.RconPort,
                 RconPassword = file.RconPassword ?? defaults.RconPassword,
@@ -183,6 +198,7 @@ namespace ValheimBakaLoader.Game
             EmptyServerRestartDelayMinutes = EmptyServerRestartDelayMinutes,
             ScheduledRestart = ScheduledRestart,
             ScheduledRestartHours = ScheduledRestartHours,
+            CleanseWhenEmpty = CleanseWhenEmpty,
             RconEnabled = RconEnabled,
             RconPort = RconPort,
             RconPassword = RconPassword,

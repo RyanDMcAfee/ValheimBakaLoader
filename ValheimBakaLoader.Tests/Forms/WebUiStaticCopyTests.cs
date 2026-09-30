@@ -462,6 +462,10 @@ namespace ValheimBakaLoader.Tests.Forms
 
             var shown = new (string Word, int Times)[]
             {
+                // Hearth went from three to four in 1.2.6 and back to three in the same release:
+                // the Settings hall's App tab carried the word for a while because its rows came
+                // from the Hearth's Upkeep card, which named the wrong hall. The card head there
+                // has no Norse caption now, and neither does the Language heading under it.
                 ("hearth", 3), ("vikings", 4), ("saga", 3), ("runes", 2), ("world", 2),
                 ("atlas", 2), ("herald", 3), ("skald", 2),
                 ("forge", 1), ("scrolls", 1), ("heimr", 1), ("rites", 1),
@@ -519,8 +523,9 @@ namespace ValheimBakaLoader.Tests.Forms
                 Regex.Escape("open.textContent=T(\"common.button.open\");")).Count);
             Assert.Equal(2, Regex.Matches(html, @"data-i18n-title=""common\.sort\.by_name""").Count);
             Assert.Equal(2, Regex.Matches(html, @"data-i18n-title=""common\.chip\.show\.title""").Count);
-            // The Upkeep card and the three foldable sections of the Settings hall.
-            Assert.Equal(4, Regex.Matches(html, @"data-i18n-title=""hearth\.upkeep\.head\.title""").Count);
+            // The Upkeep card, the Connection card 1.2.6 split out of it, and the three
+            // foldable sections of the Settings hall.
+            Assert.Equal(5, Regex.Matches(html, @"data-i18n-title=""hearth\.upkeep\.head\.title""").Count);
 
             Assert.Equal("Open", Lore(catalog, "common.button.open"));
             Assert.Equal("Sort by name", Lore(catalog, "common.sort.by_name"));

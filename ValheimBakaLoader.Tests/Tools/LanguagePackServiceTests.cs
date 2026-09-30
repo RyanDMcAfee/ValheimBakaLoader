@@ -40,8 +40,14 @@ namespace ValheimBakaLoader.Tests.Tools
         private static readonly string TagsUrl =
             ValheimBakaLoader.Properties.Resources.UrlGithubApi + "/releases/tags/v" + AppVersion;
 
+        // The list is asked for a page at a time since 1.2.6. One bare call is answered
+        // with thirty releases and no hint that there are more, and the pack lookup reaches
+        // DOWN past the running version, so a rolling window of thirty would one day answer
+        // "no packs for your version" to a host whose packs are published. The fixtures below
+        // come back short, so page one is the only page asked for.
         private static readonly string ReleasesUrl =
-            ValheimBakaLoader.Properties.Resources.UrlGithubApi + "/releases";
+            ValheimBakaLoader.Properties.Resources.UrlGithubApi + "/releases?per_page="
+            + ValheimBakaLoader.Tools.GitHubClient.ReleasePageSize + "&page=1";
 
         // Deliberately not a shape anything could compose. A manifest may publish its packs
         // anywhere GitHub redirects them to, and the app's only job is to use the address it
@@ -322,6 +328,92 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal(Path.Combine(Root, "ru", AppVersion), result.Folder);
             Assert.True(File.Exists(Path.Combine(result.Folder, "strings.json")));
             AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// 1.2.6 puts a second product on the release: BakaLoaderUncheat, a plugin for a
+        /// player's own game client. It is a .zip, it sorts before every pack by name, and it
+        /// is nothing this flow wants. The proof that it cannot be picked up is the road
+        /// itself: a pack's address is read out of the manifest, and the release's asset list
+        /// is only ever asked one question, which is where lang-manifest.json is. So the
+        /// recorded request list is the assertion: the manifest, the address the manifest
+        /// published, and nothing else off that release at all.
+        /// </summary>
+        [Fact]
+        public async Task A_release_carrying_the_companion_plugin_still_installs_the_pack_the_manifest_names()
+        {
+            const string Companion = "https://example.invalid/releases/download/v1.2.0/BakaLoaderUncheat-1.0.0.zip";
+
+            // The order GitHub answers in: by name, with the companion first.
+            var release = JsonConvert.SerializeObject(new
+            {
+                tag_name = "v" + AppVersion,
+                html_url = "https://example.invalid/releases/tag/v" + AppVersion,
+                published_at = "2026-09-17T00:00:00Z",
+                draft = false,
+                prerelease = false,
+                assets = new object[]
+                {
+                    new { name = "BakaLoaderUncheat-1.0.0.zip", browser_download_url = Companion, size = 4096 },
+                    new { name = "lang-ja-1.2.0.zip", browser_download_url = "https://example.invalid/releases/download/v1.2.0/lang-ja-1.2.0.zip", size = 1 },
+                    new { name = LanguagePackService.ManifestAssetName, browser_download_url = ManifestUrl, size = 512 },
+                    new { name = "lang-ru-1.2.0.zip", browser_download_url = "https://example.invalid/releases/download/v1.2.0/lang-ru-1.2.0.zip", size = 1 },
+                    new { name = "lang-zh-hans-1.2.0.zip", browser_download_url = "https://example.invalid/releases/download/v1.2.0/lang-zh-hans-1.2.0.zip", size = 1 },
+                    new { name = "lang-zh-hant-1.2.0.zip", browser_download_url = "https://example.invalid/releases/download/v1.2.0/lang-zh-hant-1.2.0.zip", size = 1 },
+                    new { name = "ValheimBakaLoader-1.2.0-win-x64.zip", browser_download_url = "https://example.invalid/releases/download/v1.2.0/ValheimBakaLoader-1.2.0-win-x64.zip", size = 1 },
+                },
+            });
+
+            var zip = PackZip("ru", AppVersion, 7);
+            var manifest = ManifestJson(Entry("ru", RuPackUrl, zip, 7));
+
+            var (service, handler) = Build(request =>
+            {
+                var url = request.RequestUri?.ToString() ?? "";
+                if (url == TagsUrl) return Json(release);
+                if (url == ManifestUrl) return Json(manifest);
+                if (url == RuPackUrl) return Bytes(zip);
+                return Missing();
+            });
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.True(result.Ok, result.ReasonId);
+            Assert.Equal(Path.Combine(Root, "ru", AppVersion), result.Folder);
+            Assert.True(File.Exists(Path.Combine(result.Folder, "strings.json")));
+
+            Assert.Contains(ManifestUrl, handler.Requests);
+            Assert.Contains(RuPackUrl, handler.Requests);
+            Assert.DoesNotContain(Companion, handler.Requests);
+            Assert.DoesNotContain(handler.Requests,
+                r => r.Contains("Uncheat", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(handler.Requests,
+                r => r.Contains("releases/download", StringComparison.OrdinalIgnoreCase));
+            AssertStagingIsEmpty();
+        }
+
+        /// <summary>
+        /// And the asset list itself: the manifest is found by its own name out of a list the
+        /// companion sorts to the front of, rather than by position or by "the first zip",
+        /// which is the mistake that shipped on 1.2.0 in the self-updater.
+        /// </summary>
+        [Fact]
+        public void The_manifest_is_found_by_name_with_the_companion_standing_first()
+        {
+            var release = new GitHubRelease
+            {
+                TagName = "v" + AppVersion,
+                Assets = new[]
+                {
+                    new GitHubReleaseAsset { Name = "BakaLoaderUncheat-1.0.0.zip", BrowserDownloadUrl = "https://example.invalid/x/BakaLoaderUncheat-1.0.0.zip" },
+                    new GitHubReleaseAsset { Name = "lang-ja-1.2.0.zip", BrowserDownloadUrl = "https://example.invalid/x/lang-ja-1.2.0.zip" },
+                    new GitHubReleaseAsset { Name = LanguagePackService.ManifestAssetName, BrowserDownloadUrl = ManifestUrl },
+                    new GitHubReleaseAsset { Name = "ValheimBakaLoader-1.2.0-win-x64.zip", BrowserDownloadUrl = "https://example.invalid/x/app.zip" },
+                },
+            };
+
+            Assert.Equal(ManifestUrl, release.Asset(LanguagePackService.ManifestAssetName)?.BrowserDownloadUrl);
+            Assert.Null(release.Asset("BakaLoaderUncheat.zip"));
         }
 
         // ------------------------------------------------------------------ 2 and 3. integrity
@@ -1664,6 +1756,105 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.NotNull(seen);
             Assert.Equal("ru", seen.Code);
             Assert.Equal("1.2.0", seen.Version);
+        }
+
+        /// <summary>
+        /// A pack whose CATALOGUE is older than the app's is installed and used, rather than
+        /// turned away for being behind.
+        /// <para>
+        /// WHY THIS EXISTS. The owner's walk of 1.2.5 found four languages standing on packs
+        /// from 1.2.0 while the app had already resolved the manifest from the 1.2.4 release.
+        /// The interface then read in English in large blocks inside an otherwise translated
+        /// window, with nothing on the menu saying why. Being behind is not a failure: the
+        /// reading rule for every catalogue in this app is that an id a pack does not carry
+        /// falls back to English, so an older pack is strictly better than no pack, and the
+        /// menu is where the host is told which version it came from.
+        /// </para>
+        /// <para>
+        /// Three things at once here: a pack already on disk from a much older catalogue,
+        /// a release page with nothing under this app's tag, and a manifest one version
+        /// behind whose catalogue is still behind the app's own. Every one of those is a
+        /// reason something could have refused, and none of them may.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task A_pack_whose_catalogue_is_older_than_the_app_is_installed_and_used()
+        {
+            // What the host is standing on: a pack from a long way back.
+            PlaceInstalled("ru", "1.0.0", 1);
+
+            // What is published: one version behind this app, on an older catalogue too.
+            var zip = PackZip("ru", "1.1.9", 3);
+            var manifest = JsonConvert.SerializeObject(new
+            {
+                schema = 1,
+                appVersion = "1.1.9",
+                generatedUtc = "2026-08-01T00:00:00Z",
+                catalog = 3,
+                languages = new object[]
+                {
+                    new
+                    {
+                        code = "ru",
+                        asset = "lang-ru-1.1.9.zip",
+                        url = RuPackUrl,
+                        bytes = zip.Length,
+                        sha256 = Sha(zip),
+                        catalog = 3,
+                        nativeName = "ru",
+                        englishName = "ru",
+                        keys = 2,
+                        translated = 2,
+                        status = "machine",
+                        minAppVersion = "1.0.0",
+                        appVersion = "1.1.9",
+                    },
+                },
+            });
+
+            var releases = JsonConvert.SerializeObject(new object[]
+            {
+                new
+                {
+                    tag_name = "v1.1.9",
+                    published_at = "2026-08-01T00:00:00Z",
+                    draft = false,
+                    prerelease = false,
+                    assets = new[] { new { name = LanguagePackService.ManifestAssetName, browser_download_url = ManifestUrl, size = 512 } },
+                },
+            });
+
+            var (service, _) = Build(request =>
+            {
+                var url = request.RequestUri?.ToString() ?? "";
+                if (url == TagsUrl) return Missing();          // no release page for this version yet
+                if (url == ReleasesUrl) return Json(releases);
+                if (url == ManifestUrl) return Json(manifest);
+                if (url == RuPackUrl) return Bytes(zip);
+                return Missing();
+            });
+
+            var result = await service.DownloadAsync("ru");
+
+            Assert.True(result.Ok, result.ReasonId ?? "the older pack was refused");
+            Assert.Equal("1.1.9", result.AppVersion);
+
+            // And it is the pack in use: newer than what was there, older than the app, and
+            // saying so about itself so the menu can word the line.
+            var install = service.InstalledAny("ru");
+            Assert.Equal("1.1.9", install.Version);
+            Assert.Equal(3, install.Catalog);
+            Assert.False(install.MatchesApp, "a pack from an older release must not claim to match the app");
+            Assert.True(File.Exists(Path.Combine(install.Folder, "strings.json")));
+
+            // The menu is told both halves: which version the pack came from, and which
+            // version the app is, because the sentence names both.
+            var listing = await service.ListAsync();
+            var row = listing.Languages.Single(l => l.Code == "ru");
+            Assert.Equal(AppVersion, listing.AppVersion);
+            Assert.True(row.Installed);
+            Assert.False(row.MatchesApp);
+            Assert.Equal("1.1.9", row.InstalledVersion);
         }
 
         [Fact]

@@ -2,6 +2,7 @@
 using System;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using ValheimBakaLoader.Game;
 using ValheimBakaLoader.Tools.Http;
@@ -20,6 +21,7 @@ namespace ValheimBakaLoader.Tools
         void SendServerUpdated(string serverName, string buildId, bool starting);
         void SendServerUpdateFailed(string serverName, string reason);
         void SendLegacyWorldLoaded(string serverName, string worldName);
+        void SendCheatMarksCleared(string serverName, string counts);
     }
 
     public class DiscordWebhookService : IDiscordWebhookService
@@ -27,6 +29,23 @@ namespace ValheimBakaLoader.Tools
         private readonly IUserPreferencesProvider UserPrefsProvider;
         private readonly IHttpClientProvider HttpClientProvider;
         private readonly IApplicationLogger Logger;
+
+        /// <summary>
+        /// The clocks one webhook post is held to.
+        /// <para>
+        /// It had none of its own, so it ran on HttpClient's default hundred seconds, and that
+        /// default is released the moment the response headers are in: a Discord edge that
+        /// accepted the connection and then went quiet held the task and its client for as long
+        /// as the process lived. A herald line is worth twenty seconds and not a second more;
+        /// the next one will say the same thing.
+        /// </para>
+        /// </summary>
+        public DownloadBudget PostBudget { get; set; } = new()
+        {
+            HeaderTimeout = TimeSpan.FromSeconds(20),
+            TotalTimeout = TimeSpan.FromSeconds(20),
+            IdleTimeout = TimeSpan.FromSeconds(20),
+        };
 
         public DiscordWebhookService(
             IUserPreferencesProvider userPrefsProvider,
@@ -126,6 +145,20 @@ namespace ValheimBakaLoader.Tools
                 0xE0A35C); // Amber
         }
 
+        /// <summary>
+        /// The armed cleanse landed on an empty server, which is usually at four in the
+        /// morning with nobody at the window. The counts go in verbatim: they are the plugin's
+        /// own reply line, the same words the Players hall shows, so there is one reading of
+        /// this sweep and not two.
+        /// </summary>
+        public void SendCheatMarksCleared(string serverName, string counts)
+        {
+            SendEmbed(
+                HostCatalog.T("host.discord.cleanse.title"),
+                HostCatalog.T("host.discord.cleanse.body", ("server", serverName), ("counts", counts)),
+                0x8C6D3F); // Bronze
+        }
+
         private void SendEmbed(string title, string description, int color)
         {
             var prefs = UserPrefsProvider.LoadPreferences();
@@ -159,9 +192,14 @@ namespace ValheimBakaLoader.Tools
                 try
                 {
                     using var client = HttpClientProvider.CreateClient();
+                    // The client's own timeout out of the way, the budget's clocks in its
+                    // place: whichever of the two deadlines settles first ends the post.
+                    var budget = PostBudget.Copy();
+                    BoundedDownload.Unbounded(client);
+                    using var deadline = BoundedDownload.Deadline(budget.TotalTimeout, CancellationToken.None);
                     var json = JsonConvert.SerializeObject(payload);
                     var content = new StringContent(json, Encoding.UTF8, "application/json");
-                    var response = await client.PostAsync(webhookUrl, content);
+                    var response = await client.PostAsync(webhookUrl, content, deadline.Token);
 
                     if (!response.IsSuccessStatusCode)
                     {
@@ -170,7 +208,10 @@ namespace ValheimBakaLoader.Tools
                 }
                 catch (Exception e)
                 {
-                    Logger.Warning("Discord webhook error: {message}", e.Message);
+                    // The exception object, its type and the innermost reason. On a timeout
+                    // the message alone says only that the clock ran out, which is the one
+                    // thing a host reading this line already knows.
+                    Logger.Warning(e, "Discord webhook error: {message}", Http.WireTrace.Innermost(e));
                 }
             });
         }

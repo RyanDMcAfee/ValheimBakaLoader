@@ -188,7 +188,7 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             var bridge = AppSourceTree.Files()["BlendWindow.Bridge.cs"];
             var at = bridge.IndexOf(
-                "private async Task ApplyBepInExUpdateAsync(string profile)", StringComparison.Ordinal);
+                "private async Task ApplyBepInExUpdateAsync(string profile, CancellationToken stop = default)", StringComparison.Ordinal);
             Assert.True(at > 0, "the unattended BepInEx step is gone");
 
             var body = bridge.Substring(at, Math.Min(3600, bridge.Length - at));

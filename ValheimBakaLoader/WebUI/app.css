@@ -36,9 +36,38 @@
   --iron:#1A1D21; --iron-deep:#14161A; --iron-deeper:#0F1114;
   --ember:#FF7A1A; --ember-hi:#FFB35C; --ember-dim:rgba(255,122,26,.14);
   --bronze:rgba(140,109,63,.4); --bronze-hi:rgba(140,109,63,.75);
-  --bone:#E8E2D5; --bone-dim:#9A927F; --bone-faint:#5E594E;
+  /* ---- THE READING TIERS, MEASURED ----
+     Every colour a WORD is drawn in reaches 4.5 against every ground in the tonal ladder
+     below, which is WCAG AA for text at these sizes, AND reaches it with whatever dims it
+     composited in. That second half is new in 1.2.6's batch D and it is the half the claim was
+     quietly missing: a token measured on its own says nothing about a word inside a row at
+     opacity .42, and four words in the window were between 2.26 and 3.70 on screen while every
+     number below was true. The dimming is gone from those four; what is left dimmed is the
+     inactive controls, which WCAG 1.4.3 exempts and scripts/ui/contrast_gate.js names one at a
+     time in DIMMED_OK, and two ornament glyphs it names in ORNAMENT.
+
+     The numbers are here so the next change to one of them has to keep them true:
+     surface-3 is the lightest ground and so the one that decides.
+
+       bone            10.0   the ordinary reading colour
+       bone-dim         5.2   the one under it, was 4.2 and read as a smudge at 10px
+       bone-faint-text  4.6   the quietest one words are ever drawn in
+       bone-faint       1.9   NOT for words. Borders, rules and decoration only.
+       bronze-text      5.5   a rune beside a label, was bronze-hi at 2.1 composited
+       bronze-hi        2.1   NOT for words. Borders and the odd hairline.
+       cold-hi          5.9   blue text. cold itself is 2.8 and is for strokes and fills.
+       blood-text       4.6   red text. blood itself is 2.9 and is for borders and grounds.
+       moss-text        4.6   green text. moss itself is 4.2 and is for grounds and fills.
+       amber            6.3   ember 5.0, ember-hi 7.3: all three were already fine.
+
+     scripts/ui/contrast_gate.js measures this out of this file on every copy gate, so a
+     token edited back down fails before it ships, and scripts/ui/contrast_gate_proofs.js
+     plants a defect of each shape the gate used to be blind to and holds it to failing. */
+  --bone:#E8E2D5; --bone-dim:#ABA391; --bone-faint:#5E594E; --bone-faint-text:#9E998E;
+  --bronze-text:#C6A46E;
   --cold:#5B7A8C; --cold-hi:#8FB4C9;
-  --amber:#E8A93C; --blood:#D5453C; --moss:#6FA05C;
+  --amber:#E8A93C; --blood:#D5453C; --blood-text:#FC6C63;
+  --moss:#6FA05C; --moss-text:#76A763;
   /* The only four places a font family name is written in the whole product. Every rule
      goes through one of these, so switching a language switches a stack rather than a
      sweep. --serif-small is the same face as --serif in English and exists for the ten
@@ -196,7 +225,7 @@ html.lang-pending body>*{visibility:hidden}
   color:var(--bone-dim);font-size:11px;cursor:pointer;transition:all .18s var(--ease);
 }
 .cmdchip:hover{border-color:var(--ember);color:var(--bone);box-shadow:0 0 14px rgba(255,122,26,.25)}
-.cmdchip kbd{font-family:var(--mono);font-size:10px;background:#23272D;border:1px solid #33383F;
+.cmdchip kbd{font-family:var(--mono);font-size:11px;background:#23272D;border:1px solid #33383F;
   border-radius:4px;padding:1px 6px;color:var(--bone-dim)}
 .winbtns{display:flex;gap:2px;margin-left:8px}
 .winbtn{width:38px;height:30px;display:flex;align-items:center;justify-content:center;
@@ -234,7 +263,7 @@ html.lang-pending body>*{visibility:hidden}
 }
 .langmenu.open{display:block;animation:pageIn .15s var(--ease)}
 .langmenu .lm-head{
-  font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint);
+  font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint-text);
   padding:5px 10px 6px;
 }
 .lm-row{
@@ -245,7 +274,7 @@ html.lang-pending body>*{visibility:hidden}
 .lm-row:focus-visible{outline:1px solid var(--ember);outline-offset:-1px}
 .lm-row .lm-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
 .lm-row .lm-name{font-size:12.5px;line-height:1.3}
-.lm-row .lm-sub{font-family:var(--mono);font-size:10px;color:var(--bone-dim);line-height:1.3}
+.lm-row .lm-sub{font-family:var(--mono);font-size:11px;color:var(--bone-dim);line-height:1.3}
 .lm-row .lm-mark{width:14px;text-align:center;color:var(--ember);font-size:11px;flex:none}
 .lm-row.on{background:rgba(255,122,26,.10)}
 .lm-row.busy{cursor:default}
@@ -257,7 +286,7 @@ html.lang-pending body>*{visibility:hidden}
 .lm-row.off{cursor:default;color:var(--bone-dim)}
 .lm-row.off:hover{background:transparent;color:var(--bone-dim)}
 .lm-tag{
-  font-size:8.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--bone-faint);
+  font-size:8.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--bone-faint-text);
   border:1px solid var(--bronze);border-radius:4px;padding:1px 5px;flex:none;
   white-space:nowrap;align-self:center;
 }
@@ -268,14 +297,14 @@ html.lang-pending body>*{visibility:hidden}
 .lm-bar.indeterminate .lm-fill{width:35%;animation:lmSweep 1.1s var(--ease) infinite}
 @keyframes lmSweep{0%{margin-left:-35%}100%{margin-left:100%}}
 .lm-act{
-  font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--bone-dim);
+  font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--bone-dim);
   background:transparent;border:1px solid var(--bronze);border-radius:4px;padding:3px 8px;
   cursor:pointer;flex:none;transition:all .15s var(--ease);
 }
 .lm-act:hover:not(:disabled){border-color:var(--ember);color:var(--ember-hi)}
 .lm-act:disabled{opacity:.4;cursor:not-allowed}
 .lm-note{
-  font-family:var(--mono);font-size:10px;line-height:1.4;color:var(--bone-dim);
+  font-family:var(--mono);font-size:11px;line-height:1.4;color:var(--bone-dim);
   padding:7px 10px 4px;border-top:1px solid rgba(140,109,63,.25);margin-top:5px;
 }
 .lm-note.warn{color:var(--amber)}
@@ -350,7 +379,7 @@ html.lang-pending body>*{visibility:hidden}
    its height down on short windows. */
 .side-foot{margin-top:auto;flex:none;width:100%;padding:0 3px;
   display:flex;flex-direction:column;align-items:center;gap:5px;
-  color:var(--bone-faint);font-family:var(--mono);font-size:9.5px;letter-spacing:1px}
+  color:var(--bone-faint-text);font-family:var(--mono);font-size:9.5px;letter-spacing:1px}
 .side-foot .foot-ver{display:flex;align-items:center;justify-content:center;gap:5px;
   line-height:1;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* A newer BakaLoader is waiting: the version line names it, glows, and takes a click.
@@ -363,7 +392,7 @@ html.lang-pending body>*{visibility:hidden}
 .side-foot .foot-ver.upd:hover .mc{animation:none;color:var(--ember-hi);
   text-shadow:0 0 12px rgba(255,122,26,.95),0 0 26px rgba(232,169,60,.60)}
 .side-foot .foot-ver.upd:focus-visible{outline:1px solid var(--ember);outline-offset:2px;border-radius:4px}
-.side-foot .moon{font-size:14px;line-height:1;color:var(--cold);text-shadow:0 0 8px rgba(91,122,140,.5)}
+.side-foot .moon{font-size:14px;line-height:1;color:var(--cold-hi);text-shadow:0 0 8px rgba(91,122,140,.5)}
 .side-foot .mead{display:block;width:100%;margin-top:2px;padding-top:6px;text-align:center;line-height:1.3;
   color:var(--amber);cursor:pointer;text-decoration:none;letter-spacing:.2px;font-size:9px;
   border-top:1px solid rgba(140,109,63,.18);transition:color .18s var(--ease),text-shadow .18s var(--ease)}
@@ -421,14 +450,36 @@ html.lang-pending body>*{visibility:hidden}
 .pagehead h1 .r{color:var(--ember);margin-right:8px;text-shadow:0 0 10px rgba(255,122,26,.6)}
 .pagehead .sub{font-size:11px;color:var(--bone-dim);letter-spacing:.5px}
 .pagehead .grow{flex:1}
+/* The Players hall's two cheat-mark controls, as a PAIR. The button and the switch beside it are
+   one offer said two ways, and the head is a wrapping flex row: at 1024x680 the three things on
+   the right do not fit on one line, so the switch took a line of its own at the LEFT margin
+   while Clear cheat marks sat right on the line above, reading as two unrelated controls. A
+   margin-left:auto on the switch alone fixed that line and split the pair apart on every wider
+   window, because two auto margins on one line share the space between them. So they wrap
+   together instead, and end level with the head's right edge at every width. */
+.pagehead .headpair{margin-left:auto;display:flex;align-items:center;gap:10px;
+  flex-wrap:wrap;justify-content:flex-end;row-gap:6px}
+/* The Settings hall's two tabs. Server is everything the hall has always held, saved by the
+   button in the header; App holds the preferences that belong to BakaLoader itself, each of
+   which saves itself as it is moved. A tab strip rather than a second hall in the sidebar:
+   these are settings, and the sidebar is halls. */
+.worldtabs{flex:none;display:flex;gap:6px;margin:-6px 0 14px}
+.wtab{background:rgba(0,0,0,.28);border:1px solid var(--bronze);border-radius:20px;
+  padding:4px 14px;color:var(--bone-dim);font-family:var(--serif-small);font-size:var(--t11);
+  font-weight:600;letter-spacing:2px;text-transform:uppercase;cursor:pointer;
+  transition:all .15s var(--ease)}
+.wtab:hover{color:var(--bone);border-color:var(--bronze-hi)}
+.wtab.on{color:#1A0E04;background:linear-gradient(180deg,#FF9234,#E8560F);
+  border-color:var(--ember)}
+.wtab:focus-visible{outline:1px solid var(--ember);outline-offset:2px}
 /* The search box a hall carries in its header, and the "showing N of M" that stands
    beside it while something is typed. Both narrow what is on screen and nothing else. */
 .pagesearch{width:200px;max-width:100%;background:rgba(0,0,0,.3);border:1px solid var(--bronze);
-  border-radius:20px;padding:3px 11px;color:var(--bone);font-family:var(--mono);font-size:10px;
+  border-radius:20px;padding:3px 11px;color:var(--bone);font-family:var(--mono);font-size:11px;
   outline:none;transition:border-color .15s var(--ease)}
-.pagesearch::placeholder{color:var(--bone-faint)}
+.pagesearch::placeholder{color:var(--bone-faint-text)}
 .pagesearch:focus{border-color:var(--ember)}
-.pagesearch-count{color:var(--bone-faint);white-space:nowrap}
+.pagesearch-count{color:var(--bone-faint-text);white-space:nowrap}
 .pagesearch-count:empty{display:none}
 .cfgsearch{width:100%;margin-top:8px}
 /* Save Config and the line that belongs to it: the note sits directly above the button and
@@ -472,7 +523,7 @@ html.lang-pending body>*{visibility:hidden}
   box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 22px rgba(255,122,26,.15),inset 0 1px 0 rgba(255,255,255,.04)}
 .microlabel{flex:none;font-size:var(--t11);letter-spacing:2px;text-transform:uppercase;font-weight:700;line-height:1.35;
   color:var(--bone);margin:0 0 var(--s2);display:flex;align-items:center;gap:var(--s2)}
-.microlabel .r{color:var(--bronze-hi);font-size:11px}
+.microlabel .r{color:var(--amber);font-size:11px}
 .bigval{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:22px;font-weight:700;
   line-height:1.15;color:var(--bone)}
 .subval{font-family:var(--mono);font-size:11px;line-height:1.35;color:var(--bone-dim);font-variant-numeric:tabular-nums}
@@ -491,7 +542,7 @@ html.lang-pending body>*{visibility:hidden}
 .empty-state.es-compact{padding:var(--s3) var(--s2);gap:var(--s1)}
 .empty-state.es-compact .es-mark{font-size:17px}
 .empty-state.es-compact .es-title{font-size:var(--t11)}
-.empty-state.es-compact .es-reason{font-size:10px;max-width:40ch}
+.empty-state.es-compact .es-reason{font-size:11px;max-width:40ch}
 /* a table's empty state owns the whole row, with no cell borders under it */
 tbody td:has(>.empty-state){border-bottom:none;padding:0}
 #term .empty-state{color:var(--bone-dim)}
@@ -520,14 +571,23 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .b-mods{grid-column:span 1}
 .b-net{grid-column:span 2}
 .b-upkeep{grid-column:span 2;align-self:start}
-.b-log{grid-column:span 4;display:flex;flex-direction:column;min-height:0}
-.b-upkeep .togglerow{margin-top:6px}
-.upkeep-head{cursor:pointer;user-select:none}
+/* Connection, its own card since 1.2.6. It shares the last row with Upkeep and the log, both
+   of which are collapsed by default and the log takes what is left, so AT SIX COLUMNS the
+   Hearth is exactly as tall as it was before this card existed. Not below 1264px: four columns
+   put Upkeep and Connection on a row between them and push the log down to a fifth, so there
+   the hall is one row taller. Written down rather than claimed both ways, because the claim was
+   made flatly and is only true at the wider breakpoint. */
+.b-conn{grid-column:span 2;align-self:start}
+.b-log{grid-column:span 2;display:flex;flex-direction:column;min-height:0}
+.b-upkeep .togglerow,.b-conn .togglerow{margin-top:6px}
+.upkeep-head,.conn-head{cursor:pointer;user-select:none}
 @media (max-width:1264px){
   .bento{grid-template-columns:repeat(4,1fr);
     grid-template-rows:repeat(3,minmax(180px,auto)) minmax(160px,1fr)}
   .bento.upkeep-open{grid-template-rows:repeat(3,minmax(180px,auto)) minmax(min-content,1fr)}
-  .b-log{grid-column:span 2}
+  /* Four columns: Upkeep and Connection take the row between them and the log takes the
+     whole of the next one. */
+  .b-log{grid-column:span 4}
 }
 /* The card's leading Othala smoulders like the mead link (emberW) and rotates
    -90deg (closed) -> 0deg (open); the chevron on the right end is the explicit
@@ -539,6 +599,20 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .b-upkeep.open .upkeep-head .r{transform:rotate(0deg)}
 .upkeep-body{display:none}
 .b-upkeep.open .upkeep-body{display:block;margin-top:4px}
+/* The Connection card wears the same head, the same chevron and the same fold. One set of
+   rules for both would have needed a shared class name on two cards that are otherwise
+   nothing alike, so the selectors are paired instead. */
+.conn-head .r{display:inline-block;color:var(--amber);transform:rotate(-90deg);
+  transition:transform .18s var(--ease)}
+.b-conn.open .conn-head .r{transform:rotate(0deg)}
+.conn-body{display:none}
+.b-conn.open .conn-body{display:block;margin-top:4px}
+.conn-head{min-height:28px;border-radius:7px;margin:2px -6px 0;padding:4px 6px;
+  transition:background .15s var(--ease),color .15s var(--ease)}
+.conn-head:hover{background:rgba(255,255,255,.04);color:var(--bone)}
+.conn-head:hover .fs-chev{color:var(--ember-hi)}
+.conn-head:focus-visible{outline:1px solid var(--ember);outline-offset:1px}
+.b-conn.open .conn-head .fs-chev{transform:rotate(90deg);color:var(--ember)}
 
 /* ============ COLLAPSIBLE HEADER AFFORDANCE ============
    Every foldable header (Upkeep card, World hall sections) carries a chevron
@@ -547,7 +621,7 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .fs-chev{flex:none;display:inline-block;width:16px;text-align:center;
   font-size:12px;line-height:1;color:var(--bone-dim);
   transform:rotate(0deg);transition:transform .18s var(--ease),color .18s var(--ease)}
-.fs-hint{flex:none;font-family:var(--sans);font-size:10px;font-weight:500;letter-spacing:.5px;
+.fs-hint{flex:none;font-family:var(--sans);font-size:11px;font-weight:500;letter-spacing:.5px;
   text-transform:none;color:var(--bone-dim);white-space:nowrap}
 .formsec.collapsible.open .fs-chev,.b-upkeep.open .upkeep-head .fs-chev{
   transform:rotate(90deg);color:var(--ember-hi)}
@@ -590,14 +664,14 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
   color:var(--bone-dim);font-variant-numeric:tabular-nums;border-bottom:1px solid rgba(140,109,63,.12)}
 .skrow:last-child{border-bottom:none}
 .skrow .skw{color:var(--bone);font-weight:600}
-.skrow .skt{margin-left:auto;font-size:10px;white-space:nowrap;flex:none}
+.skrow .skt{margin-left:auto;font-size:11px;white-space:nowrap;flex:none}
 .skrow .skk{flex:none;width:14px;text-align:center}
-.skrow .skk.join{color:var(--moss)}
+.skrow .skk.join{color:var(--moss-text)}
 .skrow .skk.leave{color:var(--cold-hi)}
 .skrow .skk.death{color:var(--ember-hi)}
-.skrow .skk.start{color:var(--moss)}
+.skrow .skk.start{color:var(--moss-text)}
 .skrow .skk.stop{color:var(--cold-hi)}
-.skrow .skk.crash{color:#E85B4B}
+.skrow .skk.crash{color:var(--blood-text)}
 .skempty{font-family:var(--mono);font-size:11px;color:var(--bone-dim);padding:8px 0}
 
 /* ---------- HEARTH FLAME ----------
@@ -630,7 +704,7 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .hpid{font-family:var(--mono);font-size:10.5px;line-height:1.35;color:var(--bone-dim);font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Game + network version, straight off the server's startup banner. */
-.hver{font-family:var(--mono);font-size:10px;line-height:1.35;color:var(--bone-faint);font-variant-numeric:tabular-nums;
+.hver{font-family:var(--mono);font-size:11px;line-height:1.35;color:var(--bone-faint-text);font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* buttons */
@@ -647,9 +721,9 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 /* The one button shape for something that cannot be taken back. Outlined rather than
    filled: it has to read as a warning without competing with the ember button that
    carries the ordinary action on the same row. */
-.btn-blood{background:transparent;color:var(--blood);border-color:rgba(213,69,60,.55)}
+.btn-blood{background:transparent;color:var(--blood-text);border-color:rgba(213,69,60,.55)}
 .btn-blood:hover{color:#F0736B;border-color:rgba(213,69,60,.9);background:rgba(213,69,60,.1)}
-.btn-sm{height:26px;padding:0 11px;font-size:10px}
+.btn-sm{height:26px;padding:0 11px;font-size:11px}
 
 /* Vikings mini card */
 .vrow{display:flex;align-items:center;gap:9px;padding:4px 0;font-size:12px;line-height:1.35}
@@ -657,14 +731,14 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .vdot.on{background:var(--moss);box-shadow:0 0 8px rgba(111,160,92,.8)}
 .vdot.off{background:var(--cold);opacity:.5}
 .vname{font-weight:600;color:var(--bone)}
-.vsub{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
+.vsub{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--bone-dim);font-variant-numeric:tabular-nums}
 
 /* Saves - the bar chart takes whatever height the card is given */
 #homeVik{flex:1;min-height:0;overflow:hidden}
 .savebars{display:flex;align-items:flex-end;gap:3px;flex:1;min-height:26px;max-height:120px;margin-top:10px}
-.savecap{flex:none;font-size:9px;letter-spacing:.6px;color:var(--bone-faint);margin-top:5px;line-height:1.35;
+.savecap{flex:none;font-size:9px;letter-spacing:.6px;color:var(--bone-faint-text);margin-top:5px;line-height:1.35;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.savebars .empty{align-self:center;font-size:11.5px;color:var(--bone-faint);font-family:var(--sans)}
+.savebars .empty{align-self:center;font-size:11.5px;color:var(--bone-faint-text);font-family:var(--sans)}
 .savebars i{flex:1;background:linear-gradient(180deg,var(--bronze-hi),rgba(140,109,63,.25));border-radius:2px 2px 0 0}
 .savebars i.hot{background:linear-gradient(180deg,var(--ember-hi),var(--ember));box-shadow:0 0 8px rgba(255,122,26,.4)}
 
@@ -694,7 +768,7 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
    itself scrolls (app.js registers it for the edge-fade cue) instead of hiding them. */
 .b-net{overflow-y:auto}
 .netline{display:flex;align-items:center;gap:7px;margin-top:var(--s1);font-family:var(--mono);
-  font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums;line-height:1.4}
+  font-size:11px;color:var(--bone-dim);font-variant-numeric:tabular-nums;line-height:1.4}
 .copychip{margin-left:auto;font-size:9px;padding:2px 7px;border:1px solid var(--bronze);border-radius:4px;
   cursor:pointer;color:var(--bone-dim);transition:all .15s var(--ease);letter-spacing:1px}
 .copychip:hover{color:var(--ember-hi);border-color:var(--ember)}
@@ -707,7 +781,7 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
    there is, so nothing on screen today moves. */
 .pill{font-size:8.5px;letter-spacing:1.2px;font-weight:700;line-height:1.5;padding:2px 7px;border-radius:20px;text-transform:uppercase;
   white-space:nowrap;max-width:none;min-width:34px;text-align:center}
-.pill.green{background:rgba(111,160,92,.15);color:var(--moss);border:1px solid rgba(111,160,92,.4)}
+.pill.green{background:rgba(111,160,92,.15);color:var(--moss-text);border:1px solid rgba(111,160,92,.4)}
 .pill.amber{background:rgba(232,169,60,.13);color:var(--amber);border:1px solid rgba(232,169,60,.4)}
 .pill.blue{background:rgba(91,122,140,.15);color:var(--cold-hi);border:1px solid rgba(91,122,140,.4)}
 .pill.ember{background:var(--ember-dim);color:var(--ember-hi);border:1px solid rgba(255,122,26,.45)}
@@ -750,7 +824,7 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
 
 /* ============ TABLES (Vikings / Mods) ============ */
 table{width:100%;border-collapse:collapse;font-size:12px}
-thead th{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-dim);
+thead th{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-dim);
   text-align:left;padding:9px var(--s3);border-bottom:1px solid var(--bronze);font-weight:700;line-height:1.3}
 thead th.sortable{cursor:pointer;user-select:none;transition:color .15s var(--ease)}
 thead th.sortable:focus-visible{outline:1px solid var(--ember);outline-offset:-2px}
@@ -760,7 +834,10 @@ thead th.sortable .sortmark{display:inline-block;margin-left:5px;font-size:8px;c
 tbody td{padding:var(--s2) var(--s3);border-bottom:1px solid rgba(140,109,63,.16);font-variant-numeric:tabular-nums;line-height:1.35}
 tbody tr{transition:background .15s var(--ease)}
 tbody tr:hover{background:rgba(255,122,26,.045)}
-tbody tr.dim{opacity:.42}
+/* An offline viking's row, read QUIETER rather than half erased. It was opacity:.42, which
+   takes every word in the row with it: 12px cells at 3.40 against the lightest card. The colour
+   token does the same job at 4.6 and the row still reads as the quiet one. */
+tbody tr.dim td,tbody tr.dim td.mono{color:var(--bone-faint-text)}
 td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 
 /* ---------- PLAYER ROSTER ----------
@@ -775,7 +852,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .viktable td.num{text-align:right;font-variant-numeric:tabular-nums}
 .viktable th.vik-pos,.viktable td.vik-pos{text-align:right}
 /* a dash here means "not reported", never "zero": it always says which on hover */
-.viktable .vdash{color:var(--bone-faint);cursor:help}
+.viktable .vdash{color:var(--bone-faint-text);cursor:help}
 .rowmenu-cell{text-align:right;padding-right:var(--s2)}
 .rowmenu{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;
   border:1px solid transparent;border-radius:var(--r2);background:transparent;color:var(--ember);
@@ -791,6 +868,9 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 /* The "Possibly outdated" hint folds away first on a narrow window so the mods table never
    overflows; it is the least essential of the columns. */
 @media (max-width:1100px){#page-mods .mod-po{display:none}}
+/* And the same column folds away when not one row has anything to put in it. A header
+   over twenty two blank cells is a column that asks a question nobody answered. */
+#modsTable.po-empty .mod-po{display:none}
 
 /* context menu mock */
 .ctxwrap{position:relative}
@@ -803,12 +883,12 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 }
 .ctxmenu .ci{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;
   font-size:11.5px;cursor:pointer;color:var(--bone);transition:all .13s var(--ease)}
-.ctxmenu .ci .r{color:var(--bronze-hi);font-size:12px;width:14px;text-align:center}
+.ctxmenu .ci .r{color:var(--bronze-text);font-size:12px;width:14px;text-align:center}
 .ctxmenu .ci:hover{background:var(--ember-dim);color:var(--ember-hi)}
 .ctxmenu .ci:hover .r{color:var(--ember)}
 .ctxmenu .ci.danger:hover{background:rgba(213,69,60,.12);color:#F08078}
 .ctxmenu hr{border:0;border-top:1px solid rgba(140,109,63,.25);margin:5px 6px}
-.ctxhead{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint);padding:5px 10px 4px}
+.ctxhead{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint-text);padding:5px 10px 4px}
 
 /* ============ WORLD FORM ============ */
 .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
@@ -816,15 +896,39 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .formgrid3{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px}
 .field label{display:block;font-size:9.5px;letter-spacing:2.2px;text-transform:uppercase;
   color:var(--bone-dim);font-weight:600;margin-bottom:6px}
-.field input[type=text],.field input[type=password],.field select{
+/* The App tab's three dropdowns sit in a .togglerow rather than a .field, and they were
+   the only selects in the window the platform still drew: system Arial on a grey ground
+   with a grey border and the OS chevron, beside twelve selects in the app's own face. They
+   share these selectors rather than carrying a copy of the block, so the next change to a
+   select reaches them too. */
+.field input[type=text],.field input[type=password],.field select,.togglerow select{
   width:100%;height:34px;padding:0 var(--s3);background:var(--iron-deeper);
   border:1px solid var(--bronze);border-radius:var(--r2);color:var(--bone);
   font-family:var(--mono);font-size:12px;outline:none;transition:all .18s var(--ease);
 }
-.field input:focus,.field select:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(255,122,26,.12),0 0 14px rgba(255,122,26,.15)}
-.field select{appearance:none;cursor:pointer;
+.field input:focus,.field select:focus,.togglerow select:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(255,122,26,.12),0 0 14px rgba(255,122,26,.15)}
+/* A field whose value the form has just refused. The border says which box, so the
+   sentence under the dialog does not have to name it. */
+.field input.bad,.field select.bad{border-color:var(--blood);
+  box-shadow:0 0 0 3px rgba(217,67,47,.14)}
+/* A text box with a small button beside it, both on one line, the box taking what is left. */
+.rowline{display:flex;gap:8px;align-items:center}
+.rowline input[type=text]{flex:1 1 auto;min-width:0}
+.rowline .btn{flex:none}
+/* Every select in the window is drawn by the platform, and on Windows the popup list and
+   the closed control are painted in the OS light theme unless the page says otherwise.
+   color-scheme is what tells the platform which set of system colours to use, and the
+   option rules below carry the dark palette into the popup wherever the engine honours
+   them. Without these the dark window opened a white list of white rows. */
+:root{color-scheme:dark}
+select,option,optgroup{color-scheme:dark}
+select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
+.field select,.togglerow select{appearance:none;cursor:pointer;
   background-image:linear-gradient(45deg,transparent 50%,var(--bone-dim) 50%),linear-gradient(135deg,var(--bone-dim) 50%,transparent 50%);
   background-position:calc(100% - 16px) 15px,calc(100% - 11px) 15px;background-size:5px 5px;background-repeat:no-repeat}
+/* A .field select owns its whole column; one in a togglerow shares the line with the label
+   it belongs to, so it takes what its own max-width allows and no more. */
+.togglerow select{flex:0 1 auto}
 .togglerow{display:flex;align-items:center;justify-content:space-between;height:34px;
   padding:0 var(--s3);background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:var(--r2)}
 .togglerow .tl{font-size:11.5px;color:var(--bone)}
@@ -834,15 +938,32 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   background:var(--bone-dim);transition:all .2s var(--ease)}
 .toggle.on{background:linear-gradient(180deg,#E8560F,#B4430C);border-color:var(--ember)}
 .toggle.on::after{left:20px;background:#FFE9CF;box-shadow:0 0 8px rgba(255,122,26,.8)}
+/* A switch is in the tab order now, so it has to SHOW that it is the thing a key would move.
+   focus-visible rather than focus, so a mouse press does not leave a ring behind it. */
+.toggle:focus-visible{outline:2px solid var(--ember);outline-offset:3px;border-radius:20px}
 /* A switch that can do nothing until the one it depends on is turned on. It keeps its
    own stored value and shows it: the row is dimmed and refuses the click, rather than
    pretending the setting has changed. */
-.togglerow.gated{opacity:.45}
-.togglerow.gated .toggle{cursor:not-allowed}
+/* A row whose switch cannot be moved yet. The whole row was opacity:.45, so its LABEL was
+   3.70 and the host could not read what the row they are waiting on even says. The label takes
+   the quiet token instead, the border quietens with it, and the CONTROL keeps its dimming,
+   which is WCAG 1.4.3's own exception for an inactive component and the only part of the row
+   the dimming was ever about. */
+.togglerow.gated{border-color:rgba(140,109,63,.22)}
+.togglerow.gated .tl{color:var(--bone-faint-text)}
+.togglerow.gated .toggle{cursor:not-allowed;opacity:.45}
+/* There was a .togglerow.gated select rule here dimming a select the same way, and there is
+   no such select: .gated goes on the Detailed log row, the auto-update row and the kill-scope
+   radios, and not one of them holds one. It was the only thing keeping .togglerow select on
+   the contrast gate's exemption list, and a rule that styles nothing cannot earn an exemption,
+   so both went. A gated select that really is drawn one day starts from a measured colour. */
 .formsec{font-family:var(--serif-small);font-size:12px;letter-spacing:3px;color:var(--bone-dim);
   margin:20px 0 10px;display:flex;align-items:center;gap:10px}
 .formsec::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--bronze),transparent)}
-.formsec .r{color:var(--bronze-hi)}
+/* bronze-text, like every other rune beside a label. It was bronze-hi, which measures 2.1
+   against the card it sits on: a glyph nobody with ordinary sight would call readable, in front
+   of a heading. The gate forgave it as ornament; it does not need forgiving now. */
+.formsec .r{color:var(--bronze-text)}
 /* A section heading pairs the plain word with the Norse one, the same way a card
    header does. The rule line to its right takes the free space, so the caption sits
    beside the label instead of being pushed to the far edge. */
@@ -887,24 +1008,24 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   line-height:1.75;font-variant-numeric:tabular-nums}
 .term .ln{white-space:pre-wrap;animation:lnIn .22s var(--ease)}
 @keyframes lnIn{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
-.term .t{color:var(--bone-faint)}
+.term .t{color:var(--bone-faint-text)}
 .term .info{color:var(--bone-dim)}
-.term .ok{color:var(--moss)}
+.term .ok{color:var(--moss-text)}
 .term .warn{color:var(--amber)}
 .term .err{color:#F08078}
 .term .net{color:var(--cold-hi)}
 .term .cmd{color:var(--ember-hi);font-weight:700}
-.term .dbg{color:var(--bone-faint);opacity:.7}
+.term .dbg{color:var(--bone-faint-text)}
 /* labeled rule marking session starts / helm turns */
 .term .ln.div{display:flex;align-items:center;gap:10px;margin:7px 0;animation:none}
 .term .ln.div .divline{flex:1;height:1px;background:rgba(140,109,63,.35)}
 .term .ln.div .divtxt{flex:none;font-size:9px;letter-spacing:1.8px;text-transform:uppercase;
-  color:var(--bone-faint);white-space:nowrap}
+  color:var(--bone-faint-text);white-space:nowrap}
 /* saga search + paused chip */
 .termsearch{margin-left:auto;width:190px;background:rgba(0,0,0,.3);border:1px solid var(--bronze);
-  border-radius:20px;padding:3px 11px;color:var(--bone);font-family:var(--mono);font-size:10px;
+  border-radius:20px;padding:3px 11px;color:var(--bone);font-family:var(--mono);font-size:11px;
   outline:none;transition:border-color .15s var(--ease)}
-.termsearch::placeholder{color:var(--bone-faint)}
+.termsearch::placeholder{color:var(--bone-faint-text)}
 .termsearch:focus{border-color:var(--ember)}
 .termhead .hidden{display:none}
 #termNew{cursor:pointer}
@@ -923,7 +1044,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .statusbar{
   height:28px;flex:none;display:flex;align-items:center;gap:0;padding:0 14px;
   background:linear-gradient(180deg,#16181C,#121417);border-top:1px solid var(--bronze);
-  font-family:var(--mono);font-size:10px;color:var(--bone-dim);font-variant-numeric:tabular-nums;
+  font-family:var(--mono);font-size:11px;color:var(--bone-dim);font-variant-numeric:tabular-nums;
 }
 .statusbar .seg{display:flex;align-items:center;gap:6px;padding:0 12px;position:relative}
 .statusbar .seg+.seg::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:1px;background:rgba(140,109,63,.3)}
@@ -944,12 +1065,12 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .palette .pin .r{color:var(--ember);font-size:15px;text-shadow:0 0 8px rgba(255,122,26,.6)}
 .palette .pin input{flex:1;background:transparent;border:0;outline:none;color:var(--bone);
   font-size:13.5px;font-family:var(--sans)}
-.palette .pin input::placeholder{color:var(--bone-faint)}
+.palette .pin input::placeholder{color:var(--bone-faint-text)}
 .palette .plist{max-height:280px;overflow-y:auto;padding:6px}
 .pitem{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:7px;cursor:pointer;
   font-size:12.5px;color:var(--bone);transition:all .12s var(--ease)}
-.pitem .r{color:var(--bronze-hi);width:16px;text-align:center;font-size:13px}
-.pitem .k{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);
+.pitem .r{color:var(--bronze-text);width:16px;text-align:center;font-size:13px}
+.pitem .k{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--bone-faint-text);
   border:1px solid #33383F;border-radius:4px;padding:1px 6px}
 .pitem:hover,.pitem.sel{background:var(--ember-dim);color:var(--ember-hi)}
 .pitem:hover .r,.pitem.sel .r{color:var(--ember)}
@@ -961,8 +1082,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .pitem.pconsole{border-top:1px dashed rgba(140,109,63,.3);margin-top:4px;padding-top:11px}
 .pitem.pconsole #palConsoleLbl{font-family:var(--mono);font-size:11.5px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
-.palette .pfoot{padding:7px 16px;border-top:1px solid rgba(140,109,63,.25);font-size:10px;
-  color:var(--bone-faint);display:flex;gap:14px}
+.palette .pfoot{padding:7px 16px;border-top:1px solid rgba(140,109,63,.25);font-size:11px;
+  color:var(--bone-faint-text);display:flex;gap:14px}
 .palette .pfoot kbd{font-family:var(--mono);font-size:9px;border:1px solid #33383F;border-radius:3px;padding:0 4px}
 
 /* ============ TOASTS ============
@@ -986,7 +1107,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .toast::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ember);
   box-shadow:0 0 10px rgba(255,122,26,.7)}
 .toast .r{color:var(--ember);font-size:14px;text-shadow:0 0 8px rgba(255,122,26,.5)}
-.toast .tt{font-family:var(--mono);font-size:10px;color:var(--bone-dim);margin-left:auto;font-variant-numeric:tabular-nums}
+.toast .tt{font-family:var(--mono);font-size:11px;color:var(--bone-dim);margin-left:auto;font-variant-numeric:tabular-nums}
 .toast.out{animation:toastOut .3s var(--ease) forwards}
 @keyframes toastIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes toastOut{to{opacity:0;transform:translateY(14px)}}
@@ -994,8 +1115,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 /* ============ NATIVE STATES (disabled controls) ============ */
 .btn:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(.4) brightness(.85)}
 .btn:disabled:hover{filter:grayscale(.4) brightness(.85);box-shadow:none}
-.field select:disabled{opacity:.5;cursor:not-allowed}
-.fieldnote{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);margin-top:5px;letter-spacing:.4px}
+.field select:disabled,.togglerow select:disabled{opacity:.5;cursor:not-allowed}
+.fieldnote{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint-text);margin-top:5px;letter-spacing:.4px}
 
 /* ============ LIVE CONTEXT MENU (fixed, JS-positioned) ============ */
 .ctxmenu.ctxfixed{position:fixed;top:0;left:0;right:auto;width:232px;z-index:95;display:none;animation:none}
@@ -1005,7 +1126,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .ctxmenu .ci.disabled:hover{background:transparent;color:var(--bone)}
 .ctxmenu .ci.disabled:hover .r{color:var(--bronze-hi)}
 .ctxmenu .ci.confirm,.ctxmenu .ci.confirm:hover{background:rgba(213,69,60,.18);color:#F08078;font-weight:600}
-.ctxmenu .ci.confirm .r{color:var(--blood)}
+.ctxmenu .ci.confirm .r{color:var(--blood-text)}
 
 /* ============ MODALS (teleport / spawn / confirm) ============ */
 .modal-bg{position:absolute;inset:0;z-index:85;background:rgba(8,9,11,.6);backdrop-filter:blur(3px);
@@ -1065,7 +1186,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .modal .crow:hover{background:var(--ember-dim)}
 .modal .crow .cc{font-family:var(--mono);font-size:11.5px;color:var(--bone)}
 .modal .crow:hover .cc{color:var(--ember-hi)}
-.modal .crow .ca{color:var(--bone-faint);font-size:10.5px}
+.modal .crow .ca{color:var(--bone-faint-text);font-size:10.5px}
 .modal .crow .cd{font-size:10.5px;color:var(--bone-dim)}
 
 /* drill-down modal (network / saves detail) */
@@ -1084,7 +1205,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .modal .dstat .dsv{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--ember-hi);
   font-variant-numeric:tabular-nums}
 .modal .dstat .dsk{font-size:9px;letter-spacing:1.6px;text-transform:uppercase;color:var(--bone-dim);margin-top:2px}
-.modal .dnote{font-size:10px;color:var(--bone-faint);line-height:1.5;margin-top:4px}
+.modal .dnote{font-size:11px;color:var(--bone-faint-text);line-height:1.5;margin-top:4px}
 
 /* The Barrow's layer rows.
    A layer carries a long backup name, its kind, its size, its age and two controls, which
@@ -1101,14 +1222,14 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 /* first-launch setup wizard */
 .modal.wiz{width:560px}
 .wiz-steps{display:flex;align-items:center;gap:16px;margin-bottom:2px}
-.wiz-steps .ws{display:flex;align-items:center;gap:7px;color:var(--bone-faint);
+.wiz-steps .ws{display:flex;align-items:center;gap:7px;color:var(--bone-faint-text);
   font-size:9.5px;letter-spacing:1.8px;font-weight:600}
 .wiz-steps .ws b{width:20px;height:20px;border-radius:50%;border:1px solid var(--bronze);flex:none;
-  display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600}
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600}
 .wiz-steps .ws.on{color:var(--ember-hi)}
 .wiz-steps .ws.on b{border-color:var(--ember);color:var(--ember-hi);box-shadow:0 0 9px rgba(255,122,26,.4)}
 .wiz-steps .ws.done{color:var(--bone-dim)}
-.wiz-steps .ws.done b{border-color:var(--moss);color:var(--moss)}
+.wiz-steps .ws.done b{border-color:var(--moss);color:var(--moss-text)}
 .wiz-help{font-size:12px;color:var(--bone-dim);line-height:1.6}
 .wiz-help code{font-family:var(--mono);font-size:10.5px;color:var(--bone);
   background:rgba(0,0,0,.28);padding:1px 6px;border-radius:4px}
@@ -1118,9 +1239,9 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .wiz-paths .r{color:var(--ember);text-shadow:0 0 8px rgba(255,122,26,.5);margin-right:5px}
 .wiz-paths strong{color:var(--bone)}
 .wiz-stat{font-size:11px;min-height:15px;letter-spacing:.3px}
-.wiz-stat.ok{color:var(--moss)}
-.wiz-stat.bad{color:var(--blood)}
-.wiz-stat.dim{color:var(--bone-faint)}
+.wiz-stat.ok{color:var(--moss-text)}
+.wiz-stat.bad{color:var(--blood-text)}
+.wiz-stat.dim{color:var(--bone-faint-text)}
 .wiz-found{display:flex;flex-direction:column;gap:5px;max-height:120px;overflow-y:auto}
 .wiz-found .wf{font-family:var(--mono);font-size:10.5px;color:var(--bone-dim);text-align:left;
   border:1px solid var(--bronze);border-radius:6px;padding:6px 10px;cursor:pointer;
@@ -1129,18 +1250,18 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .wiz-sum{display:flex;flex-direction:column;gap:9px;font-size:12px;
   border:1px solid var(--bronze);border-radius:9px;padding:12px 14px;background:var(--iron-deeper)}
 .wiz-sum .row{display:flex;gap:12px}
-.wiz-sum .k{color:var(--bone-faint);letter-spacing:.4px;min-width:130px;flex:none}
+.wiz-sum .k{color:var(--bone-faint-text);letter-spacing:.4px;min-width:130px;flex:none}
 .wiz-sum .v{font-family:var(--mono);font-size:11px;color:var(--bone);word-break:break-all}
 .wiz-nav{display:flex;align-items:center;gap:8px;margin-top:4px}
 .wiz-nav .grow{flex:1}
 
 /* blood-red danger button + World-hall setup reset row */
-.btn-blood{background:transparent;color:var(--blood);border-color:rgba(213,69,60,.5)}
+.btn-blood{background:transparent;color:var(--blood-text);border-color:rgba(213,69,60,.5)}
 .btn-blood:hover{color:#FF6B61;border-color:var(--blood);background:rgba(213,69,60,.1);
   box-shadow:0 0 14px rgba(213,69,60,.25)}
 .setupreset{display:flex;align-items:center;gap:12px;margin-top:20px;padding-top:16px;
   border-top:1px solid var(--bronze)}
-.setupreset-note{font-size:10px;color:var(--bone-faint);letter-spacing:.4px;
+.setupreset-note{font-size:11px;color:var(--bone-faint-text);letter-spacing:.4px;
   /* The same last resort the help panel takes, for the same reason: the note under the
      world dials is the longest sentence on the Settings hall, and a run with nowhere to
      break in it took the whole hall sideways rather than wrapping. Measured at 1024x680
@@ -1156,7 +1277,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .capsbanner .capslist{margin:8px 0 10px;font-size:11px;line-height:1.7;color:var(--bone-dim)}
 .capsbanner .capslist b{color:var(--bone)}
 .capsbanner .capsact{display:flex;align-items:center;gap:12px}
-.capsbanner .capsnote{font-size:10px;color:var(--bone-faint)}
+.capsbanner .capsnote{font-size:11px;color:var(--bone-faint-text)}
 
 /* spawn-item picker */
 .pick-list{height:220px;overflow-y:auto;background:var(--iron-deeper);
@@ -1165,9 +1286,14 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   font-size:11.5px;color:var(--bone);cursor:pointer;transition:all .12s var(--ease)}
 .pick-item:hover{background:rgba(255,122,26,.07)}
 .pick-item.sel{background:var(--ember-dim);color:var(--ember-hi)}
-.pick-item .pk{font-size:8.5px;letter-spacing:1px;text-transform:uppercase;color:var(--bone-faint);
+.pick-item .pk{font-size:8.5px;letter-spacing:1px;text-transform:uppercase;color:var(--bone-faint-text);
   border:1px solid var(--bronze);border-radius:20px;padding:1px 7px;flex:none}
-.pick-item .pm{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--bone-faint)}
+.pick-item .pm{margin-left:auto;font-family:var(--mono);font-size:9.5px;color:var(--bone-faint-text)}
+/* The line that says the realm is offering the vanilla list because it has not written its
+   own yet. It sits at the top of the list rather than under it, because a host who cannot
+   find a modded item stops looking before they scroll to the bottom. */
+.pick-note{font-size:10.5px;line-height:1.45;color:var(--bone-faint-text);padding:6px 9px 8px;
+  border-bottom:1px solid var(--bronze);margin-bottom:4px}
 
 /* ============ WAVE 2 - advanced form, runes editor, statusbar ============ */
 /* path/password rows: input + trailing chip or button */
@@ -1184,10 +1310,10 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
    into Explorer, so nothing here takes user-select away. */
 .dircur{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px}
 .dircur-k{font-family:var(--serif-small);font-size:9px;letter-spacing:1.6px;
-  text-transform:uppercase;color:var(--bone-faint);flex:none}
-.dircur-v{font-family:var(--mono);font-size:10px;color:var(--bone-dim);
+  text-transform:uppercase;color:var(--bone-faint-text);flex:none}
+.dircur-v{font-family:var(--mono);font-size:11px;color:var(--bone-dim);
   user-select:text;word-break:break-all;min-width:0}
-.dircur-src{font-size:9px;letter-spacing:.6px;color:var(--bone-faint);
+.dircur-src{font-size:9px;letter-spacing:.6px;color:var(--bone-faint-text);
   border:1px solid var(--bronze);border-radius:20px;padding:0 7px;flex:none;white-space:nowrap}
 .dircur-src.own{color:var(--amber);border-color:rgba(232,169,60,.45)}
 .dircur-open{margin-left:auto;flex:none}
@@ -1251,7 +1377,12 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
    unsaved in it, and the hall on screen says whether this is the hall it belongs to.
    The dot on the rail is what carries the state to the other halls. */
 #page-world.active ~ .worldunsaved.on{display:flex;animation:unsavedIn .22s var(--ease)}
-.worldunsaved .wu-k{font-family:var(--serif-small);font-size:10px;letter-spacing:2px;
+/* Except on the App tab. Every row on that tab writes itself the moment it is moved, Save
+   Config is hidden there for exactly that reason, and a band promising that Save Config
+   writes the edits was describing the other tab. The attribute selector carries one more
+   point of weight than the rule above, so this wins without an !important. */
+#page-world.active[data-wtab="app"] ~ .worldunsaved.on{display:none}
+.worldunsaved .wu-k{font-family:var(--serif-small);font-size:11px;letter-spacing:2px;
   text-transform:uppercase;color:var(--ember-hi)}
 .worldunsaved .wu-v{font-size:10.5px;line-height:1.45;color:var(--bone-dim)}
 /* The band. A hall is inset:0 of the pane, so lifting its bottom edge shortens the
@@ -1293,11 +1424,14 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 
 /* gated parameter fields (toggle off → field sleeps) */
 .field input:disabled{opacity:.45;cursor:not-allowed}
-.field.gated label{opacity:.5}
+/* Same rule, same reason: the label said which box is asleep and was drawn at 2.69. */
+.field.gated label{color:var(--bone-faint-text)}
 
 /* dimmed statusbar segment (e.g. RCON off) */
-.statusbar .seg.dim{opacity:.45}
-.statusbar .seg.dim .em{color:var(--bone-faint)}
+/* RCON off, and the rest of a segment that has nothing to say. It was opacity:.45 over
+   bone-faint-text, which is 2.26: the word "off" in the status bar was a smudge. Same reading,
+   one token, 4.6. */
+.statusbar .seg.dim,.statusbar .seg.dim .em{color:var(--bone-faint-text)}
 
 /* two-step confirm state on buttons */
 .btn.confirming{background:linear-gradient(180deg,#B03A32,#7E2A24);border-color:var(--blood);color:#FFE1DC}
@@ -1305,7 +1439,13 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 
 /* RUNES page - config editor */
 .runes{display:flex;flex-direction:column}
-.runes-grid{flex:1;min-height:0;display:grid;grid-template-columns:250px 1fr;gap:14px}
+/* The file column grows with the window. It was a fixed 250px, and at the app's own
+   minimum size two config files whose names share a long prefix both truncated to the
+   same thing: "balrond.astafaraios.BalrondFu..." was BalrondFurnitureReborn.cfg and
+   BalrondFurRandomizer.cfg, and nothing on the row told them apart. Every row carries
+   its full name as a tooltip as well, which is what covers the narrowest window. */
+.runes-grid{flex:1;min-height:0;display:grid;
+  grid-template-columns:clamp(250px,26%,420px) 1fr;gap:14px}
 .cfg-listcard,.cfg-edcard{display:flex;flex-direction:column;min-height:0}
 .cfg-list{flex:1;overflow-y:auto;margin:2px -6px 0;min-height:0}
 .cfg-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:7px;cursor:pointer;
@@ -1326,7 +1466,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .cfg-editor{flex:1;width:100%;min-height:0;resize:none;background:transparent;border:none;outline:none;
   font-family:var(--mono);font-size:11.5px;line-height:1.65;color:var(--bone);
   padding:2px 4px;caret-color:var(--ember)}
-.cfg-editor::placeholder{color:var(--bone-faint)}
+.cfg-editor::placeholder{color:var(--bone-faint-text)}
 /* The find mark. A layer holding the same words in the same font at the same width sits
    behind the editor, which is see-through, so a mark painted on the layer shows up under
    the letters it belongs to. Every type-setting rule below has to match .cfg-editor above
@@ -1350,7 +1490,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .srvstrip::-webkit-scrollbar{display:none}
 /* "more below" cue under the strip: shown only when a chip is out of view */
 .srvmore{flex:none;height:12px;line-height:12px;font-family:var(--mono);font-size:9px;
-  letter-spacing:.5px;color:var(--bone-faint);user-select:none;cursor:default;
+  letter-spacing:.5px;color:var(--bone-faint-text);user-select:none;cursor:default;
   transition:color .15s var(--ease)}
 .srvmore:hover{color:var(--ember-hi)}
 .srvchip{width:40px;height:40px;border-radius:14px;position:relative;cursor:pointer;flex:none;
@@ -1367,7 +1507,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .srvchip .srvbadge{position:absolute;right:-5px;bottom:-5px;min-width:15px;height:15px;padding:0 3px;
   border-radius:8px;background:var(--ember);color:#1A1108;font-size:9px;font-weight:800;
   display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
-.srvchip.add{border-style:dashed;color:var(--bone-faint)}
+.srvchip.add{border-style:dashed;color:var(--bone-faint-text)}
 .srvchip.add:hover{color:var(--ember-hi);border-color:var(--ember)}
 .srvsep{width:44px;height:1px;background:rgba(140,109,63,.25);margin:2px 0 4px;flex:none}
 
@@ -1429,7 +1569,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   font-size:11.5px;color:var(--bone-dim);background:var(--iron-deep);
   border-bottom:1px solid rgba(140,109,63,.22);flex:none}
 .editbar .ebedit{font-family:var(--serif-small);letter-spacing:.14em;text-transform:uppercase;
-  font-size:9px;color:var(--bone-faint)}
+  font-size:9px;color:var(--bone-faint-text)}
 .editbar .ebname{color:var(--ember-hi);font-weight:600;letter-spacing:.02em}
 .editbar .ebmeta{color:var(--bone-dim)}
 .editbar .ebmeta b{color:var(--bone);font-weight:600}
@@ -1456,6 +1596,14 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 /* Same reason as the dialog body: this line carries a file name or a folder often enough
    that a word which will not fit has to break instead of leaving the bar. */
 .holdbar .hbmsg{color:var(--bone-dim);min-width:0;flex:1 1 260px;overflow-wrap:anywhere}
+/* A link INSIDE the sentence, for the conditions whose only offer is a page to read. An
+   ember button beside a Close made a bar about a decision the host had already taken look
+   like it still wanted an answer, and two buttons that both only closed the bar had no
+   difference between them. The word carries the same ember the bar's own title does so it
+   reads as the one thing here that can be pressed. */
+.holdbar .hbmsg .inlink{color:var(--ember-hi);text-decoration:underline;
+  text-underline-offset:2px;cursor:pointer}
+.holdbar .hbmsg .inlink:hover{color:var(--bone)}
 .holdbar .hbacts{display:flex;align-items:center;gap:7px;margin-left:auto;flex:none;flex-wrap:wrap}
 /* The condition bar's action buttons size to their words too. "Update BakaLoader" is
    137px of ink against the 120px the button was budgeted for and the English is already
@@ -1472,7 +1620,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   background:linear-gradient(90deg,#B4430C,var(--ember));transition:width .25s var(--ease)}
 .holdbar .hbprog.indet i,.modprog .hbprog.indet i{width:40%;animation:hbsweep 1.4s var(--ease) infinite}
 @keyframes hbsweep{from{margin-left:-40%}to{margin-left:100%}}
-.holdbar .hbpct,.modprog .hbpct{flex:none;font-family:var(--mono);font-size:10px;color:var(--bone-dim);
+.holdbar .hbpct,.modprog .hbpct{flex:none;font-family:var(--mono);font-size:11px;color:var(--bone-dim);
   font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion:reduce){
   .holdbar .hbprog.indet i,.modprog .hbprog.indet i{animation:none;width:100%;opacity:.45}
@@ -1498,7 +1646,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .beprow .bepver{font-size:11px;color:var(--bone-dim);flex:none}
 .beprow .bepmsg{flex:1 1 220px;min-width:0;font-size:11.5px;color:var(--bone-dim)}
 .beprow .bepacts{display:flex;align-items:center;gap:7px;margin-left:auto;flex:none}
-.beprow-wrap .bepnotes{margin:6px 2px 0;font-size:11px;line-height:1.55;color:var(--bone-faint)}
+.beprow-wrap .bepnotes{margin:6px 2px 0;font-size:11px;line-height:1.55;color:var(--bone-faint-text)}
 .beprow-wrap .bepwrong{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;
   padding:8px 12px;border-radius:8px;border:1px solid rgba(232,169,60,.4);
   background:rgba(232,169,60,.08)}
@@ -1526,7 +1674,7 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .atlas-bar{flex:none;display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:2px 2px 10px}
 .lchip{font-size:9.5px;letter-spacing:1.4px;text-transform:uppercase;font-weight:600;
   font-family:var(--sans);padding:3px 10px;border-radius:20px;border:1px solid var(--bronze);
-  color:var(--bone-faint);background:transparent;cursor:pointer;transition:all .15s var(--ease)}
+  color:var(--bone-faint-text);background:transparent;cursor:pointer;transition:all .15s var(--ease)}
 .lchip:hover{color:var(--bone);border-color:var(--bronze-hi)}
 .lchip.on{background:var(--ember-dim);border-color:var(--ember);color:var(--ember-hi)}
 .atlas-wrap{flex:1;position:relative;min-height:0;border-radius:8px;overflow:hidden;
@@ -1539,8 +1687,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
   color:var(--bone-dim);background:rgba(8,12,18,.55);pointer-events:none;
   transition:opacity .3s var(--ease)}
 .atlas-msg.hidden{opacity:0}
-.atlas-coord{position:absolute;left:10px;bottom:8px;font-family:var(--mono);font-size:10px;
-  color:var(--bone-faint);background:rgba(8,12,18,.6);padding:2px 8px;border-radius:6px;
+.atlas-coord{position:absolute;left:10px;bottom:8px;font-family:var(--mono);font-size:11px;
+  color:var(--bone-faint-text);background:rgba(8,12,18,.6);padding:2px 8px;border-radius:6px;
   pointer-events:none;font-variant-numeric:tabular-nums}
 .atlas-side{display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto}
 .atlas-side .card{flex:0 0 auto}
@@ -1549,15 +1697,15 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .atlas-side .atlas-waycard{flex:1 0 auto;min-height:0;display:flex;flex-direction:column}
 .atlas-facts{display:flex;flex-direction:column;gap:4px;margin-top:10px}
 .afact{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;line-height:1.4;font-family:var(--sans)}
-.afact .ak{color:var(--bone-faint);letter-spacing:.04em}
+.afact .ak{color:var(--bone-faint-text);letter-spacing:.04em}
 .afact .av{color:var(--bone);font-variant-numeric:tabular-nums;text-align:right}
 /* One sentence under a card header saying why the card shows what it shows. Sans, not
    mono: it is prose, not a measurement. */
 .cardnote{margin-top:6px;font-family:var(--sans);font-size:11px;line-height:1.45;
-  color:var(--bone-faint)}
+  color:var(--bone-faint-text)}
 .atlas-roster{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .atlas-roster .vrow{padding:4px 0}
-.atlas-roster .empty{font-size:11.5px;color:var(--bone-faint);font-family:var(--sans)}
+.atlas-roster .empty{font-size:11.5px;color:var(--bone-faint-text);font-family:var(--sans)}
 /* at least four waypoint rows before the list starts scrolling */
 .atlas-list{flex:1;min-height:110px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:8px}
 .atlas-list .wp{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;
@@ -1566,8 +1714,8 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .atlas-list .wp:hover{background:rgba(255,255,255,.05);color:var(--bone)}
 .atlas-list .wp .wr{font-size:12px;width:16px;text-align:center;flex:none}
 .atlas-list .wp .wn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.atlas-list .wp .wc{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);flex:none}
-.atlas-list .empty{font-size:11.5px;color:var(--bone-faint);font-family:var(--sans);padding:4px 8px}
+.atlas-list .wp .wc{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint-text);flex:none}
+.atlas-list .empty{font-size:11.5px;color:var(--bone-faint-text);font-family:var(--sans);padding:4px 8px}
 @media (max-width:1180px){.atlas-grid{grid-template-columns:minmax(0,1fr) 240px}}
 
 /* ---------- ATLAS weather (deterministic skies + wind) ---------- */
@@ -1576,17 +1724,17 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .wx-biomes{display:flex;flex-wrap:wrap;gap:4px;margin-top:9px}
 .wxb{font-size:9px;letter-spacing:.8px;text-transform:uppercase;font-weight:600;
   font-family:var(--sans);padding:2px 8px;border-radius:16px;border:1px solid var(--bronze);
-  color:var(--bone-faint);cursor:pointer;transition:all .15s var(--ease)}
+  color:var(--bone-faint-text);cursor:pointer;transition:all .15s var(--ease)}
 .wxb:hover{color:var(--bone);border-color:var(--bronze-hi)}
 .wxb.on{background:var(--ember-dim);border-color:var(--ember);color:var(--ember-hi)}
 .wx-forecast{display:flex;flex-direction:column;gap:2px;margin-top:5px}
 .wxf{display:flex;align-items:center;gap:7px;font-family:var(--sans);font-size:11px;
   color:var(--bone-dim);padding:2px 0}
-.wxf .wxft{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);min-width:58px;
+.wxf .wxft{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint-text);min-width:58px;
   font-variant-numeric:tabular-nums}
 .wxf .wxfr{width:14px;text-align:center;color:var(--ember-hi);flex:none}
 .wxf .wxfe{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wxf .wxfw{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);
+.wxf .wxfw{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint-text);
   font-variant-numeric:tabular-nums}
 #wxNow .wxfr{margin-right:4px}
 
@@ -1643,10 +1791,10 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .wgtip .wgt-lbl{color:var(--bone);font-weight:600;font-size:11px}
 .wgtip .wgt-row.sel .wgt-lbl{color:var(--ember-hi)}
 .wgtip .wgt-ex{color:var(--bone-dim);font-size:10.5px;margin-top:2px}
-.wgtip .wgt-eff{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint);margin-top:3px;
+.wgtip .wgt-eff{font-family:var(--mono);font-size:9.5px;color:var(--bone-faint-text);margin-top:3px;
   letter-spacing:.4px}
 .wgtip .wgt-foot{margin-top:8px;padding-top:7px;border-top:1px solid var(--bronze);
-  font-size:10px;color:var(--bone-faint);letter-spacing:.4px}
+  font-size:11px;color:var(--bone-faint-text);letter-spacing:.4px}
 /* A run with nowhere to break in it pushed this panel sideways instead of wrapping inside
    it: the panel is a fixed 420px and its own overflow is a scrollbar, so the sentence went
    off the edge and the host had to scroll a tooltip to read it. It is not a made up case.

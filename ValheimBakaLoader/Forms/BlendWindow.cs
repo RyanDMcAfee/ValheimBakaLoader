@@ -93,10 +93,79 @@ namespace ValheimBakaLoader.Forms
         // Breathing room so a scaled window never sits flush against the work area edges.
         private const int WorkAreaMargin = 24;
 
+        /// <summary>
+        /// The page zoom the host's Text size preference asks for, or 1.0 until the preferences
+        /// have been read.
+        /// <para>
+        /// It is held here as well as on the control because the window's own MINIMUM is
+        /// computed from it: a zoom of 1.45 over a 1024 pixel window hands the page 706 CSS
+        /// pixels, which is narrower than any layout in it, so the minimum grows with the zoom
+        /// and the work-area clamp below is what keeps that possible on a small display.
+        /// </para>
+        /// </summary>
+        private double TextZoom = 1.0;
+
         /// <summary>Display scale for this window: 1.0 at 96 dpi, 1.5 at 150%.</summary>
         private float DpiScale => DeviceDpi <= 0 ? 1f : DeviceDpi / 96f;
 
         private static int ScaleUnits(int designPx, float scale) => Math.Max(1, (int)Math.Round(designPx * scale));
+
+        /// <summary>
+        /// The window minimum for one display scale and one text zoom, clamped so a minimum can
+        /// never be bigger than the screen it has to fit on.
+        /// <para>
+        /// Written once and used by all three places that set MinimumSize, because a minimum
+        /// that follows the zoom in two of them and not the third is a window a host can drag
+        /// down to a size the halls do not lay out in.
+        /// </para>
+        /// <para>
+        /// WHY THE ZOOM MULTIPLIES IT, said plainly, because this is the whole of the premise and
+        /// it is a one-line piece of arithmetic: a WebView2 ZoomFactor is a Chromium PAGE zoom,
+        /// which divides the CSS viewport by the factor. 1024 device pixels at 1.45 is 706 CSS
+        /// pixels, and nothing in these halls lays out at 706. So the minimum in DEVICE pixels
+        /// has to grow by the same factor for the 1024x680 design minimum to still be what the
+        /// stylesheet gets. The canvas has nothing to do with it: the Atlas sizes its backing
+        /// store from its wrap's own CSS size times devicePixelRatio and draws in CSS pixels, so
+        /// it follows the zoom exactly as an 11px rule does and needs no multiplier of its own.
+        /// </para>
+        /// </summary>
+        private static Size MinimumFor(float scale, double zoom, int maxWidth, int maxHeight)
+        {
+            var wide = ScaleUnits((int)Math.Round(DesignMinWidth * zoom), scale);
+            var tall = ScaleUnits((int)Math.Round(DesignMinHeight * zoom), scale);
+            return new Size(Math.Min(wide, maxWidth), Math.Min(tall, maxHeight));
+        }
+
+        /// <summary>
+        /// Puts the host's Text size on the page and moves the window minimum with it. Called
+        /// once the WebView is ready and again on every save that carried the preference, so the
+        /// window follows the setting rather than the next launch.
+        /// </summary>
+        internal void ApplyTextSize(string size)
+        {
+            TextZoom = TextSizes.Factor(size);
+
+            try
+            {
+                if (WebView != null) WebView.ZoomFactor = TextZoom;
+            }
+            catch (Exception e)
+            {
+                // A zoom that would not take is not worth a window.
+                Logger.Debug("Could not apply the text size {size}: {message}", size, e.Message);
+            }
+
+            if (!IsHandleCreated || WindowState != FormWindowState.Normal) return;
+
+            var work = Screen.FromControl(this).WorkingArea;
+            var maxWidth = Math.Max(320, work.Width - WorkAreaMargin);
+            var maxHeight = Math.Max(240, work.Height - WorkAreaMargin);
+
+            MinimumSize = MinimumFor(DpiScale, TextZoom, maxWidth, maxHeight);
+            ClientSize = new Size(
+                ClampInt(ClientSize.Width, MinimumSize.Width, maxWidth),
+                ClampInt(ClientSize.Height, MinimumSize.Height, maxHeight));
+        }
 
         private static int ClampInt(int value, int min, int max) => value < min ? min : (value > max ? max : value);
 
@@ -230,16 +299,22 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private void ApplyDpiSizing()
         {
+            // The host's Text size, read before the first sizing rather than after it. The zoom
+            // itself goes on the WebView once there is one, further down the launch, but the
+            // window's own minimum depends on it: reading it there and not here would open the
+            // window at the Normal minimum and then grow it, which a host at Extra large would
+            // see as a jump on every launch.
+            TextZoom = TextSizes.Factor(ReadSavedTextSize());
+
             var scale = DpiScale;
             var work = Screen.FromControl(this).WorkingArea;
             var maxWidth = Math.Max(320, work.Width - WorkAreaMargin);
             var maxHeight = Math.Max(240, work.Height - WorkAreaMargin);
 
             // The minimum is clamped too: a minimum bigger than the screen would leave the
-            // window unable to fit anywhere.
-            MinimumSize = new Size(
-                Math.Min(ScaleUnits(DesignMinWidth, scale), maxWidth),
-                Math.Min(ScaleUnits(DesignMinHeight, scale), maxHeight));
+            // window unable to fit anywhere. And it carries the text zoom, because zooming the
+            // page is the same thing as making the window smaller from the layout's side.
+            MinimumSize = MinimumFor(scale, TextZoom, maxWidth, maxHeight);
 
             var (savedWidth, savedHeight) = ReadSavedWindowSize();
             var wantWidth = ScaleUnits(savedWidth > 0 ? savedWidth : DesignWidth, scale);
@@ -316,13 +391,22 @@ namespace ValheimBakaLoader.Forms
             var maxWidth = Math.Max(320, work.Width - WorkAreaMargin);
             var maxHeight = Math.Max(240, work.Height - WorkAreaMargin);
 
-            MinimumSize = new Size(
-                Math.Min(ScaleUnits(DesignMinWidth, scale), maxWidth),
-                Math.Min(ScaleUnits(DesignMinHeight, scale), maxHeight));
+            MinimumSize = MinimumFor(scale, TextZoom, maxWidth, maxHeight);
 
             ClientSize = new Size(
                 ClampInt(ClientSize.Width, MinimumSize.Width, maxWidth),
                 ClampInt(ClientSize.Height, MinimumSize.Height, maxHeight));
+        }
+
+        /// <summary>
+        /// The stored Text size, read straight off the preferences. It is its own little reader
+        /// because the window applies the zoom before the bridge has been asked anything, the
+        /// same way the saved window size and the saved language are read here.
+        /// </summary>
+        private string ReadSavedTextSize()
+        {
+            try { return TextSizes.Normalize(UserPrefsProvider?.LoadPreferences()?.TextSize); }
+            catch { return TextSizes.Normal; }
         }
 
         /// <summary>The remembered window size in device-independent pixels, or (0, 0).</summary>
@@ -512,6 +596,11 @@ namespace ValheimBakaLoader.Forms
 
             await ClearCacheOnceForThisVersionAsync(core);
 
+            // And the size it is read at, before the first frame rather than after it. Setting
+            // the zoom once the page is up would show a host who chose Extra large one frame at
+            // the size they did not choose, every launch.
+            ApplyTextSize(ReadSavedTextSize());
+
             core.Navigate($"https://{VirtualHost}/index.html");
         }
 
@@ -672,6 +761,13 @@ namespace ValheimBakaLoader.Forms
                 return;
             }
 
+            // Counted here and nowhere else: one place, before the handler runs, so a command
+            // that threw is still a command a host issued. Nothing but the method name, the
+            // profile it was about, and for a console line its verb, ever reaches the tally,
+            // and the tally itself ignores every method that is not one of the commands.
+            try { CountCommand(method, parameters); }
+            catch { /* a count is never worth a command */ }
+
             try
             {
                 var result = await handler(parameters);
@@ -809,6 +905,13 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>Register an RPC method callable from the Blend UI.</summary>
+        /// <summary>
+        /// Adds one host command to the anonymous tally, when the opt-out allows it and the
+        /// method is one of the commands. The bridge partial owns the tally and the profile;
+        /// this is the seam so the dispatcher above does not have to know about either.
+        /// </summary>
+        partial void CountCommand(string method, JObject parameters);
+
         protected void RegisterRpc(string method, Func<JObject, Task<object>> handler)
         {
             RpcHandlers[method] = handler;

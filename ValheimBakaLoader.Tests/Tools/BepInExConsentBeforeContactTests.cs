@@ -91,7 +91,7 @@ namespace ValheimBakaLoader.Tests.Tools
         public void The_restart_window_reads_the_answer_before_it_asks_the_site()
         {
             var bridge = AppSourceTree.Files()["BlendWindow.Bridge.cs"];
-            var at = bridge.IndexOf("private async Task ApplyBepInExUpdateAsync(string profile)", StringComparison.Ordinal);
+            var at = bridge.IndexOf("private async Task ApplyBepInExUpdateAsync(string profile, CancellationToken stop = default)", StringComparison.Ordinal);
             Assert.True(at > 0, "the unattended BepInEx step is gone");
 
             var body = bridge.Substring(at, Math.Min(2600, bridge.Length - at));
@@ -120,7 +120,7 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             var bridge = AppSourceTree.Files()["BlendWindow.Bridge.cs"];
 
-            var window = bridge.IndexOf("private async Task ApplyBepInExUpdateAsync(string profile)", StringComparison.Ordinal);
+            var window = bridge.IndexOf("private async Task ApplyBepInExUpdateAsync(string profile, CancellationToken stop = default)", StringComparison.Ordinal);
             var heal = bridge.IndexOf("HealInterruptedBepInExWrite(baseExe, installs);", window, StringComparison.Ordinal);
             var consent = bridge.IndexOf("Tools.BepInExConsent.Effective(", window, StringComparison.Ordinal);
             Assert.True(heal > 0 && consent > heal, "the repair no longer runs ahead of the answer");

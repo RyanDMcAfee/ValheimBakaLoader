@@ -111,7 +111,14 @@ namespace ValheimBakaLoader.Tests.Forms
         // realm 68 after issue 17: the forge's copy-the-world switch, what it says when it
         // is on, what the world section says when it is off, and the seed note that goes
         // with a copied world.
-        [InlineData("realm.", 68)]
+        // 85 after 1.2.6: the realm's own password (its label, placeholder, the roll button,
+        // the note and the four rules a bad one breaks), the community-listing switch and
+        // its paragraph, the sentence for an empty name, the three reasons a world cannot be
+        // copied plus the general one, and the duplicate dialog's own heading and button.
+        // 90 with the five the unsaved-work question asks before a realm switch throws away
+        // what the host typed: the heading, the sentence with both realm names in it, the
+        // discard button, and the name of each hall that can be holding unsaved work.
+        [InlineData("realm.", 90)]
         [InlineData("barrow.", 54)]
         [InlineData("waystone.wiz.", 46)]
         [InlineData("world.wg.", 65)]
@@ -171,7 +178,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // nothing: no BepInEx rather than no mods.
             // 19 with the Mods hall's third nothing: the scan ran and Thunderstore did not
             // answer, which is not the same nothing as a hall that has never been scanned.
-            Assert.Equal(19, calls.Count);
+            // 20 with the Saga's second nothing: a pill or a search that hides every line is
+            // not the same nothing as a console nothing has been written to yet.
+            Assert.Equal(20, calls.Count);
             var composed = 0;
             var fromTable = 0;
             var fromHelper = 0;
@@ -428,6 +437,111 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
+        /// Every id a logLine body asks for, by the argument it sits in. A line-based grep
+        /// cannot do this: four lines in app.js carry a toast and a logLine together, and
+        /// the T() on those belongs to the toast.
+        /// </summary>
+        private static List<string> LoggedIds()
+        {
+            var source = AppJs();
+            var found = new List<string>();
+
+            for (var at = source.IndexOf("logLine(", StringComparison.Ordinal); at >= 0;
+                 at = source.IndexOf("logLine(", at + 1, StringComparison.Ordinal))
+            {
+                if (at > 0 && (char.IsLetterOrDigit(source[at - 1]) || source[at - 1] is '_' or '$' or '.'))
+                    continue;
+
+                var depth = 0;
+                var quote = '\0';
+                var i = at + "logLine".Length;
+                var from = i;
+                for (; i < source.Length; i++)
+                {
+                    var c = source[i];
+                    if (quote != '\0')
+                    {
+                        if (c == '\\') i++;
+                        else if (c == quote) quote = '\0';
+                        continue;
+                    }
+                    if (c is '"' or '\'' or '`') { quote = c; continue; }
+                    if (c is '(' or '[' or '{') depth++;
+                    else if (c is ')' or ']' or '}')
+                    {
+                        depth--;
+                        if (depth == 0) break;
+                    }
+                }
+
+                if (i >= source.Length || depth != 0) continue;
+                foreach (Match hit in TCall.Matches(source[from..i])) found.Add(hit.Groups[1].Value);
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// The Saga log is English and verbatim, so a logLine body is a plain literal and
+        /// never a lookup. Not one of them, which is why this asserts an EMPTY set rather
+        /// than a list of the ones that are allowed: a list with anything on it is a rule
+        /// somebody can add a line to, and the whole trouble started with lines somebody
+        /// added.
+        /// <para>
+        /// Rule 33 in the copy gate used to hold the other half of this and does not any
+        /// more: it was narrowed in 1.2.6 to the calls that PAINT a sentence into the
+        /// window, because policing logLine meant carrying an allowlist of every Saga line
+        /// in the app, which is the rule arguing with the decision rather than holding it.
+        /// So the decision needs a gate of its own, and this is it.
+        /// </para>
+        /// <para>
+        /// Batches C and D of 1.2.6 routed eight log bodies through the catalog and nothing
+        /// noticed, and batch A added the two the Thunderstore scan writes about which of
+        /// its two roads it took. All ten are literals again and all ten ids are gone.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void No_new_saga_line_is_asked_for_by_id()
+        {
+            Assert.Empty(LoggedIds());
+
+            // and the ten that went back to English really are literals in the body now
+            var js = AppJs();
+            foreach (var line in new[]
+            {
+                "logLine(\"info\",\"[Thunderstore] a scan answered for a server that is no longer open",
+                "?\"reading the community listing index\"",
+                ":\"reading the mod folder, and the community listing already held\"",
+                "logLine(\"info\",\"[BakaLoader] the interface text size is now \"+r.TextSize",
+                "?\"the cheat marks will be cleared the next time this server has been empty for a minute.\"",
+                ":\"the armed cheat-mark sweep was put down.\"",
+                "logLine(\"warn\",\"[RCON] the armed cheat-mark sweep did not get through.",
+                "logLine(\"warn\",\"[RCON] the server stopped answering, so BakaLoader stopped waiting",
+                "logLine(\"warn\",\"[RCON] the armed cleanse is still running.",
+                "logLine(\"warn\",\"[BakaLoader] \"+(r.world||world)+\" keeps an index naming every chunk file \"",
+            })
+            {
+                Assert.Contains(line, js, StringComparison.Ordinal);
+            }
+
+            // The Worlds card keeps its catalog entry, because the CARD is the window
+            // speaking. Only its log line became English.
+            var catalog = Catalog();
+            Assert.True(catalog.ContainsKey("world.integrity.note"));
+            foreach (var gone in new[]
+            {
+                "app.textsize.saved.log", "vikings.cleanse.armed.on.log",
+                "vikings.cleanse.armed.off.log", "vikings.cleanse.armed.log.undelivered",
+                "vikings.cleanse.armed.log.gone", "vikings.cleanse.armed.log.running",
+                "mods.scan.saga.stale_realm",
+                "mods.scan.saga.asking_site", "mods.scan.saga.reusing_listing",
+            })
+            {
+                Assert.False(catalog.ContainsKey(gone), gone + " is still in the catalog");
+            }
+        }
+
+        /// <summary>
         /// The Log settings dialog's file-name note got the slots it was waiting for. The
         /// catalog's markup rule reads &lt;realm&gt; as a tag and marking the entry allowsHtml
         /// would be a lie on a value that goes through esc(), so the sentence names two
@@ -564,7 +678,14 @@ namespace ValheimBakaLoader.Tests.Forms
             // install BakaLoader did not make asks, the one a "this install is newer"
             // refusal turns into, and the one the saved-copy button asks.
             // 24 with the question baka_cleanse asks before it sweeps a world.
-            Assert.Equal(24, sites);
+            // 25 with the note a world whose files disagree with their own index puts in
+            // front of a start.
+            // 26 with the question a realm switch asks when the World hall or the open scroll
+            // is holding something the host never saved. Until 1.2.6 the switch asked nothing:
+            // the World hall was emptied with the unsaved band still up, and the Runes editor
+            // kept the previous realm's text while the list redrew for the new one, so one
+            // press of Save wrote realm A's scroll into realm B's file.
+            Assert.Equal(26, sites);
             Assert.True(frozen.Count == 0,
                 "a dialog would keep its wording through a language switch:\n  "
                 + string.Join("\n  ", frozen));

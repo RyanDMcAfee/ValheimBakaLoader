@@ -163,8 +163,10 @@ namespace ValheimBakaLoader.Tests.Forms
             // and that wait is dropped on the window's own thread, where it could never end
             Assert.Contains("_bepInExWriteSlot.Wait(OnUiThread ? TimeSpan.Zero : wait);", bridge,
                 StringComparison.Ordinal);
-            // and the unattended window does not queue behind a person: it defers and says so
-            Assert.Equal(2, Regex.Matches(bridge, @"_bepInExUpdateWaiting = latest;").Count);
+            // and the unattended window does not queue behind a person: it defers and says so.
+            // Three places do that now: another server on this install is up, the one write slot
+            // is already held, and the restart window ran out before the write began.
+            Assert.Equal(3, Regex.Matches(bridge, @"_bepInExUpdateWaiting = latest;").Count);
 
             var takes = Regex.Matches(bridge, @"!(?:Try)?BeginBepInExWrite\(").Count;
             var releases = Regex.Matches(bridge, @"EndBepInExWrite\(\);").Count;
@@ -361,11 +363,11 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var bridge = Bridge().Replace("\r\n", "\n");
 
-            Assert.Contains("session.Server.ApplyLoaderUpdate = () => ApplyBepInExUpdateAsync(profile);",
+            Assert.Contains("session.Server.ApplyLoaderUpdate = stop => ApplyBepInExUpdateAsync(profile, stop);",
                 bridge, StringComparison.Ordinal);
 
             // and it is no longer buried in the hook that only fires for pending mod updates
-            var at = bridge.IndexOf("session.Server.ApplyModUpdates = async () =>", StringComparison.Ordinal);
+            var at = bridge.IndexOf("session.Server.ApplyModUpdates = async stop =>", StringComparison.Ordinal);
             Assert.True(at > 0, "the unattended mod-update hook is gone");
             Assert.DoesNotContain("await ApplyBepInExUpdateAsync(profile);",
                 bridge.Substring(at), StringComparison.Ordinal);
@@ -373,8 +375,11 @@ namespace ValheimBakaLoader.Tests.Forms
             // In the window itself the loader goes first, and it is not under the flag that
             // counts pending mod updates.
             var resume = Server().Replace("\r\n", "\n");
-            var loader = resume.IndexOf("await ApplyLoaderUpdate();", StringComparison.Ordinal);
-            var mods = resume.IndexOf("await ApplyModUpdates();", StringComparison.Ordinal);
+            // Both hooks run under a clock since 1.2.6. A hook that HUNG was not a hook that
+            // failed: the world is already stopped here and the relaunch sits behind the await,
+            // so one stalled download left the world down with nothing else in the log.
+            var loader = resume.IndexOf("ApplyLoaderUpdate, RestartHookBudget", StringComparison.Ordinal);
+            var mods = resume.IndexOf("ApplyModUpdates, RestartHookBudget", StringComparison.Ordinal);
             var gate = resume.IndexOf("if (ApplyUpdatesOnRestart && ApplyModUpdates != null)",
                 StringComparison.Ordinal);
 
@@ -558,7 +563,9 @@ namespace ValheimBakaLoader.Tests.Forms
         public void The_unattended_window_leaves_the_restarting_profile_out_of_the_question()
         {
             var bridge = Bridge().Replace("\r\n", "\n");
-            var at = bridge.IndexOf("private async Task ApplyBepInExUpdateAsync(string profile)", StringComparison.Ordinal);
+            var at = bridge.IndexOf(
+                "private async Task ApplyBepInExUpdateAsync(string profile, CancellationToken stop = default)",
+                StringComparison.Ordinal);
 
             Assert.True(at > 0, "the unattended BepInEx step is gone");
             Assert.Contains("!string.Equals(i.ProfileName, profile, StringComparison.OrdinalIgnoreCase)",

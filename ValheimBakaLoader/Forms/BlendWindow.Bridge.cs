@@ -3,6 +3,7 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -48,6 +49,7 @@ namespace ValheimBakaLoader.Forms
         private IMaxPlayersInstaller MaxPlayersInstaller;
         private IDiscordStatusService DiscordStatus;
         private IDiscordWebhookService DiscordWebhooks;
+        private ICommandTally CommandCounts;
         private IAnalyticsService Analytics;
         private ISoftwareUpdateProvider SoftwareUpdates;
         private IServerUpdateService ServerUpdates;
@@ -136,11 +138,30 @@ namespace ValheimBakaLoader.Forms
         private readonly SemaphoreSlim _bepInExWriteSlot = new(1, 1);
 
         /// <summary>
-        /// The longest a start waits for another BepInEx write to finish. Longer than the
-        /// download's own five minute timeout on purpose, so the wait ends because the other
+        /// The longest a start waits for another BepInEx write to finish. Longer than
+        /// <see cref="BepInExWriteBudget"/> on purpose, so the wait ends because the other
         /// write ended rather than because this one gave up in the middle of it.
+        /// <para>
+        /// This used to name "the download's own five minute timeout", and no such thing
+        /// existed: the five minutes were an HttpClient.Timeout, which is released the moment
+        /// the response headers are in and never bounded the streamed body at all. A pack
+        /// that answered its headers and then stopped sending held this slot forever. What
+        /// the number is longer than now is a budget that really does end.
+        /// </para>
         /// </summary>
         private static readonly TimeSpan BepInExWriteWait = TimeSpan.FromMinutes(6);
+
+        /// <summary>
+        /// The longest any one BepInEx write may take before the wait on it is given up.
+        /// <para>
+        /// It exists because the slot above and the launch claim are both released in a
+        /// finally, and a finally is only reached by work that ends. The pack's download
+        /// carries a header deadline, a total deadline and an idle watchdog of its own; this
+        /// is the ceiling over the unpacking and the copying beside it, so whatever happens
+        /// out on the wire the slot and the claim come back.
+        /// </para>
+        /// </summary>
+        internal static TimeSpan BepInExWriteBudget { get; set; } = TimeSpan.FromMinutes(8);
 
         /// <summary>True while any of the four write paths holds the slot.</summary>
         private bool BepInExWriteInProgress => _bepInExWriteSlot.CurrentCount == 0;
@@ -216,6 +237,27 @@ namespace ValheimBakaLoader.Forms
         // is worth standing: a refusal after a write replaces it, and so does the other way
         // round.
         private BepInExUnattendedOutcome _bepInExLastUnattended;
+
+        // What the last restart window for each profile ended on, so the line that says so is
+        // written out loud once per change of state rather than once per window. A scheduled
+        // restart runs every few hours and an install whose loader BakaLoader did not put down
+        // declines for the same reason every single time: the owner's application log carried
+        // eight identical Information lines about it over two days. The same pattern the RCON
+        // client uses for "connected": a change is news, a repeat is Debug.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> BepInExWindowReported =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Whether this profile's restart window ended on something DIFFERENT from last time,
+        /// which is the question "is this worth saying out loud" reduced to one word.
+        /// </summary>
+        private bool BepInExWindowStateChanged(string profile, string state)
+        {
+            var key = profile ?? "";
+            var was = BepInExWindowReported.TryGetValue(key, out var held) ? held : null;
+            BepInExWindowReported[key] = state ?? "";
+            return !string.Equals(was, state ?? "", StringComparison.Ordinal);
+        }
         private bool _requiredModInstallInProgress;
         private bool _maxPlayersSaveInProgress;
         private bool _atlasRenderInProgress;
@@ -290,6 +332,7 @@ namespace ValheimBakaLoader.Forms
             MaxPlayersInstaller = serviceProvider.GetRequiredService<IMaxPlayersInstaller>();
             DiscordStatus = serviceProvider.GetRequiredService<IDiscordStatusService>();
             DiscordWebhooks = serviceProvider.GetRequiredService<IDiscordWebhookService>();
+            CommandCounts = serviceProvider.GetService<ICommandTally>();
             Analytics = serviceProvider.GetRequiredService<IAnalyticsService>();
             SoftwareUpdates = serviceProvider.GetRequiredService<ISoftwareUpdateProvider>();
             ServerUpdates = serviceProvider.GetRequiredService<IServerUpdateService>();
@@ -350,6 +393,7 @@ namespace ValheimBakaLoader.Forms
                 WireSessionEvents(session);
                 WireAppSelfUpdate(session);
                 WireModUpdateHooks(session);
+                WireEmptyCleanseHooks(session);
                 WireRelaunchSettings(session);
                 WireLaunchGuard(session);
 
@@ -1152,9 +1196,9 @@ namespace ValheimBakaLoader.Forms
             // this restart was raised BECAUSE mod updates were pending, and the loader has to
             // be looked at on every restart that has a window whatever mod auto update is set
             // to. The two settings answer different questions.
-            session.Server.ApplyLoaderUpdate = () => ApplyBepInExUpdateAsync(profile);
+            session.Server.ApplyLoaderUpdate = stop => ApplyBepInExUpdateAsync(profile, stop);
 
-            session.Server.ApplyModUpdates = async () =>
+            session.Server.ApplyModUpdates = async stop =>
             {
                 if (!UserPrefsProvider.LoadPreferences().AutoUpdateMods) return;
 
@@ -1162,7 +1206,10 @@ namespace ValheimBakaLoader.Forms
                 var updatable = mods?.Where(m => m.UpdateAvailable).ToList();
                 if (updatable == null || updatable.Count == 0) return;
 
-                var results = await ModUpdateService.UpdateModsAsync(updatable);
+                // The token is the restart saying stop. The walk replaces one plugin folder at
+                // a time and the relaunch is waiting on this, so it is passed all the way down
+                // rather than only bounding the wait out here.
+                var results = await ModUpdateService.UpdateModsAsync(updatable, progress: null, stop);
                 Logger.Information("Auto-updated {count} mod(s) for profile {profile}",
                     results.Count(r => r.Updated), profile);
 
@@ -1171,6 +1218,195 @@ namespace ValheimBakaLoader.Forms
                 // Herald: mod count / last-update time changed.
                 DiscordStatus.RequestUpdate();
             };
+        }
+
+        /// <summary>
+        /// One host command, on the anonymous tally. The same preference that gates the beat
+        /// gates the counting, so with it off nothing is even held in memory: the switch says
+        /// nothing is sent at all, and a count kept against the day it is turned back on would
+        /// make that sentence untrue.
+        /// <para>
+        /// The only thing taken off the parameters is the console line's VERB, and only for
+        /// server.command. No player name, no world name, no server name and no argument of any
+        /// kind is read here.
+        /// </para>
+        /// </summary>
+        partial void CountCommand(string method, JObject parameters)
+        {
+            if (CommandCounts == null) return;
+            if (!UserPrefsProvider.LoadPreferences().ShareAnonymousStats) return;
+
+            var line = string.Equals(method, CommandTally.ConsoleMethod, StringComparison.Ordinal)
+                ? parameters?.Value<string>("command")
+                : null;
+
+            CommandCounts.Count(method, CountedProfileName(parameters) ?? ActiveProfileName, line);
+        }
+
+        /// <summary>
+        /// The realm a command was issued AGAINST, when the call says which, or null when it
+        /// did not and the window's own realm is the answer.
+        /// <para>
+        /// Several calls carry their own realm: a config write names the realm the buffer was
+        /// read from, a start and a save carry the whole profile document, and an update cancel
+        /// names the one it is cancelling. Every one of those can be issued while the window is
+        /// showing a DIFFERENT realm, and counting them all against the active one booked a
+        /// press on realm B to realm A. Nothing about the count is wrong, only which of the
+        /// two one-way keys it landed under, and nothing in the payload can show that.
+        /// </para>
+        /// <para>
+        /// Only the two shapes that really mean a profile are read. A <c>name</c> is not one of
+        /// them: on servers.adoptWorld it is a world, and on the second mod site's install call
+        /// it is a mod. A key built over a world name would be a second key for one realm.
+        /// </para>
+        /// </summary>
+        private static string CountedProfileName(JObject parameters)
+        {
+            if (parameters == null) return null;
+
+            var named = parameters.Value<string>("profile");
+            if (string.IsNullOrWhiteSpace(named))
+            {
+                // The document travels as ServerPreferences, which Newtonsoft writes in Pascal
+                // case here and which the page reads back as prefs.ProfileName. Both spellings
+                // are asked for anyway: a naming policy added later must not silently take the
+                // realm off these two calls and put their presses back on the active one.
+                var prefs = parameters["prefs"] as JObject;
+                named = prefs?.Value<string>("ProfileName") ?? prefs?.Value<string>("profileName");
+            }
+
+            return string.IsNullOrWhiteSpace(named) ? null : named.Trim();
+        }
+
+        /// <summary>
+        /// Wires the armed one-shot cheat-mark cleanse: whether this profile is still asking
+        /// for one, and what to do when the server has been empty long enough.
+        /// <para>
+        /// The sweep itself is the same one the Players hall's button runs, down to the poll
+        /// and the ceiling, because a second road to a command is a second set of rules about
+        /// what its reply means. What this adds is the part a host at the window does by hand:
+        /// reading the reply, saying the counts, posting them, and putting the switch down.
+        /// </para>
+        /// </summary>
+        private void WireEmptyCleanseHooks(ServerSession session)
+        {
+            var profile = session.ProfileName;
+
+            // Read off the profile on disk each time, not off the options the process was
+            // launched with: a switch moved while the server is up has to mean something
+            // before the next restart.
+            session.Server.CleanseWhenEmptyWanted = () =>
+                ServerPrefsProvider.LoadPreferences(profile)?.CleanseWhenEmpty == true;
+
+            session.Server.RunEmptyCleanse = async () =>
+            {
+                AppLogger.Information(
+                    "{Line:l}", "[RCON] " + profile + " has been empty for "
+                    + (int)ValheimServer.EmptyCleanseDelay.TotalSeconds
+                    + " seconds, so the armed cheat-mark sweep is going out.");
+
+                var outcome = await RunCleanseAsync(
+                    command => session.Server.SendRconCommandAsync(command, quiet: command != "baka_cleanse"),
+                    CleansePollEvery,
+                    CleansePollCeiling,
+                    line => AppLogger.Information("{Line:l}", "[RCON] " + line));
+
+                var said = (outcome?.Response ?? "").Trim();
+                var done = ArmedCleanseLands(outcome);
+
+                // The counts, in the log the Saga hall draws, whether or not anybody is looking
+                // at the window: this fires on an empty server, which is usually the middle of
+                // the night. A reply that did not get through says that instead.
+                if (said.Length > 0)
+                    AppLogger.Information("{Line:l}", "[RCON] " + said);
+                else
+                    AppLogger.Warning(
+                        "{Line:l}", "[RCON] the armed cheat-mark sweep did not get through, so the "
+                        + "switch is still on and the next empty moment gets its turn.");
+
+                if (done)
+                {
+                    // One shot. The switch goes down before anything is announced, so a post
+                    // that fails cannot leave it armed with the work already done.
+                    SetCleanseWhenEmpty(profile, false);
+
+                    if (said.Length > 0 && UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                    {
+                        var named = ServerPrefsProvider.LoadPreferences(profile)?.Name;
+                        DiscordWebhooks.SendCheatMarksCleared(
+                            string.IsNullOrWhiteSpace(named) ? profile : named, said);
+                    }
+                }
+
+                // The page hears the raw reply and reads it with the same expression the
+                // button's reply goes through, so one sweep has one wording.
+                PostEvent("players.cleanseRan", new
+                {
+                    profile,
+                    response = said,
+                    stillRunning = outcome?.StillRunning ?? false,
+                    notAnswering = outcome?.NotAnswering ?? false,
+                    ok = outcome?.Ok ?? false,
+                    armed = !done,
+                });
+
+                return done;
+            };
+        }
+
+        /// <summary>
+        /// Whether an armed cleanse is over, so the switch goes down, or has to wait for the
+        /// next empty moment.
+        /// <para>
+        /// Only one thing keeps the switch up, and it is the one the host armed it for: the
+        /// sweep was turned away because somebody is on the server. That covers the plugin's
+        /// own refusal (an Error line naming who is connected), a sweep that gave up part way
+        /// because somebody walked on, a command that did not get through at all, and a server
+        /// that stopped answering under the wait.
+        /// </para>
+        /// <para>
+        /// Everything else puts the switch down, INCLUDING a sweep still walking at the end of
+        /// the ceiling, which is work in progress and not a refusal, and including a reply this
+        /// build has no reading for. A switch that stayed up on an answer nobody understands
+        /// would arm the same sweep at every empty moment for ever, which on a server with a
+        /// plugin too old to know the verb is a command going out every minute of the night.
+        /// </para>
+        /// </summary>
+        public static bool ArmedCleanseLands(CleanseOutcome outcome)
+        {
+            if (outcome == null || !outcome.Ok) return false;
+            if (outcome.NotAnswering) return false;
+
+            var said = (outcome.Response ?? "").TrimStart();
+            if (said.StartsWith("Error:", StringComparison.OrdinalIgnoreCase)) return false;
+            if (said.StartsWith(
+                    BakaLoaderKillAll.CleansePlan.StoppedPrefix, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Writes the armed-cleanse switch on one profile and tells the page. Nothing else on
+        /// this side writes it, so the switch has one owner.
+        /// </summary>
+        private void SetCleanseWhenEmpty(string profile, bool on)
+        {
+            var prefs = ServerPrefsProvider.LoadPreferences(profile);
+            if (prefs == null) return;
+
+            if (prefs.CleanseWhenEmpty != on)
+            {
+                prefs.CleanseWhenEmpty = on;
+                ServerPrefsProvider.SavePreferences(prefs);
+            }
+
+            // Whether or not the value moved: a page that asked for the switch has to be told
+            // where it ended up, and a page that has just been told the sweep landed has to be
+            // told the switch went down with it.
+            PostEvent("players.cleanseArmed", new { profile, on });
+
+            if (Sessions.TryGetValue(profile, out var session)) session.Server.ArmEmptyCleanseWatch();
         }
 
         /// <summary>
@@ -1543,14 +1779,23 @@ namespace ValheimBakaLoader.Forms
         /// not null, or another realm's worlds go with them.
         /// </summary>
         public static ServerPreferences ProfileSharingSaveFolder(
-            IEnumerable<ServerPreferences> all, string profileName, string saveFolder)
+            IEnumerable<ServerPreferences> all, string profileName, string saveFolder,
+            string userSaveFolder = null)
         {
             if (all == null || string.IsNullOrWhiteSpace(saveFolder)) return null;
 
+            // The same fallback ProfileSelectingWorld applies, for the same reason: a realm with
+            // no folder of its own keeps its worlds in the app-wide one, and SameFolder answers
+            // false for a blank side. Without it the realm every host starts on could never be
+            // named as the one still using a folder, so deleting an isolated realm's files could
+            // take the shared worlds with them and nothing would have said so. Callers that have
+            // no app-wide folder to hand pass nothing and get exactly the old behaviour.
             return all.FirstOrDefault(other =>
                 other != null
                 && !string.Equals(other.ProfileName, profileName, StringComparison.OrdinalIgnoreCase)
-                && SameFolder(other.SaveDataFolderPath, saveFolder));
+                && SameFolder(
+                    string.IsNullOrWhiteSpace(other.SaveDataFolderPath) ? userSaveFolder : other.SaveDataFolderPath,
+                    saveFolder));
         }
 
         /// <summary>
@@ -1938,7 +2183,7 @@ namespace ValheimBakaLoader.Forms
         /// closes the app at midnight and opens it at nine still reads what their loader did.
         /// </para>
         /// </summary>
-        private sealed class BepInExUnattendedOutcome
+        internal sealed class BepInExUnattendedOutcome
         {
             /// <summary>written | healed | refused | failed.</summary>
             public string Outcome { get; init; }
@@ -1972,6 +2217,32 @@ namespace ValheimBakaLoader.Forms
             public DateTime? EligibleUtc { get; init; }
 
             public DateTime WhenUtc { get; init; }
+
+            /// <summary>
+            /// The FACT this outcome stands for, as one string, so a notice the host has
+            /// closed can be recognised the next time the same fact is recorded.
+            /// <para>
+            /// A restart window runs every few hours and a refusal on a rule is the SAME fact
+            /// every time: the loader on this install was not put here by BakaLoader, and it
+            /// still was not an hour later. Keyed on the outcome, the reason, the pack on
+            /// offer and the version on disk, a second window over an unchanged install
+            /// produces the same key, and a page that already showed it once leaves it alone.
+            /// </para>
+            /// <para>
+            /// A write and a heal are EVENTS rather than standing facts, so the moment goes
+            /// into their key: each new one is worth its own notice, and closing yesterday's
+            /// does not close today's.
+            /// </para>
+            /// <para>
+            /// A FAILURE is keyed like a refusal, with no moment in it. The reasons that
+            /// reach here are standing ones, a loader file something else holds open or a
+            /// note naming a pack the site has taken down, and every window fails on the
+            /// same one until the install changes. Keyed on its moment it was the refusal
+            /// bug over again: a new fact every restart, and a bar to close after each.
+            /// </para>
+            /// </summary>
+            public string Key => Tools.BepInExNoticeKey.Of(
+                Outcome, Reason, Version, InstalledVersion, WhenUtc);
         }
 
         /// <summary>Records what an unattended write came to, for the next page that asks.</summary>
@@ -1979,9 +2250,26 @@ namespace ValheimBakaLoader.Forms
         {
             if (result == null) return;
 
+            _bepInExLastUnattended = BepInExOutcomeOf(profile, result, DateTime.UtcNow);
+        }
+
+        /// <summary>
+        /// Which of the four outcomes a finished unattended write IS, with the clock handed in.
+        /// <para>
+        /// Static and internal so the mapping and the KEY it produces can be driven straight
+        /// from a test: the rule that matters here is not the shape of the source, it is that
+        /// two windows over an unchanged install name the same fact and a new event does not.
+        /// A test that could only read this file would have to guess at that.
+        /// </para>
+        /// </summary>
+        internal static BepInExUnattendedOutcome BepInExOutcomeOf(
+            string profile, Tools.BepInExInstallResult result, DateTime whenUtc)
+        {
+            if (result == null) return null;
+
             if (result.Skipped)
             {
-                _bepInExLastUnattended = new BepInExUnattendedOutcome
+                return new BepInExUnattendedOutcome
                 {
                     Outcome = "refused",
                     Profile = profile,
@@ -1989,19 +2277,14 @@ namespace ValheimBakaLoader.Forms
                     Version = result.Version,
                     InstalledVersion = result.PreviousCoreVersion,
                     EligibleUtc = result.EligibleUtc,
-                    WhenUtc = DateTime.UtcNow,
+                    WhenUtc = whenUtc,
                 };
-                return;
             }
 
             // An adoption that found the pack already there moved no bytes. Saying "BepInEx
             // went from 5.4.2350 to 5.4.2350" would be a made-up sentence, and a refusal an
             // earlier window raised has stopped being true either way.
-            if (result.NothingChanged)
-            {
-                _bepInExLastUnattended = null;
-                return;
-            }
+            if (result.NothingChanged) return null;
 
             // A write that was UNDONE, which is the only shape a restore takes when nobody
             // pressed anything: a write stopped part way, and the copy from before it went
@@ -2011,25 +2294,24 @@ namespace ValheimBakaLoader.Forms
             // pointing at a folder that a heal over a missing core does not even leave behind.
             if (result.Healed || result.Restored)
             {
-                _bepInExLastUnattended = new BepInExUnattendedOutcome
+                return new BepInExUnattendedOutcome
                 {
                     Outcome = "healed",
                     Profile = profile,
                     ToVersion = result.CoreVersion,
                     BackupStamp = result.BackupStamp,
-                    WhenUtc = DateTime.UtcNow,
+                    WhenUtc = whenUtc,
                 };
-                return;
             }
 
-            _bepInExLastUnattended = new BepInExUnattendedOutcome
+            return new BepInExUnattendedOutcome
             {
                 Outcome = "written",
                 Profile = profile,
                 FromVersion = result.PreviousVersion,
                 ToVersion = result.Version,
                 BackupStamp = result.BackupStamp,
-                WhenUtc = DateTime.UtcNow,
+                WhenUtc = whenUtc,
             };
         }
 
@@ -2199,8 +2481,17 @@ namespace ValheimBakaLoader.Forms
         /// most needs to be told.
         /// </summary>
         private object BepInExUnattendedDto()
+            => BepInExUnattendedDto(
+                _bepInExLastUnattended, UserPrefsProvider.LoadPreferences()?.BepInExNoticeSeenKey);
+
+        /// <summary>
+        /// The same answer with both of its inputs handed in, which is the whole of what it
+        /// reads: the outcome that is standing, and the key of the last notice the host
+        /// closed. Static and internal so the seen rule can be driven directly in a test
+        /// rather than inferred from the shape of the source.
+        /// </summary>
+        internal static object BepInExUnattendedDto(BepInExUnattendedOutcome last, string seenKey)
         {
-            var last = _bepInExLastUnattended;
             return last == null ? null : new
             {
                 outcome = last.Outcome,
@@ -2218,6 +2509,12 @@ namespace ValheimBakaLoader.Forms
                 // window that declined or threw.
                 leftAsItWas = last.Outcome != "written" && last.Outcome != "healed",
                 whenUtc = last.WhenUtc,
+                // The name of the fact this outcome stands for, and whether the host has
+                // already closed a notice about that exact fact. A refusal on a rule is
+                // recorded again by every restart window, so without these two the page
+                // stood the same bar up after every launch for ever.
+                key = last.Key,
+                seen = Tools.BepInExNoticeKey.Seen(last.Key, seenKey),
             };
         }
 
@@ -2302,9 +2599,14 @@ namespace ValheimBakaLoader.Forms
                 var baseExe = GetCanonicalBaseServerExe();
                 var installs = LiveInstalls();
 
+                // Every loader write carries a clock. The pack's own download has three of
+                // its own, and this is the ceiling over the whole write, so nothing that goes
+                // wrong out on the wire can hold the one write slot for the session.
+                using var budget = new System.Threading.CancellationTokenSource(BepInExWriteBudget);
+
                 var result = update
-                    ? await BepInEx.UpdateAsync(baseExe, installs, progress, options: options)
-                    : await BepInEx.InstallAsync(baseExe, url, installs, progress, options: options);
+                    ? await BepInEx.UpdateAsync(baseExe, installs, progress, budget.Token, options)
+                    : await BepInEx.InstallAsync(baseExe, url, installs, progress, budget.Token, options);
 
                 RecordBepInExInstall(ActiveProfileName, result);
                 _bepInExUpdateWaiting = null;
@@ -2438,7 +2740,7 @@ namespace ValheimBakaLoader.Forms
         /// answers with Skip. The loader is left as it is and the relaunch goes ahead.
         /// </para>
         /// </summary>
-        private async Task ApplyBepInExUpdateAsync(string profile)
+        private async Task ApplyBepInExUpdateAsync(string profile, CancellationToken stop = default)
         {
             try
             {
@@ -2493,6 +2795,20 @@ namespace ValheimBakaLoader.Forms
 
                 Tools.BepInExInstallResult windowResult = null;
 
+                // The restart gave up waiting while the lookup above was running, so the write
+                // does not begin at all: the relaunch is what happens next, and two writers over
+                // one BepInEx/core is an install that starts neither version. Asked here rather
+                // than at the top because this is the last moment before anything is touched.
+                if (stop.IsCancellationRequested)
+                {
+                    _bepInExUpdateWaiting = latest;
+                    Logger.Information(
+                        "A newer BepInEx pack ({0}) is waiting: the restart window ran out before the write began.",
+                        latest);
+                    PostBepInExChanged();
+                    return;
+                }
+
                 // The one write slot. A host pressing Install or Update on the row right now
                 // is writing the same BepInEx/core, and an unattended window does not queue
                 // behind a person: it waits for the next restart and the row says so.
@@ -2521,21 +2837,45 @@ namespace ValheimBakaLoader.Forms
                     RecordUnattendedBepInEx(profile, result);
                     _bepInExUpdateWaiting = null;
 
+                    // Once per change of state, not once per window. The wording is the same
+                    // wording; what moved is the level. A window that declines on the same rule
+                    // as the last one is not news, and eight identical Information lines over
+                    // two days is how this line filled the owner's log while saying nothing
+                    // new. A DIFFERENT reason is news again, and says so out loud.
                     if (result.Skipped)
-                        Logger.Information(
-                            "BepInEx for profile {0} was left as it was at the restart window ({1}).",
-                            profile, result.SkipReason);
+                    {
+                        if (BepInExWindowStateChanged(profile, "refused:" + (result.SkipReason ?? "")))
+                            Logger.Information(
+                                "BepInEx for profile {0} was left as it was at the restart window ({1}).",
+                                profile, result.SkipReason);
+                        else
+                            Logger.Debug(
+                                "BepInEx for profile {0} was left as it was at the restart window ({1}).",
+                                profile, result.SkipReason);
+                    }
                     else if (result.NothingChanged)
-                        Logger.Information(
-                            "BepInEx for profile {0} already held the current pack at the restart window.",
-                            profile);
+                    {
+                        if (BepInExWindowStateChanged(profile, "current"))
+                            Logger.Information(
+                                "BepInEx for profile {0} already held the current pack at the restart window.",
+                                profile);
+                        else
+                            Logger.Debug(
+                                "BepInEx for profile {0} already held the current pack at the restart window.",
+                                profile);
+                    }
                     else
+                    {
+                        // A write is an event: it is always worth a line, and it clears the
+                        // state so a refusal after it is news again.
+                        BepInExWindowStateChanged(profile, "written:" + (result.Version ?? ""));
                         Logger.Information(
                             "BepInEx for profile {0} went from {1} to {2} at the restart window; what it "
                             + "replaced is in BepInEx\\{3}\\{4}.",
                             profile, result.PreviousVersion ?? "nothing", result.Version,
                             Tools.BepInExService.BackupDirName,
                             result.BackupStamp ?? "(nothing was replaced)");
+                    }
                 }
                 finally
                 {
@@ -2689,8 +3029,15 @@ namespace ValheimBakaLoader.Forms
                 // carries on, the same as any other companion plugin that could not be placed.
                 try
                 {
+                    // The start's own clock over the write. This call is BLOCKED on, inside
+                    // the try whose finally hands back the write slot, and the launch claim is
+                    // held across the whole of StartCore around it: a download that never
+                    // ended took both of those away for the life of the process, so the row's
+                    // buttons stayed greyed and that profile could never be started again.
+                    using var budget = new System.Threading.CancellationTokenSource(BepInExWriteBudget);
+
                     var result = BepInEx.InstallAsync(baseExe, null, installs, progress,
-                            options: Tools.BepInExWriteOptions.Window)
+                            budget.Token, Tools.BepInExWriteOptions.Window)
                         .GetAwaiter().GetResult();
 
                     startResult = result;
@@ -3041,6 +3388,13 @@ namespace ValheimBakaLoader.Forms
                 case StageOutcome.Staged: return null;
                 case StageOutcome.NetworkError: return "offline";
                 case StageOutcome.SwitchedOff: return "checkingOff";
+
+                // A release that was found, is newer, and whose asset did not arrive whole is
+                // not "already on the newest release": that sentence is a false statement
+                // about the host's machine, and it contradicts the pill beside it naming the
+                // version. It gets its own, which says what happened and that nothing was
+                // written over.
+                case StageOutcome.DownloadDamaged: return "damaged";
 
                 // AlreadyCurrent and NoRelease both mean the same thing to the host: GitHub was
                 // reached and there is nothing there to install.
@@ -3664,6 +4018,11 @@ namespace ValheimBakaLoader.Forms
                 ServerPrefsProvider.SavePreferences(prefs);
                 CurrentProfile = prefs.ProfileName;
                 PostEvent("servers.changed", BuildServersList());
+                // The armed cleanse rides on this document too, so a save is one of the ways
+                // its switch moves. The watch is read again rather than left holding whatever
+                // the last read said.
+                if (Sessions.TryGetValue(prefs.ProfileName, out var savedSession))
+                    savedSession.Server.ArmEmptyCleanseWatch();
                 // The same shape the page was handed on the way in, so the Directories lines
                 // are answered from the save rather than left describing the state before it.
                 return Task.FromResult<object>(BuildProfilePrefsDto(prefs, UserPrefsProvider.LoadPreferences()));
@@ -3812,7 +4171,8 @@ namespace ValheimBakaLoader.Forms
                     if (saveFolder != null)
                     {
                         var sharedWith = ProfileSharingSaveFolder(
-                            ServerPrefsProvider.LoadPreferences(), name, saveFolder);
+                            ServerPrefsProvider.LoadPreferences(), name, saveFolder,
+                            UserPrefsProvider.LoadPreferences().SaveDataFolderPath);
 
                         if (sharedWith != null)
                             throw new HostFacingException("profiles.delete.saveFolderShared",
@@ -3858,6 +4218,45 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(new { gamePort, rconPort });
             });
 
+            // Can the world of a realm be copied right now? Asked when the forge opens, so a
+            // Duplicate that cannot copy says why with the switch already off, instead of
+            // running the whole forge and throwing at the end.
+            //
+            // It answers with the SAME reasons servers.create throws, computed by the same
+            // code: a check written a second time by hand is a check that drifts.
+            RegisterRpc("servers.copyCheck", p =>
+            {
+                var profile = (p.Value<string>("profile") ?? string.Empty).Trim();
+                var world = (p.Value<string>("world") ?? string.Empty).Trim();
+
+                object Refused(string reasonId, object reasonParams)
+                    => new { ok = false, reasonId, reasonParams };
+
+                if (world.Length == 0 || !WorldStore.IsSafeReferenceToken(world))
+                    return Task.FromResult(Refused("servers.create.copyBadSourceRef", new { world }));
+
+                var sourcePrefs = string.IsNullOrWhiteSpace(profile)
+                    ? null
+                    : ServerPrefsProvider.LoadPreferences(profile);
+                var sourceFolder = ResolveSaveDataFolder(sourcePrefs?.SaveDataFolderPath);
+                if (string.IsNullOrWhiteSpace(sourceFolder))
+                    return Task.FromResult(Refused("servers.create.copyNoSourceFolder", new { profile }));
+
+                if (WorldStore.Find(sourceFolder, world) == null)
+                    return Task.FromResult(Refused("servers.create.copySourceMissing", new { world, profile }));
+
+                try
+                {
+                    RefuseWhileTheWorldIsBeingWritten(world, sourceFolder);
+                }
+                catch (HostFacingException refusal)
+                {
+                    return Task.FromResult(Refused(refusal.MessageId, refusal.Params));
+                }
+
+                return Task.FromResult<object>(new { ok = true, reasonId = (string)null, reasonParams = (object)null });
+            });
+
             // Creates a new server profile with guaranteed-distinct identity (name, world,
             // ports) so a second server is genuinely separate, not a shadow of the first.
             // When isolateInstall is set, provisions a junction-based isolated install (its
@@ -3882,6 +4281,21 @@ namespace ValheimBakaLoader.Forms
                 // Optional world switches for the NEW world, on the same gate as Save Config.
                 // Absent leaves whatever the world turns out to carry alone.
                 var worldSwitches = ParseWorldKeys(p["keys"]);
+
+                // The realm's own password. Required, and never inherited: the forge used to
+                // send nothing at all, so a new realm silently came up on whatever password the
+                // realm the host happened to be standing on had. A host who does not know a
+                // realm's password cannot tell anyone how to join it.
+                var password = p.Value<string>("password") ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(password))
+                    throw new HostFacingException("servers.create.passwordRequired",
+                        "Give the realm a password of its own.");
+
+                // And whether it is listed in the game's community browser. OFF unless the host
+                // asked for it: the forge sent nothing, the new profile inherited the standing
+                // one's Public flag, and a realm founded from a listed one went up listed. A
+                // realm nobody asked to publish is not published.
+                var listPublicly = p.Value<bool?>("public") ?? false;
 
                 var isolateInstall = p.Value<bool?>("isolateInstall") ?? true;
                 var seedMods = p.Value<bool?>("seedMods") ?? true;
@@ -3947,6 +4361,12 @@ namespace ValheimBakaLoader.Forms
                 created.ProfileName = name;
                 created.Name = name;              // its own in-game name, never the base server's
                 created.WorldName = world;
+                created.Password = password;      // its own password, never the base server's
+                created.Public = listPublicly;    // and private unless the host asked otherwise
+                // A fresh RCON secret for this realm. The seeded copy carries the base realm's,
+                // and two realms sharing one RCON password means the one a host hands out for
+                // one of them opens the other as well.
+                created.RconPassword = NewRconSecret();
                 created.Port = gamePort;
                 created.RconPort = rconPort;
                 created.AutoStart = false;        // never surprise-launch a brand-new server
@@ -3955,7 +4375,22 @@ namespace ValheimBakaLoader.Forms
 
                 // Save folder: give the new server its own so worlds/backups never mingle.
                 if (isolateSaveFolder)
+                {
                     created.SaveDataFolderPath = MakeIsolatedSaveFolder(name);
+                }
+                else
+                {
+                    // Off means the SHARED folder, and that is the only other thing it can
+                    // honestly mean. The new realm is seeded from the active realm's own
+                    // preferences, so leaving this alone handed it whatever private folder the
+                    // active realm had: found a realm from an isolated one with the switch off
+                    // and the new realm wrote its worlds into the OTHER realm's folder, the
+                    // Directories note said its worlds never mix, and from then on neither
+                    // realm could be deleted with its files because each named the other as
+                    // sharing the folder. Blank falls back to the app-wide folder, which is
+                    // what "shared" means everywhere else in the app.
+                    created.SaveDataFolderPath = null;
+                }
 
                 // Optional explicit seed for the NEW world: pre-write its .fwl (the
                 // dedicated server has no -seed argument, but it adopts a pre-existing
@@ -4238,6 +4673,17 @@ namespace ValheimBakaLoader.Forms
                         && SamePath(save ?? "", EffectiveSave(other) ?? ""))
                         warnings.Add(new { kind = "world", other = other.ProfileName,
                             message = $"World '{world}' sits in the same save folder as '{other.ProfileName}', and both can't load it at once." });
+                    else if (!string.IsNullOrWhiteSpace(save)
+                        && SamePath(save, EffectiveSave(other) ?? "")
+                        && !SamePath(save, userSave ?? ""))
+                        // A shared save folder is worth saying whether or not the two realms
+                        // also share a world name. This warning used to need BOTH, so a realm
+                        // pointed at another realm's private folder said nothing at all: the
+                        // worlds mingled, the delete path jammed for both realms, and the only
+                        // thing on screen claimed the two never mix. The app-wide folder is
+                        // left out because sharing THAT is the documented default.
+                        warnings.Add(new { kind = "saveFolder", other = other.ProfileName,
+                            message = $"Keeps its worlds in the same save folder as '{other.ProfileName}', which is that realm's own folder rather than the shared one. Give this realm its own folder or point it at the shared one." });
                 }
                 return Task.FromResult<object>(warnings);
             });
@@ -4297,6 +4743,10 @@ namespace ValheimBakaLoader.Forms
                 // on the key's presence, so every save of any switch on this card went at the
                 // registry for a preference nobody had touched.
                 var startWithWindowsMoved = false;
+                // And whether it carried a MOVED text size. The zoom and the window minimum are
+                // moved after the write lands, so the page is already saved at the size it is
+                // about to be shown at.
+                var textSizeMoved = false;
                 UserPrefsProvider.Mutate(current =>
                 {
                     prefs = current;
@@ -4387,6 +4837,15 @@ namespace ValheimBakaLoader.Forms
                     // guarded here so none can.
                     Apply("Language", v =>
                         prefs.Language = ReadableLanguage(LanguageCodes.Normalize(v.Value<string>())) ?? prefs.Language);
+                    // A closed list of three, read through the same normaliser the load road
+                    // uses, so a spelling nothing answers to leaves the preference where it was
+                    // rather than saving a zoom of nothing.
+                    Apply("TextSize", v =>
+                    {
+                        var asked = TextSizes.Normalize(v.Value<string>());
+                        textSizeMoved = !string.Equals(asked, prefs.TextSize, StringComparison.Ordinal);
+                        prefs.TextSize = asked;
+                    });
                     Apply("PlayerMessageLanguage", v =>
                     {
                         var asked = v.Value<string>()?.Trim();
@@ -4437,6 +4896,15 @@ namespace ValheimBakaLoader.Forms
                 {
                     try { AppLogger.Information("{Line:l}", LogLevel.Toggled(prefs.DetailedLog)); }
                     catch (Exception e) { AppLogger.Debug("Could not move the log level: {0}", e.Message); }
+                }
+
+                // The zoom, live. A host who has just chosen Large is looking at the window
+                // they chose it in, so waiting for the next launch would read as a setting that
+                // does nothing. The window minimum moves with it for the same reason.
+                if (textSizeMoved)
+                {
+                    try { ApplyTextSize(prefs.TextSize); }
+                    catch (Exception e) { AppLogger.Debug("Could not apply the text size: {0}", e.Message); }
                 }
 
                 return Task.FromResult<object>(BuildUserPrefsDto(startupNotes));
@@ -4743,6 +5211,8 @@ namespace ValheimBakaLoader.Forms
             RegisterRpc("backups.overview", p =>
             {
                 var profiles = ServerPrefsProvider.LoadPreferences();
+                // The app-wide save folder, which is what a realm with none of its own uses.
+                var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
                 var groups = new List<(DateTime modified, object dto)>();
 
                 // Layers whose world is gone. They live in the same folders and are the same
@@ -4783,9 +5253,15 @@ namespace ValheimBakaLoader.Forms
                         foreach (var live in WorldStore.EnumerateIn(saveFolder, sub))
                         {
                             var world = live.Name;
-                            var owner = profiles.FirstOrDefault(pr =>
-                                string.Equals(pr.WorldName, world, StringComparison.OrdinalIgnoreCase)
-                                && SameFolder(pr.SaveDataFolderPath, saveFolder));
+                            // The SAME lookup the delete gate enforces, fallback and all. The
+                            // Default realm carries no save folder of its own by design, and
+                            // SameFolder answers false for a blank side, so the Barrow drew every
+                            // one of the Default realm's worlds as unclaimed, never showed the
+                            // raiding dot for a live one, and offered a Delete control that
+                            // worlds.delete then refused the moment the host had typed the world
+                            // name into the confirm box. An added realm was fine; the one every
+                            // host starts on was not.
+                            var owner = ProfileSelectingWorld(profiles, world, saveFolder, userSave);
                             var running = owner != null
                                 && Sessions.TryGetValue(owner.ProfileName, out var session)
                                 && session.Server.Status != ServerStatus.Stopped;
@@ -5576,12 +6052,102 @@ namespace ValheimBakaLoader.Forms
                         // part of the story, so the map must not be read as the whole world.
                         chunksTotal = db.ChunksTotal,
                         chunksSkipped = db.ChunksSkipped,
+                        // Chunk files holding fewer objects than the world's own committed
+                        // index claims for them. Empty on a healthy world.
+                        chunkShortfalls = db.ChunkShortfalls
+                            .Select(sf => new { file = sf.FileName, index = sf.IndexCount, found = sf.FileCount, missing = sf.Missing })
+                            .ToList(),
                     };
                 }
                 finally
                 {
                     _atlasInfoInProgress = false;
                 }
+            });
+
+            // Whether a world's files agree with its own committed index, asked before a
+            // start and by the Worlds card.
+            //
+            // A 1.0 world writes an index naming every chunk file and how many objects each
+            // one holds, and then writes the files. The two are a statement and its evidence,
+            // so when a file's own header declares fewer records than the index claims, the
+            // world has lost exactly that difference. The owner's Final Sunset lost 82,563
+            // records this way and nothing anywhere said so until somebody walked into the
+            // hole. This is a NOTE and never a refusal: the world still loads, and a host who
+            // knows what is missing can reach for their backups before the next save writes
+            // over them.
+            RegisterRpc("worlds.integrity", async p =>
+            {
+                var world = (p.Value<string>("world") ?? string.Empty).Trim();
+                if (world.Length == 0) throw new ArgumentException("world is required");
+
+                object Nothing() => new
+                {
+                    world,
+                    read = false,
+                    shortfalls = Array.Empty<object>(),
+                    missingTotal = 0,
+                };
+
+                var stored = WorldStore.Find(ResolveSaveDataFolder(null), world);
+                // Only a 1.0 world has a chunk index. A pre-1.0 one is a single file and there
+                // is nothing here to disagree with.
+                if (stored == null || stored.Format != WorldFormat.Chunked) return Nothing();
+
+                var dbPath = stored.DbPath;
+                if (dbPath == null || !File.Exists(dbPath)) return Nothing();
+
+                // What this world's files looked like when the answer below was worked out.
+                // The check parses every chunk file, which is the most expensive thing on the
+                // road in front of a Start, and the answer cannot change while the bytes do
+                // not: a memo keyed on the file itself is read again the moment a server run
+                // has written to it, and never before.
+                var stamp = WorldIntegrityStamp(dbPath);
+                if (_worldIntegrityMemo.TryGetValue(world, out var remembered) && remembered.Stamp == stamp)
+                    return remembered.Answer;
+
+                List<string> diagnostics = null;
+                var parse = Task.Run(() => ReadWorldSaveWithDiagnostics(stored.Folder, out diagnostics));
+
+                // A ceiling, because a Start waits on this. A world large enough or a disk slow
+                // enough to run past it is not a reason to hold the button: the note is a note,
+                // nothing here can stop a start, and a check that did not finish says nothing
+                // rather than holding the world down while it thinks.
+                if (await Task.WhenAny(parse, Task.Delay(WorldIntegrityBudget)) != parse)
+                {
+                    // Read and dropped, so a parse nobody is waiting on any more cannot come
+                    // back as an unobserved exception.
+                    _ = parse.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                    Logger.Warning(
+                        "The integrity check for {world} did not finish within {seconds} seconds, so the start went on without it.",
+                        world, Math.Max(1, (int)WorldIntegrityBudget.TotalSeconds));
+                    return Nothing();
+                }
+
+                var db = await parse;
+                if (db == null) return Nothing();
+
+                var rows = db.ChunkShortfalls
+                    .Select(sf => new { file = sf.FileName, index = sf.IndexCount, found = sf.FileCount, missing = sf.Missing })
+                    .ToList();
+
+                if (rows.Count > 0)
+                {
+                    Logger.Warning(
+                        "The world {world} has {files} chunk files holding fewer objects than its own index says: {missing} records are not on disk.",
+                        world, rows.Count, rows.Sum(r => r.missing));
+                }
+
+                object answer = new
+                {
+                    world,
+                    read = true,
+                    shortfalls = rows,
+                    missingTotal = rows.Sum(r => r.missing),
+                };
+
+                _worldIntegrityMemo[world] = (stamp, answer);
+                return answer;
             });
 
             // --- Max players (bundled BakaLoaderMaxPlayers plugin cfg) ---
@@ -5992,6 +6558,27 @@ namespace ValheimBakaLoader.Forms
                 };
             });
 
+            // The armed one-shot. It is a players.* method for the same two reasons the
+            // cleanse itself is: it is the Players hall's own switch, and what it arms is that
+            // hall's own command. It writes one field on the ACTIVE profile rather than taking
+            // a whole profile document, because the hall that holds it has no form to send.
+            RegisterRpc("players.cleanseWhenEmpty", p =>
+            {
+                var profile = CurrentProfile
+                    ?? throw new HostFacingException("players.cleanseWhenEmpty.noProfile",
+                        "No server profile is open.");
+
+                var on = p.Value<bool?>("on")
+                    ?? throw new HostFacingException("players.cleanseWhenEmpty.onRequired",
+                        "on is required");
+
+                SetCleanseWhenEmpty(profile, on);
+                return Task.FromResult<object>(new
+                {
+                    on = ServerPrefsProvider.LoadPreferences(profile)?.CleanseWhenEmpty == true,
+                });
+            });
+
             RegisterRpc("players.heal", async p => await Server.HealAsync(RequireTarget(p)));
             RegisterRpc("players.smite", async p => await Server.SmiteAsync(RequireTarget(p)));
 
@@ -6008,6 +6595,13 @@ namespace ValheimBakaLoader.Forms
                 var prefab = p.Value<string>("prefab");
                 var amount = p.Value<int?>("amount") ?? 1;
                 var levelOrQuality = p.Value<int?>("levelOrQuality") ?? 0;
+
+                // Against THIS realm's catalog. The picker's own search loads it and this did
+                // not, so a spawn on a realm with no items.json was validated against whatever
+                // catalog happened to be in memory, which after a realm switch was the previous
+                // realm's: a modded prefab the running server has never heard of passed the
+                // check because another install's file listed it.
+                EnsureItemCatalogLoaded();
 
                 var entry = ItemCatalog.Entries.FirstOrDefault(e =>
                         string.Equals(e.PrefabName, prefab, StringComparison.OrdinalIgnoreCase))
@@ -6067,10 +6661,46 @@ namespace ValheimBakaLoader.Forms
                     })
                     .ToList();
 
-                return Task.FromResult<object>(new { results, loadedFrom = ItemCatalog.LoadedFrom });
+                // Whether this is the realm's OWN, mod-aware list or the vanilla list BakaLoader
+                // ships. A realm that has never started has no items.json of its own, and until
+                // now nothing on the picker said so: on a fresh isolated realm it silently
+                // offered the other realm's modded prefabs, and once that leak was closed it
+                // silently offered vanilla with no word about why the mods were missing.
+                return Task.FromResult<object>(new
+                {
+                    results,
+                    loadedFrom = ItemCatalog.LoadedFrom,
+                    live = ItemCatalog.IsLiveCatalog,
+                });
             });
 
             // --- Mods ---
+
+            // How many mods are installed on this realm, read off the disk and nothing else.
+            // The Hearth card and the rail used to show the count of the SCAN, so a realm the
+            // host had not opened the Mods hall on read "-" while the Mods hall counted the
+            // same mods perfectly well one click later. How many mod folders there are is a
+            // fact about the disk: it never needed a site to be asked, and this asks none.
+            RegisterRpc("mods.count", p =>
+            {
+                var pluginsDir = GetPluginsDirectory();
+                if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
+                    return Task.FromResult<object>(new { count = (int?)null });
+
+                try
+                {
+                    return Task.FromResult<object>(new { count = (int?)ModScanner.ScanPlugins(pluginsDir).Count });
+                }
+                catch (Exception e)
+                {
+                    // A folder that could not be read is "not known", never zero: a card that
+                    // says nothing is installed when something is is worse than one that says
+                    // it does not know.
+                    Logger.Debug("Could not count the mods in {folder}: {message}", pluginsDir, e.Message);
+                    return Task.FromResult<object>(new { count = (int?)null });
+                }
+            });
+
             RegisterRpc("mods.scan", async p =>
             {
                 if (_modScanInProgress)
@@ -6162,6 +6792,13 @@ namespace ValheimBakaLoader.Forms
                         ok = !blind,
                         reasonId = blind ? ScanFailureId(failure) : null,
                         reasonParams = blind ? ScanFailureParams(failure) : null,
+                        // Which realm these rows are. A scan takes as long as the two sites
+                        // take, and a host who switches realm while one is out used to get the
+                        // PREVIOUS realm's installed mods drawn as this realm's, with Update,
+                        // Remove and Configure on every row pointed at the new realm's install.
+                        // The reply says who it belongs to and the page drops one that does not
+                        // belong to the realm on screen.
+                        profile = CurrentProfile,
                     };
                 }
                 finally
@@ -6401,8 +7038,36 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(result);
             });
 
+            // The same answer the refusal below stands on, asked BEFORE the confirm opens so
+            // the button the host sees matches what pressing it would do. The page used to
+            // work this out itself from the realm on screen, which is a different question
+            // from "is the folder these plugins live in open", and the two disagreed in both
+            // directions: an enabled button that was then refused, and a refusal naming a
+            // realm the host was not looking at.
+            RegisterRpc("mods.removeGuard", p =>
+            {
+                var holding = RunningSessionName(RemovalFolders(p));
+                return Task.FromResult<object>(new { blockedBy = holding });
+            });
+
             RegisterRpc("mods.remove", p =>
             {
+                // A loaded DLL cannot be deleted on Windows. Until 1.2.6 this only WARNED on
+                // the page and went ahead anyway: the folder came half away, the plugin that
+                // was locked stayed, and the install was left in a state the host had not
+                // asked for and could not see. Every profiles.* RPC that touches an install
+                // already refuses this way, and so does this one now.
+                //
+                // Scoped to the install these mods live in, the way every profiles.* refusal
+                // is scoped to the profile it names. A realm that is up holds its OWN plugins
+                // folder open and nothing else: isolated installs are the default, so refusing
+                // over an unrelated realm blocked a removal Windows had no objection to.
+                var live = RunningSessionName(RemovalFolders(p));
+                if (live != null)
+                    throw new HostFacingException("mods.remove.serverRunning",
+                        $"Stop the server '{live}' before removing a mod: Windows will not let a loaded plugin be deleted.",
+                        ("name", live));
+
                 var mod = FindInstalledMod(p);
                 var includeConfig = p.Value<bool?>("includeConfig") ?? false;
                 var result = ModRemovalService.RemoveMod(mod, includeConfig);
@@ -6824,8 +7489,28 @@ namespace ValheimBakaLoader.Forms
             // on every answer. It is its own call rather than a flag on the status read because
             // a read happens on every page paint, and a read that cleared it would take the
             // notice away before anybody had looked at it.
+            //
+            // The fact's KEY is written down as well, and that is what makes a closed notice
+            // stay closed. Clearing the field alone only lasted until the next restart window
+            // recorded the same refusal, which on the owner's install was every few hours: the
+            // bar came back after every launch saying a thing he had already read and decided
+            // about. The key is remembered per install beside the other BepInEx preferences,
+            // so the next window's identical fact arrives already marked seen, while a
+            // DIFFERENT fact (another reason, another pack, a write, a failure) names a
+            // different key and is said once, properly.
             RegisterRpc("bepinex.noticeSeen", p =>
             {
+                var closed = _bepInExLastUnattended?.Key;
+                if (!string.IsNullOrEmpty(closed))
+                    UserPrefsProvider.Mutate(prefs =>
+                    {
+                        if (string.Equals(prefs.BepInExNoticeSeenKey, closed, StringComparison.Ordinal))
+                            return false;
+
+                        prefs.BepInExNoticeSeenKey = closed;
+                        return true;
+                    });
+
                 _bepInExLastUnattended = null;
                 return Task.FromResult<object>(BuildBepInExDto());
             });
@@ -6871,6 +7556,22 @@ namespace ValheimBakaLoader.Forms
 
             RegisterRpc("config.write", p =>
             {
+                // The realm the buffer being saved was read from, when the page said which.
+                // A scroll opened on one realm and left unsaved used to be written into the
+                // NEXT realm's file by one press of Save: the page redrew the list for the new
+                // realm and kept the old realm's text in the editor, and this handler resolved
+                // the path against whichever realm was active by then. The page clears the
+                // editor on a switch now, and this is the second lock on the same door: a
+                // write that names a realm this window is not on is refused.
+                var forProfile = p.Value<string>("profile");
+                if (!string.IsNullOrWhiteSpace(forProfile)
+                    && !string.Equals(forProfile, ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new HostFacingException("config.wrongRealm",
+                        "That scroll was opened on another realm, so it was not written here.",
+                        ("opened", forProfile), ("active", ActiveProfileName ?? ""));
+                }
+
                 var path = ResolveConfigFilePath(p.Value<string>("file"));
                 File.WriteAllText(path, p.Value<string>("text") ?? "");
                 return Task.FromResult<object>(true);
@@ -7339,6 +8040,11 @@ namespace ValheimBakaLoader.Forms
                 canStop = server.CanStop,
                 canRestart = server.CanRestart,
                 countdownActive = server.IsCountdownActive,
+                // When THIS session came up, so the window's uptime survives a realm switch.
+                // The page used to start its own clock the first time it saw Running, which
+                // made a server that had been up for hours read as freshly started the moment
+                // the host came back to it. Null while nothing is running.
+                runningSinceUtc = server.RunningSinceUtc?.ToString("o", CultureInfo.InvariantCulture),
                 adopted = server.IsAdopted,
                 launchPending = server.LaunchInProgress,
                 // Read from the server's own banner; null until it has printed one.
@@ -8944,6 +9650,12 @@ namespace ValheimBakaLoader.Forms
                 prefs.CustomJoinDomain,
                 prefs.Language,
                 prefs.PlayerMessageLanguage,
+                // How big the window is read at. The spelling is all the page needs: the zoom
+                // is applied to the WebView here, it reaches every rule in the stylesheet by
+                // itself, and it reaches the Atlas map's own labels through devicePixelRatio,
+                // which the canvas is already transformed by. The factor used to ride along for
+                // a scaler on the page, and that scaler was double counting the zoom.
+                prefs.TextSize,
                 HasDiscordStatusMessage = !string.IsNullOrWhiteSpace(prefs.DiscordStatusMessageId),
                 AppVersion = AssemblyHelper.GetApplicationVersion(),
             };
@@ -9211,6 +9923,147 @@ namespace ValheimBakaLoader.Forms
         /// shared folder is recognised at all.
         /// </para>
         /// </summary>
+        /// <summary>
+        /// A fresh RCON secret for a realm being forged. Letters and digits only, because it
+        /// travels on a command line and through a plugin config file, and long enough that
+        /// guessing it is not a thing anybody does.
+        /// </summary>
+        private static string NewRconSecret()
+        {
+            // No look-alikes: this is read off a screen and typed into a config by hand.
+            const string alphabet = "abcdefghijkmnpqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789";
+            var bytes = new byte[24];
+            using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create())
+                rng.GetBytes(bytes);
+
+            var chars = new char[bytes.Length];
+            for (var i = 0; i < bytes.Length; i++) chars[i] = alphabet[bytes[i] % alphabet.Length];
+            return new string(chars);
+        }
+
+        /// <summary>
+        /// The name of a server that is up right now and has one of
+        /// <paramref name="foldersTheRemovalTouches"/> open, or null when nothing is holding
+        /// any of them. It is the folders the removal would delete FROM, plugins and patchers
+        /// both, rather than a plugins folder alone: an isolated realm copies plugins and
+        /// junctions patchers, so the two answer to different owners. Anything but Stopped
+        /// counts: a server that is starting has already loaded its plugins, and one that is
+        /// stopping has not let go of them yet.
+        /// <para>
+        /// Scoped to the FOLDER, which is what Windows locks, rather than to the window. This
+        /// walked every session and refused over the first one that was up, whatever install
+        /// it belonged to. Realms are given their own isolated install by default, so a
+        /// stopped realm's plugins are a folder the running one has never opened and the
+        /// removal would have gone through; a host who leaves one world up all evening could
+        /// not remove a mod from any other realm for as long as it stayed up, and the refusal
+        /// named a realm they were not looking at. The rule itself lives in
+        /// <see cref="Tools.ModRemovalGate"/>, and the page reads the same answer through
+        /// mods.removeGuard, so the confirm's button and this refusal cannot disagree.
+        /// </para>
+        /// </summary>
+        /// <summary>
+        /// The longest the chunk-by-chunk integrity read may take before the start goes on
+        /// without it. Settable so the suite can prove the give-up without owning a world big
+        /// enough to need it.
+        /// </summary>
+        internal static TimeSpan WorldIntegrityBudget { get; set; } = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// The last integrity answer per world, beside the stamp of the file it was read from.
+        /// The read parses every chunk file and sits on the road in front of a Start; the
+        /// answer cannot change while the bytes do not, so this is read again the moment a
+        /// server run has written to the save and never in between.
+        /// </summary>
+        private readonly Dictionary<string, (string Stamp, object Answer)> _worldIntegrityMemo =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// What a world's save file looks like right now, as one short string: its size and
+        /// its write time. Anything that cannot be read answers a value that matches nothing,
+        /// so an unreadable file is re-read rather than remembered.
+        /// </summary>
+        private static string WorldIntegrityStamp(string dbPath)
+        {
+            try
+            {
+                var info = new FileInfo(dbPath);
+                return info.Length + ":" + info.LastWriteTimeUtc.Ticks;
+            }
+            catch
+            {
+                return Guid.NewGuid().ToString("N");
+            }
+        }
+
+        private string RunningSessionName(IReadOnlyList<string> foldersTheRemovalTouches)
+        {
+            var live = new List<Tools.ModRemovalGate.Session>();
+            foreach (var session in Sessions.Values)
+            {
+                if (session.Server.Status == ServerStatus.Stopped) continue;
+
+                // What the live process launched against beats what the profile says now: the
+                // host may have pointed the profile somewhere else since, and the folders that
+                // are locked are the ones the running process opened.
+                var exePath = session.Server.Options?.ServerExePath;
+                if (string.IsNullOrWhiteSpace(exePath)) exePath = GetServerExePathFor(session.ProfileName);
+                live.Add(new Tools.ModRemovalGate.Session(session.ProfileName, true,
+                    BepInExSubdirectoryOf(exePath, "plugins"),
+                    BepInExSubdirectoryOf(exePath, "patchers")));
+            }
+
+            return Tools.ModRemovalGate.BlockedBy(live, foldersTheRemovalTouches);
+        }
+
+        /// <summary>
+        /// The folders a removal of the mod named in <paramref name="p"/> would delete from, on
+        /// the profile that is current.
+        /// <para>
+        /// The plugins folder always. The patchers folder only when this mod really has a part
+        /// in it, or when the mod could not be read at all and nothing here can say: an
+        /// isolated realm COPIES plugins, which makes them its own, but JUNCTIONS patchers to
+        /// the base install, which makes them everybody's, so a patcher carrying mod removed on
+        /// a stopped realm would delete the folder a running realm has loaded. Naming patchers
+        /// on every removal would put back the refusal this whole change is undoing, so it is
+        /// named only when it is really in the way.
+        /// </para>
+        /// </summary>
+        private IReadOnlyList<string> RemovalFolders(JObject p)
+        {
+            var exePath = GetServerExePath();
+            var folders = new List<string>();
+            var plugins = BepInExSubdirectoryOf(exePath, "plugins");
+            if (!string.IsNullOrWhiteSpace(plugins)) folders.Add(plugins);
+
+            var patchers = BepInExSubdirectoryOf(exePath, "patchers");
+
+            Tools.Models.InstalledMod mod = null;
+            try { mod = FindInstalledMod(p); }
+            catch
+            {
+                // Nothing readable to scope by. The removal itself will say why in a moment;
+                // until then the wider answer is the safe one.
+                if (!string.IsNullOrWhiteSpace(patchers)) folders.Add(patchers);
+                return folders;
+            }
+
+            try
+            {
+                var patcherFolder = Tools.ModRemovalService.ResolvePatcherDirectory(mod);
+                if (!string.IsNullOrWhiteSpace(patcherFolder) && Directory.Exists(patcherFolder)
+                    && !string.IsNullOrWhiteSpace(patchers))
+                {
+                    folders.Add(patchers);
+                }
+            }
+            catch
+            {
+                if (!string.IsNullOrWhiteSpace(patchers)) folders.Add(patchers);
+            }
+
+            return folders;
+        }
+
         private void RefuseWhileTheWorldIsBeingWritten(string world, string saveFolder)
         {
             var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
@@ -9508,15 +10361,23 @@ namespace ValheimBakaLoader.Forms
         private string GetPluginsDirectory() => GetPluginsDirectoryFor(CurrentProfile);
 
         private string GetPluginsDirectoryFor(string profileName)
+            => BepInExSubdirectoryOf(GetServerExePathFor(profileName), "plugins");
+
+        /// <summary>
+        /// A folder under the BepInEx directory that belongs beside a server exe, or null when
+        /// there is no usable path. Named on its own because a live session answers with the
+        /// exe it really launched, which is not always the one its profile names today, and
+        /// because the removal gate asks about "patchers" as well as "plugins".
+        /// </summary>
+        private static string BepInExSubdirectoryOf(string exePath, string name)
         {
-            var exePath = GetServerExePathFor(profileName);
             if (string.IsNullOrWhiteSpace(exePath)) return null;
 
             try
             {
                 var dir = Path.GetDirectoryName(exePath);
                 if (string.IsNullOrWhiteSpace(dir)) return null;
-                return Path.Combine(dir, "BepInEx", "plugins");
+                return Path.Combine(dir, "BepInEx", name);
             }
             catch
             {

@@ -94,6 +94,35 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         public static readonly TimeSpan ForceCooldown = TimeSpan.FromSeconds(60);
         private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(120);
+
+        /// <summary>
+        /// The clocks the index read is held to: how long the headers may take, how long the
+        /// whole document may take, and how long it may go without a byte arriving.
+        /// <para>
+        /// The 120 second RequestTimeout above is an HttpClient.Timeout, and that is released
+        /// the moment the headers land. A site that answered its headers and then stopped
+        /// sending ran past it with no end at all, holding the one index slot, so the mod scan
+        /// never returned and every later press of Scan answered "a mod scan is already in
+        /// progress" for the rest of the session. Settable so a test can prove it in a second.
+        /// </para>
+        /// </summary>
+        public DownloadBudget IndexBudget { get; set; } = new()
+        {
+            HeaderTimeout = TimeSpan.FromSeconds(20),
+            TotalTimeout = TimeSpan.FromSeconds(120),
+            IdleTimeout = TimeSpan.FromSeconds(20),
+        };
+
+        /// <summary>
+        /// The longest a caller waits for the one index slot before giving up on it.
+        /// <para>
+        /// This is the lesson Thunderstore's client already carries after issue 18: the read
+        /// holding the slot has deadlines of its own, and every caller queued behind it used to
+        /// have none, so a five row scan taken during a stalled read waited the whole of that
+        /// read out. Waiting for a turn never costs more than taking one.
+        /// </para>
+        /// </summary>
+        public TimeSpan LockWait { get; set; } = TimeSpan.FromSeconds(20);
         private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(15);
         private static readonly TimeSpan FirstBackoff = TimeSpan.FromMinutes(1);
 
@@ -168,7 +197,15 @@ namespace ValheimBakaLoader.Tools
         {
             if (IsFresh()) return Index;
 
-            await IndexLock.WaitAsync();
+            if (!await IndexLock.WaitAsync(LockWait))
+            {
+                // The turn never came. That is a failed read like any other, so the memo and
+                // the backoff are written the same way, and the callers behind this one are
+                // answered out of the memo rather than queueing too.
+                RecordFailure("the index read is already running and did not finish in time");
+                return Index;
+            }
+
             try
             {
                 // Somebody else may have refreshed it while this call waited.
@@ -198,7 +235,14 @@ namespace ValheimBakaLoader.Tools
 
         public async Task<bool> RefreshAsync()
         {
-            await IndexLock.WaitAsync();
+            if (!await IndexLock.WaitAsync(LockWait))
+            {
+                // A press of Scan while a stalled read holds the slot used to hang the page
+                // for as long as that read took. It is bounded like every other wait now.
+                RecordFailure("the index read is already running and did not finish in time");
+                return false;
+            }
+
             try
             {
                 // Only just read: there is nothing newer to find, and the held answer is
@@ -245,12 +289,15 @@ namespace ValheimBakaLoader.Tools
                 FetchCount++;
 
                 using var client = HttpClientProvider.CreateClient();
-                client.Timeout = RequestTimeout;
+                // Out of the way on purpose: it never covered the body, which is the part that
+                // stalled. The budget below is what bounds this read now.
+                BoundedDownload.Unbounded(client);
                 client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent());
                 client.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip");
                 client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
 
-                using var response = await client.GetAsync(V1IndexUrl, HttpCompletionOption.ResponseHeadersRead);
+                using var response = await BoundedDownload.HeadersAsync(
+                    client, new Uri(V1IndexUrl), IndexBudget, CancellationToken.None);
 
                 if (response.StatusCode == HttpStatusCode.TooManyRequests)
                 {
@@ -341,12 +388,19 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         private async Task<Stream> ReadBodyAsync(HttpResponseMessage response)
         {
+            // Two clocks over the body: a total, and a watchdog that gives up when nothing has
+            // arrived for a while. Without them this loop had no end: the 120 second timeout on
+            // the client was already spent by the time the first byte was asked for.
+            using var whole = BoundedDownload.Deadline(IndexBudget.TotalTimeout, CancellationToken.None);
+
             var buffer = new MemoryStream();
-            await using (var raw = await response.Content.ReadAsStreamAsync())
+            await using (var source = await response.Content.ReadAsStreamAsync(whole.Token))
+            await using (var raw = new IdleWatchdogStream(
+                source, IndexBudget.IdleTimeout, whole.Token, Logger, "Hexium index read"))
             {
                 var chunk = new byte[81920];
                 int read;
-                while ((read = await raw.ReadAsync(chunk, 0, chunk.Length)) > 0)
+                while ((read = await raw.ReadAsync(chunk, 0, chunk.Length, whole.Token)) > 0)
                 {
                     if (buffer.Length + read > MaxIndexBytes)
                         throw new IOException($"The Hexium index passed {MaxIndexBytes} bytes, so it was not read.");

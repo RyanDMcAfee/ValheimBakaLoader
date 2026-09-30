@@ -62,6 +62,14 @@ namespace ValheimBakaLoader.Tools
         /// <summary>The pack names an app newer than this one.</summary>
         public const string TooOld = "lang.reason.tooOld";
 
+        /// <summary>
+        /// The pack names an oldest app that is not a version at all, so nothing can be
+        /// compared against it. This is a damaged manifest and not an old app: telling the
+        /// host to update BakaLoader, which is what the reason above says, sends them off to
+        /// do something that will not change the answer.
+        /// </summary>
+        public const string MinUnreadable = "lang.reason.minUnreadable";
+
         /// <summary>The release page could not be reached at all.</summary>
         public const string Offline = "lang.reason.offline";
 
@@ -534,6 +542,15 @@ namespace ValheimBakaLoader.Tools
         public TimeSpan StallTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
         /// <summary>
+        /// The longest one pack download may take from the first byte to the last, whatever it
+        /// is doing. The stall window above catches a connection that has stopped delivering,
+        /// and is re-armed on every read, which is right and leaves one hole: a body that keeps
+        /// trickling a byte at a time never trips it. A pack is capped at eighty megabytes, so
+        /// half an hour is a ceiling nobody on a working connection will ever meet.
+        /// </summary>
+        public TimeSpan TotalDownloadTimeout { get; set; } = TimeSpan.FromMinutes(30);
+
+        /// <summary>
         /// How long a held manifest is taken at its word before the release page is asked
         /// again. Six hours, the same floor the software update check keeps, because
         /// unauthenticated GitHub calls are limited per address and this app sits on a box
@@ -888,11 +905,36 @@ namespace ValheimBakaLoader.Tools
 
                 // A pack that needs a newer app than this one is refused before a byte is
                 // asked for, and by comparing versions rather than text.
-                if (!string.IsNullOrWhiteSpace(entry.MinAppVersion) &&
-                    AssemblyHelper.CompareVersion(entry.MinAppVersion, AppVersion) > 0)
+                //
+                // The gate used to read "> 0" alone, and the comparator answers -2 for a
+                // version it could not read, which is not greater than zero: a manifest that
+                // spelled the minimum as "1.3.0.0" or as "latest" was therefore installed into
+                // an app older than it names. A minAppVersion that is present and unreadable is
+                // not a comparison that came out favourable, it is a field this app cannot
+                // honour, and the safe answer on an untrusted document is to refuse, the same
+                // way the version-as-folder-name check three lines above already refuses.
+                if (!string.IsNullOrWhiteSpace(entry.MinAppVersion))
                 {
-                    return Fail(code, LanguagePackReasons.TooOld, progress,
-                        ("minAppVersion", entry.MinAppVersion), ("appVersion", AppVersion));
+                    var against = AssemblyHelper.CompareVersion(entry.MinAppVersion, AppVersion);
+
+                    // A field that is not a version and a field that names a newer app are two
+                    // different answers, and they used to share one. The host was told their
+                    // BakaLoader was too old and sent off to update it, which changes nothing:
+                    // the manifest is what is wrong. So the unreadable case gets its own reason.
+                    if (against == -2)
+                    {
+                        Logger.Warning(
+                            "The manifest gives {0} as the oldest app the {1} pack will install into, "
+                            + "and that is not a version this app can read, so the pack was left alone.",
+                            entry.MinAppVersion, code);
+
+                        return Fail(code, LanguagePackReasons.MinUnreadable, progress,
+                            ("minAppVersion", entry.MinAppVersion));
+                    }
+
+                    if (against > 0)
+                        return Fail(code, LanguagePackReasons.TooOld, progress,
+                            ("minAppVersion", entry.MinAppVersion), ("appVersion", AppVersion));
                 }
 
                 if (MaxLanguagePackBytes > 0 && entry.Bytes > MaxLanguagePackBytes)
@@ -1143,7 +1185,14 @@ namespace ValheimBakaLoader.Tools
             client.Timeout = Timeout.InfiniteTimeSpan;
             client.DefaultRequestHeaders.UserAgent.ParseAdd("ValheimBakaLoader");
 
-            using var stall = CancellationTokenSource.CreateLinkedTokenSource(token);
+            // The ceiling over the whole download, and the stall window inside it. Two clocks
+            // rather than one, because they answer different questions: the stall window is
+            // re-armed on every read so a slow pack is never cut off for being slow, and that
+            // is exactly why it cannot also be the ceiling.
+            using var whole = CancellationTokenSource.CreateLinkedTokenSource(token);
+            if (TotalDownloadTimeout > TimeSpan.Zero) whole.CancelAfter(TotalDownloadTimeout);
+
+            using var stall = CancellationTokenSource.CreateLinkedTokenSource(whole.Token);
             if (StallTimeout > TimeSpan.Zero) stall.CancelAfter(StallTimeout);
 
             // The address is the one the manifest published, used exactly as it stands.
@@ -1976,8 +2025,14 @@ namespace ValheimBakaLoader.Tools
                 var releases = await GitHub.GetReleasesAsync();
                 if (releases == null) return null;
 
+                // A tag the comparator could not read is not evidence that the release is at
+                // or below the running version: it is evidence of nothing. It used to be let
+                // through, because the unreadable answer is -2 and -2 is less than zero, so one
+                // release tagged "nightly" or "v1.9.0.0" became the manifest every digest,
+                // weight, pack address and folder name in this flow was then derived from.
                 return releases
                     .Where(r => r.Asset(ManifestAssetName) != null)
+                    .Where(r => Readable(TagVersion(r.TagName)))
                     .Where(r => AssemblyHelper.CompareVersion(TagVersion(r.TagName), AppVersion) <= 0)
                     .OrderByDescending(r => TagVersion(r.TagName), new VersionOrder())
                     .FirstOrDefault();
@@ -1988,6 +2043,14 @@ namespace ValheimBakaLoader.Tools
                 return null;
             }
         }
+
+        /// <summary>
+        /// Whether a tag is a version this app can compare at all. The fallback's whole
+        /// contract is "the newest release at or below my version", and a tag nobody can read
+        /// cannot be held to either half of that.
+        /// </summary>
+        internal static bool Readable(string tag) =>
+            !string.IsNullOrWhiteSpace(tag) && AssemblyHelper.CompareVersion(tag, tag) == 0;
 
         private static string TagVersion(string tag)
         {
@@ -2163,13 +2226,27 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        /// <summary>Orders version-shaped folder names as versions rather than as text.</summary>
+        /// <summary>
+        /// Orders version-shaped folder names as versions rather than as text.
+        /// <para>
+        /// A name neither side can read sorts LOWEST rather than by its first character. The
+        /// ordinal fallback it used to take is why "nightly" outranked "1.2.4": n sorts above
+        /// 1. Two unreadable names rank the same, and text decides between those two alone.
+        /// </para>
+        /// </summary>
         private sealed class VersionOrder : IComparer<string>
         {
             public int Compare(string x, string y)
             {
+                var readableX = Readable(x);
+                var readableY = Readable(y);
+
+                if (!readableX && !readableY) return string.CompareOrdinal(x, y);
+                if (!readableX) return -1;
+                if (!readableY) return 1;
+
                 var compared = AssemblyHelper.CompareVersion(x, y);
-                return compared == -2 ? string.CompareOrdinal(x, y) : compared;
+                return compared == -2 ? 0 : compared;
             }
         }
 

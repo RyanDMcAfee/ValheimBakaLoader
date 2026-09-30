@@ -156,8 +156,13 @@ namespace ValheimBakaLoader.Tests.Tools
             // The address came back with the answer and was used exactly as it came.
             Assert.Equal(new[] { LiveUrl }, provider.Handler.Requests.ToArray());
 
-            // The held list was never even consulted, because the live answer stood.
-            client.Verify(c => c.GetLatestAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            // The held list had no say in WHICH version, which is the whole of this bug. It is
+            // asked one other thing: the package page publishes no file_size, so the listing is
+            // asked what the version the page named weighs before anything is written over a
+            // folder the server loads from. Here the list is two releases behind, so its size
+            // belongs to another archive and is not applied. PublishedSizeSecondHopTests is
+            // where that hop is driven on its own.
+            client.Verify(c => c.LookupLiveAsync("Vapok", "XPortalNetworks"), Times.Once);
         }
 
         [Fact]

@@ -178,6 +178,7 @@ namespace ValheimBakaLoader
             services.AddSingleton<ISteamHandoff, SteamHandoff>();
             services.AddSingleton<ISteamCmdRunner, SteamCmdRunner>();
             services.AddSingleton<IServerUpdateService, ServerUpdateService>();
+            services.AddSingleton<ICommandTally, CommandTally>();
             services.AddSingleton<IHeartbeatService, HeartbeatService>();
             services.AddSingleton<IAnalyticsService, AnalyticsService>();
             services.AddSingleton<ISoftwareUpdateProvider, SoftwareUpdateProvider>();

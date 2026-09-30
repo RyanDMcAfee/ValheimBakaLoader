@@ -48,6 +48,17 @@ namespace ValheimBakaLoader.Tools
             }
             catch
             {
+                // A four component tag is the shape this used to choke on, and choking
+                // answered -2, which every caller read as "nothing newer". One release
+                // tagged v1.2.9.0 turned updating off for every host and made the log say
+                // they were current. The app already ships a comparer that reads that
+                // shape and keeps the fourth component as a tie-break, and the mod side
+                // has used it for versions, so the same reading is used here rather than
+                // a second opinion about what a version is. A tag neither comparer can
+                // read is still -2, and -2 is still not a reason to call a host current.
+                if (SemVer.IsReadable(version) && SemVer.IsReadable(against))
+                    return SemVer.Compare(version, against);
+
                 return -2;
             }
         }

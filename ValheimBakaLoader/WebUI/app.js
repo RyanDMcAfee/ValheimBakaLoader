@@ -138,11 +138,28 @@ const HOST_SENTENCES=[
   {named:"worlds.copyNoSuchWorld",       textId:"world.copy.reason.no_such_world"},
   {named:"worlds.copyUnreadable",        textId:"world.copy.reason.unreadable"},
   {named:"worlds.copyFailed",            textId:"world.copy.reason.failed"},
+  /* The three the forge asks about BEFORE it forges anything, through servers.copyCheck.
+     They are the same refusals servers.create throws, so a host reads the reason with the
+     switch already off rather than after a failed forge. */
+  {named:"servers.create.copyBadSourceRef",  textId:"realm.new.copy.reason.bad_source"},
+  {named:"servers.create.copyNoSourceFolder",textId:"realm.new.copy.reason.no_folder"},
+  {named:"servers.create.copySourceMissing", textId:"realm.new.copy.reason.missing"},
+  /* Removing a mod while a server is up. Windows will not let a loaded plugin be deleted,
+     so this is a refusal now rather than a warning the host could walk past. */
+  {named:"mods.remove.serverRunning",        textId:"mods.remove.reason.server_running"},
   /* The three the language bridge throws. The endings a pack DOWNLOAD can have are not
      throws at all, so they are a table of their own below. */
   {named:"lang.busy",         textId:"lang.reason.busy"},
   {named:"lang.unknownCode",  textId:"lang.reason.unknown_code"},
   {named:"lang.notInstalled", textId:"lang.reason.not_installed"},
+  /* A second press while the first scan is still out. The host side refuses it by name,
+     and until 1.2.6 the page had no sentence for that name, so the press answered with
+     the general "the call failed" wording, with the method name in it. */
+  {named:"mods.scan.alreadyRunning", textId:"mods.scan.reason.already_running"},
+  /* A Save in Runes that names a realm this window is not on. The page clears the editor
+     on a realm switch, so a host should never see this; it is worded because the host side
+     refuses the write by name and a refusal with no sentence reads as "the call failed". */
+  {named:"config.wrongRealm", textId:"runes.write.reason.wrong_realm"},
 ];
 /* Every way a language pack download can end, as the pack service names it in the result,
    beside the catalog entry that words it. This is the same question HOST_SENTENCES answers
@@ -161,6 +178,7 @@ const LANG_REASONS=[
   {named:"lang.reason.integrity",  textId:"lang.reason.integrity"},
   {named:"lang.reason.tooLarge",   textId:"lang.reason.too_large"},
   {named:"lang.reason.tooOld",     textId:"lang.reason.too_old"},
+  {named:"lang.reason.minUnreadable",textId:"lang.reason.min_unreadable"},
   {named:"lang.reason.offline",    textId:"lang.reason.offline"},
   {named:"lang.reason.noPack",     textId:"lang.reason.no_pack"},
   {named:"lang.reason.unknownCode",textId:"lang.reason.unknown_code"},
@@ -264,6 +282,9 @@ const S={
   saveSec:null, saveInterval:600,
   players:[], caps:{rcon:false,devcommands:false},
   mods:null, modsScanned:false, modsScanning:false, modsUpdating:false, lastScan:null,
+  /* How many mod folders are on this realm's disk, read without asking any site. The
+     Hearth card and the rail stand on this until a scan gives them the real list. */
+  modsOnDisk:null,
   /* BepInEx, as bepinex.status answers it and bepinex.changed pushes it. One fact for
      the whole install rather than for this profile: every server provisioned from one
      install loads the same loader through junctions and hard links. null means nothing
@@ -314,6 +335,7 @@ const S={
   invite:null,            // crossplay invite code (shown while known; cleared on stop)
   saveDur:[],             // last 10 world-save durations (ms) for the rolling average
   lastSaveAt:null,        // Date of the last observed world save
+  lastSaveMs:null,        // and how long that write took, so the header can be repainted
   net:{conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]}, // parsed "Connections N ZDOS:… sent:… recv:…" server stats
   servers:[],             // multi-server chip strip: [{name,status,running,playersOnline,active}]
   /* The world-generation dials the host is editing, kept out of the DOM so a re-render never
@@ -613,6 +635,7 @@ function repaintBootCopy(){
   try{renderHearthLog();}catch(_){}       /* the Hearth log card's empty state */
   try{renderSaveBars();}catch(_){}        /* the save-timing card's empty state */
   try{renderSaveAvg();}catch(_){}         /* the rolling write-time average */
+  try{renderLastSave();}catch(_){}        /* and the time beside "last rune-check" */
   try{renderServerChips();}catch(_){}     /* the sidebar strip's chip tooltips */
   try{renderHexiumCopy();}catch(_){}      /* the Upkeep card's second-mod-site switch */
   try{renderStartWinNote();}catch(_){}    /* and the note under Start with Windows */
@@ -632,7 +655,8 @@ function repaintBootCopy(){
   try{repaintWorldDialCopy();}catch(_){}  /* the five world dials: options, notes, footnote */
   try{repaintWorldSelectCopy();}catch(_){}  /* the World field: its New world entry and line */
   try{renderWorldDirty();}catch(_){}      /* the unsaved signs, and with them both Directories lines */
-  try{renderPlayerMsgLang();}catch(_){}   /* the Upkeep card's player-message select */
+  try{renderPlayerMsgLang();}catch(_){}   /* the App tab's player-message select */
+  try{renderAppLang();}catch(_){}         /* and its interface-language select */
   try{renderLangDot();}catch(_){}         /* the sidebar's partial-translation mark */
   /* These two are async, so a throw inside them lands on the promise rather than in the
      try around the call, and an unhandled rejection is a console error on every boot. */
@@ -805,6 +829,12 @@ function langNameOf(code){
 /* The one line under a language's own name. Six states, and the order is the order a host
    reads them in: what they are using, what they have, what it would cost, and why they
    cannot have it. */
+/* The version this app is, as the language list reported it. The list carries it so the
+   menu never has to guess, and the sidebar's own stamp is the floor when a list has not
+   landed yet. */
+function langAppVersion(){
+  return (LANG.list&&LANG.list.appVersion)||S.version||"";
+}
 function langRowLine(l){
   if(l.code===langCurrent()){
     /* Current AND behind. The two facts are not alternatives and the row used to show
@@ -813,12 +843,17 @@ function langRowLine(l){
        did not tell. The line below it is where every other language says the same
        thing, and this is the same sentence with what it is joined to the front. */
     return (l.installed&&!l.matchesApp&&!l.builtIn)
-      ?T("lang.row.current_older_pack",{version:l.installedVersion||""})
+      ?T("lang.row.current_older_pack",
+         {version:l.installedVersion||"",app:langAppVersion()})
       :T("lang.row.current");
   }
   if(l.builtIn) return T("lang.row.built_in");
   if(l.installed&&l.matchesApp) return T("lang.row.installed");
-  if(l.installed) return T("lang.row.older_pack",{version:l.installedVersion||""});
+  /* A pack cut for an older release is used, not refused: the ids it does not carry fall
+     back to English, which is how every catalog in this app is read. The line says both
+     versions so a host reading English inside their own language knows exactly why. */
+  if(l.installed) return T("lang.row.older_pack",
+    {version:l.installedVersion||"",app:langAppVersion()});
   if(l.available) return T("lang.row.not_installed",{size:fmtBytes(l.bytes||0)});
   if(!(LANG.list&&LANG.list.manifest&&LANG.list.manifest.ok)) return T("lang.row.offline");
   return T("lang.row.not_published");
@@ -981,6 +1016,10 @@ async function langRefresh(){
   LANG.list=r;
   renderLangMenu();
   renderPlayerMsgLang();
+  /* And the App tab's Interface language select, which reads the same rows. Without this the
+     list would land and the one select the host is looking at while it lands would keep the
+     single English row it fell back to. */
+  renderAppLang();
   return true;
 }
 /* The first frame's language. Runs inside the catalog boot, between the English catalog
@@ -1238,9 +1277,34 @@ function renderPlayerMsgLang(){
   return opts.length;
 }
 
+/* The App tab's interface-language select. The globe in the title bar is still the one
+   that offers a DOWNLOAD for a language that is not here yet, because that is a fetch and
+   not a setting; this offers the languages that are already readable, which is what a host
+   looking through Settings is after. One writer either way: choosing here calls the same
+   langPick the globe's rows call. */
+function renderAppLang(){
+  const sel=$("#selAppLang"); if(!sel) return 0;
+  const here=String(langCurrent()||"en");
+  const rows=langRows().filter(l=>l.installed||l.builtIn);
+  const opts=rows.length?rows.map(l=>({code:l.code,name:l.nativeName||l.englishName||l.code}))
+                        :[{code:"en",name:"English"}];
+  if(!opts.some(o=>o.code===here)) opts.push({code:here,name:langNameOf(here)});
+  sel.innerHTML=opts.map(o=>
+    `<option value="${esc(o.code)}"${o.code===here?" selected":""}>${esc(o.name)}</option>`).join("");
+  sel.value=here;
+  return opts.length;
+}
+$("#selAppLang")?.addEventListener("change",()=>{
+  const sel=$("#selAppLang"); if(!sel) return;
+  /* langPick is the one road into a language change, globe and select alike. A refusal
+     leaves the select saying what is actually on screen rather than what was chosen. */
+  Promise.resolve(langPick(sel.value)).then(()=>{try{renderAppLang();}catch(_){}});
+});
+
 /* Both are painted now and again the moment the catalog lands, the same as every other
    painter repaintBootCopy runs: the select and the dot are on screen from the first frame
    and would otherwise carry ids until something happened to redraw them. */
+renderAppLang();
 renderPlayerMsgLang();
 renderLangDot();
 
@@ -1278,28 +1342,12 @@ $("#langMenu")?.addEventListener("keydown",e=>{
 });
 document.addEventListener("click",()=>{if(langMenuIsOpen())langMenuClose();});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&langMenuIsOpen())langMenuClose();});
-/* The card that holds the player-message select. Expanding it is the second place the
-   host asks for the list out loud, and it is asked once: langRefresh answers false while
-   one is already in flight and the list is kept afterwards.
-
-   ASKED AFTER THE PRESS HAS BEEN HANDLED, never during it. Two listeners sit on this
-   header and the one that actually opens the card is added LATER than this one, because
-   wireCollapsible("upkeepHead", ...) runs much further down this file. Listeners fire in
-   the order they were added, so reading the class here inside the dispatch reads the
-   state the card is LEAVING rather than the one it is arriving at, and that had the whole
-   thing backwards: expanding the card asked for nothing, and collapsing it reached the
-   release page for a menu the host had just put away. A task queued here runs once the
-   dispatch is finished, whatever order the two listeners were added in.
-
-   Both roads, because the header is operable from the keyboard and that road never
-   produces a click: wireCollapsible's own keydown calls the toggle directly. */
-const langUpkeepAsk=()=>setTimeout(()=>{
-  if($("#upkeepCard")?.classList.contains("open")) langRefresh();
-},0);
-$("#upkeepHead")?.addEventListener("click",langUpkeepAsk);
-$("#upkeepHead")?.addEventListener("keydown",e=>{
-  if(e.key==="Enter"||e.key===" "||e.key==="Spacebar") langUpkeepAsk();
-});
+/* WHERE THE SECOND ASK LIVES NOW. Until 1.2.6 the player-message select sat on the Hearth's
+   Upkeep card, and expanding that card was the second place the host asked for the list out
+   loud. Both selects are on the Settings hall's App tab now, so the ask moved with them and
+   is made by worldTab, which is the one place that knows the tab changed. A hook left on the
+   Upkeep header would have been an ask for a control that is not there, and the tab's own
+   two selects would have been drawn from an empty list until the host opened the globe. */
 $("#selPlayerMsgLang")?.addEventListener("change",()=>{
   const sel=$("#selPlayerMsgLang");
   const asked=String(sel.value||"same");
@@ -1569,9 +1617,13 @@ function syncCollapsible(rec){
   rec.hint.textContent=open?"":T("common.collapsible.folded",{count:rec.count});
   /* An open Upkeep card is taller than a fixed bento row, so the last row is
      told to take its content height while the card is unfolded. */
-  if(rec.target.id==="upkeepCard"){
+  if(rec.target.id==="upkeepCard"||rec.target.id==="connCard"){
+    /* Either card being open is enough: the row has to take its content height while ANY
+       of the cards in it is unfolded, and reading only the one that just moved put the row
+       back to a fixed height while the other one was still open. */
     const bento=document.querySelector(".bento");
-    if(bento) bento.classList.toggle("upkeep-open",open);
+    const anyOpen=!!(document.querySelector("#upkeepCard.open")||document.querySelector("#connCard.open"));
+    if(bento) bento.classList.toggle("upkeep-open",anyOpen);
   }
 }
 function syncCollapsibleTerms(){
@@ -1624,7 +1676,8 @@ function goPage(name){
   });
   currentPage=name;
   setToastLift();
-  if(name==="vikings"){try{renderVikCols();}catch(_){}}
+  if(name==="vikings"){try{renderVikCols();}catch(_){}try{renderCleanseArmed();}catch(_){}}
+  if(name==="world"){try{worldTab(WORLD_TAB);}catch(_){}}
   if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();flameResize();}
   flameTick();   // the fire only burns while the Dashboard is on screen
   refreshScrollCues();
@@ -1636,7 +1689,10 @@ function goPage(name){
     if(name==="vikings"){refreshPlayers();refreshJournal(true);}
     if(name==="runes") refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
     if(name==="herald") refreshHerald();      // re-read prefs so the hall always shows the saved truth
-    if(name==="hearth") refreshStartWinNote(); // and the notes under Start with Windows, which a trip to Task Manager can have cleared
+    /* The notes under Start with Windows, which a trip to Task Manager can have cleared,
+       are re-read by the worldTab(WORLD_TAB) call above rather than here: the walk into the
+       hall goes through it, so does every press of the tab strip, and asking in both places
+       would read the preferences twice for one walk. */
   }
 }
 $$(".navitem").forEach(n=>n.addEventListener("click",()=>goPage(n.dataset.page)));
@@ -1764,8 +1820,14 @@ async function duplicateServer(name){
      walking into it. The source is read AFTER the switch, because that is when S.prefs
      is this realm's. The switch in the forge can still be turned off, and then it is a
      new realm with this one's mods and a world of its own. */
+  /* The source realm's own password and its community listing ride along so the forge can
+     show them prefilled: a duplicate keeps what it was duplicated from, and the host can
+     see both before founding anything. The profile is handed over even when there is no
+     world to copy, because the dialog's own heading and button are a duplicate's. */
   const world=(S.prefs&&S.prefs.WorldName)||"";
-  addServerProfile(world?{profile:name,world}:null);
+  addServerProfile({profile:name,world,
+    password:(S.prefs&&S.prefs.Password)||"",
+    listed:!!(S.prefs&&S.prefs.Public)});
 }
 async function archiveServer(name){
   const r=await rpc("profiles.archive",{name});
@@ -1893,19 +1955,87 @@ async function adoptWorldFlow(o){
     toast("↺ "+T("realm.adopted.toast",{name}));
   });
 }
-async function switchServer(name){
+/* Everything on screen that the host has typed and not saved, named by the hall it sits
+   in. A realm switch used to throw all of it away without a word, and worse than that:
+   the Runes editor kept the previous realm's text while the list redrew for the new one,
+   so one press of Save wrote realm A's scroll into realm B's file. */
+function unsavedRealmWork(){
+  const out=[];
+  try{ if(worldFormDirtyKeys().length) out.push(T("realm.switch.unsaved.what.world")); }catch(_){}
+  try{ if(CFG.dirty&&CFG.file) out.push(T("realm.switch.unsaved.what.runes")); }catch(_){}
+  return out;
+}
+/* The Runes editor, put back to nothing. Called on a realm switch, because an open scroll
+   belongs to the realm it was read from: its name, its text, its unsaved mark and the
+   find painted over it are all about a file on that realm's disk. */
+function cfgForget(){
+  CFG.file=null; CFG.dirty=false; CFG.profile=null;
+  const ed=$("#cfgEditor"); if(ed) ed.value="";
+  const save=$("#cfgSaveBtn"); if(save) save.disabled=true;
+  try{resetCfgSaveBtn();}catch(_){}
+  cfgFindReset();
+}
+async function switchServer(name,opts){
   if(!name||name===S.profileName) return;
+  /* The question the Runes hall already knows how to ask, asked for the whole window. A
+     switch away from unsaved work is the same event as opening another scroll over an
+     unsaved one, and it was the one road that never asked. */
+  if(!(opts&&opts.discardUnsaved)){
+    const pending=unsavedRealmWork();
+    if(pending.length){
+      const from=S.profileName||"";
+      confirmModal(()=>T("realm.switch.unsaved.title"),
+        ()=>T("realm.switch.unsaved.body",
+          {from:bold(from),to:bold(name),halls:pending.join(", ")}),
+        ()=>T("realm.switch.unsaved.discard"),
+        ()=>{switchServer(name,{discardUnsaved:true});});
+      return;
+    }
+  }
   const prefs=await rpc("profiles.get",{name});
   if(prefs===FAIL||!prefs) return;
+  /* The realm being LEFT still owns its write times, so they go down under its name
+     before its name is overwritten. */
+  saveTimesStash(S.profileName);
   S.prefs=prefs; S.profileName=prefs.ProfileName; S.saveInterval=prefs.SaveInterval??600;
   S.players=[]; S.invite=null; S.net={conns:null,zdos:null,sent:null,recv:null,at:null,hist:[]};
-  S.saveDur=[]; S.lastSaveAt=null; S.saveSec=null; S.upSince=null;
+  saveTimesLoad(prefs.ProfileName);
+  S.saveSec=null; S.upSince=null;
   /* Put back, never replaced: the sort states are the one pair of objects the page wires a
      handler over once and never again, so a fresh object here is a state the headers would
      stop being able to reach. wireSort resolves them through a getter for the same reason;
      the two together are belt and braces and they do not conflict. */
   S.mods=null; S.modsScanned=false; S.lastScan=null; sortReset(S.modSort);
   S.modIndexAt=null; S.modIndexSource=null; S.modsIndexBlind=false; S.modsScanReason=null;
+  /* The failure sentence is about the same read as the reason beside it, for the same
+     realm. Left standing, the new realm's hall said Thunderstore could not be read for a
+     scan it had never run. */
+  S.modsScanError=null;
+  /* A scan or an Update all still out belongs to the realm that started it. The flags were
+     read by renderMods for the whole window, so one realm's run greyed Scan, Add mod and
+     Update all on every other realm with nothing on the hall to say why, and the per-row
+     phases painted any row that happened to share a FullName as updating. The replies that
+     are still in flight carry their own realm and are dropped when they land. */
+  S.modsScanning=false; S.modsUpdating=false; S.modRowStatus={};
+  MOD_UPD=null; try{renderModUpdateProgress();}catch(_){}
+  /* A cleanse belongs to the realm it is sweeping. The gate and the palette entry both
+     refused every other realm's Cleanse for the ten minutes it ran. */
+  S.cleansing=false;
+  /* And so does the armed one-shot: it is a field on the profile that has just been read,
+     so the switch is redrawn from THIS realm's answer rather than left showing the last
+     realm's. A switch left standing here would be a host arming a sweep on a realm they
+     are not looking at. */
+  try{renderCleanseArmed();}catch(_){}
+  /* The difficulty dials are a per-realm reading of a per-realm card, and the held set was
+     keyed on the world NAME alone: an edit abandoned on one realm rode into the next, was
+     re-snapshotted as saved, and was written by that realm's Save Config. */
+  S.worldMods=null;
+  /* The open scroll and its unsaved text go with the realm they were read from. */
+  cfgForget();
+  /* And what was read about the previous realm's worlds. The memo is per world name, and a
+     name is not an identity across realms: two realms can hold worlds called the same
+     thing, and the host side reads the file the ACTIVE realm points at. */
+  for(const key in WORLD_INTEGRITY_READ) delete WORLD_INTEGRITY_READ[key];
   /* a search was typed about the previous realm's mods and scrolls, so it goes with them */
   S.modFilter=""; if($("#modSearch")) $("#modSearch").value="";
   S.runeFilter=""; if($("#runeSearch")) $("#runeSearch").value="";
@@ -1913,8 +2043,14 @@ async function switchServer(name){
   /* conditions belong to the realm that raised them */
   ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate","restartPending"]
     .forEach(clearCondition);
-  /* and so does a dismissal: the settings the host waved away were that realm's */
+  /* and so does a dismissal: the settings the host waved away were that realm's. All
+     three of these are memos about ONE realm's bar, and two of them used to stand: a
+     mod-updates bar dismissed on a realm with three waiting suppressed the next realm's
+     bar whenever that realm also had three, and the plugin-failure memo did the same on a
+     matching failure set. The host was never told. */
   RESTART_PENDING_HIDDEN=null;
+  MOD_UPDATES_HIDDEN=null;
+  PLUGIN_FAIL_HIDDEN=null;
   /* so does the update answer: install kind, waiting bytes and the reason a realm cannot
      be updated are all about the install the previous realm pointed at. */
   SRV_UPDATE=null; _updHidden=false;
@@ -1922,12 +2058,17 @@ async function switchServer(name){
             canUpdate:false,running:false,reason:""};
   try{renderUpdatePill();}catch(_){}
   S.journal={}; sortReset(S.vikSort); S.crashed=false;
-  /* the previous realm's write times belong to the previous realm */
+  /* the previous realm's write times belong to the previous realm, and this realm's own
+     are back: the header, the average and the bars are all painted from the one set */
   renderSaveAvg();
+  renderLastSave();
+  renderSaveBars();
   try{atlasReset();}catch{}
   const st=await rpc("server.state");
   if(st!==FAIL){S.state=null;applyState(st);}
   refreshUpdateInfo();   // this realm's own install, asked fresh
+  S.modsOnDisk=null;     // the previous realm's mods are not this realm's
+  refreshModCount();     // and this realm's own count, off its own disk
   renderAllFromPrefs();
   await refreshPlayers();
   renderMods();
@@ -1953,8 +2094,37 @@ async function switchServer(name){
 /* `source` is {profile, world} when the forge was opened by Duplicate, and null otherwise.
    With one, the forge offers to copy that world and offers it ON: a duplicate that came up
    on an empty world was the whole of issue 17. */
+/* A password a new realm can be founded on, rolled here rather than typed. The alphabet
+   leaves out the letters and digits that look like each other, because this is read off a
+   screen and typed into a game client by somebody else. */
+function newRealmPassword(){
+  const alphabet="abcdefghijkmnpqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const out=[];
+  const draw=new Uint8Array(12);
+  try{ (window.crypto||window.msCrypto).getRandomValues(draw); }
+  catch(_){ for(let i=0;i<draw.length;i++) draw[i]=Math.floor(Math.random()*256); }
+  for(let i=0;i<draw.length;i++) out.push(alphabet[draw[i]%alphabet.length]);
+  return out.join("");
+}
+/* What is wrong with a realm password, in the host's own words, or null when nothing is.
+   These are the game's own rules, the same four ValheimServerOptions holds a start to, said
+   BEFORE anything is forged rather than at the first launch. */
+function realmPasswordProblem(password,name,world){
+  const value=String(password||"");
+  if(!value.trim()) return T("realm.new.password.required");
+  if(value.length<5) return T("realm.new.password.too_short");
+  if(name&&value.indexOf(name)>=0) return T("realm.new.password.has_name");
+  if(world&&value.indexOf(world)>=0) return T("realm.new.password.has_world");
+  return null;
+}
 async function addServerProfile(source){
-  source=(source&&source.world)?source:null;
+  /* Two different things arrive here. A DUPLICATE names the realm it came from, and gets
+     its own heading, its own button and the source realm's password and listing prefilled.
+     A COPYABLE duplicate also names a world, and only then is the copy switch drawn. The
+     two used to be one test, so pressing Duplicate on a realm with no world at all opened
+     the plain forge under the plain heading and the host had no way to tell. */
+  const duplicating=!!(source&&source.profile);
+  const copyable=!!(source&&source.world);
   // The realm-forge dials for a brand-new world: their own ids so they never collide with the
   // settings-page fMod* dials. Every dial defaults to Normal ("").
   const wsModsHtml=Object.entries(WORLDGEN).map(([key,def])=>
@@ -1964,20 +2134,36 @@ async function addServerProfile(source){
       `<select id="wsMod_${key}">${wgOptions(key,"")}</select>`+
       `<div class="fieldnote wgnote" id="wsNote_${key}"></div></div>`).join("");
   const m=modalOpen(
-    `<div class="mtitle">${esc(T("realm.new.title"))}</div>`+
+    `<div class="mtitle">${esc(duplicating
+      ?T("realm.duplicate.title",{name:source.profile}):T("realm.new.title"))}</div>`+
     `<div class="mbody" style="display:flex;flex-direction:column;gap:2px">`+
       `<div class="field"><label>${esc(T("realm.new.name.label"))}</label>`+
-        `<input type="text" id="wsName" placeholder="${esc(T("realm.new.name.placeholder"))}" spellcheck="false" autocomplete="off"></div>`+
+        `<input type="text" id="wsName" placeholder="${esc(T("realm.new.name.placeholder"))}" spellcheck="false" autocomplete="off">`+
+        `<div class="fieldnote" id="wsNameNote"></div></div>`+
+      /* The realm's own password, and whether the game lists it. Both used to be missing
+         from this dialog altogether: the new profile was seeded from whichever realm the
+         host was standing on, so it inherited that realm's password and its Public flag,
+         and a realm founded from a listed one went up listed on a password nobody had been
+         told. */
+      `<div class="field"><label>${esc(T("realm.new.password.label"))}</label>`+
+        `<div class="rowline">`+
+          `<input type="text" id="wsPass" placeholder="${esc(T("realm.new.password.placeholder"))}" spellcheck="false" autocomplete="off">`+
+          `<button type="button" class="btn btn-ghost btn-sm" id="wsPassGen">${esc(T("realm.new.password.generate"))}</button>`+
+        `</div>`+
+        `<div class="fieldnote">${esc(T("realm.new.password.note"))}</div></div>`+
+      `<div class="togglerow" title="${esc(T("realm.new.public.title"))}"><span class="tl">${esc(T("realm.new.public.label"))}</span>`+
+        `<div class="toggle" id="wsPublic"></div></div>`+
       `<div class="field"><label>${esc(T("realm.new.world.label"))}</label>`+
         `<input type="text" id="wsWorld" placeholder="${esc(T("realm.new.world.placeholder"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote" id="wsPorts">${esc(T("realm.new.ports.finding"))}</div></div>`+
       /* The copy switch, only when there is a world to copy. On by default: a host who
          pressed Duplicate meant the whole realm, and the one they did not mean is the one
          they turn off here. */
-      (source
+      (copyable
         ?`<div class="togglerow" title="${esc(T("realm.new.copy_world.title"))}">`+
            `<span class="tl">${esc(T("realm.new.copy_world.label",{source:source.world}))}</span>`+
-           `<div class="toggle on" id="wsCopyWorld"></div></div>`
+           `<div class="toggle on" id="wsCopyWorld"></div></div>`+
+           `<div class="fieldnote" id="wsCopyNote" style="display:none"></div>`
         :"")+
       /* What the world section is really going to do, said plainly and repainted whenever
          the switch above moves. Without a source it says the one thing that is true of a
@@ -1998,7 +2184,8 @@ async function addServerProfile(source){
       `<div class="mbody-note" id="wsStatus"></div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="wsCancel">${esc(T("common.button.cancel"))}</button>`+
-      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(T("realm.new.ok"))}</button></div>`,
+      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(duplicating
+        ?T("realm.duplicate.ok"):T("realm.new.ok"))}</button></div>`,
     ()=>addServerProfile(source));
 
   const nameI=m.querySelector("#wsName"), worldI=m.querySelector("#wsWorld");
@@ -2006,6 +2193,9 @@ async function addServerProfile(source){
   const portsN=m.querySelector("#wsPorts"), statusN=m.querySelector("#wsStatus");
   const okB=m.querySelector("#wsOk");
   const copyT=m.querySelector("#wsCopyWorld");
+  const copyNote=m.querySelector("#wsCopyNote");
+  const nameNote=m.querySelector("#wsNameNote");
+  const passI=m.querySelector("#wsPass"), pubT=m.querySelector("#wsPublic");
   const seedI=m.querySelector("#wsWorldSeed"), seedNote=m.querySelector("#wsSeedNote");
   const worldNote=m.querySelector("#wsWorldNote");
   const on=el=>el.classList.contains("on");
@@ -2027,8 +2217,38 @@ async function addServerProfile(source){
     if(seedNote) seedNote.textContent=copying
       ?T("realm.new.seed.copied.note"):T("realm.new.seed.note");
   };
+  /* A duplicate shows what it is duplicating: the source realm's password and whether the
+     game lists it. A brand new realm starts on neither. */
+  if(duplicating&&passI) passI.value=source.password||"";
+  if(duplicating&&pubT&&source.listed) pubT.classList.add("on");
+  if(pubT) pubT.addEventListener("click",()=>pubT.classList.toggle("on"));
+  m.querySelector("#wsPassGen")?.addEventListener("click",()=>{
+    passI.value=newRealmPassword();
+    statusN.textContent="";
+    passI.focus(); passI.select();
+  });
   paintWorldSection();
   if(copyT) copyT.addEventListener("click",()=>{copyT.classList.toggle("on");paintWorldSection();});
+  /* Whether the source world CAN be copied, asked the moment the dialog opens rather than
+     when the host presses the button. It used to be asked by forging the whole realm and
+     throwing at the end, which left a stack trace in the log and a host with no idea what
+     to do about it. The host side answers with the same reasons servers.create refuses
+     for, so the two can never give different answers. */
+  if(copyable&&copyT&&Native.available){
+    rpc("servers.copyCheck",{profile:source.profile,world:source.world}).then(r=>{
+      if(r===FAIL||!r||r.ok!==false) return;
+      copyT.classList.remove("on");
+      copyT.classList.add("off");
+      copyT.style.opacity=".4";
+      copyT.style.pointerEvents="none";
+      if(copyNote){
+        copyNote.textContent=hostSentence(r.reasonId,r.reasonParams)
+          ||T("realm.new.copy.unavailable");
+        copyNote.style.display="";
+      }
+      paintWorldSection();
+    });
+  }
   [iso,seed,saveIso].forEach(t=>t.addEventListener("click",()=>{
     t.classList.toggle("on");
     // Seeding mods only makes sense with a separate install: dim it when install is shared.
@@ -2061,7 +2281,17 @@ async function addServerProfile(source){
   m.querySelector("#wsCancel").addEventListener("click",modalClose);
   okB.addEventListener("click",async()=>{
     const name=nameI.value.trim();
-    if(!name){nameI.focus();return;}
+    /* An empty name used to move the cursor and say nothing, so the button read as dead.
+       It says what it wants now, and marks the field it wants it in. */
+    if(!name){
+      if(nameNote) nameNote.textContent=T("realm.new.name.required");
+      nameI.classList.add("bad");
+      statusN.textContent="";
+      nameI.focus();
+      return;
+    }
+    if(nameNote) nameNote.textContent="";
+    nameI.classList.remove("bad");
     if((S.servers||[]).some(s=>String(s.name).toLowerCase()===name.toLowerCase())){
       statusN.textContent=T("realm.new.name.taken"); return;
     }
@@ -2073,6 +2303,16 @@ async function addServerProfile(source){
     if(world){
       const worldProblem=worldNameProblem(world,null);
       if(worldProblem){statusN.textContent=worldProblem;worldI.focus();return;}
+    }
+    /* The realm's own password, held to the game's own four rules here rather than at the
+       first launch. A realm forged on a password the server will refuse is a realm the host
+       finds out about a week later. */
+    const password=passI?passI.value:"";
+    const passProblem=realmPasswordProblem(password,name,world||name);
+    if(passProblem){
+      statusN.textContent=passProblem;
+      if(passI) passI.focus();
+      return;
     }
     const modifiers=collectWsMods();
     if(!Native.available){
@@ -2087,6 +2327,7 @@ async function addServerProfile(source){
     statusN.textContent=on(iso)?T("realm.new.status.provisioning"):T("realm.new.status.saving");
     const payload={
       name, world,
+      password, public:!!(pubT&&on(pubT)),
       worldSeed:m.querySelector("#wsWorldSeed").value.trim(),
       isolateInstall:on(iso), seedMods:on(iso)&&on(seed), isolateSaveFolder:on(saveIso),
       port:ports?ports.gamePort:null, rconPort:ports?ports.rconPort:null,
@@ -2095,7 +2336,7 @@ async function addServerProfile(source){
     /* The key rides ONLY when the switch is on. Sending it with a flag beside it would put
        the decision on the far side of the wire, where a handler that read the pair and not
        the flag would copy a world the host had just said not to copy. */
-    if(source&&copyT&&on(copyT)) payload.copyWorldFrom={profile:source.profile,world:source.world};
+    if(copyable&&copyT&&on(copyT)) payload.copyWorldFrom={profile:source.profile,world:source.world};
     const created=await rpc("servers.create",payload);
     if(created===FAIL||!created){
       okB.disabled=false; okB.textContent=T("realm.new.ok");
@@ -2504,6 +2745,25 @@ function renderHearthVersion(){
   }
   el.style.display="";
 }
+/* Where the uptime clock is anchored, chosen rather than assumed.
+   Uptime is the SESSION's, not this page's. The host answers with the moment its own
+   process came up, and that is the anchor whenever it is there. Without it the page took
+   the only road it had, which was "the first time I saw Running", and a realm switch
+   arrives here with no previous state at all: a world that had been up all evening read as
+   freshly started, and the condition bar and the SERVER card both counted from the switch.
+   The old road is kept for a host too old to send the field, where the first sighting is
+   still the best that is known, and an anchor already held is never thrown away for a
+   fresh one on a state that says nothing new.
+   @param {number|null} held the anchor the page is holding, or null
+   @param {string|undefined} prev the status the page saw last
+   @param {{runningSinceUtc?:string}} st the state that has just arrived
+   @param {number} now the page's own clock, the fallback of last resort */
+function uptimeAnchor(held,prev,st,now){
+  const since=st&&st.runningSinceUtc?Date.parse(st.runningSinceUtc):NaN;
+  if(!isNaN(since)) return since;
+  if(prev!=="Running") return now;
+  return held;
+}
 function applyState(st){
   if(!st) return;
   const prev=S.state?.status;
@@ -2515,9 +2775,9 @@ function applyState(st){
     // each server session opens under its own rule in the chronicle
     logDivider(T("saga.divider.session",{name:S.profileName||T("saga.divider.session.unnamed"),when:new Date().toLocaleString(LOC())}));
   }
-  if(st.status==="Running"&&prev!=="Running"){
-    S.upSince=Date.now();
-    if(S.saveSec==null) S.saveSec=S.saveInterval;
+  if(st.status==="Running"){
+    S.upSince=uptimeAnchor(S.upSince,prev,st,Date.now());
+    if(prev!=="Running"&&S.saveSec==null) S.saveSec=S.saveInterval;
   }
   if(st.status==="Stopped"){
     S.upSince=null; S.saveSec=null;
@@ -2616,11 +2876,59 @@ sailBtn.addEventListener("click",()=>{
   toast("ᛟ "+T("hearth.sail.copied.preview.toast"));
 });
 renderHearth();
+renderLastSave();
+
+/* How many mods this realm has on disk, asked of the host side and nothing else. It costs
+   a folder listing, it reaches no site, and it is what the Hearth card and the rail stand
+   on until a real scan replaces it. Quiet on every failure: a card that cannot be filled
+   keeps the dash it already has. */
+async function refreshModCount(){
+  if(!Native.available) return;
+  const r=await rpc("mods.count");
+  if(r===FAIL||!r) return;
+  S.modsOnDisk=(typeof r.count==="number")?r.count:null;
+  try{renderMods();}catch(_){}
+}
 
 /* The rolling average of the last dozen world writes, or a dash while nothing has been
    timed yet. A painter rather than five assignments, because the browser preview seeds
    the numbers while app.js is still being evaluated and the catalog is fetched: without
    somewhere for the second paint to run again, that one line read its own id. */
+/* Write times belong to the realm that measured them.
+   The card used to keep one set of numbers for the whole window. Switching realms emptied
+   the bars and the average, and left the time beside "last rune-check" exactly where it
+   was, so the header read a measurement off the realm the host had just left while the
+   body under it said nothing had been measured at all. Both halves are now read from one
+   place, that place is keyed by realm, and switching back to a realm brings its own
+   numbers back rather than a blank. */
+const SAVE_TIMES={};
+/* Puts the realm being left down under its own name. Called BEFORE the incoming realm's
+   name is written into S, or the outgoing realm's numbers would be filed under it. */
+function saveTimesStash(name){
+  if(!name) return;
+  SAVE_TIMES[name]={dur:(S.saveDur||[]).slice(),lastAt:S.lastSaveAt||null,
+                    lastMs:(S.lastSaveMs==null?null:S.lastSaveMs)};
+}
+/* And picks the realm being entered back up, or an empty set when it has never saved. */
+function saveTimesLoad(name){
+  const held=(name&&SAVE_TIMES[name])||null;
+  S.saveDur=held?held.dur.slice():[];
+  S.lastSaveAt=held?held.lastAt:null;
+  S.lastSaveMs=held?held.lastMs:null;
+}
+/* The one painter for the time beside "last rune-check". It reads the same two fields the
+   bars and the average read, so the header and the body can no longer disagree: a realm
+   with nothing measured says so in words rather than showing the last realm's clock. */
+function renderLastSave(){
+  const el=$("#lastSave"); if(!el) return;
+  /* fmtT, not a hand-built HH:MM. The line this replaced wrote the time through the
+     lookup's own formatter, and rebuilding it by hand put this one clock on the card into
+     a notation no other time in the window uses: a reader on a twelve hour locale got
+     "19:45" here and "7:45 PM" everywhere else. */
+  el.textContent=(S.lastSaveAt&&S.lastSaveMs!=null)
+    ?T("hearth.saves.last.value",{clock:fmtT(S.lastSaveAt),ms:S.lastSaveMs})
+    :T("hearth.saves.last.none");
+}
 function renderSaveAvg(){
   const el=$("#saveAvg"); if(!el) return;
   const d=S.saveDur||[];
@@ -2667,12 +2975,11 @@ Object.assign(ES_ACTIONS,{
   startServer:()=>lifecycleToggle(),
   clearModSearch:()=>setModFilter(""),
   clearRuneSearch:()=>setRuneFilter(""),
-  /* From a scan that could not read the site: the Upkeep card holds the two connection
-     switches and the test that says which of them would have helped. */
+  /* From a scan that could not read the site: the Connection card holds the two switches
+     and the test that says which of them would have helped. It was a block at the foot of
+     Upkeep until 1.2.6, and this is the one action that knew that. */
   openConnectionTest:()=>{
-    goPage("hearth");
-    const body=$("#upkeepBody"), head=$("#upkeepHead");
-    if(body&&head&&head.getAttribute("aria-expanded")!=="true") head.click();
+    openConnectionCard();
     const btn=$("#btnNetTest");
     if(btn){ btn.scrollIntoView({block:"center"}); btn.focus(); }
   },
@@ -2934,6 +3241,8 @@ function appUpdRefusal(reason){
     return T("appupd.refusal.cooldown");
   if(reason==="notAvailable")
     return T("appupd.refusal.not_available");
+  if(reason==="damaged")
+    return T("appupd.refusal.damaged");
   if(reason==="offline")
     return T("appupd.refusal.offline");
   return T("appupd.refusal.other");
@@ -3220,7 +3529,7 @@ function renderRowStatus(st){
   /* Two entries rather than one with a ternary inside it: a run that failed with nothing
      to say would otherwise read "Failed:" with a colon hanging off the end of it. */
   if(st.phase==="failed")
-    return `<span class="pill" style="color:var(--blood);border-color:var(--blood)" title="${esc(st.error||"")}">${esc(st.error?T("mods.row.failed",{detail:st.error}):T("mods.row.failed.nodetail"))}</span>`;
+    return `<span class="pill" style="color:var(--blood-text);border-color:var(--blood)" title="${esc(st.error||"")}">${esc(st.error?T("mods.row.failed",{detail:st.error}):T("mods.row.failed.nodetail"))}</span>`;
   return "";
 }
 /* The bulk-update bar's own record: how many mods, how many finished, which one is running.
@@ -3312,7 +3621,13 @@ function renderModSourceLabels(){
   const add=$("#addModBtn");
   if(add) add.textContent=both?T("mods.add.label.link"):T("mods.add.label");
   const scan=$("#scanBtn");
-  if(scan) scan.textContent=both?T("mods.scan.label.sites"):T("mods.scan.label");
+  /* A scan in flight owns the button's words as well as its disabled state. The two used
+     to disagree: renderMods greyed the button out and this line wrote the resting label
+     back over it, so a host who pressed Scan saw a button that still read "Scan
+     Thunderstore" and did nothing, which is what a broken button looks like. */
+  if(scan) scan.textContent=S.modsScanning
+    ?T("mods.scan.label.running")
+    :(both?T("mods.scan.label.sites"):T("mods.scan.label"));
 }
 /* Both halves of the switch in one place: the page's own mirror of the setting, and the
    Mods hall drawn again in the same breath so its labels never sit a render behind it.
@@ -3456,10 +3771,16 @@ function renderMods(){
      the words and innerHTML: the button is markup, and a translated sentence is text. */
   $("#updAllBtn").innerHTML=esc(T("mods.update_all.label",{count:scanned?upd.length:"-"}));
   $("#updAllBtn").disabled=busy||!upd.length;
-  $("#modCount").textContent=scanned?mods.length:"-";
-  /* The rail's own count. A hall that has not been scanned has no number to show, and
-     "-" is not a number, so the plural falls to the category every language has. */
-  $("#sbMods").textContent=T("side.mods.count",{count:scanned?mods.length:"-"});
+  /* What the Hearth card and the rail show. A scan gives the real list; without one the
+     count read off the plugin folder stands in, because the number of mods installed is a
+     fact about the disk and never needed a site to be asked. The card used to read "-"
+     on every realm the host had not opened the Mods hall on, while the Mods hall itself
+     counted the same mods perfectly well one click later. */
+  const count=scanned?mods.length:(S.modsOnDisk==null?"-":S.modsOnDisk);
+  $("#modCount").textContent=count;
+  /* The rail's own count. A count nothing has read has no number to show, and "-" is not
+     a number, so the plural falls to the category every language has. */
+  $("#sbMods").textContent=T("side.mods.count",{count});
   renderModSortMarks();
   if(!scanned){
     /* Three states here, not two. A scan that FAILED used to leave the hall showing the
@@ -3502,6 +3823,16 @@ function renderMods(){
   /* The one use of the search: the rows that get drawn. Everything above and below this
      line counts the whole list. */
   const shown=modsForBody(mods);
+  /* The possibly-outdated column, only when a row has something to put in it. It used to
+     stand over twenty two blank cells whenever Valheim's own update date could not be
+     read, which is a header asking a question nothing answers.
+     Counted over the WHOLE list rather than over the rows a search has narrowed it to. A
+     column that appears and disappears as the host types is a table that reflows under the
+     cursor, and it said the opposite of the truth both ways round: type a name that matches
+     no flagged mod and the column vanished although flagged mods are installed. */
+  const table=$("#modsTable");
+  if(table) table.classList.toggle("po-empty",
+    !mods.some(m=>m.possiblyOutdated&&!m.IsPatcher));
   $("#modTable").innerHTML=shown.map(m=>{
     const has=!!m.UpdateAvailable;
     /* A copy the host took from Hexium is HELD, not CURRENT: BakaLoader leaves it where
@@ -3524,7 +3855,7 @@ function renderMods(){
       ?`<td class="mod-po" style="color:var(--amber)" title="${esc(T("mods.col.possibly_outdated.tip"))}">${esc(T("mods.possibly_outdated.yes"))}</td>`
       :`<td class="mod-po"></td>`;
     const patcherTag=m.IsPatcher
-      ?` <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(T("mods.tag.patcher"))}</span>`:"";
+      ?` <span class="mono" style="font-size:10px;color:var(--bone-faint-text)">${esc(T("mods.tag.patcher"))}</span>`:"";
     /* A copy the host took from the second site says so, and keeps saying so whatever
        happens to the switch afterwards: it is why this row sits out Update all. */
     const srcChip=(m.installedSource==="hexium")
@@ -3533,7 +3864,7 @@ function renderMods(){
        is installed and what Thunderstore has, or this is a Hexium copy Thunderstore has
        moved past. Both are offers, and both ask before they do anything. */
     const mark=modLatestMark(m);
-    return `<tr data-key="${esc(m.FullName)}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint)">${esc(m.Author)}</span>${patcherTag}${srcChip}</td>`+
+    return `<tr data-key="${esc(m.FullName)}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint-text)">${esc(m.Author)}</span>${patcherTag}${srcChip}</td>`+
       `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
       `<td class="mono"${has?' style="color:var(--amber)"':""}${blind?` title="${esc(T("mods.status.unchecked.tip"))}"`:(m.notListed?` title="${esc(T("mods.status.not_listed.tip"))}"`:"")}>${esc(m.LatestVersion||"-")}${mark}</td>`+
       `<td>${statusCell}</td>`+
@@ -3951,7 +4282,13 @@ function renderBepInExRow(){
      the keyboard, so this note and the condition bar are the only places it is ever said.
      The install was left exactly as it was in every one of these cases, which is what the
      title of the condition carries. */
-  const leftAlone=bepInExLeftAloneText(b.lastUnattended);
+  /* A note the host has already read and closed is not repeated here either. The ROW
+     itself keeps saying what it is (the Different loader pill and its own sentence), which
+     is the fact that never goes away; this line is the window's report of one particular
+     restart, and once read it has been read. */
+  const leftAlone=bepInExNoticeSeen(b.lastUnattended)
+    ?null
+    :bepInExLeftAloneText(b.lastUnattended);
   if(leftAlone) notes.push(leftAlone);
   /* A pack unpacked under plugins is a wrong install rather than a state of the right
      one, so it gets its own line and its own offer. */
@@ -4427,13 +4764,47 @@ function bepInExAskOnce(next){
 const SCAN_CEILING_MS=60000;
 /* @param {{force?:boolean}} [opts] force is a host pressing Scan, Try again or the empty
    panel's button. It is never true for a scan the page started by itself. */
+/* Whether a scan reply belongs to the realm on screen. Two questions, and either one
+   answering no is enough: the realm the page asked for, and the realm the host side says
+   it read (the reply's own profile field, which an older bridge does not send). */
+function scanReplyIsOurs(askedFor,reply){
+  if(askedFor!==S.profileName) return false;
+  const said=reply&&!Array.isArray(reply)&&typeof reply==="object"?reply.profile:null;
+  if(said&&S.profileName&&String(said)!==String(S.profileName)) return false;
+  return true;
+}
 async function scanMods(opts){
   const force=!!(opts&&opts.force);
-  if(!Native.available||S.modsScanning||S.modsUpdating) return;
+  /* A press that arrives while a scan is already out gets an answer. The button is
+     disabled for the length of a scan, but the empty panel's action and the Try again
+     button reach here too, and a road that returned in silence is why the hall looked
+     dead. Only a HOST press is answered: the scans the page starts by itself pass
+     force:false and stay quiet. */
+  if(!Native.available) return;
+  if(S.modsScanning||S.modsUpdating){
+    if(force) toast("ᚦ "+T("mods.scan.reason.already_running"));
+    return;
+  }
+  /* Which realm this scan is for. The two sites take as long as they take, and a host who
+     switches realm mid-scan used to have the PREVIOUS realm's installed mods land on the
+     new realm's hall, with Update, Remove and Configure on every row now pointed at the new
+     realm's install. The reply carries the realm the host side read as well; both are
+     checked, so an older bridge with no such field is still handled here. */
+  const forRealm=S.profileName;
   S.modsScanning=true; S.modsScanError=null; S.modsScanReason=null;
   S.modsIndexBlind=false; renderMods();
   toast("ᛋ "+T("mods.scan.begun.toast"));
-  logLine("info","[Thunderstore] reading the community listing index…");
+  /* What this scan is really going to do. Only a host press asks the sites again; a scan
+     the page starts for itself reuses the listing already held, and the log used to claim
+     the network read either way. A host reading the Saga after a realm switch saw
+     "reading the community listing index" against an application log with no request in it
+     for a quarter of an hour.
+     Two literals rather than two lookups, because this is the Saga: the line has to mean the
+     same thing to whoever the host sends it to, and the whole point of the pair is that the
+     log says which of the two roads was taken. */
+  logLine("info","[Thunderstore] "+(force
+    ?"reading the community listing index"
+    :"reading the mod folder, and the community listing already held"));
   /* The ceiling. Whichever settles first wins, and a scan that never comes back leaves the
      page saying the site could not be read rather than spinning for ever. */
   const TIMED_OUT={timedOut:true};
@@ -4441,6 +4812,13 @@ async function scanMods(opts){
     rpc("mods.scan",{force:force}),
     new Promise(done=>setTimeout(()=>done(TIMED_OUT),SCAN_CEILING_MS)),
   ]);
+  /* The realm moved on while this was out. Nothing of this reply belongs here: not the
+     rows, not the failure, not the busy flag, which the switch has already put down and the
+     new realm's own scan may well be holding. */
+  if(!scanReplyIsOurs(forRealm,r)){
+    logLine("info","[Thunderstore] a scan answered for a server that is no longer open, so it was dropped");
+    return;
+  }
   S.modsScanning=false;
   if(r===TIMED_OUT){
     S.modsScanError="timeout";
@@ -4726,9 +5104,15 @@ $("#modTable").addEventListener("contextmenu",e=>{
 async function removeModFlow(mod){
   /* Config files and the mods that depend on this one, both read locally. Dependents come
      back ordered so removing them ahead of the mod never orphans one midway. */
-  const [files,deps]=await Promise.all([
+  /* And the one question the host side answers about the removal itself: which realm, if
+     any, is holding THIS install's plugins open. The page used to work that out from the
+     realm on screen, and a realm is not an install: with isolated installs the default, a
+     stopped realm's plugins are a folder the running one never opened. The two gates
+     disagreed in both directions, so there is one gate now and the page reads it. */
+  const [files,deps,guard]=await Promise.all([
     rpc("mods.findConfigs",{fullName:mod.FullName}),
     rpc("mods.dependents",{fullName:mod.FullName}),
+    rpc("mods.removeGuard",{fullName:mod.FullName}),
   ]);
   if(files===FAIL) return;
   const cfgs=Array.isArray(files)?files:[];
@@ -4738,19 +5122,36 @@ async function removeModFlow(mod){
      `<label class="mchk"><input type="checkbox" id="mDepAll"> ${esc(T("mods.remove.dependents.also",{count:dependents.length}))}</label>`+
      `<div class="mono-list">${dependents.map(d=>esc(d.displayName||d.fullName)).join("<br>")}</div>`
     :"";
+  /* Anything but Stopped, on the install these plugins live in: a server that is starting
+     has already loaded them, and one that is stopping has not let go of them yet. The name
+     comes back so the note can say which realm to stop rather than leaving the host to
+     guess. When the host side could not be asked at all, the realm on screen is the only
+     answer the page has, and it errs towards the refusal. */
+  const blockedBy=(guard&&guard!==FAIL)
+    ?(guard.blockedBy||null)
+    :((S.state&&S.state.status&&S.state.status!=="Stopped")?(S.profileName||""):null);
+  const running=!!blockedBy;
   const body=()=>
     `<div class="mbody-note">${esc(T("mods.remove.backup.note"))}</div>`+
     (cfgs.length
       ?`<label class="mchk"><input type="checkbox" id="mIncCfg" checked> ${esc(T("mods.remove.configs.also",{count:cfgs.length}))}</label><div class="mono-list">${cfgs.map(f=>esc(String(f).split(/[\\/]/).pop())).join("<br>")}</div>`
       :`<div class="mbody-note">${esc(T("mods.remove.configs.none"))}</div>`)+
     depBlock()+
-    ((S.state?.status==="Running")
-      ?`<div class="mwarn">⚠ ${esc(T("mods.remove.running.warn"))}</div>`:"");
+    (running
+      ?`<div class="mwarn">⚠ ${esc(blockedBy
+          ?T("mods.remove.running.warn.named",{name:blockedBy})
+          :T("mods.remove.running.warn"))}</div>`:"");
+  /* A server that is up ON THIS INSTALL is a refusal, not a warning: Windows holds the
+     loaded plugin open and the folder comes half away. The confirm still opens, because the
+     host asked a question and deserves the answer, but the button that would do it is off
+     and the note above names the realm to stop. A realm that is up on a different install
+     is not this removal's business and no longer blocks it. */
   confirmModal(()=>T("mods.remove.confirm.title",{name:mod.FullName}),body,()=>T("common.button.remove"),m=>{
+    if(running) return;
     const includeConfig=!!m.querySelector("#mIncCfg")?.checked;
     const alsoRemove=!!m.querySelector("#mDepAll")?.checked;
     doRemoveMod(mod,includeConfig,alsoRemove?dependents:[]);
-  });
+  },{disableOk:running});
 }
 async function doRemoveMod(mod,includeConfig,dependents){
   dependents=dependents||[];
@@ -5303,6 +5704,43 @@ function cleanseToast(read){
   }
 }
 
+/* ---------- THE ARMED ONE-SHOT ----------
+   The same sweep as the button above, waiting for a moment nobody is watching. It is a
+   setting on THIS realm's profile, which is why it is drawn from S.prefs and redrawn on
+   every realm switch: a switch left showing the previous realm's answer would be a host
+   arming a sweep on a realm they are not looking at. */
+function renderCleanseArmed(){
+  const el=$("#tCleanseArmed"); if(!el) return;
+  setT("tCleanseArmed",!!(S.prefs&&S.prefs.CleanseWhenEmpty));
+}
+/* The press. The generic [data-t] handler has already flipped the class by the time this
+   runs, so the state on screen is what the host asked for; the host side is asked to make
+   it true, and a refusal puts the switch back rather than leaving the page saying a sweep
+   is armed when nothing is. */
+async function onCleanseArmedClick(){
+  const want=swOn("tCleanseArmed");
+  if(!Native.available){
+    /* A browser has no realm to arm. The switch still moves, because a walk has to be able
+       to photograph both states, and the toast says why nothing was saved. */
+    toast("ᛉ "+T("vikings.cleanse.preview.toast"));
+    return;
+  }
+  const r=await rpc("players.cleanseWhenEmpty",{on:want});
+  if(r===FAIL||!r){renderCleanseArmed();return;}
+  if(S.prefs) S.prefs.CleanseWhenEmpty=!!r.on;
+  setT("tCleanseArmed",!!r.on);
+  toast(r.on
+    ?"ᛉ "+T("vikings.cleanse.armed.on.toast")
+    :"ᚦ "+T("vikings.cleanse.armed.off.toast"));
+  /* The toast above is the window talking, so it is a catalog entry. This is the Saga, and
+     the Saga stays English and verbatim by decision: a log line is a record of what this
+     machine did, and a host who pastes it into an issue pastes the same words whatever
+     language their window is in. */
+  logLine("info","[BakaLoader] "+(r.on
+    ?"the cheat marks will be cleared the next time this server has been empty for a minute."
+    :"the armed cheat-mark sweep was put down."));
+}
+
 /* The question, which is four sentences because there are four things a host has to know
    before they press it: what it clears, what it cannot reach and what to do about that,
    that it needs an empty server, and the one character nobody can clear. */
@@ -5461,7 +5899,7 @@ function killAllModal(){
           ?`<div class="field" style="margin:2px 0 4px 25px"><label>${esc(T("pal.kill.field.creature"))}</label>`+
              `<input type="text" id="kaName" placeholder="${esc(T("pal.kill.field.creature.placeholder"))}" spellcheck="false" autocomplete="off" value="${esc(KILL_SCOPE.name)}"></div>`
           :"")+
-        (problemId?`<div class="subval" id="kaNote" style="color:var(--blood);margin-top:6px">${esc(T(problemId))}</div>`:"")+
+        (problemId?`<div class="subval" id="kaNote" style="color:var(--blood-text);margin-top:6px">${esc(T(problemId))}</div>`:"")+
       `</div>`+
       `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="kaCancel">${esc(T("common.button.cancel"))}</button>`+
         `<button class="btn btn-blood btn-sm" id="kaOk">${esc(T("pal.kill.confirm.button"))}</button></div>`,
@@ -5536,6 +5974,14 @@ function invokePal(){
   if(sel.dataset.cmd==="world_backups"){barrowModal();return;}      // works in preview too
   if(sel.dataset.cmd==="server_analytics"){goPage("skald");return;} // works in preview too
   if(sel.dataset.cmd==="log_settings"){vellumModal();return;}      // works in preview too
+  /* The three controls that moved onto the Settings hall's App tab in 1.2.6. The regroup's
+     promise was that the palette would still land on them; openAppTab was written for it and
+     then never called from anywhere, so the promise was not kept. Each of these lands on the
+     tab and scrolls its own control into view. They work in the preview too, because nothing
+     about opening a tab needs the host side. */
+  if(sel.dataset.cmd==="text_size"){openAppTab("selTextSize");return;}
+  if(sel.dataset.cmd==="interface_language"){openAppTab("selAppLang");return;}
+  if(sel.dataset.cmd==="start_with_windows"){openAppTab("tStartWin");return;}
   if(Native.available){
     const cmd=sel.dataset.cmd;
     if(sel.id==="palConsole"){
@@ -5714,21 +6160,57 @@ function renderTermStream(){
 }
 /* The console starts empty on a cold launch, so say so rather than showing a blank
    black panel that looks broken. */
+/* Two different emptinesses, and the console used to draw neither of them for the second.
+   A pill or a search that matched nothing hid every line and left about thirteen hundred
+   pixels of black with no text in it: the old rule asked whether any line EXISTS, and they
+   all did, they were just hidden. Now it asks what is VISIBLE, and a narrowed console says
+   so and hands back the button that widens it again. */
 function renderTermEmpty(){
   if(!term) return;
-  const has=term.querySelector(".ln");
+  const lines=term.querySelectorAll(".ln");
+  let visible=false;
+  lines.forEach(l=>{ if(l.style.display!=="none") visible=true; });
   const es=term.querySelector(".empty-state");
-  if(has&&es){es.remove();return;}
-  if(has||es) return;
-  term.insertAdjacentHTML("beforeend",emptyState({mark:"ᛋ",title:T("saga.empty.title"),
-    reason:T("saga.empty.reason"),
-    action:{name:"startServer",label:T("saga.empty.action")}}));
+  if(visible){ if(es) es.remove(); return; }
+
+  const kind=(termQ||filter!=="all")?"narrowed":"cold";
+  if(es&&es.dataset.emptyKind===kind) return;
+  if(es) es.remove();
+
+  term.insertAdjacentHTML("beforeend",kind==="narrowed"
+    ?emptyState({mark:"ᛉ",title:T("saga.empty.narrowed.title"),
+      reason:T("saga.empty.narrowed.reason"),
+      action:{name:"clearSagaNarrowing",label:T("saga.empty.narrowed.action")}})
+    :emptyState({mark:"ᛋ",title:T("saga.empty.title"),
+      reason:T("saga.empty.reason"),
+      action:{name:"startServer",label:T("saga.empty.action")}}));
+  const drawn=term.querySelector(".empty-state");
+  if(drawn) drawn.dataset.emptyKind=kind;
   esWire(term);
 }
+/* The one way back from a console that shows nothing: empty the search box, put the pill
+   back on All, and paint again. Named so the empty state can offer it as a button. */
+function clearSagaNarrowing(){
+  termQ="";
+  const box=$("#termSearch");
+  if(box) box.value="";
+  filter="all";
+  $$(".fpill[data-f]").forEach(x=>x.classList.toggle("active",x.dataset.f==="all"));
+  applyTermVis();
+}
+Object.assign(ES_ACTIONS,{clearSagaNarrowing});
+/* The empty state is the last child, so a new line goes in FRONT of it and the note is
+   left for renderTermEmpty to keep or drop. It used to be torn out here and never put
+   back, and nothing on the append road ever repainted it: a running server writes lines
+   the whole time, so the "no lines match" note lived until the next line landed and the
+   panel went black again with every line hidden. Asking again after each line is what
+   makes the note hold; renderTermEmpty leaves an already-correct note alone, so this is
+   a read per line and not a redraw per line. */
 function termAppend(d){
-  const es=term.querySelector(".empty-state"); if(es) es.remove();
-  term.appendChild(d);
+  const es=term.querySelector(".empty-state");
+  if(es) term.insertBefore(d,es); else term.appendChild(d);
   while(term.children.length>TERM_CAP) term.firstChild.remove();
+  renderTermEmpty();
   if(termPin) term.scrollTop=term.scrollHeight;
   else if(d.style.display!=="none"&&d.dataset.k!=="div"){termUnseen++;renderTermStream();}
 }
@@ -5921,28 +6403,57 @@ $("#capsInstallBtn")?.addEventListener("click",async()=>{
   renderCaps();
 });
 
-/* ---------- TOGGLES ---------- */
-$$("[data-t]").forEach(t=>t.addEventListener("click",()=>{t.classList.toggle("on");syncAdvGates();}));
+/* ---------- TOGGLES ----------
+   THE GENERIC HANDLER FOR EVERY SWITCH, AND EVERYTHING ELSE COMES AFTER IT. Two click
+   listeners on one element run in the order they were ADDED, so a listener registered above
+   this one reads the class this one is about to flip: the state the switch is LEAVING. 1.2.6
+   shipped exactly that on the armed sweep's switch and arming one from the window was
+   impossible. scripts/copy-gate/scan_listener_order.py holds the rule and fails on a click or
+   keydown listener added to a data-t element anywhere above this line. */
+/* What a switch says about itself to something that is not a pair of eyes. A span is not a
+   control to a screen reader and it is not in the tab order either: every switch in this
+   window answered a mouse and nothing else, which is a whole class of host who could not
+   reach a single one of them. role and tabindex are set here rather than spelled on thirty
+   spans in the markup, so a switch added later cannot be the one that was forgotten. */
+function markSwitch(t){
+  if(!t||!t.setAttribute) return;
+  t.setAttribute("aria-checked",t.classList.contains("on")?"true":"false");
+}
+$$("[data-t]").forEach(t=>{
+  if(!t.getAttribute("role")) t.setAttribute("role","switch");
+  if(t.getAttribute("tabindex")==null) t.setAttribute("tabindex","0");
+  markSwitch(t);
+  t.addEventListener("click",()=>{t.classList.toggle("on");markSwitch(t);syncAdvGates();});
+  /* ONE keydown for every switch, beside the one click. Enter and Space go down the SAME
+     road a press does rather than flipping the class themselves: every listener added after
+     this one reads the class this handler set, so a keyboard road that flipped it by hand
+     would be a second order of events and the armed sweep's own bug all over again.
+     Space is stopped from scrolling the hall while it is at it. */
+  t.addEventListener("keydown",e=>{
+    if(e.key!=="Enter"&&e.key!==" "&&e.key!=="Spacebar") return;
+    e.preventDefault();
+    t.click();
+  });
+});
+/* The armed sweep's switch, wired BELOW the handler above and not beside the button it
+   stands next to. It is a data-t toggle, so the class that says which way it went is flipped
+   by that handler, and onCleanseArmedClick reads the class: two click listeners on one
+   element run in the order they were ADDED, so a registration above it would read the state
+   the switch is LEAVING and post the opposite of what the host asked for. It did, in the
+   first cut of 1.2.6, and arming a sweep from the window was impossible.
+   The catalog's own toast wording lives in onCleanseArmedClick. */
+$("#tCleanseArmed")?.addEventListener("click",()=>{onCleanseArmedClick();});
 
 /* ---------- UPKEEP (app self-update + start with Windows) ---------- */
 wireCollapsible("upkeepHead",$("#upkeepBody"),$("#upkeepCard"));
+/* The Connection card, on the same pattern and for the same reason: three switches and a
+   test are worth a fold, and a Hearth that grew six rows taller because they moved out of
+   Upkeep would have been the regroup making things worse. */
+wireCollapsible("connHead",$("#connBody"),$("#connCard"));
 
-/* The card opens collapsed, so "the card opens" is this header and not only the walk into
-   the hall: a host who never left the Hearth gets the notes re-read too. The header's own
-   toggle is wired on the line above and both listeners run in the order they were added, so
-   by the time this one fires the card already carries the class that says which way it went.
-   Keyboard as well as mouse, because the header answers Enter and Space by calling its
-   toggle directly rather than by producing a click. */
-if($("#upkeepHead")){
-  const upkeepOpened=()=>{
-    const card=$("#upkeepCard");
-    if(card&&card.classList.contains("open")) refreshStartWinNote();
-  };
-  $("#upkeepHead").addEventListener("click",upkeepOpened);
-  $("#upkeepHead").addEventListener("keydown",e=>{
-    if(e.key==="Enter"||e.key===" "||e.key==="Spacebar") upkeepOpened();
-  });
-}
+/* The App tab's own re-reads are in worldTab, which is the one place that knows the tab
+   changed. A listener here would be added before worldTab is wired and would read the tab
+   the hall is leaving. */
 
 /* Auto-update has nothing to work from while update checking is off: C# reads the pair
    the same way (AppUpdateService.MaySelfUpdate), so the switch is dimmed and the click is
@@ -6160,11 +6671,16 @@ async function initUpkeep(){
        so nothing on disk has to be migrated. */
     setT("tPlainTerms",!up.PlainTerminology);
     PLAIN=!!up.PlainTerminology;
+    /* Text size. The zoom itself is the host side's: it is on the WebView before the first
+       frame, so nothing here has to apply it, and the map's own labels follow it through
+       devicePixelRatio. All the page keeps is the picker's own value. */
+    renderTextSize(up.TextSize);
     /* The player-message choice rides in on this same document. It is read here rather
        than asked for on its own, and the select is drawn from it before applyTerms draws
        everything else, so the card never shows a choice the host did not make. */
     LANG.playerMessages=String(up.PlayerMessageLanguage||"same");
     renderPlayerMsgLang();
+    renderAppLang();
     applyTerms();
     syncUpkeepGates();
     if(up.AppVersion) $("#blVersion").textContent="v"+up.AppVersion;
@@ -6244,6 +6760,52 @@ async function initUpkeep(){
   $("#tStartMin").addEventListener("click",save);
   $("#tShareStats").addEventListener("click",save);
   $("#tPlainTerms").addEventListener("click",()=>{PLAIN=!swOn("tPlainTerms");save();applyTerms();});
+  /* Text size. Its own save rather than the card's, because the host side moves the window's
+     zoom and its minimum only for a save that CARRIED the key, and the card posts every
+     switch on it together: riding along would move the window on every unrelated click. */
+  $("#selTextSize")?.addEventListener("change",()=>{onTextSizeChosen();});
+}
+
+/* The three sizes and the word for each. A table rather than a composed id: an id built
+   out of a value is an id no gate can hold, and the catalog check says so out loud. */
+const TEXT_SIZE_NAMES={
+  normal:"app.textsize.normal",
+  large:"app.textsize.large",
+  xlarge:"app.textsize.xlarge",
+};
+/** The word for one stored size, or the word for Normal when it is not one of the three. */
+function textSizeName(size){
+  const id=TEXT_SIZE_NAMES[String(size||"").trim().toLowerCase()]||TEXT_SIZE_NAMES.normal;
+  return T(id);
+}
+
+/** Draws the picker at the stored size. */
+function renderTextSize(size){
+  const el=$("#selTextSize"); if(!el) return;
+  const want=["normal","large","xlarge"].indexOf(String(size||"normal").trim().toLowerCase())>=0
+    ?String(size).trim().toLowerCase():"normal";
+  el.value=want;
+}
+
+/** The choice, saved. The window follows it because the host side zooms the page. */
+async function onTextSizeChosen(){
+  const el=$("#selTextSize"); if(!el) return;
+  const asked=el.value||"normal";
+  if(!Native.available){
+    /* A browser has no WebView to zoom and no host to save to, so nothing follows the
+       choice. The picker is left where the finger put it, because a walk has to be able to
+       photograph all three, and the toast says nothing was saved. */
+    toast("ᛖ "+T("app.textsize.preview.toast"));
+    return;
+  }
+  const r=await rpc("userprefs.save",{prefs:{TextSize:asked}});
+  if(r===FAIL||!r){renderTextSize("normal");return;}
+  renderTextSize(r.TextSize);
+  /* Nothing to redraw here. The zoom moves every rule in the stylesheet and it moves the
+     Atlas wrap's own CSS size with them, so the ResizeObserver on that wrap is what resizes
+     the chart's backing store and repaints it at the new devicePixelRatio. */
+  toast("ᛖ "+T("app.textsize.saved.toast",{size:textSizeName(r.TextSize)}));
+  logLine("info","[BakaLoader] the interface text size is now "+r.TextSize+".");
 }
 
 /* ---------- THE CONNECTION TEST ----------
@@ -6583,7 +7145,7 @@ function promptModal(title,placeholder,onOk,check,note){
       `<div class="mtitle">${esc(worded(title))}</div>`+
       `<input type="text" id="mIn" placeholder="${esc(worded(placeholder))}" spellcheck="false" autocomplete="off">`+
       (note?`<div class="subval" id="mStanding" style="padding:6px 2px 0">${esc(worded(note))}</div>`:"")+
-      (problem?`<div class="subval" id="mInNote" style="color:var(--blood);padding:4px 2px 0">${esc(problem)}</div>`:"")+
+      (problem?`<div class="subval" id="mInNote" style="color:var(--blood-text);padding:4px 2px 0">${esc(problem)}</div>`:"")+
       `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(T("common.button.confirm"))}</button></div>`,
       again);
     const inp=m.querySelector("#mIn");
@@ -6606,14 +7168,19 @@ function promptModal(title,placeholder,onOk,check,note){
   };
   return again();
 }
-function confirmModal(title,bodyHtml,okLabel,onOk){
+/* @param {{disableOk?:boolean}} [opts] disableOk opens the dialog with its own button off,
+   for a question whose answer is already no: the host still reads why, and the control that
+   would do the thing is not there to be pressed. */
+function confirmModal(title,bodyHtml,okLabel,onOk,opts){
   const again=()=>{
     const m=modalOpen(
       `<div class="mtitle">${esc(worded(title))}</div>`+
       `<div class="mbody">${worded(bodyHtml)}</div>`+
       `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(worded(okLabel))}</button></div>`,
       again);
-    m.querySelector("#mOk").addEventListener("click",()=>{try{onOk(m);}finally{modalClose();}});
+    const ok=m.querySelector("#mOk");
+    if(opts&&opts.disableOk) ok.disabled=true;
+    ok.addEventListener("click",()=>{try{onOk(m);}finally{modalClose();}});
     m.querySelector("#mCancel").addEventListener("click",modalClose);
     return m;
   };
@@ -6719,12 +7286,101 @@ async function launchGuardModal(g,onPick){
 }
 /* Runs the guard for a start-shaped action. Calls go(answer) once the host has decided;
    answer is null for a normal start, or the token the native side stages for this launch. */
+/* Worlds whose files have already been read this session, so the note in front of a start
+   is shown once and a host who has acknowledged it is not asked again every time they
+   press Kindle. Emptied by nothing: a session is the unit the spec asks for. */
+const WORLD_INTEGRITY_SEEN={};
+/* And what the files said the one time they were read, per world, so the Worlds card can
+   be painted without asking the native side again every time the hall is opened or a realm
+   is switched. A world is read once per session; the answer is the same either way. */
+const WORLD_INTEGRITY_READ={};
+/* What this world's own index says about its own files, and the note when they disagree.
+   Never a refusal: the host reads it, presses the button, and the start goes ahead. */
+async function worldIntegrityCheck(world){
+  if(!Native.available||!world) return null;
+  const r=await rpc("worlds.integrity",{world});
+  if(r===FAIL||!r||!Array.isArray(r.shortfalls)||!r.shortfalls.length) return null;
+  return r;
+}
+/* The one read per world per session, shared by the note in front of a start and the note
+   on the Worlds card so the two can never say different things about the same world. */
+async function worldIntegrityFor(world){
+  if(!world) return null;
+  if(Object.prototype.hasOwnProperty.call(WORLD_INTEGRITY_READ,world)) return WORLD_INTEGRITY_READ[world];
+  const r=await worldIntegrityCheck(world);
+  WORLD_INTEGRITY_READ[world]=r;
+  return r;
+}
+/* Which world the Worlds card is about: the one in the field if the hall is up, the realm's
+   own otherwise. A name typed into the New world box is a world with no files yet, so the
+   read comes back with nothing and the card stays quiet. */
+function worldIntegritySubject(){
+  try{ const w=worldFieldValue(); if(w) return w; }catch(_){}
+  return (S.prefs&&S.prefs.WorldName)||"";
+}
+/* Paints the Worlds card for whatever world it is pointed at now, CLEARING it first.
+   Without the clear, a realm switch left the previous realm's world named in a warning
+   about data loss sitting on the new realm's card, which is the bleed the rest of the
+   switch was written to end. Without the call at all the card was only ever painted behind
+   a Start, so a host who never pressed Kindle never saw the note the card exists for. */
+function refreshWorldIntegrity(){
+  renderWorldIntegrity(null);
+  const world=worldIntegritySubject();
+  if(!Native.available||!world) return;
+  worldIntegrityFor(world).then(r=>{
+    /* The host can switch realm or pick another world while the files are being read, so
+       only paint when the answer is still about the world the card is showing. */
+    if(worldIntegritySubject()!==world) return;
+    renderWorldIntegrity(r);
+  }).catch(()=>{});
+}
+/* The same answer drawn into the Worlds card, so a host who never presses Start still
+   finds out. Painted from whatever the last check read; hidden when there is nothing. */
+function renderWorldIntegrity(r){
+  const el=$("#fWorldIntegrity"); if(!el) return;
+  if(!r||!Array.isArray(r.shortfalls)||!r.shortfalls.length){
+    el.style.display="none"; el.innerHTML=""; return;
+  }
+  el.innerHTML=`<div>⚠ ${esc(T("world.integrity.note",
+    {world:r.world||"",files:r.shortfalls.length,missing:r.missingTotal||0}))}</div>`+
+    `<div class="mono-list">${r.shortfalls.map(sf=>esc(T("world.integrity.row",
+      {file:sf.file,index:sf.index,found:sf.found}))).join("<br>")}</div>`+
+    `<div>${esc(T("world.integrity.backups"))}</div>`;
+  el.style.display="";
+}
+/* Asked once per world per session, in front of every start. The note is acknowledged and
+   the start carries on; nothing here can stop one. */
+function withWorldIntegrityNote(next){
+  const world=(S.prefs&&S.prefs.WorldName)||"";
+  if(!Native.available||!world||WORLD_INTEGRITY_SEEN[world]){next();return;}
+  WORLD_INTEGRITY_SEEN[world]=true;
+  worldIntegrityFor(world).then(r=>{
+    if(worldIntegritySubject()===world) renderWorldIntegrity(r);
+    if(!r){next();return;}
+    /* The card and the dialog word this from the catalog, because both of them are the
+       window speaking. The line below is the Saga, which stays English and verbatim, and
+       it carries its counts with "(s)" the way the other counted lines here do rather than
+       through a plural rule. */
+    logLine("warn","[BakaLoader] "+(r.world||world)+" keeps an index naming every chunk file "
+      +"and how many objects it holds. "+r.shortfalls.length+" file(s) short of that count, "
+      +"and "+(r.missingTotal||0)+" object(s) not on disk");
+    confirmModal(
+      ()=>T("world.integrity.title",{world:r.world||world}),
+      ()=>`<div class="mbody-note">${esc(T("world.integrity.note",
+            {world:r.world||world,files:r.shortfalls.length,missing:r.missingTotal||0}))}</div>`+
+          `<div class="mono-list">${r.shortfalls.map(sf=>esc(T("world.integrity.row",
+            {file:sf.file,index:sf.index,found:sf.found}))).join("<br>")}</div>`+
+          `<div class="mbody-note">${esc(T("world.integrity.backups"))}</div>`,
+      ()=>T("world.integrity.ok"),
+      ()=>next());
+  }).catch(()=>next());
+}
 function withLaunchGuard(go){
   if(!Native.available){go(null);return;}
   /* One question in front of the guard, asked once ever. A start is what loads
      BepInEx, so a start is the first moment the answer matters, and both starts in
      the app come through here rather than each growing a copy of the question. */
-  bepInExAskOnce(()=>launchCheckThenGo(go));
+  withWorldIntegrityNote(()=>bepInExAskOnce(()=>launchCheckThenGo(go)));
 }
 /* The guard itself, unchanged: ask the host side what a start would mean on this
    build, and either start or put the question up. */
@@ -7058,6 +7714,34 @@ window.BakaPreview={
        cleanseSaid    one reply, read and worded, exactly as the real path words it */
   cleanse:()=>{cleanseModal();return modalIsOpen();},
   cleanseSaid:reply=>({read:cleanseReply(reply),toast:cleanseToast(cleanseReply(reply))}),
+  /* The armed one-shot's three seams. Nothing in a browser can arm a sweep on a realm, so
+     a walk seeds the profile field, redraws, and feeds the two events the host posts.
+       cleanseArmedState  what the switch shows for a given profile answer
+       cleanseArmedEvent  the host saying where the switch ended up
+       cleanseRanEvent    the host handing over one reply from an armed sweep */
+  cleanseArmedState:on=>{
+    S.prefs=Object.assign({},S.prefs||{},{CleanseWhenEmpty:!!on});
+    renderCleanseArmed();
+    return swOn("tCleanseArmed");
+  },
+  cleanseArmedEvent:d=>{
+    if(S.prefs) S.prefs.CleanseWhenEmpty=!!(d&&d.on);
+    renderCleanseArmed();
+    return swOn("tCleanseArmed");
+  },
+  cleanseRanEvent:d=>{
+    const said=String((d&&d.response)||"").trim();
+    if(!d||!d.ok) return {toast:"ᚦ "+T("pal.console.undelivered.toast"),armed:!!(d&&d.armed)};
+    if(d.notAnswering) return {toast:cleanseToast({kind:"gone"}),armed:!!d.armed};
+    if(d.stillRunning) return {toast:"ᛉ "+T("vikings.cleanse.still_running.toast"),armed:!!d.armed};
+    return {
+      switchToast:d.armed
+        ?"ᚦ "+T("vikings.cleanse.armed.waiting.toast")
+        :"ᛉ "+T("vikings.cleanse.armed.fired.toast"),
+      toast:cleanseToast(cleanseReply(said)),
+      armed:!!d.armed,
+    };
+  },
   /* The roster the radius scope is measured from. A walk wants the EMPTY case as much as
      the full one: with nobody online the dialog cannot serve a radius at all, and the
      preview's own four players can never show that state. */
@@ -7160,7 +7844,7 @@ window.BakaPreview={
   langList:o=>{
     LANG.list=o||null;
     if(o&&o.current) LANG.status=Object.assign({},LANG.status||{},{current:o.current});
-    renderLangMenu(); renderPlayerMsgLang();
+    renderLangMenu(); renderPlayerMsgLang(); try{renderAppLang();}catch(_){}
     return langRows().length;
   },
   langStatus:o=>{LANG.status=o||null;renderLangDot();renderLangMenu();return LANG.status;},
@@ -7283,7 +7967,12 @@ function renderConditionBar(){
   bar.dataset.sev=c.sev||"info";
   bar.innerHTML=
     `<span class="hbtitle">${esc(c.title)}</span>`+
-    `<span class="hbmsg">${esc(c.msg)}</span>`+
+    /* msgHtml is for the one shape a plain sentence cannot carry: a link inside the
+       sentence. Every raiser that hands in msg still gets its words escaped here, which is
+       the only safe default when the words can hold a version number off a file on disk. A
+       raiser that hands in msgHtml has escaped its own parts and is putting an anchor
+       between them; there is no third way in and nothing interpolates raw. */
+    `<span class="hbmsg">${c.msgHtml||esc(c.msg)}</span>`+
     (c.progressHtml||"")+
     `<span class="hbacts">${c.actionsHtml||""}`+
     `<button class="btn btn-ghost btn-sm" data-cond-dismiss>${esc(c.dismissLabel||T("cond.btn.dismiss"))}</button>`+
@@ -7565,6 +8254,15 @@ function conditionBepInExNoMods(b){
     again:()=>conditionBepInExNoMods(b),
   });
 }
+/* Whether the host has already closed a notice about this exact fact.
+   WHY THIS EXISTS. A scheduled restart window runs every few hours, and every one of them
+   records the same refusal on an install whose loader BakaLoader did not put down. Closing
+   the bar only cleared the standing outcome, so the next window stood the same fact up
+   again and the owner had to close the same sentence after every launch. The host side now
+   remembers the fact's key per install and says so here, and a fact that has been read is
+   not raised a second time. A NEW fact (another reason, another pack, a write, a failure)
+   carries a different key and is said once, properly. */
+function bepInExNoticeSeen(last){ return !!(last&&last.seen); }
 /* A write that happened at a restart, said once. The host was not at the keyboard for it,
    so there was no toast and very often no window to put one in: the fact stands here until
    they close it, and closing it is what tells the host side to stop sending it. */
@@ -7574,6 +8272,7 @@ let BEP_WRITE_CHRONICLED=null;
 function conditionBepInExWritten(last){
   if(last&&last.outcome==="healed"){conditionBepInExHealed(last);return;}
   if(!last||last.outcome!=="written"||!last.toVersion){clearCondition("bepinexWritten");return;}
+  if(bepInExNoticeSeen(last)){clearCondition("bepinexWritten");return;}
   /* A write nobody watched gets its line in the chronicle here, because the place that
      writes one for a press is the press itself and there was no press. */
   if(last.whenUtc&&last.whenUtc!==BEP_WRITE_CHRONICLED){
@@ -7593,12 +8292,13 @@ function conditionBepInExWritten(last){
       ?T("bepinex.notice.written.body",
           {from:last.fromVersion||"",to:last.toVersion,folder})
       :T("bepinex.notice.written.body.first",{to:last.toVersion}),
-    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbBepSeen">${esc(T("common.button.close"))}</button>`,
+    /* One button. The bar draws a dismiss of its own, and a second ghost button beside it
+       saying Close did exactly what that one did: the owner read the pair and found no
+       difference between them, because there was none. So the bar's own button IS the
+       close, and closing it is what tells the host side the notice has been read. */
+    dismissLabel:T("common.button.close"),
     again:()=>conditionBepInExWritten(last),
-    wire:bar=>bar.querySelector("#cbBepSeen").addEventListener("click",()=>{
-      clearCondition("bepinexWritten");
-      if(Native.available) Native.call("bepinex.noticeSeen",{});
-    }),
+    onDismiss:()=>bepInExNoticeDrawn(last),
   });
 }
 /* SECTION L, said in its own words. A write that stopped part way is UNDONE rather than
@@ -7610,18 +8310,16 @@ function conditionBepInExWritten(last){
    a heal over a core that had already gone replaces nothing, so the folder that sentence
    sent the host to is not even there. */
 function conditionBepInExHealed(last){
+  if(bepInExNoticeSeen(last)){clearCondition("bepinexWritten");return;}
   if(last.whenUtc&&last.whenUtc!==BEP_WRITE_CHRONICLED){
     BEP_WRITE_CHRONICLED=last.whenUtc;
     logLine("warn","[BepInEx] a write here did not finish, so the copy from before it was put back");
   }
   setCondition("bepinexWritten",{sev:"info",title:T("bepinex.notice.healed.title"),
     msg:T("bepinex.notice.healed.body"),
-    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbBepSeen">${esc(T("common.button.close"))}</button>`,
+    dismissLabel:T("common.button.close"),
     again:()=>conditionBepInExHealed(last),
-    wire:bar=>bar.querySelector("#cbBepSeen").addEventListener("click",()=>{
-      clearCondition("bepinexWritten");
-      if(Native.available) Native.call("bepinex.noticeSeen",{});
-    }),
+    onDismiss:()=>bepInExNoticeDrawn(last),
   });
 }
 /* What the host can usefully press on that row, per reason, or nothing at all. The two
@@ -7665,13 +8363,46 @@ function bepInExLeftAloneWrite(last){
      when the row went up. */
   const gone=last?last.reason==="bepinex.repairPackGone"&&!!last.leftAsItWas
                  :bepInExRepairPackGone(S.bepinex);
-  clearCondition("bepinexLeftAlone");
-  if(Native.available) Native.call("bepinex.noticeSeen",{});
+  /* Pressing the offer IS having read the notice, so it goes down the same road the close
+     does rather than spelling those two lines out a second time. */
+  bepInExLeftAloneSeen(last);
   goPage("mods");
   bepInExUpdateFlow(gone?{takeCurrentPack:true}:null);
 }
 function bepInExLeftAloneWiki(){
   if(Native.available) Native.call("shell.openUrl",{target:"bepinex-wiki"});
+}
+/* The host side has now been told the notice was read, so it stops travelling on every
+   answer AND writes the fact down: a closed notice stays closed across the next window and
+   the next launch.
+   The page marks its OWN copies first, before the call rather than after it. The RPC is a
+   round trip, and what every replay of this condition reads is the outcome the page is
+   holding: a server.status or a bepinex.changed arriving in that gap found seen:false and
+   stood the bar straight back up, a flicker the host sees and cannot explain. Both copies
+   are marked, because the bar was raised with one and the next replay reads the other. */
+function bepInExNoticeDrawn(last){
+  if(last) last.seen=true;
+  if(S.bepinex&&S.bepinex.lastUnattended) S.bepinex.lastUnattended.seen=true;
+  if(Native.available) Native.call("bepinex.noticeSeen",{});
+}
+/* The tail of the sentence for the four reasons a press cannot help with, with the wiki
+   link INSIDE it rather than on a button of its own.
+   WHY. Those four are decisions that are the host's to make, and the only thing the bar
+   could offer was the page that explains them. An ember button beside a Close made the bar
+   look like it wanted an answer, and the Mods hall row carries the same fact for good, so
+   closing the bar loses nothing. Both halves are escaped here and the anchor goes between
+   them: nothing from the host side is interpolated raw. */
+function bepInExLeftAloneKeptHtml(){
+  const mark="\u0001";
+  const line=T("bepinex.condition.left_alone.kept",{wiki:mark});
+  const a=`<a href="#" class="inlink" id="cbBepWikiLink">`+
+    `${esc(T("bepinex.condition.left_alone.wiki_link"))}</a>`;
+  const at=line.indexOf(mark);
+  /* A translation that dropped the placeholder still gets the link, at the end, rather
+     than a sentence that mentions a page the host cannot reach. */
+  return at<0
+    ?esc(line)+" "+a
+    :esc(line.slice(0,at))+a+esc(line.slice(at+mark.length));
 }
 /* A restart window that wrote nothing, and why. It stands until the host has dealt with
    it, because that window ran with nobody watching: one line in the log is not telling
@@ -7680,24 +8411,39 @@ function bepInExLeftAloneWiki(){
 function conditionBepInExLeftAlone(last){
   const msg=bepInExLeftAloneText(last);
   if(!msg){clearCondition("bepinexLeftAlone");return;}
+  /* Already read. The fact has not changed since the host closed it, and standing it up
+     again after every restart window was the whole complaint. */
+  if(bepInExNoticeSeen(last)){clearCondition("bepinexLeftAlone");return;}
   const offer=bepInExLeftAloneAct(last);
+  /* A press that does work keeps its button. A reason whose only offer was the wiki page
+     gets the link in the sentence instead, and the bar is left with one button. */
+  const wiki=!!(offer&&offer.act==="wiki");
+  const act=wiki?null:offer;
   setCondition("bepinexLeftAlone",{sev:last.outcome==="failed"?"warn":"info",
     title:T("bepinex.condition.left_alone.title"),
     msg,
+    msgHtml:wiki?esc(msg)+" "+bepInExLeftAloneKeptHtml():null,
     actionsHtml:
-      (offer?`<button class="btn btn-ember btn-sm" id="cbBepLeftAct">${esc(T(offer.labelId))}</button>`:"")+
-      `<button class="btn btn-ghost btn-sm" id="cbBepLeft">${esc(T("common.button.close"))}</button>`,
+      (act?`<button class="btn btn-ember btn-sm" id="cbBepLeftAct">${esc(T(act.labelId))}</button>`:""),
+    /* The bar's own button is the close, and there is no second one beside it saying the
+       same word and doing the same thing. */
+    dismissLabel:T("common.button.close"),
     again:()=>conditionBepInExLeftAlone(last),
+    onDismiss:()=>bepInExNoticeDrawn(last),
     wire:bar=>{
-      bar.querySelector("#cbBepLeftAct")?.addEventListener("click",
-        offer&&offer.act==="wiki"?bepInExLeftAloneWiki:(()=>bepInExLeftAloneWrite(last)));
-      bar.querySelector("#cbBepLeft").addEventListener("click",bepInExLeftAloneSeen);
+      bar.querySelector("#cbBepLeftAct")?.addEventListener("click",()=>bepInExLeftAloneWrite(last));
+      bar.querySelector("#cbBepWikiLink")?.addEventListener("click",e=>{
+        e.preventDefault();
+        bepInExLeftAloneWiki();
+      });
     },
   });
 }
-function bepInExLeftAloneSeen(){
+function bepInExLeftAloneSeen(last){
   clearCondition("bepinexLeftAlone");
-  if(Native.available) Native.call("bepinex.noticeSeen",{});
+  /* The same road the close goes down, marks and all, rather than a second copy of it that
+     would one day be the one missing the mark. */
+  bepInExNoticeDrawn(last);
 }
 /* A newer pack that cannot go in yet. Every server on one install loads one BepInEx
    through the same junctions and hard links, so the write waits for all of them rather
@@ -7749,6 +8495,24 @@ function conditionBepInExMaintained(){
       openUpkeepBepInEx();
     }),
   });
+}
+/* Opens the Connection card, where the two switches and the test live. */
+function openConnectionCard(){
+  goPage("hearth");
+  const card=$("#connCard");
+  if(card&&!card.classList.contains("open")) $("#connHead")?.click();
+  requestAnimationFrame(()=>{try{card?.scrollIntoView({block:"nearest"});}catch(_){}});
+}
+/* Opens the Settings hall's App tab, where the preferences about BakaLoader itself live.
+   They were at the foot of the Upkeep card until 1.2.6. */
+function openAppTab(focusId){
+  goPage("world");
+  worldTab("app");
+  const tab=$("#worldTabApp");
+  /* The control the host asked for, when they asked through the palette, and the tab itself
+     otherwise. One scroll rather than two, because two would fight each other. */
+  const want=focusId?$("#"+focusId):null;
+  requestAnimationFrame(()=>{try{(want||tab)?.scrollIntoView({block:"nearest"});}catch(_){}});
 }
 /* Opens the Upkeep card, where the auto-update switch lives. */
 function openUpkeepCard(){
@@ -7980,7 +8744,7 @@ function worldDeleteModal(ctx,after){
       `<div class="subval" id="dwBkNote" style="margin-top:6px">${esc(worldDeleteBackupNote(false))}</div>`+
       `<div class="field" style="margin-top:12px"><label>${esc(T("world.delete.confirm.label"))}</label>`+
         `<input type="text" id="dwName" placeholder="${esc(ctx.world)}" spellcheck="false" autocomplete="off"></div>`+
-      `<div class="subval" id="dwStat" style="margin-top:6px;color:var(--blood)">${esc(T("world.delete.warning"))}</div>`+
+      `<div class="subval" id="dwStat" style="margin-top:6px;color:var(--blood-text)">${esc(T("world.delete.warning"))}</div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="dwCancel">${esc(T("common.button.cancel"))}</button>`+
       `<button class="btn btn-blood btn-sm" id="dwOk" disabled>${esc(T("world.delete.button"))}</button></div>`,()=>worldDeleteModal(ctx,after));
@@ -8569,7 +9333,7 @@ function renderSkald(){
     `<span class="vname">${esc(nm)}</span>`+
     (ch?` <span class="subval">(${esc(ch)})</span>`:"")+`</td>`+
     `<td class="mono" title="${esc(skDur(p.playSec))}">${skDur(p.playSec)}</td><td class="mono">${p.sessions??0}</td><td class="mono">${p.deaths??0}</td>`+
-    `<td class="mono" title="${p.online?"":esc(seen)}">${p.online?`<span style="color:var(--moss)">${esc(T("skald.players.online"))}</span>`:seen}</td></tr>`;
+    `<td class="mono" title="${p.online?"":esc(seen)}">${p.online?`<span style="color:var(--moss-text)">${esc(T("skald.players.online"))}</span>`:seen}</td></tr>`;
   }).join("");
   $("#skPlayerTable").innerHTML=rows
     ||`<tr><td colspan="5">${emptyState({mark:"ᛗ",title:T("skald.players.empty.title"),
@@ -9086,9 +9850,18 @@ function openSpawnModal(p){
       const r=await rpc("items.search",{query:query.trim(),limit:100});
       if(r===FAIL||my!==searchSeq) return;
       const res=r.results||[];
-      list.innerHTML=res.map((it,i)=>
-        `<div class="pick-item" data-i="${i}"><span>${esc(it.Label)}</span><span class="pk">${esc(it.category||"")}</span><span class="pm">${esc(it.PrefabName)}</span></div>`
-      ).join("")||`<div class="pick-item" style="opacity:.5;cursor:default">${esc(T("vikings.spawn.no_match"))}</div>`;
+      /* Which list these are. A realm that has never started has no catalog of its own, so
+         the picker is offering the vanilla list BakaLoader ships and the modded items the
+         host is looking for are simply not in it. That used to be silent, and before the
+         leak was closed it was worse than silent: the picker offered another realm's modded
+         prefabs and the spawn was accepted for a prefab the running server has never heard
+         of. The line says which list is open and how to get the real one. */
+      const vanillaOnly=Native.available&&r&&r.live===false;
+      list.innerHTML=
+        (vanillaOnly?`<div class="pick-note">${esc(T("vikings.spawn.vanilla_only"))}</div>`:"")+
+        (res.map((it,i)=>
+          `<div class="pick-item" data-i="${i}"><span>${esc(it.Label)}</span><span class="pk">${esc(it.category||"")}</span><span class="pm">${esc(it.PrefabName)}</span></div>`
+        ).join("")||`<div class="pick-item" style="opacity:.5;cursor:default">${esc(T("vikings.spawn.no_match"))}</div>`);
       list._res=res;
       markPicked();
     }
@@ -9145,8 +9918,102 @@ function openSpawnModal(p){
    that name up to the catalog lookup, which is the one thing in the file that
    earns a one letter name: it wraps nearly every sentence a host reads. The
    writer kept its name because nothing else wants it. */
+/* ---------- THE SETTINGS HALL'S TWO TABS ----------
+   Server is everything the hall has always held and is saved by the button in its header.
+   App holds the preferences that belong to BakaLoader rather than to a server, and each of
+   those writes itself the moment it is moved, which is why Save Config is hidden while App
+   is showing: a button that saves nothing on the tab it is standing over is a button a host
+   presses and then wonders about.
+   The chosen tab is not saved anywhere. It is a view of one hall and not a setting, and a
+   host who opens Settings is far more often after the server's own than after the app's. */
+let WORLD_TAB="server";
+function worldTab(name){
+  const want=name==="app"?"app":"server";
+  WORLD_TAB=want;
+  const server=$("#worldTabServer"), app=$("#worldTabApp");
+  if(server) server.style.display=want==="server"?"block":"none";
+  if(app) app.style.display=want==="app"?"block":"none";
+  $$(".wtab").forEach(b=>{
+    const on=b.getAttribute("data-wtab")===want;
+    b.classList.toggle("on",on);
+    b.setAttribute("aria-selected",on?"true":"false");
+  });
+  /* Save Config belongs to the Server tab. On the App tab there is nothing for it to
+     write, and the unsaved band at the foot of the hall is about the Server tab too. */
+  const save=document.querySelector("#page-world .savecfg");
+  if(save) save.style.display=want==="server"?"":"none";
+  /* And the band itself. The comment above always said it, and the band went on standing
+     there anyway: "Save Config writes them" over a tab whose Save Config is hidden and
+     whose every row writes itself the moment it is moved. The tab goes on the hall, the
+     stylesheet keeps the band off the App tab from there, and the room the hall gives up
+     at its foot goes with it so the App tab does not end in an empty band. The EDITS are
+     untouched, exactly as the band promises: walking back to Server brings both back. */
+  const hall=$("#page-world");
+  if(hall){
+    hall.dataset.wtab=want;
+    const band=$("#worldUnsaved");
+    hall.classList.toggle("unsaved-room",
+      want==="server"&&!!band&&band.classList.contains("on"));
+  }
+  /* THE TWO THINGS THE APP TAB HAS TO ASK FOR, asked from here because here is the one
+     place that knows the tab changed. A listener on the tab button cannot do it: this
+     function is what moves WORLD_TAB and it is wired thousands of lines below the rest of
+     the file, so a listener added earlier reads the tab the hall is LEAVING and a first
+     press of App reads "server" and returns. That shipped, and both of these were dead.
+       The Start-with-Windows notices are facts about the Windows registry, and the registry
+     moves while BakaLoader is running: every one of them sends the host out of this window
+     to fix it, so the tab they come back to asks again rather than repainting the warning
+     they just cleared.
+       The language list fills this tab's two selects, Interface language and Messages to
+     players, with the packs that are actually installed. Opening the tab is the host asking
+     for that list out loud, which is the same standing this has at the globe. */
+  if(want==="app"){
+    try{refreshStartWinNote();}catch(_){}
+    try{langRefresh();}catch(_){}
+  }
+  try{refreshScrollCues();}catch(_){}
+  return want;
+}
+/* THE GENERIC HANDLER FOR THE TWO TABS, AND EVERYTHING ELSE COMES AFTER IT. Same rule as the
+   switches, and 1.2.6 shipped a breach of this one too: the App tab's own refresh was wired
+   above the line that moves WORLD_TAB, so the first press read the tab the hall was LEAVING and
+   returned. scripts/copy-gate/scan_listener_order.py fails on a click or keydown listener added
+   to .wtab above this line. */
+$$(".wtab").forEach(b=>b.addEventListener("click",()=>worldTab(b.getAttribute("data-wtab"))));
+
+/* ---------- TEXT SIZE ----------
+   The window is one page, so Text size is the page's ZOOM and the host side sets it on the
+   WebView: every rule in the stylesheet follows it without anything here having to know.
+   THE MAP'S OWN LABELS FOLLOW IT TOO, and nothing here has to make them. A WebView2
+   ZoomFactor is a Chromium page zoom: it shrinks the CSS viewport and raises
+   devicePixelRatio by the same factor. The Atlas sizes its backing store as the wrap's CSS
+   size times devicePixelRatio and draws through setTransform(dpr, ...), so its drawing space
+   is CSS pixels, exactly like the stylesheet's, and an unchanged 11px font grows on screen
+   by the zoom the same way an 11px rule does. The first cut of 1.2.6 multiplied these by the
+   factor as well, which made the place names about half again taller than the words beside
+   them at Extra large.
+   Measured in Chromium under its own page zoom: the same literal 11px monospace drew ink
+   43x10 device pixels at 1.00, 51x12 at 1.20 and 61x14 at 1.45, with no scaler at all.
+   So the one thing this section owns is the FACE and the two design sizes, named in one
+   place so a literal cannot creep into a painter where no screenshot at Normal would show
+   it. The wrap's CSS size changes with the zoom, so the ResizeObserver on it is what
+   redraws the chart. */
+/* TEXTSCALE-BEGIN */
+/** A canvas font at one design size, in the map's own face. */
+function atlasFont(px){
+  return px+"px 'IBM Plex Mono',monospace";
+}
+/* TEXTSCALE-END */
 const swOn=id=>$("#"+id).classList.contains("on");
-const setT=(id,on)=>$("#"+id).classList.toggle("on",!!on);
+/* A switch set from an answer rather than from a press. It carries the aria with it, or a
+   screen reader would go on reading the state the switch had before the host side spoke. */
+const setT=(id,on)=>{
+  const el=$("#"+id);
+  if(!el) return false;
+  el.classList.toggle("on",!!on);
+  markSwitch(el);
+  return !!on;
+};
 /* toggle → parameter-field gating (mirrors the WinForms enable/disable behavior) */
 function syncAdvGates(){
   const gate=(inputId,on)=>{
@@ -9337,9 +10204,27 @@ function renderWorldDirs(){
      preview, where there is no profile behind the card. */
   const note=$("#dirIsolationNote");
   if(note){
-    const isolated=!!p.IsolatedInstall&&p[WORLD_DIR_SAVE_SOURCE]==="profile";
+    /* Two independent facts, so two independent sentences. One AND used to decide a note
+       that speaks about BOTH, and the two switches in the forge can be set independently:
+       a realm with its own install and the shared save folder was told it "uses the shared
+       install", directly under a line reading its own install path, and told that both
+       boxes show the defaults while one of them did not. A host who believes that installs
+       a mod expecting every realm to get it. */
+    const ownInstall=!!p.IsolatedInstall;
+    const ownSaves=p[WORLD_DIR_SAVE_SOURCE]==="profile";
     const known=Native.available&&!!S.prefs;
-    note.textContent=!known?"":isolated?T("world.dir.isolated_note"):T("world.dir.shared_note");
+    /* When the two facts agree there is one sentence that says both, and those two are the
+       sentences this note has always had. When they disagree there is no such sentence, and
+       one AND deciding a note that speaks about both is how a realm with its own install and
+       the shared save folder came to be told it "uses the shared install", directly under a
+       line reading its own install path. Four halves rather than a third whole sentence,
+       because either half can be true on its own. */
+    note.textContent=
+      !known?"":
+      ownInstall&&ownSaves?T("world.dir.isolated_note"):
+      !ownInstall&&!ownSaves?T("world.dir.shared_note"):
+      (ownInstall?T("world.dir.install_note.own"):T("world.dir.install_note.shared"))+" "+
+      (ownSaves?T("world.dir.save_note.own"):T("world.dir.save_note.shared"));
     note.style.display=known?"block":"none";
   }
   syncDirsSection();
@@ -9367,7 +10252,7 @@ function renderPathNote(d){
     return;
   }
   el.textContent=row?T(row.textId):T(d.okId);
-  el.style.color=row?(row.bad?"var(--blood)":"var(--amber)"):"var(--moss)";
+  el.style.color=row?(row.bad?"var(--blood-text)":"var(--amber)"):"var(--moss-text)";
   el.style.display="";
   /* Which of the two kinds of line this is, so the section below knows whether it is
      worth unfolding for. A confirmation is not: a host who folded the section away is
@@ -9554,7 +10439,11 @@ function renderWorldDirty(){
      at every scroll position but the last one. Measured right here rather than left to
      the observer below, so the very first frame the notice appears in already has a band
      deep enough to hold it. */
-  const hall=$("#page-world"); if(hall) hall.classList.toggle("unsaved-room",any);
+  /* The hall reads which tab is showing off its own attribute rather than off WORLD_TAB,
+     which is declared hundreds of lines below this and would be in its temporal dead zone
+     on any paint that happened before then. */
+  const hall=$("#page-world");
+  if(hall) hall.classList.toggle("unsaved-room",any&&hall.dataset.wtab!=="app");
   sizeUnsavedBand();
   const save=$("#saveCfgBtn"); if(save) save.classList.toggle("pulse",any);
   const rail=document.querySelector('.navitem[data-page="world"]');
@@ -9741,7 +10630,7 @@ function syncWorldNew(){
       const typed=!!(box&&box.value.trim());
       const problem=typed?worldNewProblem():"";
       note.textContent=problem||T("world.new.note");
-      note.style.color=problem?"var(--blood)":"";
+      note.style.color=problem?"var(--blood-text)":"";
       note.style.display="";
     }
   }
@@ -10188,7 +11077,7 @@ function scrapeWorldSwitches(){
    so nothing is dropped quietly. */
 function renderWorldCarried(){
   const el=$("#wgCarried"); if(!el) return;
-  const held=S.worldMods&&S.worldMods.world===worldFieldValue()&&Array.isArray(S.worldMods.passThrough)
+  const held=worldModsHeldFor(worldFieldValue())&&Array.isArray(S.worldMods.passThrough)
     ?S.worldMods.passThrough:[];
   el.style.display=held.length?"block":"none";
   el.textContent=held.length?T("world.wgs.carried",{keys:held.join(", ")}):"";
@@ -10275,6 +11164,18 @@ function worldGenAnswered(r){
   if(!mods||typeof mods!=="object"||Array.isArray(mods)) return false;
   return Array.isArray(r.keys);
 }
+/* Whether the held difficulty set is about this realm's world. The key used to be the
+   world NAME alone, and a name is not an identity across realms: two realms can hold worlds
+   with the same name, and a set abandoned on one realm was then re-painted onto the other
+   realm's card, declared clean by the re-snapshot, and written by that realm's Save Config.
+   The set is dropped on a realm switch as well; this is the second lock on the same door,
+   and it also covers a set written before the realm was known. */
+function worldModsHeldFor(world){
+  const held=S.worldMods;
+  if(!held||held.world!==world) return false;
+  if(held.profile&&S.profileName&&held.profile!==S.profileName) return false;
+  return true;
+}
 let _worldModsSeq=0;
 /* Render the difficulty dials for the selected world. The host's pick lives in S.worldMods,
    NOT in the DOM, so a re-render (an event, a Save, a helm turn) never discards an unsaved
@@ -10299,7 +11200,7 @@ async function renderWorldMods(){
   // never answered is not kept, because nothing else asks again until the world changes:
   // it would stand for the rest of the session, every later draw would go on showing
   // Normal for a world nobody has read, and the save would go on refusing to write it.
-  if(S.worldMods&&S.worldMods.world===world&&S.worldMods.pulled){
+  if(worldModsHeldFor(world)&&S.worldMods.pulled){
     applyWorldModDials(S.worldMods.mods);
     applyWorldSwitches(S.worldMods.keys);
     renderWorldCarried();
@@ -10331,7 +11232,7 @@ async function renderWorldMods(){
       if(r.imported) brought=r.imported;
     }
   }
-  S.worldMods={world,mods:{...cur},keys:on.slice(),passThrough:carried.slice(),pulled};
+  S.worldMods={world,profile:S.profileName,mods:{...cur},keys:on.slice(),passThrough:carried.slice(),pulled};
   applyWorldModDials(cur);
   applyWorldSwitches(on);
   renderWorldCarried();
@@ -10373,6 +11274,9 @@ $("#fWorld").addEventListener("change",()=>{
   syncWorldNew();
   if($("#fWorld").value===WORLD_NEW_VALUE) setTimeout(()=>$("#fWorldNew")?.focus(),0);
   renderWorldMods();renderWorldSeed();
+  /* A different world is a different set of files, so the note under the field is about
+     the new one or it is about nothing. */
+  try{refreshWorldIntegrity();}catch(_){}
 });
 /* A keystroke in the New world box is a change of world, so everything that follows the
    field follows it too. The seed line and the dials are held back a moment: both ask the
@@ -10434,10 +11338,10 @@ $("#copyWorldAs")?.addEventListener("click",()=>{
    other world, and the next draw painted it back to Normal. */
 function worldModsFromScreen(){
   const world=worldFieldValue();
-  const mine=S.worldMods&&S.worldMods.world===world?S.worldMods:null;
+  const mine=worldModsHeldFor(world)?S.worldMods:null;
   const held=mine&&Array.isArray(mine.passThrough)?mine.passThrough.slice():[];
-  return {world,mods:scrapeWorldModDials(),keys:scrapeWorldSwitches(),passThrough:held,
-          pulled:!Native.available||!!(mine&&mine.pulled)};
+  return {world,profile:S.profileName,mods:scrapeWorldModDials(),keys:scrapeWorldSwitches(),
+          passThrough:held,pulled:!Native.available||!!(mine&&mine.pulled)};
 }
 for(const [key,def] of Object.entries(WORLDGEN)){
   $("#"+def.sel).addEventListener("change",()=>{
@@ -10574,7 +11478,7 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   // never wipe a stored difficulty, while an intentional all-Normal choice (mods:{}) still
   // clears it. The dials are scraped once more here so the on-screen value is authoritative
   // even if a change event was missed.
-  if(prefs.WorldName&&S.worldMods&&S.worldMods.world===prefs.WorldName&&S.worldMods.pulled){
+  if(prefs.WorldName&&worldModsHeldFor(prefs.WorldName)&&S.worldMods.pulled){
     const modifiers=scrapeWorldModDials();
     /* The five switches go with them, ALWAYS as a list, even an empty one. An absent list
        means "leave the stored switches alone" on the host side, which is what keeps an
@@ -10613,7 +11517,7 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
        below reaches renderWorldMods, which no longer holds an unread set back, so the card
        fills itself with what is really stored before the host presses it. */
     console.warn("[BakaLoader] world difficulty not saved: "+
-      (S.worldMods&&S.worldMods.world===prefs.WorldName
+      (worldModsHeldFor(prefs.WorldName)
         ?"the stored dials for '"+prefs.WorldName+"' never came back, so the card is standing at Normal"
         :"the dials on screen belong to "+
           (S.worldMods&&S.worldMods.world?"'"+S.worldMods.world+"'":"no world yet")+
@@ -10667,6 +11571,10 @@ function renderAllFromPrefs(){
   $("#sbRcon").textContent=S.prefs.RconEnabled?String(S.prefs.RconPort??25575):T("status.rcon.off");
   $("#sbRconSeg").classList.toggle("dim",!S.prefs.RconEnabled);
   renderWorldForm();
+  /* The Worlds card's own note about this realm's world, painted here because this is what
+     a realm switch and a fresh load of the prefs both come through. renderWorldForm has
+     just put the world in the field, so the card is asked about the right one. */
+  try{refreshWorldIntegrity();}catch(_){}
   renderNet();
   renderHearthNative();
   try{renderCfgRunningNote();}catch(_){}
@@ -11299,7 +12207,11 @@ function waystoneWizRender(){
 $("#waystoneBtn")?.addEventListener("click",e=>{e.stopPropagation();waystoneWizard();});
 
 /* ---------- RUNES (BepInEx .cfg editor) ---------- */
-const CFG={files:[],file:null,dirty:false,mock:null};
+/* `profile` is the realm the open scroll was READ from, and it rides along on the write.
+   The editor is cleared on a realm switch, so it should never differ from the realm on
+   screen; it travels anyway, because the host side refusing a write that names another
+   realm is the lock that does not depend on this page getting the clearing right. */
+const CFG={files:[],file:null,dirty:false,mock:null,profile:null};
 async function cfgListFiles(){
   if(!Native.available) return Object.keys(CFG.mock||{});
   const r=await rpc("config.list");
@@ -11310,10 +12222,10 @@ async function cfgRead(file){
   const r=await rpc("config.read",{file});
   return r===FAIL?null:String(r??"");
 }
-async function cfgWrite(file,text){
+async function cfgWrite(file,text,profile){
   // NOTE: Bridge.cs config.write reads p.Value<string>("text") - param is `text`, not `content`
   if(!Native.available){if(CFG.mock)CFG.mock[file]=text;return true;}
-  const r=await rpc("config.write",{file,text});
+  const r=await rpc("config.write",{file,text,profile:profile||null});
   return r!==FAIL;
 }
 /* Everything one scroll can be found by: its own file name, and the mod that wrote it.
@@ -11345,7 +12257,7 @@ function renderCfgList(){
   $("#runesSub").textContent=T("runes.sub.count",{count:CFG.files.length});
   const shown=cfgFilesForList();
   $("#cfgList").innerHTML=shown.map(f=>
-    `<div class="cfg-item${f===CFG.file?" sel":""}" data-f="${esc(f)}"><span class="cfgname">${esc(f)}</span>${(f===CFG.file&&CFG.dirty)?'<span class="dot"></span>':""}</div>`
+    `<div class="cfg-item${f===CFG.file?" sel":""}" data-f="${esc(f)}" title="${esc(f)}"><span class="cfgname">${esc(f)}</span>${(f===CFG.file&&CFG.dirty)?'<span class="dot"></span>':""}</div>`
   ).join("")||(CFG.files.length
     ?`<div class="cfg-item" style="opacity:.5;cursor:default"><span class="cfgname">${esc(T("runes.list.no_match"))}</span></div>`
     :`<div class="cfg-item" style="opacity:.5;cursor:default"><span class="cfgname">${esc(T("runes.list.empty"))}</span></div>`);
@@ -11496,7 +12408,7 @@ async function loadCfg(f,force){
   }
   const text=await cfgRead(f);
   if(text===null) return;
-  CFG.file=f; CFG.dirty=false;
+  CFG.file=f; CFG.dirty=false; CFG.profile=S.profileName;
   $("#cfgEditor").value=text;
   $("#cfgSaveBtn").disabled=true;
   resetCfgSaveBtn();
@@ -11509,7 +12421,7 @@ async function refreshCfgList(reRead){
   CFG.files=files;
   if(CFG.file&&!files.includes(CFG.file)){
     // current file vanished from disk
-    CFG.file=null; CFG.dirty=false;
+    CFG.file=null; CFG.dirty=false; CFG.profile=null;
     $("#cfgEditor").value=""; $("#cfgSaveBtn").disabled=true;
     cfgFindStale();   // the text it was painted over is not there any more
   }else if(reRead&&CFG.file&&!CFG.dirty){
@@ -11554,7 +12466,7 @@ $("#cfgSaveBtn").addEventListener("click",async()=>{
     return;
   }
   resetCfgSaveBtn();
-  const ok=await cfgWrite(CFG.file,$("#cfgEditor").value);
+  const ok=await cfgWrite(CFG.file,$("#cfgEditor").value,CFG.profile);
   if(!ok) return;
   setCfgDirty(false);
   $("#cfgSaveBtn").disabled=true;
@@ -12168,7 +13080,7 @@ function atlasDraw(){
         g.fillStyle="rgba(226,217,196,.45)";
       }
       if(!wipe){
-        g.font="11px 'IBM Plex Mono',monospace"; g.textAlign="center"; g.textBaseline="middle";
+        g.font=atlasFont(11); g.textAlign="center"; g.textBaseline="middle";
         g.fillText("ᚾ "+T("atlas.fog.unexplored"),s.w/2,s.h/2);
         g.textAlign="start";
       }
@@ -12188,7 +13100,7 @@ function atlasDraw(){
   }
   const info=ATLAS.info;
   const showLbl=c.ppm>0.045;
-  ctx.font="10px 'IBM Plex Mono',monospace"; ctx.textBaseline="middle";
+  ctx.font=atlasFont(10); ctx.textBaseline="middle";
   if(info&&info.hasDb){
     if(ATLAS.layers.builds)(info.builds||[]).forEach(b=>{
       if(atlasFogHides(b.x,b.z)) return;
@@ -12338,8 +13250,9 @@ if(Native.available){
     const ms=Math.round(Number(d?.seconds)||0); // bridge param is named 'seconds' but carries milliseconds
     toast("ᛉ "+T("hearth.saves.saved.toast",{ms}));
     clearCondition("saveFailed");   // a good write answers the failed one
-    $("#lastSave").textContent=T("hearth.saves.last.value",{clock:clock(),ms});
     S.lastSaveAt=new Date();
+    S.lastSaveMs=ms;
+    renderLastSave();
     S.saveDur.push(ms); if(S.saveDur.length>12)S.saveDur.shift();
     renderSaveAvg();
     renderSaveBars();
@@ -12356,6 +13269,42 @@ if(Native.available){
     logLine("err","[BakaLoader] the server reported a FAILED world save after "+ms+
       "ms. Everything since the last good save is only in memory. Check free disk space and "+
       "whether anything else has the world files open.");
+  });
+  /* The armed sweep's switch moved on the host side: it fired, or a save carried it. The
+     page follows rather than keeping what it last drew. */
+  Native.on("players.cleanseArmed",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    if(S.prefs) S.prefs.CleanseWhenEmpty=!!d?.on;
+    renderCleanseArmed();
+  });
+  /* The armed sweep ran. The reply is handed over raw and read with the SAME expression
+     the button's reply goes through, so one sweep has one wording however it was started. */
+  Native.on("players.cleanseRan",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    const said=String(d?.response||"").trim();
+    if(said) said.split(/\r?\n/).forEach(l=>logLine("ok",l));
+    if(!d?.ok){
+      logLine("warn","[RCON] the armed cheat-mark sweep did not get through. Is the server running with RCON enabled?");
+      toast("ᚦ "+T("pal.console.undelivered.toast"));
+      return;
+    }
+    if(d?.notAnswering){
+      logLine("warn","[RCON] the server stopped answering, so BakaLoader stopped waiting for the armed cleanse.");
+      toast(cleanseToast({kind:"gone"}));
+      return;
+    }
+    if(d?.stillRunning){
+      logLine("warn","[RCON] the armed cleanse is still running. baka_cleanse_status answers with the counts when it lands.");
+      toast("ᛉ "+T("vikings.cleanse.still_running.toast"));
+      return;
+    }
+    /* Two sentences the button never needs: the switch went down with the sweep, or it is
+       still up because somebody was on the server. Both come before the reply's own toast
+       so the host reads what happened to the SWITCH first, which is the thing they set. */
+    toast(d?.armed
+      ?"ᚦ "+T("vikings.cleanse.armed.waiting.toast")
+      :"ᛉ "+T("vikings.cleanse.armed.fired.toast"));
+    toast(cleanseToast(cleanseReply(said)));
   });
   /* The world on disk is still pre-1.0. The next save converts it and there is no way back. */
   Native.on("server.legacyWorld",d=>{
@@ -12500,7 +13449,7 @@ if(Native.available){
   /* --- boot sequence --- */
   (async function bootNative(){
     /* placeholders until real data lands */
-    $("#lastSave").textContent="-";
+    renderLastSave();
     $("#saveCountdown").textContent="-:-";
     $("#tickVal").textContent="-";
     $("#sbMods").textContent=T("side.mods.count",{count:"-"});
@@ -12556,10 +13505,14 @@ if(Native.available){
     if(prefs!==FAIL&&prefs){
       S.prefs=prefs; S.profileName=prefs.ProfileName;
       S.saveInterval=prefs.SaveInterval??600;
+      /* The armed sweep survives closing the app, so the switch is drawn from the profile
+         on the first frame rather than only after a realm switch. */
+      try{renderCleanseArmed();}catch(_){}
     }
     const st=await rpc("server.state");
     if(st!==FAIL) applyState(st);
     refreshUpdateInfo();   // quiet: fills the dashboard pill and gates the palette entry
+    refreshModCount();     // the Hearth card's mod count, off the disk, before any scan
     refreshServers(); // populate the multi-server chip strip
     const caps=await rpc("caps.get");
     if(caps!==FAIL&&caps) S.caps=caps;
@@ -12820,10 +13773,14 @@ maxPacketSize = 4096`,
   };
   refreshCfgList(false);
 
-  /* world-save write times: a dozen plausible runs so the bars carry real tooltips */
+  /* world-save write times: a dozen plausible runs so the bars carry real tooltips. The
+     header is seeded with them, because a card whose bars show a dozen measurements and
+     whose header says nothing has been measured is the disagreement being ended. */
   S.saveDur=[198,214,205,232,209,241,218,236,252,224,268,214];
+  S.lastSaveAt=new Date(); S.lastSaveMs=214;
   renderSaveAvg();
   renderSaveBars();
+  renderLastSave();
 
   /* uptime tick */
   setInterval(()=>{ if(running){upMin++;renderHearth();} },60000);
@@ -12837,8 +13794,10 @@ maxPacketSize = 4096`,
       saveSec=600;
       const ms=190+Math.floor(Math.random()*90);
       S.saveDur.push(ms); if(S.saveDur.length>12)S.saveDur.shift();
+      S.lastSaveAt=new Date(); S.lastSaveMs=ms;
       renderSaveAvg();
       renderSaveBars();
+      renderLastSave();
       toast("ᛉ "+T("hearth.saves.saved.preview.toast",{clock:clock()}));
       logLine("ok","World saved ( Final_Sunset.db )  8.42 MB  in "+ms+" ms");
     }

@@ -615,9 +615,47 @@ namespace ValheimBakaLoader.Tools.Http
         }
 
         /// <summary>
-        /// Sends the request. Returns the response (even on a non-success status,
-        /// so callers can inspect the error body), or null when the request itself
-        /// failed to complete.
+        /// Says that a 404 on THIS request is an ordinary outcome, and gives the plain
+        /// sentence to write at Debug instead of the red failure line.
+        /// <para>
+        /// The language pack check asks GitHub for the release page of the version it is
+        /// running, and for a version whose page has not been published yet the answer is 404
+        /// every single time. The app then falls back to the newest release that does have
+        /// packs, which works. What a host saw was
+        /// <c>Web request to "https://api.github.com/.../releases/tags/v1.2.5" returned 404
+        /// ("Not Found")</c> in red, followed by silence: a failure line for a request the
+        /// app expects to fail and recovers from, with nothing saying what it meant.
+        /// </para>
+        /// <para>
+        /// Only 404 is covered. Every other status is still a failure and still says so at
+        /// the level it always did.
+        /// </para>
+        /// </summary>
+        public ApiCall WhenMissingSay(string sentence)
+        {
+            _missingSentence = string.IsNullOrWhiteSpace(sentence) ? null : sentence.Trim();
+            return this;
+        }
+
+        private string _missingSentence;
+
+        /// <summary>
+        /// The longest this call may take, headers and body together. These are small documents
+        /// read into memory rather than streamed, so unlike a download they are honestly covered
+        /// by one clock. Settable per call for the rare one that is bigger than the rest.
+        /// </summary>
+        public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(20);
+
+        /// <summary>Names this call's own budget instead of the shared one.</summary>
+        public ApiCall WithTimeout(TimeSpan budget)
+        {
+            Timeout = budget;
+            return this;
+        }
+
+        /// <summary>
+        /// Sends the request. Returns the response (even on a non-success status, so callers
+        /// can inspect the error body), or null when the request itself failed to complete.
         /// </summary>
         public async Task<HttpResponseMessage> SendAsync()
         {
@@ -625,6 +663,14 @@ namespace ValheimBakaLoader.Tools.Http
             try
             {
                 var client = _context.HttpClientProvider.CreateClient();
+                // A budget somebody chose. Every small JSON call in the app (the GitHub release
+                // list, the release page for one tag, the IP lookup, the crash report) used to
+                // ride HttpClient's accidental hundred seconds, and one of them is a launch step:
+                // a site that answered slowly froze the splash for a minute and forty with
+                // nothing on screen to say so and no way to skip it. The body here is small and
+                // buffered, so one clock over the whole exchange is the right shape for it.
+                if (Timeout > TimeSpan.Zero) client.Timeout = Timeout;
+
                 var request = new HttpRequestMessage(_method, _url);
 
                 foreach (var (name, value) in _headers)
@@ -648,6 +694,14 @@ namespace ValheimBakaLoader.Tools.Http
 
             if (!response.IsSuccessStatusCode)
             {
+                // An answer the caller told us to expect: one plain sentence, at Debug, and
+                // no red line for something that is not a failure.
+                if (_missingSentence != null && response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _context.Logger.Debug("{sentence}", _missingSentence);
+                    return response;
+                }
+
                 _context.Logger.Error(
                     "Web request to {url} returned {status} ({reason})",
                     _url, (int)response.StatusCode, response.ReasonPhrase);

@@ -52,6 +52,19 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         internal const string PageEnglishPrefix = "hearth.countdown.";
 
+        /// <summary>
+        /// The connection test's five verdict sentences, which the host side writes into the
+        /// application log beside the short verdict name.
+        /// <para>
+        /// They are interface ids, so they used to be dropped with the rest of the page's
+        /// catalog and <see cref="Say"/> answered each one with itself: the log line read
+        /// <c>Connection test for thunderstore.io: ok (hearth.upkeep.connection.verdict.ok)</c>,
+        /// which tells a host reading the log nothing at all and is exactly the raw id the
+        /// whole catalog exists to keep off a screen. Five entries is a cheap thing to carry.
+        /// </para>
+        /// </summary>
+        internal const string ConnectionVerdictPrefix = "hearth.upkeep.connection.verdict.";
+
         /// <summary>Where the embedded English lives inside the assembly.</summary>
         internal const string EnglishResourceName = "ValheimBakaLoader.WebUI.i18n.en.json";
 
@@ -335,7 +348,8 @@ namespace ValheimBakaLoader.Tools
             foreach (var pair in keys)
             {
                 if (!pair.Key.StartsWith(Prefix, StringComparison.Ordinal) &&
-                    !pair.Key.StartsWith(PageEnglishPrefix, StringComparison.Ordinal))
+                    !pair.Key.StartsWith(PageEnglishPrefix, StringComparison.Ordinal) &&
+                    !pair.Key.StartsWith(ConnectionVerdictPrefix, StringComparison.Ordinal))
                 {
                     continue;
                 }

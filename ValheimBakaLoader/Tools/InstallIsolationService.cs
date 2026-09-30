@@ -137,6 +137,40 @@ namespace ValheimBakaLoader.Tools
         private static bool IsBookkeepingFile(string path) =>
             BookkeepingFileNames.Contains(Path.GetFileName(path), StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Loose files that sit in a BepInEx root and describe THAT install rather than the
+        /// loader, so a new realm must not be born holding the other realm's copy.
+        /// <para>
+        /// items.json is the one that bit. The indexer plugin writes it at the BepInEx root and
+        /// it names every prefab the MOD SET of that install provides, so a realm provisioned
+        /// with no mods at all inherited a catalog describing mods it does not have: the spawn
+        /// picker offered them, the spawn validator accepted them because they were in the
+        /// catalog, and the running server had no such prefab. LogOutput.log is the loader's
+        /// own record of what it loaded on the install it sat in, and a new realm opening its
+        /// loader log to read a copy of another realm's session is a lie of the same kind.
+        /// </para>
+        /// </summary>
+        private static readonly string[] PerInstallLooseFileNames =
+        {
+            "items.json",
+            "LogOutput.log",
+        };
+
+        /// <summary>
+        /// Folders under a BepInEx root that are bookkeeping about the BASE install's loader.
+        /// <para>
+        /// The backup folder holds the whole BepInEx core and the loose loader files as they
+        /// were BEFORE BakaLoader touched them, which is tens of megabytes, and the only thing
+        /// that ever reads or prunes it works on the base install. Deep-copying it into every
+        /// instance duplicated all of it forever and handed the copy an adoption mark claiming
+        /// to be "the BepInEx you had before BakaLoader" for an install that never had one.
+        /// </para>
+        /// </summary>
+        private static readonly string[] BaseInstallOnlyBepInExDirs =
+        {
+            BepInExService.BackupDirName,
+        };
+
         /// <summary>The note one isolated install carries about where it came from.</summary>
         private sealed class InstanceMarker
         {
@@ -312,6 +346,13 @@ namespace ValheimBakaLoader.Tools
             {
                 var name = new DirectoryInfo(dir).Name;
 
+                if (BaseInstallOnlyBepInExDirs.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    // Bookkeeping about the base install's loader, exactly like the BepInEx
+                    // marker file the loose-file loop below refuses to share.
+                    continue;
+                }
+
                 if (JunctionableBepInExDirs.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
                     // core + patchers are read-only BepInEx runtime: share via junction.
@@ -340,8 +381,22 @@ namespace ValheimBakaLoader.Tools
 
             foreach (var file in Directory.EnumerateFiles(seedBep))
             {
+                var fileName = Path.GetFileName(file);
+
+                // BakaLoader's own notes about the base install are never shared: the loose-file
+                // loop reaches the same root the marker file sits in.
+                if (IsBookkeepingFile(file)) continue;
+
+                // A file that DESCRIBES the install it sits in cannot travel with a copy of the
+                // install. items.json names the mod set, so a realm with no mods must start with
+                // no catalog and let the indexer write a real one at its first start; a realm
+                // seeded WITH the mods still starts with no catalog, because the indexer writes
+                // the one that matches what actually loaded.
+                if (PerInstallLooseFileNames.Contains(fileName, StringComparer.OrdinalIgnoreCase))
+                    continue;
+
                 // Loose BepInEx files (doorstop logs, stray cfgs): copy so per-server edits don't bleed.
-                File.Copy(file, Path.Combine(dstBep, Path.GetFileName(file)), overwrite: true);
+                File.Copy(file, Path.Combine(dstBep, fileName), overwrite: true);
             }
         }
 

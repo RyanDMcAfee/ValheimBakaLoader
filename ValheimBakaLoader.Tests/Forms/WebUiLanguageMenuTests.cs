@@ -163,7 +163,8 @@ namespace ValheimBakaLoader.Tests.Forms
             }
 
             // The two that carry a value carry it as a named slot, never glued on.
-            Assert.Contains("T(\"lang.row.older_pack\",{version:l.installedVersion||\"\"})", body);
+            Assert.Contains("T(\"lang.row.older_pack\",", body);
+            Assert.Contains("{version:l.installedVersion||\"\",app:langAppVersion()})", body);
             Assert.Contains("T(\"lang.row.not_installed\",{size:fmtBytes(l.bytes||0)})", body);
 
             // And the size is formatted by the lookup, so it reads in the host's own digits
@@ -490,7 +491,7 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal(4, callers.Count);   // the declaration line plus the three calls
             Assert.Contains(callers, l => l.Contains("async function langRefresh()", StringComparison.Ordinal));
             Assert.Contains(callers, l => l.Trim() == "langRefresh();");                     // the globe opening
-            Assert.Contains(callers, l => l.Contains("upkeepCard", StringComparison.Ordinal));  // the card expanding
+            Assert.Contains(callers, l => l.Contains("try{langRefresh();}catch(_){}", StringComparison.Ordinal)); // the App tab opening
             Assert.Contains(callers, l => l.Contains("await langRefresh();", StringComparison.Ordinal)); // after a pack lands
 
             // The globe's own call sits in langMenuOpen and nowhere earlier.
@@ -615,49 +616,66 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The card asks for the list once it is OPEN, and never while it is closing. The
-        /// state has to be read after the press has been handled rather than during it,
-        /// because two listeners sit on that header and the one that actually opens the card
-        /// is added later: wireCollapsible("upkeepHead", ...) runs much further down app.js
-        /// than this wiring does, and listeners fire in the order they were added.
-        /// <para>
-        /// Read inside the dispatch, the class is the one the card is LEAVING, which had this
-        /// exactly backwards: a browser probe against a stubbed bridge showed expanding the
-        /// card asking for nothing and collapsing it asking for lang.list, so the select was
-        /// never filled from the list and the app reached the release page for a card the
-        /// host had just put away. Both halves of that are worth a test: the wrong words in
-        /// the select, and a request nobody made.
-        /// </para>
+        /// The second place the host asks for the list out loud is the Settings hall's App
+        /// tab, which is where both selects live, and the ask is made by the one function that
+        /// knows the tab changed.
         /// </summary>
+        /// <remarks>
+        /// TWO SHIPPED MISTAKES ARE HELD HERE, both of the same shape. Until 1.2.6 the
+        /// player-message select sat on the Hearth's Upkeep card, and the ask was hung on that
+        /// card's header: read inside the dispatch, the class was the one the card was LEAVING,
+        /// so expanding it asked for nothing and collapsing it reached the release page for a
+        /// card the host had just put away. That was fixed with a deferral.
+        /// <para>
+        /// Then both selects MOVED to the App tab and the ask did not, so it was an ask for a
+        /// control that is no longer there and nothing on the new tab asked at all: Messages to
+        /// players offered only "Same as the interface" and Interface language fell back to a
+        /// single English row, hiding every installed pack. The same trap was waiting on the
+        /// tab button, because the listener that switches the tab is added thousands of lines
+        /// further down app.js than any listener on the button would be. So the ask sits inside
+        /// worldTab, after the line that moves WORLD_TAB, and no listener on the tab button
+        /// reads that value.
+        /// </para>
+        /// </remarks>
         [Fact]
-        public void The_upkeep_card_asks_once_it_is_open_and_never_while_it_is_closing()
+        public void The_app_tab_asks_for_the_list_and_the_ask_sits_where_the_tab_really_moves()
         {
             var js = AppJs();
 
-            // Deferred, so the answer is the state the card ARRIVED at.
-            Assert.Contains("const langUpkeepAsk=()=>setTimeout(", js);
-            Assert.Contains("if($(\"#upkeepCard\")?.classList.contains(\"open\")) langRefresh();", js);
+            // Nothing is left on the Upkeep header: the select it followed is not there.
+            Assert.DoesNotContain("langUpkeepAsk", js);
+            Assert.DoesNotContain("$(\"#upkeepHead\")?.addEventListener(\"click\",langUpkeepAsk);", js);
 
-            // Both roads reach it. The header is operable from the keyboard and that road
-            // never produces a click: wireCollapsible's own keydown calls the toggle direct.
-            Assert.Contains("$(\"#upkeepHead\")?.addEventListener(\"click\",langUpkeepAsk);", js);
-            var keys = js.Substring(js.IndexOf("$(\"#upkeepHead\")?.addEventListener(\"keydown\"", StringComparison.Ordinal));
-            keys = keys.Substring(0, keys.IndexOf("});", StringComparison.Ordinal));
-            Assert.Contains("langUpkeepAsk()", keys);
-            foreach (var key in new[] { "Enter", "\" \"", "Spacebar" })
-                Assert.Contains(key, keys);
+            // The ask is inside worldTab, and below the assignment that moves the tab.
+            var tab = js.IndexOf("function worldTab(name){", StringComparison.Ordinal);
+            Assert.True(tab > 0, "app.js no longer holds the tab strip's own switch");
+            var body = js.Substring(tab, js.IndexOf("\n}", tab, StringComparison.Ordinal) - tab);
 
-            // And the fact that makes the deferral necessary, so a later reader who is
-            // tempted to fold it away can see what they would be walking back into.
-            var wiring = js.IndexOf("$(\"#upkeepHead\")?.addEventListener(\"click\",langUpkeepAsk);", StringComparison.Ordinal);
-            // The CALL, not the comment above the wiring that names it. Matching the bare
-            // name found that comment instead, which is the same class of mistake as reading
-            // the class inside the dispatch: the first thing that looks right is not it.
-            var toggle = js.IndexOf("wireCollapsible(\"upkeepHead\",$(", StringComparison.Ordinal);
-            Assert.True(wiring > 0 && toggle > 0, "one of the two listeners on that header is gone");
-            Assert.True(wiring < toggle,
-                "the toggle is now wired first, which does not make reading the class inside " +
-                "the dispatch safe: it makes it wrong the other way round");
+            var moved = body.IndexOf("WORLD_TAB=want;", StringComparison.Ordinal);
+            var asked = body.IndexOf("langRefresh();", StringComparison.Ordinal);
+            Assert.True(moved > 0, "worldTab no longer moves WORLD_TAB where this test expects");
+            Assert.True(asked > 0,
+                "nothing on the App tab asks for the language list, so both of its selects are "
+                + "drawn from an empty list until the host opens the globe");
+            Assert.True(asked > moved, "the ask reads the tab the hall is leaving");
+            Assert.Contains("if(want===\"app\"){", body);
+
+            // And no listener on the tab button, which is the trap this replaced.
+            Assert.DoesNotContain("$(\"#wtabApp\").addEventListener", js);
+            Assert.DoesNotContain("$(\"#wtabApp\")?.addEventListener", js);
+
+            // Both selects the ask is for are on that tab in the document.
+            var page = Html();
+            var appTab = page.Substring(page.IndexOf("id=\"worldTabApp\"", StringComparison.Ordinal));
+            appTab = appTab.Substring(0, appTab.IndexOf("</section>", StringComparison.Ordinal));
+            Assert.Contains("id=\"selPlayerMsgLang\"", appTab);
+            Assert.Contains("id=\"selAppLang\"", appTab);
+
+            // And the answer paints BOTH of them. Without the second one the list lands and
+            // the select the host is looking at keeps the single English row it fell back to.
+            var refresh = Body("async function langRefresh(){");
+            Assert.Contains("renderPlayerMsgLang();", refresh);
+            Assert.Contains("renderAppLang();", refresh);
         }
 
         // ------------------------------------------------------------------ G. the events

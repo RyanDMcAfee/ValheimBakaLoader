@@ -237,8 +237,14 @@ namespace ValheimBakaLoader.Tools
         /// The mod's patcher folder: the model's <see cref="InstalledMod.PatcherDirectory"/> when
         /// the scan set it, otherwise <c>BepInEx/patchers/{folderName}</c> computed from the plugin
         /// folder name. Returns null when neither a patcher path nor a plugin folder is known.
+        /// <para>
+        /// Public because the refusal in front of a removal has to know whether this removal will
+        /// reach into <c>patchers</c> at all: that folder is a junction to the base install on
+        /// every isolated realm and is therefore shared, while <c>plugins</c> is copied and is the
+        /// realm's own. Read only, and the answer is the same one the removal itself uses.
+        /// </para>
         /// </summary>
-        private static string ResolvePatcherDirectory(InstalledMod mod)
+        public static string ResolvePatcherDirectory(InstalledMod mod)
         {
             if (!string.IsNullOrWhiteSpace(mod?.PatcherDirectory)) return mod.PatcherDirectory;
 

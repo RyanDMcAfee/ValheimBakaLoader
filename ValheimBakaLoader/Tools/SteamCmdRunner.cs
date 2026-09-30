@@ -155,7 +155,25 @@ namespace ValheimBakaLoader.Tools
 
         private const string ExeName = "steamcmd.exe";
 
-        private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(5);
+        /// <summary>
+        /// The clocks Valve's installer download is held to, and the most it may weigh.
+        /// <para>
+        /// It used to be an HttpClient timeout of five minutes and GetByteArrayAsync, which
+        /// covers neither of the two things that actually go wrong. The timeout is released
+        /// the moment the headers are in, so a host that answers and then stops sending held
+        /// this read for the life of the process; and the whole body went into one byte array
+        /// with no cap, so whatever the far end chose to send was what BakaLoader allocated.
+        /// steamcmd.zip is a couple of megabytes, so 200 MB is a ceiling no honest copy of it
+        /// comes near.
+        /// </para>
+        /// </summary>
+        private static readonly DownloadBudget InstallerBudget = new()
+        {
+            HeaderTimeout = TimeSpan.FromSeconds(30),
+            TotalTimeout = TimeSpan.FromMinutes(5),
+            IdleTimeout = TimeSpan.FromSeconds(30),
+            MaxBytes = 200L * 1024 * 1024,
+        };
 
         private readonly IHttpClientProvider HttpClientProvider;
         private readonly IProcessProvider Processes;
@@ -193,9 +211,9 @@ namespace ValheimBakaLoader.Tools
 
                 using (var client = HttpClientProvider.CreateClient())
                 {
-                    client.Timeout = DownloadTimeout;
-                    var bytes = await client.GetByteArrayAsync(DownloadUrl, ct).ConfigureAwait(false);
-                    await File.WriteAllBytesAsync(zipPath, bytes, ct).ConfigureAwait(false);
+                    await BoundedDownload.ToFileAsync(
+                        client, DownloadUrl, zipPath, InstallerBudget.Copy(), ct,
+                        tracer: Logger, what: "steamcmd download").ConfigureAwait(false);
                 }
 
                 using (var zip = ZipFile.OpenRead(zipPath))

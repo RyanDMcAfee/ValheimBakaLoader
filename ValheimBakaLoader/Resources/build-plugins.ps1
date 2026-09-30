@@ -76,7 +76,14 @@ $plugins = @(
                                        "BakaCleanseSweep.cs");           Out = "BakaKillAll.dll" },
     @{ Dir = "SpawnHelper"; Source = @("BakaLoaderSpawnHelper.cs",
                                        "BakaSpawnMark.cs");               Out = "BakaLoaderSpawnHelper.dll" },
-    @{ Dir = "MaxPlayers";  Source = @("BakaLoaderMaxPlayers.cs");        Out = "BakaLoaderMaxPlayers.dll" }
+    @{ Dir = "MaxPlayers";  Source = @("BakaLoaderMaxPlayers.cs");        Out = "BakaLoaderMaxPlayers.dll" },
+    # The one plugin here that is NOT bundled into BakaLoader and never goes on a server. It runs
+    # on a CLIENT and takes the cheat mark off what that player's own character is carrying, which
+    # is the one place the server-side cleanse cannot reach. It is built with the same compiler
+    # and the same reference set as the others so a game update cannot leave it behind, and it is
+    # shipped as a release asset zip in the Thunderstore layout rather than installed by the app.
+    @{ Dir = "Uncheat";     Source = @("BakaLoaderUncheat.cs",
+                                       "BakaUncheatPlan.cs");              Out = "BakaLoaderUncheat.dll" }
 )
 
 if ($IncludeItemIndexer) {

@@ -314,7 +314,7 @@ namespace ValheimBakaLoader.Tools.Atlas
                         throw new FileNotFoundException("chunk file is not there", chunkPath);
                     }
 
-                    ReadChunkFile(chunkPath, chunk.IsPortalChunk, payload);
+                    payload.RecordCount = ReadChunkFile(chunkPath, chunk.IsPortalChunk, payload);
                     buckets[i] = payload;
                 }
                 catch (Exception ex)
@@ -345,6 +345,16 @@ namespace ValheimBakaLoader.Tools.Atlas
 
                 ChunkPayload payload = buckets[i];
                 if (payload == null) continue;
+
+                // The index and the file it points at are a statement and its evidence, and
+                // when they disagree the world has lost what the difference names. Nothing is
+                // refused over it: the number is written down here and the window says it
+                // before the next start, while the backups still hold what is missing.
+                if (payload.RecordCount < chunks[i].ZdoCount)
+                {
+                    info.ChunkShortfalls.Add(new DbChunkShortfall(
+                        chunks[i].FileName, chunks[i].ZdoCount, payload.RecordCount));
+                }
 
                 info.Portals.AddRange(payload.Portals);
                 info.MapTables.AddRange(payload.MapTables);
@@ -640,9 +650,16 @@ namespace ValheimBakaLoader.Tools.Atlas
             public readonly List<DbPortal> Portals = new List<DbPortal>();
             public readonly List<DbMapTable> MapTables = new List<DbMapTable>();
             public readonly List<(float X, float Z)> BuildPieces = new List<(float X, float Z)>();
+
+            /// <summary>How many records this chunk file's own header declared.</summary>
+            public int RecordCount;
         }
 
-        private static void ReadChunkFile(string path, bool isPortalChunk, ChunkPayload payload)
+        /// <summary>
+        /// Reads one chunk file and answers how many records its OWN header declares, which
+        /// the caller compares with what the world's committed index claims for it.
+        /// </summary>
+        private static int ReadChunkFile(string path, bool isPortalChunk, ChunkPayload payload)
         {
             using var br = new BinaryReader(new MemoryStream(ReadWholeFile(path), writable: false));
 
@@ -662,6 +679,8 @@ namespace ValheimBakaLoader.Tools.Atlas
             {
                 ReadZdo(br, isPortalChunk, payload);
             }
+
+            return count;
         }
 
         /// <summary>

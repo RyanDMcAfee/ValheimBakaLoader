@@ -1,0 +1,9 @@
+{
+  "name": "BakaLoaderUncheat",
+  "version_number": "1.0.0",
+  "website_url": "https://github.com/RyanDMcAfee/ValheimBakaLoader",
+  "description": "Client side. Clears the cheat mark BakaLoader 1.0.9 to 1.1.2 left on spawned items, once per character.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2202"
+  ]
+}

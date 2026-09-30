@@ -164,6 +164,31 @@ namespace ValheimBakaLoader.Game
         /// <summary>The per-session server log pipeline. Exposed for testing.</summary>
         public IValheimServerLogger Logger => ServerLogger;
 
+        /// <summary>
+        /// When this session's process came up, in UTC, or null while nothing is running.
+        /// <para>
+        /// Uptime belongs to the SESSION, not to the window looking at it. The page used to
+        /// start its own clock the moment it first saw a Running state, so switching realms
+        /// and coming back showed a server that had been up all evening as freshly started.
+        /// The session has known the answer all along; this is it written down.
+        /// </para>
+        /// </summary>
+        public DateTime? RunningSinceUtc { get; private set; }
+
+        /// <summary>
+        /// The anchor an adoption brought with it, waiting for the move to Running to take it.
+        /// Null on a launch this session made itself, where this moment IS when the process
+        /// came up.
+        /// </summary>
+        private DateTime? AdoptedRunningSinceUtc;
+
+        /// <summary>
+        /// How this session reads when a process it did not launch came up. The real answer is
+        /// the process's own start time; a test hands its own, because a process that has
+        /// genuinely been up for half an hour is not a thing a test can make.
+        /// </summary>
+        internal Func<Process, DateTime?> AdoptedStartUtcReader { get; set; }
+
         private ServerStatus CurrentStatus = ServerStatus.Stopped;
 
         public ServerStatus Status
@@ -343,12 +368,68 @@ namespace ValheimBakaLoader.Game
         public Func<Task<int>> GetPendingModUpdateCount { get; set; }
 
         /// <summary>
+        /// Optional hook (set by the UI) that answers whether this realm's profile is still
+        /// asking for its cheat marks to be cleared at the next empty moment.
+        /// <para>
+        /// It is a hook and not <c>Options.CleanseWhenEmpty</c> on purpose. Options are the
+        /// ones the RUNNING process was launched with and are only refreshed on a relaunch, so
+        /// a switch a host moves while their server is up would not have reached this watcher
+        /// until the next restart: turning it on would have done nothing all evening, and
+        /// turning it off would not have stopped a sweep that was already armed. The hook reads
+        /// the profile on disk each time it is asked, so the switch means what it says the
+        /// moment it is moved.
+        /// </para>
+        /// </summary>
+        public Func<bool> CleanseWhenEmptyWanted { get; set; }
+
+        /// <summary>
+        /// Optional hook (set by the UI) that runs the cheat-mark cleanse and reports its
+        /// counts, logs them, posts them and puts the switch down.
+        /// <para>
+        /// True means the sweep finished, so there is nothing left to wait for. False means it
+        /// was refused, and the only reason it is ever refused is that somebody walked back
+        /// onto the server between the check below and the command going out: the switch stays
+        /// on and the next empty moment gets its turn, which is what the host asked for by
+        /// turning it on in the first place.
+        /// </para>
+        /// </summary>
+        public Func<Task<bool>> RunEmptyCleanse { get; set; }
+
+        /// <summary>
         /// Optional hook (set by the UI) that downloads and installs all available mod
         /// updates. Invoked while the server is fully stopped, in the gap between Stop and
         /// Start of an auto-update restart, so BepInEx is never loading the plugin files
         /// while they're being replaced.
+        /// <para>
+        /// The token is the restart saying stop. It is signalled when
+        /// <see cref="RestartHookBudget"/> runs out, and the relaunch then waits for this hook
+        /// to return: the walk replaces plugin folders one at a time, and the server is about
+        /// to be started over those very folders. A hook that ignores the token holds the world
+        /// down for as long as its own deadlines allow, which is the lesser of the two harms but
+        /// still a harm, so honour it between mods and before each folder is cleared.
+        /// </para>
         /// </summary>
-        public Func<Task> ApplyModUpdates { get; set; }
+        public Func<CancellationToken, Task> ApplyModUpdates { get; set; }
+
+        /// <summary>
+        /// The longest either restart hook may run before it is told to stop and the world is
+        /// brought back with whatever is on disk.
+        /// <para>
+        /// Both hooks promise in their own words that a failure is logged and the restart
+        /// carries on, and both used to keep that promise only for a THROW. A hook that hangs
+        /// is not a hook that failed: the server is already stopped when these run, and the
+        /// relaunch sits behind the await, so one stalled download left the world down with
+        /// nothing in the log after "Applying pending mod updates before restart". Settable so
+        /// a test can prove the relaunch happens without waiting the real number out.
+        /// </para>
+        /// <para>
+        /// What runs out here STOPS the hook rather than merely stopping the wait on it. Both
+        /// hooks write into the install, so a hook that was walked away from would have been
+        /// clearing and refilling folders while the server started over them. See
+        /// <see cref="Tools.LaunchBudget.StopWithinAsync"/>.
+        /// </para>
+        /// </summary>
+        public static TimeSpan RestartHookBudget { get; set; } = TimeSpan.FromMinutes(15);
 
         /// <summary>
         /// Optional hook (set by the UI) that keeps the mod loader current. Invoked in the
@@ -369,8 +450,14 @@ namespace ValheimBakaLoader.Game
         /// than the loader being a pack behind, and the hook's own side says on the row what
         /// did not land.
         /// </para>
+        /// <para>
+        /// The token is the restart saying stop, on the same terms as
+        /// <see cref="ApplyModUpdates"/>: honour it before the write over BepInEx\core begins,
+        /// because the relaunch is waiting on this hook and two writers over one core is an
+        /// install that starts neither version.
+        /// </para>
         /// </summary>
-        public Func<Task> ApplyLoaderUpdate { get; set; }
+        public Func<CancellationToken, Task> ApplyLoaderUpdate { get; set; }
 
         /// <summary>
         /// Optional hook (set by the UI) that puts BepInEx in place before the companion
@@ -595,6 +682,34 @@ namespace ValheimBakaLoader.Game
         // How long the server must be continuously empty before the empty-server auto-update
         // check runs (and how often it re-checks while still empty). Player request: 10 minutes.
         private const int EmptyUpdateDelayMinutes = 10;
+
+        // While the server sits empty and the profile has asked for one, waits out
+        // EmptyCleanseDelay and then runs the cheat-mark cleanse once.
+        private CancellationTokenSource EmptyCleanseCts;
+
+        /// <summary>
+        /// How long the server has to have been empty before the armed cleanse runs.
+        /// <para>
+        /// A minute, not ten. The sweep's own refusal is the only thing that has to be
+        /// avoided and that refusal is about somebody being connected RIGHT NOW, so the wait
+        /// is only there to let a player who is mid-disconnect finish leaving: the server
+        /// drops a peer a few seconds after the client does, and a cleanse fired on the same
+        /// tick as the last leave would be refused for a player who is already gone.
+        /// </para>
+        /// </summary>
+        internal static readonly TimeSpan EmptyCleanseDelay = TimeSpan.FromSeconds(60);
+
+        /// <summary>
+        /// A shorter wait, for a test. It exists so the watcher can be driven end to end
+        /// without a minute of wall clock per case, the same way
+        /// <see cref="AppUpdateService.ReportPathOverride"/> exists so the update note can be
+        /// proved without writing where a running copy of the app reads. Null in every shipped
+        /// path, and the sixty seconds above is what the product waits.
+        /// </summary>
+        internal static TimeSpan? EmptyCleanseDelayOverride { get; set; }
+
+        /// <summary>The wait this run is holding to.</summary>
+        private static TimeSpan EmptyCleanseWait => EmptyCleanseDelayOverride ?? EmptyCleanseDelay;
         // Tracks the number of active (online/joining) players to detect the >0 -> 0 transition.
         private int LastActivePlayerCount;
 
@@ -727,24 +842,49 @@ namespace ValheimBakaLoader.Game
                 case ServerStatus.Running:
                     // A fresh session begins with nobody online, and the scheduled
                     // restart clock starts counting from this moment.
+                    // This is also the moment the session's own uptime starts. Status only
+                    // raises this event on a real change, so a session reaches here once and
+                    // the anchor stands for the whole of it.
+                    //
+                    // Except on an adoption, where this moment is when BakaLoader FOUND the
+                    // server and not when the server came up. The owner closes the window and
+                    // opens it again while a world stays up all evening, and stamping now read
+                    // as freshly started: the same wrong answer a realm switch used to give,
+                    // reached by a different road. AdoptProcess leaves the process's own start
+                    // time here and this takes it; a launch this session made itself leaves it
+                    // null and the clock below is the right answer.
+                    RunningSinceUtc = AdoptedRunningSinceUtc ?? DateTime.UtcNow;
+                    AdoptedRunningSinceUtc = null;
                     LastActivePlayerCount = 0;
                     CancelEmptyRestart();
                     StartScheduledRestartTimer();
+                    // A server that has just come up is empty, and an armed cleanse must not
+                    // have to wait for somebody to join and leave before it means anything.
+                    ArmEmptyCleanseWatch();
                     // The server is genuinely up on this build, so it becomes the one this
                     // profile "last launched". The version follows when the banner is parsed.
                     RecordLaunchedIdentity();
                     break;
 
+                case ServerStatus.Stopped:
+                    // Nothing is up, so there is no uptime. A restart comes back through
+                    // Running above with an anchor of its own, and an adopted process that has
+                    // gone must not leave its start time behind for that restart to pick up.
+                    RunningSinceUtc = null;
+                    AdoptedRunningSinceUtc = null;
+                    if (IsRestarting) _ = ResumeAfterStopAsync();
+                    break;
+
                 case ServerStatus.Stopping:
-                    // Every pending automatic-restart timer is moot once a stop begins.
+                    // Every pending automatic-restart timer is moot once a stop begins, and so
+                    // is a cleanse that needs RCON on a server that is going down. The switch
+                    // itself is left alone: it is armed until it fires.
                     CancelEmptyRestart();
                     CancelEmptyUpdateCheck();
+                    CancelEmptyCleanse();
                     CancelScheduledRestart();
                     break;
 
-                case ServerStatus.Stopped when IsRestarting:
-                    _ = ResumeAfterStopAsync();
-                    break;
             }
         }
 
@@ -847,7 +987,20 @@ namespace ValheimBakaLoader.Game
             {
                 try
                 {
-                    await ApplyLoaderUpdate();
+                    // A clock, because a throw was the only thing this ever handled. A hook
+                    // that HANGS is not a hook that failed: the world is already stopped at
+                    // this point and everything after here, including the relaunch, sits
+                    // behind the await. One stalled address used to keep the world down.
+                    // The clock STOPS the step rather than walking away from it: this one
+                    // replaces BepInEx\core, and the relaunch is the next thing to happen.
+                    var finished = await Tools.LaunchBudget.StopWithinAsync(
+                        ApplyLoaderUpdate, RestartHookBudget,
+                        line => ApplicationLogger.Warning("{line}", line),
+                        "The mod loader step");
+
+                    if (!finished)
+                        ApplicationLogger.Warning(
+                            "The restart went on with the loader that is already there.");
                 }
                 catch (Exception e)
                 {
@@ -864,8 +1017,19 @@ namespace ValheimBakaLoader.Game
                 try
                 {
                     ApplicationLogger.Information("Applying pending mod updates before restart...");
-                    await ApplyModUpdates();
-                    appliedUpdates = true;
+
+                    // The same clock, for the same reason. The mods are walked one after
+                    // another, so one address that answers its headers and then stops sending
+                    // held the whole queue and the world with it. And the same stop: the walk
+                    // clears and refills plugin folders, and the server comes up over them.
+                    appliedUpdates = await Tools.LaunchBudget.StopWithinAsync(
+                        ApplyModUpdates, RestartHookBudget,
+                        line => ApplicationLogger.Warning("{line}", line),
+                        "The mod update step");
+
+                    if (!appliedUpdates)
+                        ApplicationLogger.Warning(
+                            "The restart went on with the mods that are already installed.");
                 }
                 catch (Exception e)
                 {
@@ -1015,9 +1179,42 @@ namespace ValheimBakaLoader.Game
             // real Start asks the host about a change that never happened.
             LaunchedBuildIdentity = ProbeInstall(options)?.Identity;
 
+            // Uptime belongs to the process, not to the adoption. This server was already up
+            // when BakaLoader found it, so the anchor is when IT came up; the transition below
+            // takes this and falls back to its own clock when the process will not say.
+            AdoptedRunningSinceUtc = ReadAdoptedStartUtc(existingProcess);
+
             // Moving to Running is what records the identity (OnStatusTransition), so this
             // assignment has to come after the line above.
             Status = ServerStatus.Running;
+        }
+
+        /// <summary>
+        /// When an adopted process came up, in UTC, or null when it will not say. A process
+        /// that has already gone, or one Windows refuses the read on, throws rather than
+        /// answers, and a missing answer means "use this moment" rather than "no uptime". A
+        /// start in the future is a clock and not an uptime, so it is clamped: the page would
+        /// otherwise draw a negative one.
+        /// </summary>
+        private DateTime? ReadAdoptedStartUtc(Process existingProcess)
+        {
+            DateTime? read;
+            try
+            {
+                var reader = AdoptedStartUtcReader;
+                read = reader != null
+                    ? reader(existingProcess)
+                    : existingProcess?.StartTime.ToUniversalTime();
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (read == null) return null;
+
+            var now = DateTime.UtcNow;
+            return read.Value > now ? now : read.Value;
         }
 
         /// <summary>
@@ -2445,6 +2642,7 @@ namespace ValheimBakaLoader.Game
                 // A player is connected (or just joined) -> cancel any pending empty-server work.
                 CancelEmptyRestart();
                 CancelEmptyUpdateCheck();
+                CancelEmptyCleanse();
             }
             else if (LastActivePlayerCount > 0 && Status == ServerStatus.Running)
             {
@@ -2453,6 +2651,8 @@ namespace ValheimBakaLoader.Game
                 if (Options.EmptyServerRestart) ScheduleEmptyRestart();
                 // ...and always start watching for mod updates to install while empty (item C).
                 ScheduleEmptyUpdateCheck();
+                // ...and the armed one-shot cleanse, when this profile is still asking for one.
+                ArmEmptyCleanseWatch();
             }
 
             LastActivePlayerCount = activeCount;
@@ -2574,6 +2774,107 @@ namespace ValheimBakaLoader.Game
                     // A player rejoined, or the server stopped/restarted.
                 }
             });
+        }
+
+        /// <summary>
+        /// Starts the armed cleanse's wait when the profile is asking for one and the server is
+        /// up and empty right now, and takes the wait away when it is not.
+        /// <para>
+        /// It is public because the last-player-left edge is not the only way a server comes to
+        /// be empty and asking. A host who turns the switch on at a quiet moment has no edge
+        /// coming, and neither has a server that came up with nobody on it, which is every
+        /// server that starts. Both of those call in here, so the switch does not silently wait
+        /// for somebody to join and leave before it means anything.
+        /// </para>
+        /// <para>
+        /// Safe to call as often as anything likes: a wait that is already running is left
+        /// exactly as it is rather than restarted, or a host reaching the Players hall twice
+        /// would push the sixty seconds back each time.
+        /// </para>
+        /// </summary>
+        public void ArmEmptyCleanseWatch()
+        {
+            if (CleanseWhenEmptyWanted == null || RunEmptyCleanse == null) return;
+
+            bool wanted;
+            try { wanted = CleanseWhenEmptyWanted(); }
+            catch { return; }
+
+            if (!wanted) { CancelEmptyCleanse(); return; }
+
+            if (Status != ServerStatus.Running) return;
+            if (CountActivePlayers(PlayerDataRepository.Data) > 0) return;
+            if (EmptyCleanseCts != null) return;
+
+            ScheduleEmptyCleanse();
+        }
+
+        /// <summary>
+        /// Waits out <see cref="EmptyCleanseDelay"/> and, if the server is still up and still
+        /// empty, runs the cleanse once through the hook.
+        /// </summary>
+        private void ScheduleEmptyCleanse()
+        {
+            CancelEmptyCleanse();
+
+            var run = RunEmptyCleanse;
+            if (run == null) return;
+
+            var cts = new CancellationTokenSource();
+            EmptyCleanseCts = cts;
+            var token = cts.Token;
+
+            ApplicationLogger.Information(
+                "Server is empty; the cheat marks will be cleared in {seconds} second(s).",
+                (int)EmptyCleanseWait.TotalSeconds);
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(EmptyCleanseWait, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return; // A player rejoined, the switch went off, or the server stopped.
+                }
+
+                if (token.IsCancellationRequested) return;
+                if (Status != ServerStatus.Running) return;
+                if (CountActivePlayers(PlayerDataRepository.Data) > 0) return;
+
+                // Asked once more here rather than trusted from sixty seconds ago: a host can
+                // put the switch down while this is waiting, and a sweep that ran after that
+                // would be a setting doing something after it was turned off.
+                try { if (!CleanseWhenEmptyWanted()) return; }
+                catch { return; }
+
+                try
+                {
+                    // True: it finished, the counts are said and the switch is down. False: it
+                    // was refused, so the switch is still up and the next empty moment gets
+                    // its turn. Either way this wait is over.
+                    await run();
+                }
+                catch (Exception e)
+                {
+                    ApplicationLogger.Error(e, "The armed cheat-mark cleanse did not run.");
+                }
+                finally
+                {
+                    if (ReferenceEquals(EmptyCleanseCts, cts)) EmptyCleanseCts = null;
+                }
+            });
+        }
+
+        private void CancelEmptyCleanse()
+        {
+            var cts = EmptyCleanseCts;
+            if (cts == null) return;
+
+            EmptyCleanseCts = null;
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
         }
 
         private void CancelEmptyUpdateCheck()
@@ -2895,6 +3196,7 @@ namespace ValheimBakaLoader.Game
             CancelScheduledRestart();
             CancelEmptyUpdateCheck();
             CancelEmptyRestart();
+            CancelEmptyCleanse();
             CancelLaunchRetry();
             StopPositionPolling();
 

@@ -17,7 +17,7 @@
 -->
 <script>
 (function(){
-  var v = window.BAKA_VERSION || "1.2.5";
+  var v = window.BAKA_VERSION || "1.2.6";
   window.BAKA_ASSET_VERSION = v;
   window.BAKA_ASSET = function(name){ return name + "?v=" + encodeURIComponent(v); };
   window.BAKA_ASSET_PLAIN = function(el){
@@ -125,7 +125,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.5</span><!--
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.6</span><!--
              The partial-translation mark. A standing fact about the words on screen, so it
              stands here rather than arriving as a toast; app.js lights it and writes the
              same sentence the globe menu carries onto its tooltip. -->
@@ -272,13 +272,21 @@
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.bepinex.note">Installs BepInEx when it is missing, and at a scheduled restart replaces the core and the loader files with the current Thunderstore pack. A BepInEx that is already here is brought into its care the same way, with a copy of everything replaced kept beside the install; your mods, mod configs and BepInEx.cfg are left as they are, and so is your doorstop_config.ini unless the new pack needs a different one. An install another mod manager drives is never touched. Every server on this install shares one BepInEx, so this covers all of them.</div>
                 <div class="togglerow"><span class="tl" id="hexiumSwitchLabel">Also check Hexium</span><span class="toggle" id="tUseHexium" data-t></span></div>
                 <div class="subval" id="hexiumHelp" style="margin:2px 0 4px">Hexium is a second mod site. Whoever runs it is not named on the site, and its accounts are Discord sign-ins, so BakaLoader cannot tell you that an author there is the same person as the author of the same name on Thunderstore. With this on, your machine contacts hexium.gg about four times an hour while BakaLoader is open, and that site says it keeps request logs for up to ninety days. Nothing is installed from Hexium unless you ask for it and accept what it is.</div>
-                <!-- CONNECTION. Two switches and a test, for the machine where .NET cannot
-                     reach Thunderstore while curl on the same box can. Both switches are off
-                     by default: a machine where the ordinary way works must not be pushed off
-                     it, and the test is what says which one to turn on rather than leaving a
-                     host to guess. The result line is written by app.js, so it carries no id;
-                     everything the walker owns here is static both ways. -->
-                <div class="microlabel" style="margin:10px 0 2px" data-i18n="hearth.upkeep.connection.head"><span class="r">ᛗ</span>Connection</div>
+              </div>
+            </div>
+            <!-- CONNECTION. Its own card since 1.2.6. It used to be a block at the foot of
+                 Upkeep, which put three switches about reaching the internet under a heading
+                 about keeping BakaLoader current, and left the card a host opens to look for
+                 an update six rows longer than the update rows it is named for. Collapsed by
+                 default and on the same head-and-body pattern Upkeep uses, so the Hearth is
+                 exactly as tall as it was until somebody opens it.
+                 Both switches are off by default: a machine where the ordinary way works must
+                 not be pushed off it, and the test is what says which one to turn on rather
+                 than leaving a host to guess. The result line is written by app.js, so it
+                 carries no id; everything the walker owns here is static both ways. -->
+            <div class="card b-conn" id="connCard">
+              <div class="microlabel conn-head" id="connHead" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse" data-i18n="hearth.upkeep.connection.head" data-i18n-title="hearth.upkeep.head.title"><span class="r">ᛗ</span>Connection</div>
+              <div class="conn-body" id="connBody">
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.connection.note">How BakaLoader reaches Thunderstore, GitHub and the language packs. Leave both off unless the test below tells you otherwise.</div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.connection.no_proxy">Do not use the Windows proxy for Thunderstore</span><span class="toggle" id="tNoProxy" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.connection.no_proxy.note">BakaLoader follows the proxy settings Windows holds, including automatic detection. A proxy entry nothing is listening on makes every request sit and wait. With this on, BakaLoader goes straight out.</div>
@@ -298,44 +306,6 @@
                   <button class="btn btn-ghost btn-sm" id="btnNetTest" title="Asks thunderstore.io the way BakaLoader does, and says which of the two switches would have helped" data-i18n="hearth.upkeep.connection.test" data-i18n-title="hearth.upkeep.connection.test.title">Test connection</button>
                 </div>
                 <div class="subval" id="netTestOut" style="margin:2px 0 4px;white-space:pre-wrap"></div>
-                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_windows">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
-                <!-- The notes under that switch. Empty and out of the layout unless the
-                     host side answers with a notice id. Six of them have words: an entry for
-                     every account on this PC that an ordinary run cannot take away, one that
-                     names a different copy of BakaLoader, this account's own entry naming
-                     another copy that is still installed, that same entry standing over a PC
-                     wide one for this copy because Windows would not take it away, a write
-                     Windows refused, and this
-                     account's entry still standing with the switch off. app.js fills them from
-                     the catalog, path and all.
-                     There are two boxes because the machine wide key and this account's own key
-                     are separate facts and both can be wrong at once: the second holds this
-                     account's half when the first is already carrying the machine's. -->
-                <div class="subval" id="startWinNote" style="display:none;margin:2px 0 4px"></div>
-                <div class="subval" id="startWinNoteAlso" style="display:none;margin:2px 0 4px"></div>
-                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_minimized">Start minimized</span><span class="toggle" id="tStartMin" data-t></span></div>
-                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.start_minimized.note">The window opens minimized to the taskbar. BakaLoader has no tray icon, so it waits there rather than in the notification area.</div>
-                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.share_stats">Share anonymous usage stats</span><span class="toggle" id="tShareStats" data-t></span></div>
-                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.norse_names">Show Norse names</span><span class="toggle on" id="tPlainTerms" data-t title="On: every plain label keeps its Norse name as a caption. Off: plain English only." data-i18n-title="hearth.upkeep.norse_names.title"></span></div>
-                <div class="subval" style="margin:2px 0 0" data-i18n="hearth.upkeep.norse_names.note">Keeps Hearth, Vikings and Saga beside their plain names.</div>
-                <!-- Messages to players. It sits beside the Norse-names switch because it is
-                     the same kind of thing: a root user preference about wording, saved
-                     through userprefs.save like every other row in this card. The interface
-                     language is the globe's; this one is the language the people ON the
-                     server are written to in, which is a different audience and a different
-                     choice. app.js fills the options from the packs actually installed. -->
-                <div class="togglerow" style="height:auto;padding:6px 0">
-                  <span class="tl" data-i18n="settings.player_messages.label">Messages to players</span>
-                  <!-- The one option every install has, spelled out here the way every
-                       other static label is, so the select reads correctly on the first
-                       frame and the walker translates it like anything else. app.js
-                       replaces the whole list the moment there is a catalog to word the
-                       installed languages with; before that it leaves this alone rather
-                       than writing an id nothing can look up yet into a control the
-                       walker cannot reach. -->
-                  <select id="selPlayerMsgLang" style="max-width:190px"><option value="same" data-i18n="settings.player_messages.same">Same as the interface</option></select>
-                </div>
-                <div class="subval" style="margin:2px 0 0" data-i18n="settings.player_messages.help">The language of the in-game restart countdown and of the Discord posts.</div>
               </div>
             </div>
 
@@ -358,7 +328,22 @@
                  which is why it stands here and not in the right-click menu. It opens the
                  same question the command palette opens, from the same dialog, so there is
                  no route to the sweep that skips it. Static both ways: the walker owns it. -->
-            <button class="btn btn-ghost btn-sm" id="cleanseBtn" style="margin-left:auto" title="Clears the cheat marks BakaLoader 1.0.9 to 1.1.2 left on things it spawned. Needs an empty server." data-i18n="vikings.cleanse.label" data-i18n-title="vikings.cleanse.title">Clear cheat marks</button>
+            <!-- The two cheat-mark controls wrap together, so the switch never lands on a line
+                 of its own at the left margin while the button sits right on the line above.
+                 See .pagehead .headpair. -->
+            <div class="headpair">
+            <button class="btn btn-ghost btn-sm" id="cleanseBtn" title="Clears the cheat marks BakaLoader 1.0.9 to 1.1.2 left on things it spawned. Needs an empty server." data-i18n="vikings.cleanse.label" data-i18n-title="vikings.cleanse.title">Clear cheat marks</button>
+            <!-- The same sweep, armed and left. The button beside it needs a host at the
+                 window at a moment when nobody is playing, and on a server people use that
+                 moment is four in the morning. This waits for it: one shot, and BakaLoader
+                 puts the switch down again the moment it lands. It is a setting on THIS
+                 realm's profile, so it survives closing the app, and it is off until a host
+                 turns it on. Static both ways: the walker owns the label and the tooltip. -->
+            <div class="togglerow" id="rowCleanseArmed" style="flex:0 0 auto;gap:10px;height:30px">
+              <span class="tl" data-i18n="vikings.cleanse.armed.label">Clear cheat marks when the realm is next empty</span>
+              <span class="toggle" id="tCleanseArmed" data-t title="Waits for a minute with nobody on this realm, runs the same sweep, writes what it cleared to the Saga and then turns itself off." data-i18n-title="vikings.cleanse.armed.title"></span>
+            </div>
+            </div>
           </div>
           <!-- missing required-mods banner (native only; hidden when all mods present) -->
           <div class="capsbanner" id="capsBanner" style="display:none">
@@ -406,7 +391,7 @@
           <div id="bepinexRow" class="beprow-wrap" style="display:none"></div>
           <div class="subval" id="modsPluginNote" style="display:none;margin:0 0 12px;font-family:inherit;font-size:11.5px;line-height:1.55;letter-spacing:.3px;color:var(--warn,#e0a35c)"></div>
           <div class="card" style="padding:0"><div style="height:6px"></div>
-            <table>
+            <table id="modsTable">
               <thead><tr>
                 <th style="width:36%" class="sortable" data-sort="name" title="Sort by name" data-i18n="mods.col.name" data-i18n-title="common.sort.by_name">Name<span class="sortmark"></span></th>
                 <th class="sortable" data-sort="installed" title="Sort by installed version" data-i18n="mods.col.installed" data-i18n-title="mods.col.installed.title">Installed<span class="sortmark"></span></th>
@@ -464,7 +449,11 @@
         </section>
 
         <!-- ============ PAGE: WORLD ============ -->
-        <section class="page" id="page-world">
+        <!-- data-wtab says which of the two tabs is showing. The stylesheet reads it to keep
+             the unsaved band off the App tab, where there is nothing for Save Config to write
+             and the button itself is hidden; worldTab() moves it. It starts on server because
+             that is the tab the hall opens on. -->
+        <section class="page" id="page-world" data-wtab="server">
           <div class="pagehead">
             <h1 data-i18n="world.head.title"><span class="r">ᛃ</span>SETTINGS</h1>
             <span class="hnorse" data-i18n="common.norse.world">World</span>
@@ -477,6 +466,15 @@
               <button class="btn btn-ember btn-sm" id="saveCfgBtn" data-i18n="world.save.label">ᛉ&nbsp; Save Config</button>
             </div>
           </div>
+          <!-- The hall's two tabs. Everything that was on it is on Server, unchanged and
+               still saved by the button above; App holds the preferences that belong to
+               BakaLoader itself and each of those saves itself as it is moved. Static both
+               ways, so the walker owns both words. -->
+          <div class="worldtabs" role="tablist">
+            <button class="wtab on" id="wtabServer" data-wtab="server" role="tab" aria-selected="true" data-i18n="world.tab.server">Server</button>
+            <button class="wtab" id="wtabApp" data-wtab="app" role="tab" aria-selected="false" data-i18n="world.tab.app">App</button>
+          </div>
+          <div id="worldTabServer" class="worldtab">
           <div class="card">
             <div class="microlabel" data-i18n="world.server.label">Server<span class="cnorse" data-i18n="common.norse.heimr">Heimr</span></div>
             <div class="formgrid">
@@ -488,6 +486,13 @@
                      the first frame, like every other field on this hall. -->
                 <input type="text" id="fWorldNew" style="display:none;margin-top:6px" placeholder="name the new world" data-i18n-placeholder="world.new.placeholder" spellcheck="false" autocomplete="off">
                 <div class="fieldnote" id="fWorldNote" style="display:none"></div>
+                <!-- What this world's own files say about themselves. A 1.0 world writes an
+                     index naming every chunk file and how many objects each one holds, and
+                     when a file's own header declares fewer than that, the world has lost
+                     exactly the difference. app.js fills this, names the files and the two
+                     counts, and points at the backups. Hidden on a healthy world, which is
+                     nearly always. -->
+                <div class="mwarn" id="fWorldIntegrity" style="display:none;margin-top:6px"></div>
               </div>
               <div class="field"><label data-i18n="world.field.seed">World Seed <span class="r" title="Seed is set at world creation and can never change" data-i18n-title="world.field.seed.rune.title">ᛟ</span></label>
                 <div class="pathrow"><input type="text" id="fSeed" value="" readonly title="A world's seed is fixed at creation and cannot be changed" data-i18n-title="world.field.seed.input.title"><span class="copychip" id="copySeed" title="Copy seed" data-i18n="common.chip.copy" data-i18n-title="world.seed.copy.title">COPY</span></div>
@@ -632,6 +637,102 @@
               <span class="setupreset-note" data-i18n="world.setup.reset.note">resets setup answers only · server files and worlds are never touched</span>
             </div>
           </div>
+          </div>
+            <!-- ============ TAB: APP ============
+                 The preferences that are about BAKALOADER rather than about a server. They
+                 lived at the foot of the Hearth's Upkeep card, under a heading about keeping
+                 the app current, which is where a host went looking for none of them. Every
+                 control keeps the id it had, so the same save carries them and every rule
+                 written about them still finds them.
+                 Nothing on this tab waits for Save Config: each row writes itself the moment
+                 it is moved, the way it always did. That is why the button at the top right is
+                 hidden while this tab is showing. -->
+            <div id="worldTabApp" class="worldtab" style="display:none">
+            <div class="card">
+              <!-- No Norse caption here. These rows came from the Hearth's Upkeep card and the
+                   heading carried the Hearth's word with them, which named the wrong place:
+                   this is the Settings hall, and the Language heading right beneath it carries
+                   none either. -->
+              <div class="microlabel" data-i18n="app.sec.window">This computer</div>
+                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_windows">Start BakaLoader with Windows</span><span class="toggle" id="tStartWin" data-t></span></div>
+                <!-- The notes under that switch. Empty and out of the layout unless the
+                     host side answers with a notice id. Six of them have words: an entry for
+                     every account on this PC that an ordinary run cannot take away, one that
+                     names a different copy of BakaLoader, this account's own entry naming
+                     another copy that is still installed, that same entry standing over a PC
+                     wide one for this copy because Windows would not take it away, a write
+                     Windows refused, and this
+                     account's entry still standing with the switch off. app.js fills them from
+                     the catalog, path and all.
+                     There are two boxes because the machine wide key and this account's own key
+                     are separate facts and both can be wrong at once: the second holds this
+                     account's half when the first is already carrying the machine's. -->
+                <div class="subval" id="startWinNote" style="display:none;margin:2px 0 4px"></div>
+                <div class="subval" id="startWinNoteAlso" style="display:none;margin:2px 0 4px"></div>
+                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.start_minimized">Start minimized</span><span class="toggle" id="tStartMin" data-t></span></div>
+                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.start_minimized.note">The window opens minimized to the taskbar. BakaLoader has no tray icon, so it waits there rather than in the notification area.</div>
+                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.share_stats">Share anonymous usage stats</span><span class="toggle" id="tShareStats" data-t></span></div>
+                <!-- What this switch actually does, spelled out because it is the one privacy
+                     control on the card and it was the only row here with no paragraph under
+                     it. The sentence names the three fields, the five minutes, and the fact
+                     that turning the switch off stops the post entirely. Keep it true against
+                     Tools/HeartbeatService.cs: it sends deviceHash, appVersion,
+                     serverRunning and, since 1.2.6, a commands map of counts per profile key,
+                     every five minutes, and returns without sending anything at all when
+                     ShareAnonymousStats is off. The same preference gates the COUNTING in
+                     Tools/CommandTally.cs, so with the switch off nothing is even held in
+                     memory. -->
+                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.share_stats.note">Every five minutes BakaLoader posts three things: a one-way hash that stands for this computer, the version it is running, and whether a server is up right now. It also posts how many times each command was pressed since the last one, counted per server under a one-way key, so a count of kicks travels and never a name. No names, no addresses, no world data, nothing about the people playing, and no argument off any command. It is how many installs there are, which versions are still out there and which parts of the window get used. Turn this off and nothing is sent at all.</div>
+                <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.norse_names">Show Norse names</span><span class="toggle on" id="tPlainTerms" data-t title="On: every plain label keeps its Norse name as a caption. Off: plain English only." data-i18n-title="hearth.upkeep.norse_names.title"></span></div>
+                <div class="subval" style="margin:2px 0 0" data-i18n="hearth.upkeep.norse_names.note">Keeps Hearth, Vikings and Saga beside their plain names.</div>
+                <!-- Messages to players. It sits beside the Norse-names switch because it is
+                     the same kind of thing: a root user preference about wording, saved
+                     through userprefs.save like every other row in this card. The interface
+                     language is the globe's; this one is the language the people ON the
+                     server are written to in, which is a different audience and a different
+                     choice. app.js fills the options from the packs actually installed. -->
+                <div class="togglerow" style="height:auto;padding:6px 0">
+                  <span class="tl" data-i18n="settings.player_messages.label">Messages to players</span>
+                  <!-- The one option every install has, spelled out here the way every
+                       other static label is, so the select reads correctly on the first
+                       frame and the walker translates it like anything else. app.js
+                       replaces the whole list the moment there is a catalog to word the
+                       installed languages with; before that it leaves this alone rather
+                       than writing an id nothing can look up yet into a control the
+                       walker cannot reach. -->
+                  <select id="selPlayerMsgLang" style="max-width:190px"><option value="same" data-i18n="settings.player_messages.same">Same as the interface</option></select>
+                </div>
+                <div class="subval" style="margin:2px 0 0" data-i18n="settings.player_messages.help">The language of the in-game restart countdown and of the Discord posts.</div>
+              <!-- Language. The globe in the title bar is still there and still does the
+                   same thing; this is the same choice written out where a host looks for a
+                   setting rather than for an icon. app.js fills the list from the packs that
+                   are actually installed, and the download offer is the globe's own. -->
+              <div class="microlabel" style="margin:14px 0 2px" data-i18n="app.sec.language"><span class="r">ᛞ</span>Language</div>
+              <div class="togglerow" style="height:auto;padding:6px 0">
+                <span class="tl" data-i18n="app.language.label">Interface language</span>
+                <select id="selAppLang" style="max-width:190px"><option value="en">English</option></select>
+              </div>
+              <div class="subval" style="margin:2px 0 4px" data-i18n="app.language.help">The globe in the title bar opens the same list, and it is the one that offers a download for a language that is not here yet.</div>
+              <!-- TEXT SIZE. The window is one web page, so this is the page's zoom: it moves
+                   the text, the boxes around it and the gaps between them together, which is
+                   the only way a size setting stays laid out. The map's own labels follow it
+                   as well, without anything scaling them: a page zoom raises devicePixelRatio
+                   and the Atlas canvas is already transformed by that, so an 11px canvas font
+                   grows on screen exactly as an 11px rule does.
+                   Extra large also raises the window's own minimum size, because
+                   zooming the page is the same thing as making the window smaller from the
+                   layout's side. -->
+              <div class="togglerow" style="height:auto;padding:6px 0">
+                <span class="tl" data-i18n="app.textsize.label">Text size</span>
+                <select id="selTextSize" style="max-width:190px">
+                  <option value="normal" data-i18n="app.textsize.normal">Normal</option>
+                  <option value="large" data-i18n="app.textsize.large">Large</option>
+                  <option value="xlarge" data-i18n="app.textsize.xlarge">Extra large</option>
+                </select>
+              </div>
+              <div class="subval" style="margin:2px 0 0" data-i18n="app.textsize.help">Large and Extra large zoom the whole window, the map's labels included, and take effect the moment you choose them. Extra large needs a wider window, so BakaLoader raises the smallest size the window can be dragged to.</div>
+            </div>
+            </div>
         </section>
         <!-- The unsaved notice. It sits at the bottom left of the hall, diagonally
              opposite Save Config, and it has no button on purpose: the button it would
@@ -754,7 +855,7 @@
                 <span class="fpill" data-f="warn" data-i18n="saga.filter.warn">Warn</span>
                 <span class="fpill" data-f="err" data-i18n="saga.filter.err">Error</span>
                 <span class="fpill" data-f="net" data-i18n="saga.filter.net">Net</span>
-                <input id="termSearch" class="termsearch" placeholder="search the saga…" spellcheck="false" autocomplete="off" data-i18n-placeholder="saga.search.placeholder">
+                <input id="termSearch" class="termsearch" placeholder="search the saga…" spellcheck="false" autocomplete="off" aria-label="Search the saga" data-i18n-placeholder="saga.search.placeholder" data-i18n-aria="saga.search.aria">
                 <span class="pill ember hidden" id="termNew" title="Jump to the newest lines" data-i18n-title="saga.new.title">↓ 0 new</span>
                 <span class="fpill" id="termCopy" title="Copy the visible lines to the clipboard" data-i18n="saga.copy.label" data-i18n-title="saga.copy.title">ᛝ copy</span>
                 <span class="pill green" id="termStream">streaming</span>
@@ -906,7 +1007,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.5</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.6</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg"><span data-i18n="status.rcon.label">RCON</span> <span class="em" id="sbRcon">bound</span></span>
@@ -951,6 +1052,13 @@
         <div class="pitem" data-cmd="open_plugins_folder" data-i18n="pal.cmd.open_plugins_folder"><span class="r">ᛃ</span>Open plugins folder<span class="k" data-i18n="pal.k.path">path</span></div>
         <div class="pitem" data-cmd="open_server_logs" data-i18n="pal.cmd.open_server_logs"><span class="r">ᛃ</span>Open server logs<span class="k" data-i18n="pal.k.path">path</span></div>
         <div class="pitem" data-cmd="log_settings" data-i18n="pal.cmd.log_settings"><span class="r">ᚹ</span>Log settings…<span class="k" data-i18n="pal.k.vellum">vellum</span></div>
+        <!-- The three controls that moved out of the Hearth's Upkeep card and onto the
+             Settings hall's App tab in 1.2.6. The palette promised to still land on them, and
+             until now the helper that does it (openAppTab) had no caller at all. Each row
+             lands on the tab and scrolls its own control into view. -->
+        <div class="pitem" data-cmd="text_size" data-i18n="pal.cmd.text_size"><span class="r">ᛖ</span>Text size<span class="k" data-i18n="pal.k.app">app</span></div>
+        <div class="pitem" data-cmd="interface_language" data-i18n="pal.cmd.interface_language"><span class="r">ᛞ</span>Interface language<span class="k" data-i18n="pal.k.app">app</span></div>
+        <div class="pitem" data-cmd="start_with_windows" data-i18n="pal.cmd.start_with_windows"><span class="r">ᚠ</span>Start with Windows<span class="k" data-i18n="pal.k.app">app</span></div>
         <div class="pitem pconsole hidden" id="palConsole" data-cmd=""><span class="r">ᛊ</span><span id="palConsoleLbl" data-i18n="pal.console.row">Send to server console</span><span class="k" data-i18n="pal.k.rcon">rcon</span></div>
       </div>
       <!--

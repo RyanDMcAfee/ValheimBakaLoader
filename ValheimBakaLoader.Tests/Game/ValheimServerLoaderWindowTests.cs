@@ -82,8 +82,8 @@ namespace ValheimBakaLoader.Tests.Game
             // answers zero, which is what the bridge's own hook does when the preference is
             // off. Nothing then sets the flag the mod step is gated on.
             Server.GetPendingModUpdateCount = () => Task.FromResult(0);
-            Server.ApplyModUpdates = () => { mods++; return Task.CompletedTask; };
-            Server.ApplyLoaderUpdate = () => { loader++; return Task.CompletedTask; };
+            Server.ApplyModUpdates = _ => { mods++; return Task.CompletedTask; };
+            Server.ApplyLoaderUpdate = _ => { loader++; return Task.CompletedTask; };
 
             await RunningServer();
             Server.Restart();
@@ -105,7 +105,7 @@ namespace ValheimBakaLoader.Tests.Game
         public async Task Every_restart_reason_runs_it(string reason)
         {
             var loader = 0;
-            Server.ApplyLoaderUpdate = () => { loader++; return Task.CompletedTask; };
+            Server.ApplyLoaderUpdate = _ => { loader++; return Task.CompletedTask; };
 
             await RunningServer();
             Server.Restart(reason: reason);
@@ -126,8 +126,8 @@ namespace ValheimBakaLoader.Tests.Game
             var mods = 0;
 
             Server.GetPendingModUpdateCount = () => Task.FromResult(0);
-            Server.ApplyModUpdates = () => { mods++; return Task.CompletedTask; };
-            Server.ApplyLoaderUpdate = () => { loader++; return Task.CompletedTask; };
+            Server.ApplyModUpdates = _ => { mods++; return Task.CompletedTask; };
+            Server.ApplyLoaderUpdate = _ => { loader++; return Task.CompletedTask; };
 
             await RunningServer();
 
@@ -150,8 +150,8 @@ namespace ValheimBakaLoader.Tests.Game
             var order = new List<string>();
 
             Server.GetPendingModUpdateCount = () => Task.FromResult(3);
-            Server.ApplyModUpdates = () => { order.Add("mods"); return Task.CompletedTask; };
-            Server.ApplyLoaderUpdate = () => { order.Add("loader"); return Task.CompletedTask; };
+            Server.ApplyModUpdates = _ => { order.Add("mods"); return Task.CompletedTask; };
+            Server.ApplyLoaderUpdate = _ => { order.Add("loader"); return Task.CompletedTask; };
 
             await RunningServer();
             await Server.RestartWithCountdown(applyModUpdates: true);
@@ -168,7 +168,7 @@ namespace ValheimBakaLoader.Tests.Game
         [Fact]
         public async Task A_loader_step_that_throws_still_lets_the_server_come_back()
         {
-            Server.ApplyLoaderUpdate = () => throw new InvalidOperationException("Thunderstore did not answer");
+            Server.ApplyLoaderUpdate = _ => throw new InvalidOperationException("Thunderstore did not answer");
 
             await RunningServer();
             Server.Restart();
@@ -213,7 +213,7 @@ namespace ValheimBakaLoader.Tests.Game
             BepInExInstallResult result = null;
 
             Server.GetPendingModUpdateCount = () => Task.FromResult(0);
-            Server.ApplyLoaderUpdate = async () =>
+            Server.ApplyLoaderUpdate = async _ =>
                 result = await service.UpdateAsync(exe, Array.Empty<BepInExProfileInstall>(),
                     options: BepInExWriteOptions.Window);
 

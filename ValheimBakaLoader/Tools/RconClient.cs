@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
@@ -74,6 +75,15 @@ namespace ValheimBakaLoader.Tools
         private bool Validated;
         private int RequestId;
 
+        // The roster poller opens a fresh connection every few seconds for as long as a server
+        // runs, and every one of those used to write "RCON connected" at Information. On a box
+        // that leaves a world up all evening that one line was most of the application log and
+        // most of the Recent log on screen. These two fields remember what was last said out
+        // loud, so the routine re-connects go to Debug and only a real change of state reaches
+        // the host: one "connected" when it comes up, one "lost" when it goes away.
+        private string ReportedEndpoint;
+        private string ReportedState;
+
         public RconClient(IApplicationLogger appLogger)
         {
             Logger = appLogger;
@@ -111,25 +121,118 @@ namespace ValheimBakaLoader.Tools
                 var packet = await ReadPacketAsync(stream);
                 if (packet == null)
                 {
-                    Logger.Warning("RCON authentication failed: no response from {host}:{port}", host, port);
+                    ReportLost(host, port, "no-response", "RCON authentication failed: no response from {host}:{port}");
                     return false;
                 }
 
                 if (packet.Body != null && packet.Body.IndexOf("fail", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    Logger.Warning("RCON authentication failed: bad password for {host}:{port}", host, port);
+                    ReportLost(host, port, "bad-password", "RCON authentication failed: bad password for {host}:{port}");
                     return false;
                 }
 
                 Validated = true;
-                Logger.Information("RCON connected to {host}:{port}", host, port);
+                if (NoteState(host, port, "connected"))
+                {
+                    Logger.Information("RCON connected to {host}:{port}", host, port);
+                }
+                else
+                {
+                    Logger.Debug("RCON reconnected to {host}:{port}", host, port);
+                }
+
                 return true;
             }
             catch (Exception e)
             {
-                Logger.Warning("RCON connection error ({host}:{port}): {message}", host, port, e.Message);
+                var wasConnected = WasConnected(host, port);
+                if (!NoteState(host, port, FailureState(e)))
+                {
+                    Logger.Debug("RCON connection error ({host}:{port}): {message}", host, port, e.Message);
+                }
+                else if (wasConnected)
+                {
+                    Logger.Information("RCON lost to {host}:{port}: {message}", host, port, e.Message);
+                }
+                else
+                {
+                    Logger.Warning("RCON connection error ({host}:{port}): {message}", host, port, e.Message);
+                }
+
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Writes one of the connection failures at the level a host deserves: an Information
+        /// "lost" line the first time a connection that was up goes away, the warning once when
+        /// it never came up at all, and Debug for every repeat of the same state at the same
+        /// address.
+        /// </summary>
+        private void ReportLost(string host, int port, string state, string template)
+        {
+            var wasConnected = WasConnected(host, port);
+            if (!NoteState(host, port, state))
+            {
+                Logger.Debug(template, host, port);
+                return;
+            }
+
+            if (wasConnected)
+            {
+                Logger.Information("RCON lost to {host}:{port}", host, port);
+                return;
+            }
+
+            Logger.Warning(template, host, port);
+        }
+
+        /// <summary>
+        /// The state name one connection failure is remembered by.
+        /// <para>
+        /// It used to be the exception's MESSAGE, and a message is not an identity: the same
+        /// address refusing the same connection can word itself differently from one attempt
+        /// to the next, and a socket error carries the endpoint in its text. Every such
+        /// variation read as a NEW state, so a server that had been down for an hour went on
+        /// writing a Warning a host reads, over and over, for one thing being wrong once. The
+        /// exception's type and, where there is one, the socket error code are what actually
+        /// say which failure this is.
+        /// </para>
+        /// </summary>
+        internal static string FailureState(Exception problem)
+        {
+            if (problem == null) return "error";
+
+            var socket = problem as SocketException
+                ?? problem.InnerException as SocketException;
+
+            return socket != null
+                ? "error:" + problem.GetType().Name + ":" + (int)socket.SocketErrorCode
+                : "error:" + problem.GetType().Name;
+        }
+
+        private bool WasConnected(string host, int port)
+        {
+            return ReportedState == "connected" && ReportedEndpoint == Endpoint(host, port);
+        }
+
+        /// <summary>
+        /// Records the connection state for an address and answers whether it changed. A change
+        /// is a different state, or the same state reached at a different address.
+        /// </summary>
+        private bool NoteState(string host, int port, string state)
+        {
+            var endpoint = Endpoint(host, port);
+            if (ReportedEndpoint == endpoint && ReportedState == state) return false;
+
+            ReportedEndpoint = endpoint;
+            ReportedState = state;
+            return true;
+        }
+
+        private static string Endpoint(string host, int port)
+        {
+            return (host ?? string.Empty) + ":" + port.ToString(CultureInfo.InvariantCulture);
         }
 
         /// <summary>

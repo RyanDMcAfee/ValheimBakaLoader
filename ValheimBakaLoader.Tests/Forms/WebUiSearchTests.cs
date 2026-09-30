@@ -152,8 +152,11 @@ namespace ValheimBakaLoader.Tests.Forms
             {
                 "const mods=sortedMods(S.mods||[]);",           // the sort never sees the search
                 "const upd=mods.filter(m=>m.UpdateAvailable);", // the Update all count
-                "$(\"#modCount\").textContent=scanned?mods.length",
-                "$(\"#sbMods\").textContent=T(\"side.mods.count\",{count:scanned?mods.length",
+                // 1.2.6: both read one value, chosen once from the whole list and never
+                // from the narrowed one. Without a scan it is the count off the disk.
+                "const count=scanned?mods.length:(S.modsOnDisk==null?\"-\":S.modsOnDisk);",
+                "$(\"#modCount\").textContent=count;",
+                "$(\"#sbMods\").textContent=T(\"side.mods.count\",{count});",
                 "conditionModUpdates(upd.length);",             // the standing condition
                 "renderModIndexLine(mods.length);",
             })
@@ -424,7 +427,10 @@ namespace ValheimBakaLoader.Tests.Forms
             var js = AppJs();
 
             var save = Between(js, "$(\"#cfgSaveBtn\").addEventListener", "\n/*");
-            Assert.Contains("cfgWrite(CFG.file,$(\"#cfgEditor\").value)", save);
+            // The whole file, and the realm it was read from. A scroll opened on one realm and
+            // left unsaved used to be written into the NEXT realm's file by one press of Save,
+            // so the write names the realm and the host side refuses a mismatch.
+            Assert.Contains("cfgWrite(CFG.file,$(\"#cfgEditor\").value,CFG.profile)", save);
             Assert.DoesNotContain("runeFilter", save);
             Assert.DoesNotContain("cfgFilesForList", save);
             Assert.DoesNotContain("cfgFindMatches", save);
@@ -634,7 +640,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void Both_searches_are_dropped_when_the_helm_turns_to_another_realm()
         {
-            var switchServer = Between(AppJs(), "async function switchServer(name){", "/* New-Server wizard");
+            var switchServer = Between(AppJs(), "async function switchServer(name,opts){", "/* New-Server wizard");
 
             Assert.Contains("S.modFilter=\"\";", switchServer);
             Assert.Contains("S.runeFilter=\"\";", switchServer);

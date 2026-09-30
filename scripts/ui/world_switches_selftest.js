@@ -409,14 +409,18 @@ function card(answers, opts) {
   vm.runInContext(
     "let _worldModsSeq=0;\n" +
     fn("function worldGenAnswered(") + "\n}\n" +
+    /* The held set is keyed on the realm as well as the world since 1.2.6: a set abandoned
+       on one realm used to be re-painted onto the next realm's card and written by that
+       realm's Save Config. The real question comes across with the rest. */
+    fn("function worldModsHeldFor(") + "\n}\n" +
     fn("async function renderWorldMods(") + "\n}\n" +
     fn("function worldModsFromScreen(") + "\n}\n" +
     fn("function repaintWorldDialCopy(") + "\n}\n" +
     "this.saveConfigWorldHalf=async function(prefs){" + saveWorldHalf() + "};\n",
     context, { filename: "app.js#world-pull" });
 
-  ["worldGenAnswered", "renderWorldMods", "worldModsFromScreen", "repaintWorldDialCopy",
-   "saveConfigWorldHalf"].forEach(name =>
+  ["worldGenAnswered", "worldModsHeldFor", "renderWorldMods", "worldModsFromScreen",
+   "repaintWorldDialCopy", "saveConfigWorldHalf"].forEach(name =>
     assert.strictEqual(typeof context[name], "function", name + " did not come out of app.js"));
 
   return {

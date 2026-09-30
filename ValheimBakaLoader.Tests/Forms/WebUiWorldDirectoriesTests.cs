@@ -414,8 +414,11 @@ namespace ValheimBakaLoader.Tests.Forms
             var opens = js.IndexOf("async function renderWorldMods(){", StringComparison.Ordinal);
             Assert.True(opens > 0, "app.js no longer declares renderWorldMods");
             var mods = js.Substring(opens, js.IndexOf("\n}\n", opens, StringComparison.Ordinal) - opens);
+            // The held set is keyed on the realm as well as the world since 1.2.6: a set
+            // abandoned on one realm used to be re-painted onto the next realm's card, declared
+            // clean by the re-snapshot, and written by that realm's Save Config.
             var kept = mods.IndexOf(
-                "if(S.worldMods&&S.worldMods.world===world&&S.worldMods.pulled)", StringComparison.Ordinal);
+                "if(worldModsHeldFor(world)&&S.worldMods.pulled)", StringComparison.Ordinal);
             var adopt = mods.IndexOf("worldFormAdopt(...Object.values(WORLDGEN)", StringComparison.Ordinal);
             Assert.True(kept > 0 && adopt > kept);
             Assert.DoesNotContain("worldFormAdopt", mods.Substring(kept, adopt - kept - 1).Split("return;")[0]);
@@ -683,7 +686,13 @@ namespace ValheimBakaLoader.Tests.Forms
             // INTO that token is the next test's question, not this one's.
             Assert.Contains("--unsaved-band:", css);
             Assert.Contains("#page-world.unsaved-room{bottom:var(--unsaved-band)}", css);
-            Assert.Contains("if(hall) hall.classList.toggle(\"unsaved-room\",any);", js);
+            // The room is given up only on the tab the band is about. The App tab hides the
+            // band (there is no Save Config there and every row on it writes itself), so a hall
+            // that still shortened itself for it ended in an empty band.
+            Assert.Contains(
+                "if(hall) hall.classList.toggle(\"unsaved-room\",any&&hall.dataset.wtab!==\"app\");",
+                js);
+            Assert.Contains("#page-world.active[data-wtab=\"app\"] ~ .worldunsaved.on{display:none}", css);
             // And it is toggled on the SCROLLING element rather than on some wrapper, so
             // lifting the edge really does shorten what scrolls.
             Assert.Contains("overflow-y:auto", css.Substring(css.IndexOf(".page{", StringComparison.Ordinal), 120));

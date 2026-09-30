@@ -7,6 +7,32 @@ using System.Threading;
 namespace ValheimBakaLoader.Tools.Atlas
 {
     /// <summary>
+    /// One chunk file that holds fewer records than the world's committed index claims for
+    /// it, with both numbers so the window can name them.
+    /// </summary>
+    public sealed class DbChunkShortfall
+    {
+        public DbChunkShortfall(string fileName, int indexCount, int fileCount)
+        {
+            FileName = fileName;
+            IndexCount = indexCount;
+            FileCount = fileCount;
+        }
+
+        /// <summary>The chunk file's own name, as the index spells it.</summary>
+        public string FileName { get; }
+
+        /// <summary>How many objects the world's committed index says this file holds.</summary>
+        public int IndexCount { get; }
+
+        /// <summary>How many its own header says it holds.</summary>
+        public int FileCount { get; }
+
+        /// <summary>The difference, which is what the world has lost from this file.</summary>
+        public int Missing => IndexCount - FileCount;
+    }
+
+    /// <summary>
     /// Parsed summary of a Valheim world save (read-only, mod-free), from
     /// either a pre-1.0 single .db file or a Valheim 1.0 chunked world folder.
     ///
@@ -58,6 +84,27 @@ namespace ValheimBakaLoader.Tools.Atlas
         /// world, which is one file and has no chunks.
         /// </summary>
         public int ChunksTotal;
+
+        /// <summary>
+        /// Chunk files that hold fewer records than the world's own committed index says they
+        /// do, one entry each.
+        /// <para>
+        /// WHY THIS IS HERE. The index is written by the same save that wrote the chunk
+        /// files, so the two are a statement and its evidence: the index says chunk
+        /// <c>00_01__0_40.chunk</c> holds 812 objects and the file itself says 4. When they
+        /// disagree the world on disk has lost what the difference names, and the owner's own
+        /// Final Sunset lost 82,563 records exactly this way, with nothing anywhere saying so
+        /// until somebody walked into the hole. The reader can see it for nothing, because it
+        /// reads both numbers already, so it writes it down and the window says it out loud
+        /// before the next start.
+        /// </para>
+        /// <para>
+        /// Empty on a healthy world, and empty on a pre-1.0 one, which has no chunk index.
+        /// This is a NOTE and never a refusal: the world still loads, and a host who knows
+        /// what is missing can go to their backups before the next save writes over them.
+        /// </para>
+        /// </summary>
+        public readonly List<DbChunkShortfall> ChunkShortfalls = new List<DbChunkShortfall>();
 
         /// <summary>
         /// Chunk files that could not be read, so their objects are missing from Portals,

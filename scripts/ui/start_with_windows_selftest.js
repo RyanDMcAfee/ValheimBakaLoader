@@ -450,7 +450,7 @@ test("the table, the catalog and every count written out in the source agree", (
 });
 
 /* ------------- rule 11: the card works the notes out again rather than showing them once */
-test("the notes are asked for again on a walk into the hall and on an opening of the card", () => {
+test("the notes are asked for again, from the one place that knows the tab changed", () => {
   // WHY. Every one of these sentences names a way out that leads the host OUT of this window:
   // the Startup tab in Task Manager, the Startup apps page in Settings, another copy of
   // BakaLoader in another folder. They go and do it, they come back, and a card that had only
@@ -472,22 +472,56 @@ test("the notes are asked for again on a walk into the hall and on an opening of
     "the re-read does not hand a real reply to the painter, or does not hold the FAIL sentinel"
     + " back from it");
 
-  // And it is really called: once for the walk into the Hearth, once for the card's own
-  // header, because the card opens collapsed and a host who never left the hall opens it
-  // without walking anywhere.
-  const walk = SOURCE.indexOf('if(name==="hearth") refreshStartWinNote()');
-  assert.ok(walk > 0,
-    "goPage no longer asks for the notes again when the Hearth is opened, so a trip to Task"
-    + " Manager leaves the same warning standing on the card");
-  assert.ok(SOURCE.indexOf("refreshStartWinNote()", refresh + body.length) > 0
-    || SOURCE.lastIndexOf("refreshStartWinNote()") !== walk,
-    "nothing asks for the notes again when the Upkeep card itself is opened");
-  assert.ok(/classList\.contains\("open"\)\) refreshStartWinNote\(\)/.test(SOURCE),
-    "the Upkeep header asks for the notes again whichever way it was just toggled, so closing"
-    + " the card would count as opening it");
+  // And it is really reached, from the ONE place that knows the tab changed. This is the
+  // rule that shipped broken: the re-read was hung on a click listener on #wtabApp, and the
+  // listener that actually switches the tab is added three thousand lines further down, in
+  // the tab strip's own wiring. Listeners fire in the order they were ADDED, so the first
+  // press of App read WORLD_TAB as "server", returned, and only then did worldTab set it to
+  // "app". Nothing refreshed, ever, and rule 11 passed because goPage carries the same
+  // sentence for the walk into the hall.
+  //
+  // So the ask has to sit INSIDE worldTab, after the assignment that moves the tab, and no
+  // listener on the tab button may read WORLD_TAB at all.
+  const tab = SOURCE.indexOf("function worldTab(name){");
+  assert.ok(tab > 0, "app.js no longer holds the tab strip's own switch");
+  const tabBody = SOURCE.slice(tab, SOURCE.indexOf("\n}", tab));
+
+  const moved = tabBody.indexOf("WORLD_TAB=want;");
+  const asked = tabBody.indexOf("refreshStartWinNote()");
+  assert.ok(moved > 0, "worldTab no longer moves WORLD_TAB where this rule expects");
+  assert.ok(asked > 0,
+    "worldTab does not ask for the notes again, so the only road left is a listener on the"
+    + " tab button, and that listener reads the tab the hall is LEAVING: a host who cleared"
+    + " an entry in Task Manager comes back to the same warning standing");
+  assert.ok(asked > moved,
+    "the ask sits above the line that moves WORLD_TAB, so it reads the previous tab");
+  assert.ok(/if\(want==="app"\)\{/.test(tabBody),
+    "worldTab asks on every tab press rather than on the App tab, so pressing Server counts"
+    + " as pressing App");
+
+  assert.ok(SOURCE.indexOf('$("#wtabApp").addEventListener') < 0
+    && SOURCE.indexOf('$("#wtabApp")?.addEventListener') < 0,
+    "a listener is back on the tab button. It is added before the tab strip's own wiring, so"
+    + " it reads WORLD_TAB one press behind; worldTab is the only place that knows the tab"
+    + " changed");
+
+  // The walk into the hall goes through the same road rather than carrying a second ask, so
+  // one walk reads the preferences once.
+  assert.ok(/if\(name==="world"\)\{try\{worldTab\(WORLD_TAB\);\}catch\(_\)\{\}\}/.test(SOURCE),
+    "the walk into the Settings hall no longer goes through worldTab, so nothing asks for the"
+    + " notes again when a host walks in with the App tab already showing");
+  assert.strictEqual((SOURCE.match(/refreshStartWinNote\(\)/g) || []).length, 2,
+    "the number of places that ask for the notes has changed: the declaration and the one ask"
+    + " inside worldTab are the two this rule expects, so a second road has appeared and one"
+    + " walk into the hall now reads the preferences twice");
 });
 
 test("the flag the boot walk reads is hoisted, so goPage(\"hearth\") at script evaluation cannot hit a dead zone", () => {
+  // WORLD_TAB is read by the same walk and is declared with let, which is safe for a different
+  // reason: the boot walk goes to the Hearth, so the branch that reads it never runs during the
+  // script's own evaluation. Held here so the pair is read together.
+  assert.ok(/let WORLD_TAB="server";/.test(SOURCE),
+    "WORLD_TAB is not where this rule expects it; re-read the tab strip's own state");
   assert.ok(/^var UPKEEP_PAINTED=false;/m.test(SOURCE),
     "UPKEEP_PAINTED must be declared with var: the first goPage(\"hearth\") runs while the script is still"
     + " being evaluated, thousands of lines above the declaration, and a let there throws ReferenceError");

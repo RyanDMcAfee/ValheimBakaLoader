@@ -108,7 +108,11 @@ namespace ValheimBakaLoader.Tests.Forms
             new object[] { "hearth.card.", 20 },
             new object[] { "hearth.upkeep.auto_update.gated.", 2 },
             new object[] { "hearth.upkeep.hexium.", 4 },
-            new object[] { "appupd.", 28 },
+            // 29 with the sentence for a release whose asset did not arrive whole. That case
+            // used to be worded "BakaLoader is already on the newest release it can see",
+            // which is a false statement about the host's machine and contradicts the pill on
+            // the same screen naming the newer version.
+            new object[] { "appupd.", 29 },
             // 25 with the held-start toast, which used to glue "Start held · " in front of
             // the sentence guardBody already built and now asks for one key that carries it.
             new object[] { "guard.", 25 },
@@ -301,7 +305,10 @@ namespace ValheimBakaLoader.Tests.Forms
             // Thunderstore now has a toast of its own rather than raising the failed panel's
             // whole paragraph, and a wait that ends because the server stopped answering is
             // said in its own words instead of being worded as the ten-minute ceiling.
-            Assert.Equal(210, marked.Count);
+            // 216 with the six 1.2.6 added: four for the armed one-shot cleanse (armed, put
+            // down, it landed, it was turned away) and two for Text size (chosen, and the
+            // browser preview where only the map's own labels can follow it).
+            Assert.Equal(216, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

@@ -39,10 +39,22 @@ namespace ValheimBakaLoader.Game
         // True once the first-start question has been asked, so it is asked exactly once.
         public bool BepInExMaintenanceAsked { get; set; }
 
+        // The name of the last unattended-BepInEx fact the host closed the notice for. Per
+        // install, like the two above it, because so is BepInEx. Empty until a notice has been
+        // closed. A scheduled restart window records the same refusal every few hours, so
+        // without this the bar about a decision the host has already made came back after
+        // every launch; see Tools.BepInExNoticeKey for what a fact is named by.
+        public string BepInExNoticeSeenKey { get; set; }
+
         public bool StartWithWindows { get; set; }
 
         // Anonymous usage heartbeat (install count / servers online); see HeartbeatService.
         public bool ShareAnonymousStats { get; set; } = true;
+
+        // The random value this install keys its per-realm command counts with. Made once, the
+        // first time a count is taken, and NEVER sent anywhere: see Tools.AnalyticsSalt for why
+        // it cannot be the device hash, which travels in the same beat as the counts.
+        public string AnalyticsSalt { get; set; }
 
         public bool StartMinimized { get; set; }
 
@@ -94,6 +106,12 @@ namespace ValheimBakaLoader.Game
         // from Language because the host and the people on their server are not always
         // reading the same one.
         public string PlayerMessageLanguage { get; set; } = "same";
+
+        // How big the interface is read at: "normal", "large" or "xlarge". The whole window is
+        // one web page, so this is the page's zoom rather than a second set of font sizes, and
+        // the canvas fonts the zoom cannot reach are multiplied by the same factor. See
+        // TextSizes for the three numbers and why the window's minimum grows with them.
+        public string TextSize { get; set; } = TextSizes.Normal;
 
         // True once the first-launch setup wizard has been finished (or skipped).
         public bool SetupCompleted { get; set; }
@@ -155,8 +173,10 @@ namespace ValheimBakaLoader.Game
                 AutoUpdateBakaLoader = file.AutoUpdateBakaLoader ?? defaults.AutoUpdateBakaLoader,
                 BepInExMaintained = file.BepInExMaintained ?? defaults.BepInExMaintained,
                 BepInExMaintenanceAsked = file.BepInExMaintenanceAsked ?? defaults.BepInExMaintenanceAsked,
+                BepInExNoticeSeenKey = file.BepInExNoticeSeenKey ?? defaults.BepInExNoticeSeenKey,
                 StartWithWindows = file.StartWithWindows ?? defaults.StartWithWindows,
                 ShareAnonymousStats = file.ShareAnonymousStats ?? defaults.ShareAnonymousStats,
+                AnalyticsSalt = file.AnalyticsSalt ?? defaults.AnalyticsSalt,
                 StartMinimized = file.StartMinimized ?? defaults.StartMinimized,
                 SaveProfileOnStart = file.SaveProfileOnStart ?? defaults.SaveProfileOnStart,
                 WriteApplicationLogsToFile = file.WriteApplicationLogsToFile ?? defaults.WriteApplicationLogsToFile,
@@ -169,6 +189,13 @@ namespace ValheimBakaLoader.Game
                 PlainTerminology = file.PlainTerminology ?? defaults.PlainTerminology,
                 Language = file.Language ?? defaults.Language,
                 PlayerMessageLanguage = file.PlayerMessageLanguage ?? defaults.PlayerMessageLanguage,
+                // Carried across as it was written, the same as the two language codes beside
+                // it. The guard is at every READ instead: TextSizes.Factor answers 1.0 for a
+                // spelling this build does not know, the save handler normalises before it
+                // writes, and the window's own reader normalises before it zooms. Normalising
+                // here as well would mean a document hand-edited to a future spelling lost that
+                // spelling the next time anything on this card was saved.
+                TextSize = file.TextSize ?? defaults.TextSize,
                 SetupCompleted = file.SetupCompleted ?? defaults.SetupCompleted,
                 WindowBounds = file.WindowBounds ?? defaults.WindowBounds,
                 WindowMaximized = file.WindowMaximized ?? defaults.WindowMaximized,
@@ -209,8 +236,10 @@ namespace ValheimBakaLoader.Game
             AutoUpdateBakaLoader = AutoUpdateBakaLoader,
             BepInExMaintained = BepInExMaintained,
             BepInExMaintenanceAsked = BepInExMaintenanceAsked,
+            BepInExNoticeSeenKey = BepInExNoticeSeenKey,
             StartWithWindows = StartWithWindows,
             ShareAnonymousStats = ShareAnonymousStats,
+            AnalyticsSalt = AnalyticsSalt,
             StartMinimized = StartMinimized,
             SaveProfileOnStart = SaveProfileOnStart,
             WriteApplicationLogsToFile = WriteApplicationLogsToFile,
@@ -223,6 +252,7 @@ namespace ValheimBakaLoader.Game
             PlainTerminology = PlainTerminology,
             Language = Language,
             PlayerMessageLanguage = PlayerMessageLanguage,
+            TextSize = TextSize,
             SetupCompleted = SetupCompleted,
             WindowBounds = WindowBounds,
             WindowMaximized = WindowMaximized,

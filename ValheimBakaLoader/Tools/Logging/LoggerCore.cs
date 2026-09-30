@@ -1,9 +1,12 @@
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
+using Serilog.Parsing;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 using ValheimBakaLoader.Properties;
 
@@ -135,6 +138,48 @@ namespace ValheimBakaLoader.Tools.Logging
             return dial == null || level >= dial.MinimumLevel;
         }
 
+        /// <summary>
+        /// The line a HOST reads, which is not the line a machine reads.
+        /// <para>
+        /// Serilog renders a string property the way JSON would, wrapped in quotation marks,
+        /// and nearly every template in this app already puts its own quotes or its own
+        /// context around the value. So the log read <c>Provisioning isolated install for
+        /// '"Walk 1.2.5"'</c>, <c>No readable world header for '"WalkWorld125"'</c> and
+        /// <c>Installed "Smoothbrain-Sailing" v"1.1.8" to "D:\...\Smoothbrain-Sailing"""</c>.
+        /// That is the whole of it: a doubled quote on every name and path a host reads, on
+        /// screen in the Recent log and in the file they paste into a report.
+        /// </para>
+        /// <para>
+        /// A plain string scalar is therefore written as itself. Everything else, numbers,
+        /// dictionaries, destructured objects, aligned or formatted tokens, goes through
+        /// Serilog's own renderer exactly as before, so nothing but the quotes changes.
+        /// </para>
+        /// </summary>
+        internal static string RenderForAHost(LogEvent logEvent)
+        {
+            if (logEvent?.MessageTemplate == null) return string.Empty;
+
+            var built = new StringBuilder();
+            foreach (var token in logEvent.MessageTemplate.Tokens)
+            {
+                if (token is PropertyToken property
+                    && property.Format == null
+                    && property.Alignment == null
+                    && logEvent.Properties.TryGetValue(property.PropertyName, out var held)
+                    && held is ScalarValue scalar
+                    && scalar.Value is string text)
+                {
+                    built.Append(text);
+                    continue;
+                }
+
+                using var writer = new StringWriter(built, CultureInfo.InvariantCulture);
+                token.Render(logEvent.Properties, writer, CultureInfo.InvariantCulture);
+            }
+
+            return built.ToString();
+        }
+
         /// <summary>Tears down the sink so the next write reflects new settings.</summary>
         protected void Rebuild()
         {
@@ -151,7 +196,7 @@ namespace ValheimBakaLoader.Tools.Logging
             // Built lazily on first write so DI has finished wiring by then.
             Sink ??= BuildSink();
 
-            var line = logEvent.RenderMessage();
+            var line = RenderForAHost(logEvent);
 
             foreach (var step in Steps)
             {

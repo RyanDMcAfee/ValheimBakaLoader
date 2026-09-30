@@ -53,6 +53,10 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("scheduledRestart")] public bool? ScheduledRestart { get; set; }
         [JsonProperty("scheduledRestartHours")] public int? ScheduledRestartHours { get; set; }
 
+        // -- One-shot cleanse --
+
+        [JsonProperty("cleanseWhenEmpty")] public bool? CleanseWhenEmpty { get; set; }
+
         // -- RCON --
 
         [JsonProperty("rconEnabled")] public bool? RconEnabled { get; set; }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using ValheimBakaLoader.Tools.Http;
 using ValheimBakaLoader.Tools.Logging;
@@ -98,14 +99,28 @@ namespace ValheimBakaLoader.Tools
         /// Returns a result describing whether the mod was updated, skipped (already
         /// current), or failed. The server must be stopped before calling this.
         /// </summary>
-        Task<ModUpdateResult> UpdateModAsync(InstalledMod mod);
+        /// <param name="stop">
+        /// Told to stop. Honoured before the mod's folder is backed up and cleared, so a walk
+        /// that was given up on never leaves a half-replaced folder behind for a server that is
+        /// about to start over it.
+        /// </param>
+        Task<ModUpdateResult> UpdateModAsync(InstalledMod mod, CancellationToken stop = default);
 
         /// <summary>
         /// Updates every supplied mod that has a newer version available on Thunderstore.
         /// When <paramref name="progress"/> is given, reports one "updating" step before each
         /// mod and one "done"/"failed" step after it, so a caller can follow the run live.
+        /// <para>
+        /// <paramref name="stop"/> is the restart window saying its clock ran out. The walk is
+        /// sequential and each mod's folder is cleared and refilled, so the token is read
+        /// between mods and again before any folder is touched: the relaunch waits on this
+        /// call, and a server started over a folder still being written is a broken mod.
+        /// </para>
         /// </summary>
-        Task<List<ModUpdateResult>> UpdateModsAsync(IEnumerable<InstalledMod> mods, IProgress<ModUpdateProgress> progress = null);
+        Task<List<ModUpdateResult>> UpdateModsAsync(
+            IEnumerable<InstalledMod> mods,
+            IProgress<ModUpdateProgress> progress = null,
+            CancellationToken stop = default);
 
         /// <summary>
         /// Installs a mod from a parsed Thunderstore reference into the given
@@ -145,7 +160,20 @@ namespace ValheimBakaLoader.Tools
     public class ModUpdateService : IModUpdateService
     {
         private const string BackupDirName = ".bakaloader-mod-backups";
-        private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// The clocks every mod download is held to. HttpClient.Timeout used to be the only
+        /// one and it never covered the body: a site that answered its headers and then stopped
+        /// sending hung the scheduled restart's mod pass with the world already stopped, so the
+        /// relaunch after it was never reached and the world stayed down. Settable so a test
+        /// can prove a stalled address costs a second.
+        /// </summary>
+        public DownloadBudget DownloadBudget { get; set; } = new()
+        {
+            HeaderTimeout = TimeSpan.FromSeconds(30),
+            TotalTimeout = TimeSpan.FromMinutes(10),
+            IdleTimeout = TimeSpan.FromSeconds(30),
+        };
 
         /// <summary>
         /// The most a Hexium download is allowed to weigh. The largest Valheim mod
@@ -154,6 +182,15 @@ namespace ValheimBakaLoader.Tools
         /// Settable so a test can prove the cap with a small file.
         /// </summary>
         public long MaxHexiumDownloadBytes { get; set; } = 600L * 1024 * 1024;
+
+        /// <summary>
+        /// The most a Thunderstore package is allowed to weigh. The same number as the Hexium
+        /// cap and a property of its own, because the two are separate sites and one of them
+        /// changing its mind about how big a package may be is not a statement about the other.
+        /// Before 1.2.6 this path had no cap at all: a link that answered with a hundred
+        /// gigabytes would have filled the disk.
+        /// </summary>
+        public long MaxModDownloadBytes { get; set; } = 600L * 1024 * 1024;
 
         /// <summary>How many redirects a download is allowed to follow before it gives up.</summary>
         public int MaxDownloadRedirects { get; set; } = 5;
@@ -172,7 +209,10 @@ namespace ValheimBakaLoader.Tools
             Logger = logger;
         }
 
-        public async Task<List<ModUpdateResult>> UpdateModsAsync(IEnumerable<InstalledMod> mods, IProgress<ModUpdateProgress> progress = null)
+        public async Task<List<ModUpdateResult>> UpdateModsAsync(
+            IEnumerable<InstalledMod> mods,
+            IProgress<ModUpdateProgress> progress = null,
+            CancellationToken stop = default)
         {
             var results = new List<ModUpdateResult>();
             if (mods == null) return results;
@@ -184,6 +224,16 @@ namespace ValheimBakaLoader.Tools
 
             foreach (var mod in list)
             {
+                // Between mods, which is the one place the walk can be left in a state where
+                // nothing is half written. Everything already done stays done.
+                if (stop.IsCancellationRequested)
+                {
+                    Logger.Information(
+                        "The mod updates stopped after {0} of {1}: the restart window ran out.",
+                        index, total);
+                    break;
+                }
+
                 index++;
                 progress?.Report(new ModUpdateProgress
                 {
@@ -193,7 +243,7 @@ namespace ValheimBakaLoader.Tools
                     Phase = "updating",
                 });
 
-                var result = await UpdateModAsync(mod);
+                var result = await UpdateModAsync(mod, stop);
                 results.Add(result);
 
                 progress?.Report(result.Error != null
@@ -219,7 +269,7 @@ namespace ValheimBakaLoader.Tools
             return results;
         }
 
-        public async Task<ModUpdateResult> UpdateModAsync(InstalledMod mod)
+        public async Task<ModUpdateResult> UpdateModAsync(InstalledMod mod, CancellationToken stop = default)
         {
             if (mod == null) return ModUpdateResult.Failed(null, "No mod specified.");
 
@@ -284,7 +334,14 @@ namespace ValheimBakaLoader.Tools
             {
                 Logger.Information("Updating {0}: {1} -> {2}", mod.FullName, fromVersion, toVersion);
 
-                await DownloadFileAsync(downloadFrom, tempZip);
+                var written = await DownloadFileAsync(downloadFrom, tempZip, stop);
+
+                // Everything that could turn this download away happens before the folder on
+                // disk is touched, the way the Hexium path beside it already did.
+                var damaged = DescribeDamage(lookup.Published, tempZip, written);
+                if (damaged != null)
+                    return ModUpdateResult.Failed(mod,
+                        $"The download did not arrive whole: {damaged}. Nothing was replaced.");
 
                 Directory.CreateDirectory(tempExtract);
                 ZipFile.ExtractToDirectory(tempZip, tempExtract, overwriteFiles: true);
@@ -293,6 +350,18 @@ namespace ValheimBakaLoader.Tools
                 if (!HasAnyEntries(tempExtract))
                 {
                     return ModUpdateResult.Failed(mod, "Downloaded package was empty.");
+                }
+
+                // The last moment before anything on disk moves. A restart that gave up
+                // waiting is about to start the server over this very folder, and a clear that
+                // is still running when it does leaves the mod half replaced with the new file
+                // locked by the server that just loaded it.
+                if (stop.IsCancellationRequested)
+                {
+                    Logger.Information(
+                        "{0} was left as it is: the restart window ran out before it was replaced.",
+                        mod.FullName);
+                    return ModUpdateResult.Skipped(mod);
                 }
 
                 // Back up the current folder OUTSIDE plugins/ so BepInEx won't load it.
@@ -308,6 +377,15 @@ namespace ValheimBakaLoader.Tools
 
                 Logger.Information("Updated {0} to {1} (backup at {2}).", mod.FullName, toVersion, backupDir);
                 return ModUpdateResult.Success(mod, fromVersion, toVersion);
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            {
+                // The download is the only thing here that a token can interrupt, and it runs
+                // before the folder is backed up or cleared, so nothing on disk has moved.
+                Logger.Information(
+                    "{0} was not updated: the restart window ran out while it was downloading.",
+                    mod.FullName);
+                return ModUpdateResult.Skipped(mod);
             }
             catch (Exception e)
             {
@@ -360,6 +438,11 @@ namespace ValheimBakaLoader.Tools
             string downloadUrl;
             var version = reference.Version;
 
+            // What the site published about the build being fetched, when it published
+            // anything. The size on it is what the download is held to before a folder the
+            // server loads from is replaced.
+            ThunderstorePackageVersion published = null;
+
             if (!string.IsNullOrWhiteSpace(version))
             {
                 // A pinned version's download URL is always constructable directly, and
@@ -386,6 +469,7 @@ namespace ValheimBakaLoader.Tools
                 }
 
                 version = lookup.Package.LatestVersion;
+                published = lookup.Published;
             }
 
             // --- Download + extract + install ---
@@ -396,12 +480,26 @@ namespace ValheimBakaLoader.Tools
             var tempExtract = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}");
             string backupDir = null;
 
+            // Which part of the work was running when something went wrong. The catch below
+            // used to hand the host a raw zip-internals sentence and then send them to the
+            // mod's Versions page, which had nothing to tell them: the version existed, the
+            // bytes did not all arrive. A hint is only true for the stage it describes.
+            var stage = "download";
+
             try
             {
                 Logger.Information("Installing {0} v{1} from Thunderstore ({2}).",
                     reference.FolderName, version ?? "?", downloadUrl);
 
-                await DownloadFileAsync(downloadUrl, tempZip);
+                var written = await DownloadFileAsync(downloadUrl, tempZip);
+
+                // Held to what the site said about it before anything on disk is touched,
+                // the way the Hexium path sixty lines below already was.
+                var damaged = DescribeDamage(published, tempZip, written);
+                if (damaged != null)
+                    return Fail($"The download did not arrive whole: {damaged}. Nothing was replaced.");
+
+                stage = "unpack";
 
                 Directory.CreateDirectory(tempExtract);
                 // ZipFile.ExtractToDirectory rejects entries that resolve outside
@@ -411,6 +509,8 @@ namespace ValheimBakaLoader.Tools
 
                 if (!HasAnyEntries(tempExtract))
                     return Fail("Downloaded package was empty.");
+
+                stage = "install";
 
                 if (replacing)
                 {
@@ -462,10 +562,7 @@ namespace ValheimBakaLoader.Tools
                     TryDeleteDirectory(targetDir);
                 }
 
-                var hint = !string.IsNullOrWhiteSpace(reference.Version)
-                    ? " (check that this version exists on the mod's Versions page)"
-                    : "";
-                return Fail(e.Message + hint);
+                return Fail(InstallFailureSentence(stage, e, reference.Version));
             }
             finally
             {
@@ -614,8 +711,12 @@ namespace ValheimBakaLoader.Tools
         private async Task<long> DownloadHexiumFileAsync(Uri url, string destinationPath)
         {
             using var client = HttpClientProvider.CreateClient();
-            client.Timeout = DownloadTimeout;
+            BoundedDownload.Unbounded(client);
             client.DefaultRequestHeaders.UserAgent.ParseAdd(HexiumClient.UserAgent());
+
+            // Copy(), not the property itself: the Hexium cap belongs to this one download.
+            var budget = DownloadBudget.Copy();
+            budget.MaxBytes = MaxHexiumDownloadBytes;
 
             var address = url;
             HttpResponseMessage response = null;
@@ -625,7 +726,7 @@ namespace ValheimBakaLoader.Tools
                 for (var hop = 0; ; hop++)
                 {
                     response?.Dispose();
-                    response = await client.GetAsync(address, HttpCompletionOption.ResponseHeadersRead);
+                    response = await BoundedDownload.HeadersAsync(client, address, budget, CancellationToken.None);
 
                     // A real HttpClient follows redirects itself, so this loop usually runs
                     // once; the final address is checked below either way.
@@ -652,19 +753,25 @@ namespace ValheimBakaLoader.Tools
                 if (response.Content.Headers.ContentLength is { } declared && cap > 0 && declared > cap)
                     throw new IOException($"That download is larger than BakaLoader will fetch ({declared} bytes against a limit of {cap}).");
 
-                await using var source = await response.Content.ReadAsStreamAsync();
+                // The body's own two clocks: a total, and a watchdog that gives up when nothing
+                // has arrived for a while. The 120 second request timeout this used to lean on
+                // was released the moment the headers landed.
+                using var whole = BoundedDownload.Deadline(budget.TotalTimeout, CancellationToken.None);
+                await using var raw = await response.Content.ReadAsStreamAsync(whole.Token);
+                await using var source = new IdleWatchdogStream(
+                    raw, budget.IdleTimeout, whole.Token, Logger, "Hexium download");
                 await using var destination = File.Create(destinationPath);
 
                 var buffer = new byte[81920];
                 long total = 0;
                 int read;
-                while ((read = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                while ((read = await source.ReadAsync(buffer, 0, buffer.Length, whole.Token)) > 0)
                 {
                     total += read;
                     if (cap > 0 && total > cap)
                         throw new IOException($"That download passed the size BakaLoader will fetch ({cap} bytes), so it was stopped.");
 
-                    await destination.WriteAsync(buffer, 0, read);
+                    await destination.WriteAsync(buffer, 0, read, CancellationToken.None);
                 }
 
                 return total;
@@ -712,7 +819,12 @@ namespace ValheimBakaLoader.Tools
             catch (Exception e) { Logger.Debug("Live Thunderstore lookup failed for {0}-{1}: {2}", owner, name, e.Message); }
 
             if (!string.IsNullOrWhiteSpace(live?.Package?.LatestVersion))
-                return new LatestLookup { Package = live.Package, SiteAnswered = true };
+                return new LatestLookup
+                {
+                    Package = live.Package,
+                    SiteAnswered = true,
+                    Published = await WeighedByTheListingAsync(owner, name, live.Package),
+                };
 
             var answered = live?.Answered ?? false;
 
@@ -725,7 +837,75 @@ namespace ValheimBakaLoader.Tools
 
             // A list that had the package in it is Thunderstore speaking too, even when
             // the package's own address did not.
-            return new LatestLookup { Package = fromList, SiteAnswered = answered || fromList != null };
+            return new LatestLookup
+            {
+                Package = fromList,
+                SiteAnswered = answered || fromList != null,
+                // The list is the one answer that carries a size, so when it is what named
+                // the version it is also what the download is held to, with no second hop.
+                Published = fromList?.Latest,
+            };
+        }
+
+        /// <summary>
+        /// What the site published about the build being fetched, with a size on it wherever one
+        /// can be had.
+        /// <para>
+        /// The package page names the version and leaves out what it weighs: its "latest" object
+        /// carries version_number, download_url, date_created and a handful of display fields,
+        /// and no file_size and no sha256. That address is the one asked FIRST and the one that
+        /// answers on every ordinary install and update, so the check that holds a download to a
+        /// published size had nothing to compare with on the one path every host walks: a
+        /// damaged archive was backed up over, cleared and written with no eyebrow raised.
+        /// </para>
+        /// <para>
+        /// The community listing carries a file_size per version, so it is asked for the size of
+        /// the very version the page named. The answer is only taken when the listing's newest
+        /// version IS that version, because a size belongs to one archive and a size off a
+        /// different build would turn every install into a failed integrity check. This is the
+        /// same second hop the BepInEx installer has made since it was written. With a size from
+        /// neither, the install goes ahead and the log says it was held to nothing: a guard that
+        /// turns away every host is worse than the defect.
+        /// </para>
+        /// </summary>
+        private async Task<ThunderstorePackageVersion> WeighedByTheListingAsync(
+            string owner, string name, ThunderstorePackage fromThePage)
+        {
+            var page = fromThePage?.Latest;
+            if (page == null || page.FileSize != null) return page;
+
+            ThunderstorePackage listed = null;
+            try { listed = await Thunderstore.GetLatestAsync(owner, name); }
+            catch (Exception e)
+            {
+                Logger.Debug("The package listing did not answer about {0}-{1}: {2}", owner, name, e.Message);
+            }
+
+            var sameBuild = string.Equals(listed?.LatestVersion, page.VersionNumber, StringComparison.OrdinalIgnoreCase)
+                ? listed.Latest
+                : null;
+
+            if (sameBuild?.FileSize == null)
+            {
+                Logger.Information(
+                    "Thunderstore published no size for {0}-{1} {2}, so what came down was checked against nothing.",
+                    owner, name, page.VersionNumber);
+                return page;
+            }
+
+            // A copy of the page's answer with the listing's size on it. The objects either
+            // answer with are held by the client, so nothing that came from it is written into.
+            return new ThunderstorePackageVersion
+            {
+                VersionNumber = page.VersionNumber,
+                DownloadUrl = page.DownloadUrl,
+                WebsiteUrl = page.WebsiteUrl,
+                FullName = page.FullName,
+                DateCreated = page.DateCreated ?? sameBuild.DateCreated,
+                FileSize = sameBuild.FileSize,
+                Sha256 = string.IsNullOrWhiteSpace(page.Sha256) ? sameBuild.Sha256 : page.Sha256,
+                IsActiveRaw = page.IsActiveRaw,
+            };
         }
 
         /// <summary>
@@ -739,6 +919,15 @@ namespace ValheimBakaLoader.Tools
             public ThunderstorePackage Package { get; init; }
 
             public bool SiteAnswered { get; init; }
+
+            /// <summary>
+            /// What the site published about the build that is about to be fetched, with a size
+            /// on it wherever one could be had. Read this rather than
+            /// <c>Package.Latest</c>: the package page answers with no size at all, so
+            /// <c>Package.Latest</c> is what left every ordinary download held to nothing.
+            /// Null when nothing was resolved.
+            /// </summary>
+            public ThunderstorePackageVersion Published { get; init; }
         }
 
         /// <summary>
@@ -758,18 +947,94 @@ namespace ValheimBakaLoader.Tools
         private static string ConstructedDownloadUrl(string owner, string name, string version) =>
             $"https://thunderstore.io/package/download/{owner}/{name}/{version}/";
 
-        private async Task DownloadFileAsync(string url, string destinationPath)
+        /// <summary>
+        /// A Thunderstore package, into a file, under a header deadline, a total deadline and
+        /// an idle watchdog. Answers how many bytes were written so the caller can hold them
+        /// against the size the site published before it replaces a folder the server loads.
+        /// </summary>
+        private async Task<long> DownloadFileAsync(
+            string url, string destinationPath, CancellationToken cancellationToken = default)
         {
             using var client = HttpClientProvider.CreateClient();
-            client.Timeout = DownloadTimeout;
             client.DefaultRequestHeaders.UserAgent.ParseAdd("ValheimBakaLoader");
 
-            using var response = await client.GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
+            // Copy(), not the property itself: the Thunderstore cap belongs to this one
+            // download, and the Hexium path above sets a different one on the same service.
+            var budget = DownloadBudget.Copy();
+            budget.MaxBytes = MaxModDownloadBytes;
 
-            await using var source = await response.Content.ReadAsStreamAsync();
-            await using var destination = File.Create(destinationPath);
-            await source.CopyToAsync(destination);
+            return await BoundedDownload.ToFileAsync(
+                client, url, destinationPath, budget, cancellationToken, tracer: Logger, what: "mod download");
+        }
+
+        /// <summary>
+        /// What is wrong with the archive that arrived, in a sentence, or null when nothing is.
+        /// <para>
+        /// The Hexium path has held its downloads to the listed size since it was written, and
+        /// the BepInEx installer to the size and the digest. The Thunderstore install and
+        /// update paths replaced a folder the server loads from and were held to nothing: a
+        /// package damaged in transit unpacked without a raised eyebrow, the host's working mod
+        /// was backed up and cleared, and what went in its place was a file BepInEx would fail
+        /// to load with no record anywhere of why.
+        /// </para>
+        /// </summary>
+        internal static string DescribeDamage(ThunderstorePackageVersion published, string zipPath, long written)
+        {
+            if (published == null) return null;
+
+            if (published.FileSize is { } expected && expected > 0 && written != expected)
+                return $"it arrived as {written} bytes where Thunderstore published {expected}";
+
+            var sha = published.Sha256?.Trim();
+            if (!string.IsNullOrEmpty(sha))
+            {
+                var actual = Sha256Of(zipPath);
+                if (actual != null && !string.Equals(actual, sha, StringComparison.OrdinalIgnoreCase))
+                    return "it did not match the digest Thunderstore published";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// What the host reads when an install failed, chosen by the stage it failed in.
+        /// <para>
+        /// The version hint is only true for a lookup or a 404, which is the download stage.
+        /// It used to be added to every failure from the download onward, so a package whose
+        /// bytes did not all arrive handed the host ".NET's End of Central Directory record
+        /// could not be found" and then sent them to a Versions page that would tell them
+        /// nothing at all. The raw exception is already in the log line above the caller.
+        /// </para>
+        /// </summary>
+        internal static string InstallFailureSentence(string stage, Exception problem, string pinnedVersion)
+        {
+            if (stage == "unpack")
+                return "The package arrived but could not be unpacked, so nothing was replaced. "
+                    + "That is nearly always a download that did not come whole: try again in a little while.";
+
+            if (stage == "install")
+                return "The package could not be put in place, so the files that were there before "
+                    + "were restored. The log line beside this one says what stopped it.";
+
+            var hint = !string.IsNullOrWhiteSpace(pinnedVersion)
+                ? " (check that this version exists on the mod's Versions page)"
+                : "";
+
+            return (problem?.Message ?? "The download did not get through.") + hint;
+        }
+
+        private static string Sha256Of(string path)
+        {
+            try
+            {
+                using var sha = System.Security.Cryptography.SHA256.Create();
+                using var stream = File.OpenRead(path);
+                return Convert.ToHexString(sha.ComputeHash(stream));
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>

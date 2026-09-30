@@ -130,8 +130,32 @@ namespace ValheimBakaLoader.Game
 
                     LoadFrom(candidate);
                 }
-                else if (_entries.Count == 0)
+                else
                 {
+                    // Both halves of this question are shared state, and both were read straight
+                    // off the fields while another thread could be in the middle of LoadFrom's
+                    // swap. They are taken as one snapshot under the lock, the same way the path
+                    // and the write time above are.
+                    bool nothingLoaded, live;
+                    lock (Lock)
+                    {
+                        nothingLoaded = _entries.Count == 0;
+                        live = IsLiveCatalog;
+                    }
+
+                    if (!nothingLoaded && !live) return;
+
+                    // A realm with no items.json is a realm with no live catalog, and until now
+                    // the previous realm's catalog simply stayed loaded: the picker went on
+                    // offering the other realm's modded prefabs, the spawn validator accepted
+                    // them because they were in Entries, and items.search handed the page the
+                    // OTHER realm's install path as the place it had read them from.
+                    //
+                    // The condition used to be "nothing is loaded at all", which is true on a
+                    // cold start and false on every realm switch. The path guard above already
+                    // treats the path as part of the catalog's identity; the missing-file branch
+                    // has to do the same, which means a LIVE catalog is dropped for the bundled
+                    // vanilla list rather than left standing for a realm it is not about.
                     LoadBundledFallback();
                 }
             }

@@ -711,7 +711,17 @@ namespace ValheimBakaLoader.Tools
         /// <summary>How many redirects a download may follow before it gives up.</summary>
         public int MaxDownloadRedirects { get; set; } = 5;
 
-        private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(5);
+        /// <summary>
+        /// The clocks the loader pack is held to: a header deadline, a total deadline and an
+        /// idle window over the streamed body. Settable so a test can prove a stalled site
+        /// costs a second rather than the session.
+        /// </summary>
+        public DownloadBudget DownloadBudget { get; set; } = new()
+        {
+            HeaderTimeout = TimeSpan.FromSeconds(30),
+            TotalTimeout = TimeSpan.FromMinutes(5),
+            IdleTimeout = TimeSpan.FromSeconds(30),
+        };
 
         /// <summary>
         /// The most an unattended write may spend asking Thunderstore which pack to fetch.
@@ -763,6 +773,13 @@ namespace ValheimBakaLoader.Tools
         private readonly IHttpClientProvider HttpClientProvider;
         private readonly IInstallIsolationService Isolation;
         private readonly IApplicationLogger Logger;
+
+        // What the last refusal on a pack rule was, so the line that says so is written out
+        // loud once per change rather than once per restart window. A scheduled restart every
+        // few hours over an install with a foreign loader raises the same refusal every single
+        // time, and that one line was most of what the owner's log had to say. Same rule as
+        // the RCON client's "connected": a change of state is news, a repeat is Debug.
+        private string ReportedPackRefusal;
 
         public BepInExService(
             IThunderstoreClient thunderstore,
@@ -1399,9 +1416,20 @@ namespace ValheimBakaLoader.Tools
 
                 if (refusal != null)
                 {
-                    Logger.Information(
-                        "The BepInEx pack the site offers ({0}) was left for the host to decide on ({1}), "
-                        + "so the install was left as it was.", version, refusal);
+                    // The wording does not move; the level does. The same refusal on the same
+                    // pack, window after window, is not news.
+                    var state = version + "|" + refusal;
+                    var changed = !string.Equals(ReportedPackRefusal, state, StringComparison.Ordinal);
+                    ReportedPackRefusal = state;
+
+                    if (changed)
+                        Logger.Information(
+                            "The BepInEx pack the site offers ({0}) was left for the host to decide on ({1}), "
+                            + "so the install was left as it was.", version, refusal);
+                    else
+                        Logger.Debug(
+                            "The BepInEx pack the site offers ({0}) was left for the host to decide on ({1}), "
+                            + "so the install was left as it was.", version, refusal);
 
                     return Skipped(status, refusal, version,
                         refusal == BepInExSkipReason.Soak
@@ -3085,8 +3113,19 @@ namespace ValheimBakaLoader.Tools
         private async Task<long> DownloadAsync(Uri url, string destinationPath, CancellationToken cancellationToken)
         {
             using var client = HttpClientProvider.CreateClient();
-            client.Timeout = DownloadTimeout;
+            // Out of the way on purpose. HttpClient.Timeout is released the moment the headers
+            // are in, so it never covered a site that answers its headers and then stops
+            // sending: that read held the one write slot and the launch claim for the life of
+            // the process, and the row's buttons stayed greyed for the rest of the session.
+            // The three clocks on the budget below are what actually bound this.
+            BoundedDownload.Unbounded(client);
             client.DefaultRequestHeaders.UserAgent.ParseAdd("ValheimBakaLoader");
+
+            // Copy(), not the property itself: the cap below belongs to this one download,
+            // and writing it onto the shared budget left every later download on this service
+            // carrying whichever cap happened to be set last.
+            var budget = DownloadBudget.Copy();
+            budget.MaxBytes = MaxDownloadBytes;
 
             var address = url;
             HttpResponseMessage response = null;
@@ -3096,7 +3135,7 @@ namespace ValheimBakaLoader.Tools
                 for (var hop = 0; ; hop++)
                 {
                     response?.Dispose();
-                    response = await client.GetAsync(address, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    response = await BoundedDownload.HeadersAsync(client, address, budget, cancellationToken);
 
                     var location = IsRedirect(response) ? response.Headers.Location : null;
                     if (location == null) break;
@@ -3115,13 +3154,20 @@ namespace ValheimBakaLoader.Tools
                         "That download is larger than BakaLoader will fetch for a loader.",
                         ("limit", cap));
 
-                await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+                // The body carries the other two clocks: a total, and a watchdog that gives up
+                // when nothing has arrived for a while. A connection that has stopped
+                // delivering is not a slow one, and a slow one on a household link must not
+                // be cut off for being slow.
+                using var whole = BoundedDownload.Deadline(budget.TotalTimeout, cancellationToken);
+                await using var raw = await response.Content.ReadAsStreamAsync(whole.Token);
+                await using var source = new IdleWatchdogStream(
+                    raw, budget.IdleTimeout, whole.Token, Logger, "BepInEx download");
                 await using var destination = File.Create(destinationPath);
 
                 var buffer = new byte[81920];
                 long total = 0;
                 int read;
-                while ((read = await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+                while ((read = await source.ReadAsync(buffer, 0, buffer.Length, whole.Token)) > 0)
                 {
                     total += read;
                     if (cap > 0 && total > cap)
@@ -3129,7 +3175,7 @@ namespace ValheimBakaLoader.Tools
                             "That download is larger than BakaLoader will fetch for a loader.",
                             ("limit", cap));
 
-                    await destination.WriteAsync(buffer, 0, read, cancellationToken);
+                    await destination.WriteAsync(buffer, 0, read, CancellationToken.None);
                 }
 
                 return total;

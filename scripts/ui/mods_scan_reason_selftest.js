@@ -160,7 +160,11 @@ test("a scan that could not reach the site says so and keeps the host's own rows
   };
   vm.createContext(context);
   // fn() stops at the closing brace rather than taking it, so it is put back here.
-  vm.runInContext(body + "\n}\nthis.scanMods=scanMods;", context,
+  /* The reply own realm check comes across with scanMods. Since 1.2.6 a scan that
+     answers for a realm the host has already left is dropped rather than painted onto
+     the realm on screen, so the function it asks is part of this road. */
+  vm.runInContext(
+    fn("function scanReplyIsOurs(") + "\n}\n" + body + "\n}\nthis.scanMods=scanMods;", context,
     { filename: "app.js#scanMods" });
 
   context.REPLY = {
@@ -211,7 +215,7 @@ test("the failure state is declared with the rows and goes out with them", () =>
   // And cleared on a profile switch, with the rows, the index time and the search box.
   // The previous realm's failure is not this realm's, and a panel wording one would be
   // saying something nobody has asked about this server.
-  const swap = fn("async function switchServer(name){");
+  const swap = fn("async function switchServer(name,opts){");
   ["S.mods=null", "S.modsScanned=false", "S.modIndexAt=null",
    "S.modsIndexBlind=false", "S.modsScanReason=null"].forEach(clear => {
     assert.ok(swap.indexOf(clear) > 0,
@@ -534,7 +538,11 @@ test("what the page asks the bridge for is the kind of scan it was given", () =>
     setTimeout, console, window: {}, REPLY: null,
   };
   vm.createContext(context);
-  vm.runInContext(body + "\n}\nthis.scanMods=scanMods;", context,
+  /* The reply own realm check comes across with scanMods. Since 1.2.6 a scan that
+     answers for a realm the host has already left is dropped rather than painted onto
+     the realm on screen, so the function it asks is part of this road. */
+  vm.runInContext(
+    fn("function scanReplyIsOurs(") + "\n}\n" + body + "\n}\nthis.scanMods=scanMods;", context,
     { filename: "app.js#scanMods" });
 
   context.REPLY = { mods: [], index: { fetchedUtc: null, source: null, refreshed: false },
@@ -560,6 +568,103 @@ test("what the page asks the bridge for is the kind of scan it was given", () =>
       assert.ok(/if \(force\) indexState = await ThunderstoreClient\.RefreshAsync\(\);/.test(HOST),
         "the bridge refreshes whatever the page asked for, so the option is a no-op");
     });
+});
+
+/* ------------------------ rule 9: the button says what it is doing
+ *
+ * The walk of the real app found the Scan button dead: pressing it while a scan was
+ * already out made no request and said nothing, and the button went on reading "Scan
+ * Thunderstore" the whole time. Two halves to that. renderMods disables the button for
+ * the length of a scan, and renderModSourceLabels wrote the resting label back over it in
+ * the same breath, so nothing on screen said a scan was running. And every road into
+ * scanMods that is not the button itself, the empty panel's action among them, returned
+ * in silence when the guard caught it. */
+test("while a scan is out the button says so", () => {
+  const body = fn("function renderModSourceLabels(");
+  const made = {};
+  const context = {
+    S: { hexium: false, modsScanning: true },
+    $: id => (made[id] = made[id] || { id, textContent: "", disabled: false }),
+    T: id => id,
+    console,
+  };
+  vm.createContext(context);
+  vm.runInContext(body + "\n}\nthis.renderModSourceLabels=renderModSourceLabels;",
+    context, { filename: "app.js#renderModSourceLabels" });
+
+  context.renderModSourceLabels();
+  assert.strictEqual(made["#scanBtn"].textContent, "mods.scan.label.running",
+    "a scan in flight leaves the button reading its resting label");
+
+  context.S.modsScanning = false;
+  context.renderModSourceLabels();
+  assert.strictEqual(made["#scanBtn"].textContent, "mods.scan.label",
+    "the button never comes back to its resting label");
+
+  context.S.hexium = true;
+  context.renderModSourceLabels();
+  assert.strictEqual(made["#scanBtn"].textContent, "mods.scan.label.sites",
+    "the two-sites label was lost");
+
+  assert.ok(KEYS["mods.scan.label.running"],
+    "the catalog has no mods.scan.label.running, so the button would read its own id");
+
+  // The disabled half, which is the other render's, stays where it was.
+  assert.ok(/\$\("#scanBtn"\)\.disabled=busy;/.test(SOURCE),
+    "the button is no longer disabled for the length of a scan");
+});
+
+/* ------------------------ rule 10: a refused press is answered */
+test("a press while a scan is out is answered rather than swallowed", () => {
+  const body = fn("async function scanMods(");
+  const said = [];
+  const asked = [];
+  const S = { mods: null, modsScanned: false, modsScanning: true, modsUpdating: false,
+    modsScanError: null, modsScanReason: null, modsIndexBlind: false,
+    lastScan: null, modIndexAt: null, modIndexSource: null };
+  const context = {
+    S, Native: { available: true }, FAIL: Symbol("FAIL"), SCAN_CEILING_MS: 60000,
+    rpc: async (method, params) => { asked.push({ method, params }); return { mods: [] }; },
+    renderMods() {}, toast: line => said.push(line), logLine() {},
+    modsScanFailReason: () => "the site was not reached",
+    T: id => id, clock: () => "12:00", hhmm: () => "12:00",
+    setTimeout, console, window: {},
+  };
+  vm.createContext(context);
+  /* The reply own realm check comes across with scanMods. Since 1.2.6 a scan that
+     answers for a realm the host has already left is dropped rather than painted onto
+     the realm on screen, so the function it asks is part of this road. */
+  vm.runInContext(
+    fn("function scanReplyIsOurs(") + "\n}\n" + body + "\n}\nthis.scanMods=scanMods;", context,
+    { filename: "app.js#scanMods" });
+
+  return context.scanMods({ force: true })
+    .then(() => {
+      assert.strictEqual(asked.length, 0, "a second scan went out on top of the first");
+      assert.strictEqual(said.length, 1, "the refused press said nothing at all");
+      assert.ok(said[0].indexOf("mods.scan.reason.already_running") >= 0,
+        "the refused press said something other than the catalog's sentence: " + said[0]);
+
+      // And a scan the page starts for itself stays quiet.
+      said.length = 0;
+      return context.scanMods({ force: false });
+    })
+    .then(() => {
+      assert.strictEqual(said.length, 0,
+        "a scan the page started for itself now toasts at the host");
+    });
+});
+
+/* ------------------------ rule 11: the host's own refusal has words */
+test("the refusal the bridge throws for a second scan is worded", () => {
+  assert.ok(HOST.indexOf('HostFacingException("mods.scan.alreadyRunning"') > 0,
+    "the bridge no longer refuses a second scan by that name");
+  const paired = SOURCE.slice(SOURCE.indexOf("const HOST_SENTENCES=["));
+  assert.ok(paired.slice(0, paired.indexOf("];"))
+    .indexOf('named:"mods.scan.alreadyRunning"') > 0,
+    "the page pairs no sentence with the bridge's refusal");
+  assert.ok(KEYS["mods.scan.reason.already_running"],
+    "the catalog has no mods.scan.reason.already_running");
 });
 
 Promise.all(pending).then(() => {

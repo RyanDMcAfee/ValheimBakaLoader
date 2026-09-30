@@ -42,6 +42,14 @@ namespace ValheimBakaLoader.Forms
         // (no server has been auto-started/adopted yet, so nothing gets killed).
         private volatile bool AppUpdateStaged;
 
+        /// <summary>
+        /// Set the moment the main windows go up. Read by the self-update step, which is allowed
+        /// to be given up on: once a window is open, staging an update is no longer a safe thing
+        /// to arm, because the swap works by closing the app and a window that is open may be
+        /// holding a live server through the Job Object.
+        /// </summary>
+        private volatile bool WindowsOpened;
+
         // Set when a self-update staged while the app was already open has asked every window
         // to close. The watchdog starts writing over the install whether this process has gone
         // or not, so from that point the exit cannot rest on this form happening to be the one
@@ -242,14 +250,27 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
-        private void AddLaunchStep(string name, Func<Task> work)
+        /// <summary>
+        /// Every step carries a clock, because the window only opens once all of them have
+        /// finished. Two of these three go out to the internet, and a site that answers its
+        /// headers and then stops sending used to hold the splash open for the life of the
+        /// process. A step that runs over writes one line and the window opens without it.
+        /// </summary>
+        private void AddLaunchStep(string name, Func<Task> work, TimeSpan? budget = null)
         {
             LaunchSteps.Add(new LaunchStep(name, async () =>
             {
                 Logger.Debug("Starting startup task: {name}", name);
                 var timer = Stopwatch.StartNew();
-                await work();
-                Logger.Debug("Finished startup task: {name} ({dur}ms)", name, timer.ElapsedMilliseconds);
+
+                var finished = await LaunchBudget.WithinAsync(
+                    work,
+                    budget ?? LaunchBudget.PerStep,
+                    line => Logger.Warning("{line}", line),
+                    "The startup step \"" + name + "\"");
+
+                Logger.Debug("Finished startup task: {name} ({dur}ms, {state})",
+                    name, timer.ElapsedMilliseconds, finished ? "completed" : "given up on");
             }));
         }
 
@@ -257,9 +278,36 @@ namespace ValheimBakaLoader.Forms
         {
             StepCompleted += this.BuildEventHandler<Task>(OnStepCompleted);
 
+            // What the last update attempt left behind, if it left anything. A watchdog that
+            // could not write the new files puts the old ones back and writes down why, and
+            // this is the launch that reads it.
+            ReportLastUpdateAttempt();
+
             AddLaunchStep("Check for updates", () => SoftwareUpdateProvider.CheckForUpdatesAsync(false));
             AddLaunchStep("Load player data", PlayerDataRepository.LoadAsync);
-            AddLaunchStep("Self-update check", CheckForAppSelfUpdateAsync);
+            // With a clock of its own, because this one goes and fetches four megabytes and the
+            // 45 second default is shorter than the download's own deadlines. See
+            // SelfUpdateStepBudget.
+            AddLaunchStep("Self-update check", CheckForAppSelfUpdateAsync,
+                SelfUpdateStepBudget(AppUpdateService.StageBudget));
+        }
+
+        /// <summary>
+        /// Reads and clears the note the update watchdog leaves when it could not write the
+        /// new files. Never throws: a report that cannot be read is not a reason to fail a
+        /// launch.
+        /// </summary>
+        private void ReportLastUpdateAttempt()
+        {
+            try
+            {
+                var note = Tools.AppUpdateService.ReadAndClearUpdateReport();
+                if (!string.IsNullOrWhiteSpace(note)) Logger.Warning("{note}", note);
+            }
+            catch (Exception e)
+            {
+                Logger.Debug("Could not read the last update report: {0}", e.Message);
+            }
         }
 
         private void RunLaunchSteps()
@@ -299,16 +347,46 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// How long the self-update step is allowed to hold the splash: never less than the
+        /// staging it wraps is allowed to take, and never less than the ordinary per-step clock.
+        /// <para>
+        /// It used to get the plain 45 seconds while the download inside it was allowed a 30
+        /// second header wait and ten minutes of body, so on any link slower than about 90 KB a
+        /// second the step was given up on EVERY time: the window opened with nothing staged and
+        /// the abandoned work carried on and armed the watchdog behind it, which then waited two
+        /// minutes for a PID that was not going anywhere. The update never installed, every
+        /// launch fetched the whole zip again, and each one left a stray hidden process behind.
+        /// </para>
+        /// <para>
+        /// So this one number is larger than the 45 seconds the other steps get, and the splash
+        /// can be held while a new BakaLoader is genuinely coming down. That is the point: the
+        /// alternative is a host on a slow link who never receives an update at all. A site that
+        /// STALLS does not reach this ceiling, because the download's own header deadline and
+        /// idle watchdog end a read that has stopped sending inside a minute.
+        /// </para>
+        /// </summary>
+        internal static TimeSpan SelfUpdateStepBudget(TimeSpan stageBudget) =>
+            stageBudget > LaunchBudget.PerStep ? stageBudget : LaunchBudget.PerStep;
+
+        /// <summary>
         /// Launch-time self-update: when the AutoUpdateBakaLoader pref is on, check GitHub
-        /// for a newer release and stage it. Runs during the splash phase, BEFORE any main
-        /// window is shown - so no server has been auto-started or adopted yet, and closing
-        /// the app to let the watchdog swap files cannot kill a live server via the Job Object.
+        /// for a newer release and stage it. Meant to finish during the splash phase, BEFORE any
+        /// main window is shown, so that no server has been auto-started or adopted yet and
+        /// closing the app to let the watchdog swap files cannot kill a live server via the Job
+        /// Object.
+        /// <para>
+        /// Meant to, and not able to promise it on its own: this step carries a clock like every
+        /// other, and a step that is given up on keeps running. So the promise is kept by the
+        /// answer handed down to the service instead. It is asked before the download and again
+        /// before the watchdog is armed, and it says no the moment the windows are up: staging
+        /// then refuses itself and the update installs at the next launch.
+        /// </para>
         /// </summary>
         private async Task CheckForAppSelfUpdateAsync()
         {
             if (!UserPrefsProvider.LoadPreferences().AutoUpdateBakaLoader) return;
 
-            if (await AppUpdateService.CheckAndStageUpdateAsync())
+            if (await AppUpdateService.CheckAndStageUpdateAsync(stillWanted: () => !WindowsOpened))
             {
                 AppUpdateStaged = true;
             }
@@ -317,6 +395,13 @@ namespace ValheimBakaLoader.Forms
         /// <summary>All launch steps are done: show the profile windows and duck out of sight.</summary>
         private void OpenMainWindows()
         {
+            // First line of it, and before the staged flag is read: from here on the self-update
+            // step may no longer arm a swap, because the swap works by closing the app and what
+            // is about to be shown may hold a live server through the Job Object. A step that
+            // ran over is still running while this line executes, so the answer it is given has
+            // to change as early as possible.
+            WindowsOpened = true;
+
             if (AppUpdateStaged)
             {
                 // A newer BakaLoader was staged during the splash phase; close now (before

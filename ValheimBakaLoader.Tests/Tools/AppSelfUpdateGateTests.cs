@@ -163,7 +163,13 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             var script = WatchdogScript();
 
-            Assert.Contains("if (Get-Process -Id $appPid -ErrorAction SilentlyContinue) { exit 1 }", script);
+            Assert.Contains("if (Get-Process -Id $appPid -ErrorAction SilentlyContinue) {", script);
+
+            // And it says so. 1.2.6 gave every way out of this script a note the app reads on
+            // its next launch, because a host whose BakaLoader did not come back has nowhere
+            // else to look: this one is the only one that does not relaunch anything, since the
+            // copy that would not close is still running.
+            Assert.Contains("BakaLoader was still running two minutes after it was asked to close", script);
 
             // And it looks after the wait and before anything is written, which is the only
             // place the look is worth anything.

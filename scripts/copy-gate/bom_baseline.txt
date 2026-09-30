@@ -1,0 +1,56 @@
+# Every TRACKED text file in this repository that starts with a UTF-8 byte order mark, and
+# is meant to. Rule 30 of the copy gate reads this file.
+#
+# WHY A BASELINE RATHER THAN "no BOMs". Visual Studio writes one on a .cs, a .csproj, a
+# .resx and the .sln, and it has been doing that here since the first commit: the files below
+# carry one and nothing is wrong with any of them. What IS wrong is a file GAINING one,
+# because a byte order mark is invisible in every editor and in every diff and it changes the
+# file. A .cs that gains one still compiles; app.js served with three bytes in front of its
+# first statement is a different file; a shell script that gains one no longer runs at all.
+# One batch of edits in 1.2.6 put a BOM on twenty files that had none, which is the whole
+# reason the rule exists.
+#
+# WHY IT IS NOT A DIFF AGAINST HEAD ANY MORE. It was, and that gave the rule a lifetime: the
+# moment the work was committed there were no changed files left to compare and it could
+# never fail again, whatever a later commit did. It reads every tracked text file now, and
+# this list is the whole of what it forgives.
+#
+# THE LIST IS EXACT ON PURPOSE. A file named here that no longer starts with a BOM fails as
+# well, and the failure says to delete the line. A list that is allowed to go stale is a list
+# that quietly starts forgiving files nobody decided about.
+#
+# One path per line, from the repository root, as git ls-files writes it.
+ValheimBakaLoader.Tests/Forms/BlendWindowAppUpdateTests.cs
+ValheimBakaLoader.Tests/Forms/BlendWindowBepInExTests.cs
+ValheimBakaLoader.Tests/Forms/BlendWindowUpdateGuardTests.cs
+ValheimBakaLoader.Tests/Forms/BlendWindowWorldClaimTests.cs
+ValheimBakaLoader.Tests/Forms/LanguagePackServingTests.cs
+ValheimBakaLoader.Tests/Forms/WebUiWorldCopyTests.cs
+ValheimBakaLoader.Tests/Forms/WebUiWorldDirectoriesTests.cs
+ValheimBakaLoader.Tests/Game/FirstRunDirectoryPathsTests.cs
+ValheimBakaLoader.Tests/Game/ValheimServerLogRulesTests.cs
+ValheimBakaLoader.Tests/Tools/Atlas/ChunkedWorldReaderTests.cs
+ValheimBakaLoader.Tests/Tools/Atlas/WorldDbReaderTests.cs
+ValheimBakaLoader.Tests/Tools/LanguagePackRealArtefactTests.cs
+ValheimBakaLoader.Tests/Tools/LanguagePackServiceTests.cs
+ValheimBakaLoader.Tests/Tools/LanguagePackToolsTests.cs
+ValheimBakaLoader.Tests/Tools/PathCheckTests.cs
+ValheimBakaLoader.Tools/ValheimBakaLoader.Tools.csproj
+ValheimBakaLoader.sln
+ValheimBakaLoader/Forms/BlendWindow.Bridge.cs
+ValheimBakaLoader/Forms/SplashForm.cs
+ValheimBakaLoader/Forms/SplashForm.resx
+ValheimBakaLoader/Game/ServerPreferences.cs
+ValheimBakaLoader/Game/ServerPreferencesFile.cs
+ValheimBakaLoader/Game/ValheimServer.cs
+ValheimBakaLoader/Game/ValheimServerOptions.cs
+ValheimBakaLoader/Properties/PublishProfiles/small-x64-debug.pubxml
+ValheimBakaLoader/Properties/PublishProfiles/small-x64-release.pubxml
+ValheimBakaLoader/Tools/Atlas/ChunkedWorldReader.cs
+ValheimBakaLoader/Tools/Atlas/WorldDbReader.cs
+ValheimBakaLoader/Tools/DiscordStatusService.cs
+ValheimBakaLoader/Tools/DiscordWebhookService.cs
+ValheimBakaLoader/Tools/LanguagePackService.cs
+ValheimBakaLoader/Tools/PathCheck.cs
+ValheimBakaLoader/Tools/ServerBuildTracker.cs
+ValheimBakaLoader/ValheimBakaLoader.csproj

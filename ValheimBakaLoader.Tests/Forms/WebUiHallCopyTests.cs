@@ -107,8 +107,11 @@ namespace ValheimBakaLoader.Tests.Forms
             TheHallNames(Hall("vikings", "<!-- ============ PAGE: MODS"), new[]
             {
                 "vikings.head.title", "common.norse.vikings",
-                // The hall's one command about the WORLD rather than about a person.
+                // The hall's one command about the WORLD rather than about a person, and
+                // the switch 1.2.6 put beside it that arms the same sweep for the next
+                // moment nobody is playing.
                 "vikings.cleanse.label", "vikings.cleanse.title",
+                "vikings.cleanse.armed.label", "vikings.cleanse.armed.title",
                 "vikings.caps.head",
                 "vikings.caps.note", "vikings.col.name", "common.sort.by_name",
                 "vikings.col.status", "vikings.col.status.title", "vikings.col.platform",
@@ -192,7 +195,11 @@ namespace ValheimBakaLoader.Tests.Forms
                 Assert.DoesNotContain("data-i18n", button);
             }
             Assert.Contains("add.textContent=both?T(\"mods.add.label.link\"):T(\"mods.add.label\");", js);
-            Assert.Contains("scan.textContent=both?T(\"mods.scan.label.sites\"):T(\"mods.scan.label\");", js);
+            // 1.2.6: a scan in flight owns the button's words as well as its disabled state,
+            // so the resting label is the third arm rather than the whole line.
+            Assert.Contains("scan.textContent=S.modsScanning", js);
+            Assert.Contains("?T(\"mods.scan.label.running\")", js);
+            Assert.Contains(":(both?T(\"mods.scan.label.sites\"):T(\"mods.scan.label\"));", js);
         }
 
         // ------------------------------------------------------------------ C. Configs
@@ -285,6 +292,9 @@ namespace ValheimBakaLoader.Tests.Forms
             TheHallNames(Hall("world", "<!-- ============ PAGE: ATLAS"), new[]
             {
                 "world.head.title", "common.norse.world", "world.head.sub", "world.save.label",
+                // The hall's two tabs, added in 1.2.6. Server is everything below and App is
+                // the card at the end of this list.
+                "world.tab.server", "world.tab.app",
                 "world.server.label", "common.norse.heimr", "world.field.name",
                 "world.field.world", "world.copy.chip", "world.copy.chip.title",
                 "world.new.placeholder",
@@ -332,6 +342,26 @@ namespace ValheimBakaLoader.Tests.Forms
                 "world.setup.reset", "world.setup.reset.title", "world.setup.reset.note",
                 // And the unsaved notice, both sentences of it, in the corner of the hall.
                 "world.unsaved.title", "world.unsaved.note",
+                // The App tab. Every row below moved here whole from the Hearth's Upkeep
+                // card in 1.2.6 and kept its id, which is why most of these are still
+                // spelled hearth.upkeep.*: an id is a place in a translation file and not a
+                // place on a screen, and renaming them would have thrown away four packs'
+                // worth of work to no end. The three that are new are the heading over them,
+                // the interface language that is also the globe's, and Text size.
+                // No common.norse.hearth here: the head carried the Hearth's own word into the
+                // Settings hall because its rows came from the Hearth's Upkeep card, and the
+                // Language heading right under it never had one either.
+                "app.sec.window",
+                "hearth.upkeep.start_windows",
+                "hearth.upkeep.start_minimized", "hearth.upkeep.start_minimized.note",
+                "hearth.upkeep.share_stats", "hearth.upkeep.share_stats.note",
+                "hearth.upkeep.norse_names", "hearth.upkeep.norse_names.title",
+                "hearth.upkeep.norse_names.note",
+                "settings.player_messages.label", "settings.player_messages.same",
+                "settings.player_messages.help",
+                "app.sec.language", "app.language.label", "app.language.help",
+                "app.textsize.label", "app.textsize.normal", "app.textsize.large",
+                "app.textsize.xlarge", "app.textsize.help",
             });
         }
 
@@ -664,6 +694,9 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             TheHallNames(Hall("saga", "<!-- ============ PAGE: HERALD"), new[]
             {
+                // 1.2.6: the search box had a placeholder and no label at all, so a screen
+                // reader announced an unnamed edit field in the middle of the toolbar.
+                "saga.search.aria",
                 "saga.head.title",
                 "common.norse.saga",
                 "saga.head.sub",

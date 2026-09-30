@@ -69,19 +69,60 @@ namespace ValheimBakaLoader.Tools
             if (!clean.All(c => char.IsLetterOrDigit(c) || c is '.' or '-' or '_' or '+')) return null;
 
             var request = Get($"{Resources.UrlGithubApi}/releases/tags/{clean}")
-                .WithHeader("User-Agent", "ValheimBakaLoader"); // GitHub rejects UA-less requests
+                .WithHeader("User-Agent", "ValheimBakaLoader") // GitHub rejects UA-less requests
+                // A tag nobody published answers 404, and that is the ordinary case for a
+                // version whose release page is not up yet: the pack check falls back to the
+                // newest release that carries packs and carries on. It used to write a red
+                // failure line into the log a host reads, for a request the app expects to
+                // fail, and then said nothing about the fallback at all.
+                .WhenMissingSay("No release page yet for this version; using the newest pack available.");
 
-            // A tag nobody published answers 404, which SendAsync surfaces as null. That is
-            // not an error here: it is the ordinary case for a version with no packs.
             return await request.SendAsync<GitHubRelease>();
         }
 
+        /// <summary>How many releases one page asks for. A hundred is GitHub's ceiling.</summary>
+        internal const int ReleasePageSize = 100;
+
+        /// <summary>
+        /// How many pages the reader will walk before it stops and says so.
+        /// <para>
+        /// The list used to be one bare call, which GitHub answers with THIRTY releases and no
+        /// hint that there are more. The pack lookup's whole contract is "the newest release at
+        /// or below the version I am running", and that reaches DOWN: a rolling window of
+        /// thirty would one day answer "no packs for your version" to a host whose packs are
+        /// published and sitting on release thirty-one.
+        /// </para>
+        /// </summary>
+        internal static int MaxReleasePages { get; set; } = 5;
+
         private async Task<GitHubRelease[]> SendReleasesAsync()
         {
-            var request = Get($"{Resources.UrlGithubApi}/releases")
-                .WithHeader("User-Agent", "ValheimBakaLoader"); // GitHub rejects UA-less requests
+            var all = new System.Collections.Generic.List<GitHubRelease>();
 
-            return await request.SendAsync<GitHubRelease[]>();
+            for (var page = 1; page <= MaxReleasePages; page++)
+            {
+                var request = Get($"{Resources.UrlGithubApi}/releases?per_page={ReleasePageSize}&page={page}")
+                    .WithHeader("User-Agent", "ValheimBakaLoader"); // GitHub rejects UA-less requests
+
+                var batch = await request.SendAsync<GitHubRelease[]>();
+
+                // The first page failing is the whole query failing, which is what the callers
+                // already handle. A later page failing leaves the pages already read standing:
+                // a short list is better than no list, and it is the same list the app had
+                // before paging was asked for at all.
+                if (batch == null) return page == 1 ? null : all.ToArray();
+
+                all.AddRange(batch);
+
+                // A page that came back short is the last page there is.
+                if (batch.Length < ReleasePageSize) return all.ToArray();
+            }
+
+            Logger?.Warning(
+                "GitHub has more releases than the first {0} pages this reader walks, so anything older "
+                + "than that is not being looked at.", MaxReleasePages);
+
+            return all.ToArray();
         }
 
         private static IOrderedEnumerable<GitHubRelease> Published(GitHubRelease[] releases) =>
@@ -141,5 +182,14 @@ namespace ValheimBakaLoader.Tools
         /// count the manifest carries, which is the one the download is held to.
         /// </summary>
         [JsonProperty("size")] public long Size { get; set; }
+
+        /// <summary>
+        /// The digest GitHub publishes for the uploaded file, written as "sha256:" and
+        /// sixty-four hex characters. Older releases carry nothing here, so it is read
+        /// beside the size rather than instead of it: the size catches a body that arrived
+        /// short, and the digest is the only thing that catches one that arrived at the
+        /// right length with the wrong bytes in it.
+        /// </summary>
+        [JsonProperty("digest")] public string Digest { get; set; }
     }
 }

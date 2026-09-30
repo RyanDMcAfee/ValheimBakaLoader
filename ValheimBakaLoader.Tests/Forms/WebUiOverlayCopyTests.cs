@@ -70,8 +70,11 @@ namespace ValheimBakaLoader.Tests.Forms
                               .Select(m => (Id: m.Groups[1].Value, Word: m.Groups[2].Value))
                               .ToList();
 
-            // 22 with Clear cheat marks, which is a viking row like the kick beside it.
-            Assert.Equal(22, badges.Count);
+            // 22 with Clear cheat marks, which is a viking row like the kick beside it, and 25
+            // from 1.2.6's batch D: Text size, Interface language and Start with Windows are rows
+            // of their own now, because the controls they land on moved to the Settings hall's
+            // App tab and the palette's promise was that it would still reach them.
+            Assert.Equal(25, badges.Count);
             Assert.DoesNotContain("<span class=\"k\">", palette);   // none left unkeyed
 
             foreach (var (id, word) in badges)
@@ -80,11 +83,13 @@ namespace ValheimBakaLoader.Tests.Forms
                 Assert.Equal(word, Lore(catalog, id));
             }
 
-            Assert.Equal(14, badges.Select(b => b.Id).Distinct().Count());
+            // Fifteen distinct words: the fourteen that were here, plus `app`, which the three
+            // rows for the controls that moved to the Settings hall's App tab share.
+            Assert.Equal(15, badges.Select(b => b.Id).Distinct().Count());
         }
 
         /// <summary>
-        /// Seven of those fourteen are words the plain swap has always reworded, so the
+        /// Seven of those fifteen are words the plain swap has always reworded, so the
         /// entry carries both registers and the two ways of asking give the same answer.
         /// The other seven read the same either way and name no plain register, because
         /// one that said anything else would be a new wording rather than a translation.

@@ -61,14 +61,15 @@ namespace ValheimBakaLoader.Tests.Forms
         /// large ones keep the display face, which is where the brand voice actually lives.
         /// The eleventh is the BepInEx row's name, at 12.5px above the mods table, and the
         /// last two came with the Settings hall's Directories work: the word Currently
-        /// above each path, and the title on the unsaved notice.
+        /// above each path, and the title on the unsaved notice. The fourteenth is 1.2.6's
+        /// Settings tab strip, which is two chips in the same voice as a hall's Norse caption.
         /// </summary>
         [Fact]
         public void The_small_serif_rules_and_the_display_ones_are_separate_tokens()
         {
             var css = Css();
 
-            Assert.Equal(13, Regex.Matches(css, Regex.Escape("font-family:var(--serif-small)")).Count);
+            Assert.Equal(14, Regex.Matches(css, Regex.Escape("font-family:var(--serif-small)")).Count);
 
             var display = Regex.Matches(css, @"font-family:var\(--serif\)[^}]*")
                 .Cast<Match>().Select(m => m.Value).ToList();

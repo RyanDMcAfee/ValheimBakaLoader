@@ -238,15 +238,19 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var body = Body("langRowLine");
             Assert.Contains("(l.installed&&!l.matchesApp&&!l.builtIn)", body);
-            Assert.Contains("?T(\"lang.row.current_older_pack\",{version:l.installedVersion||\"\"})", body);
+            // 1.2.6: the line names the app's version too, because a pack cut for an older
+            // release is USED rather than refused and the English a host then reads inside
+            // their own language has to be explained on the spot.
+            Assert.Contains("?T(\"lang.row.current_older_pack\",", body);
+            Assert.Contains("{version:l.installedVersion||\"\",app:langAppVersion()})", body);
             Assert.Contains(":T(\"lang.row.current\");", body);
 
             var catalog = Catalog();
             Assert.True(catalog.ContainsKey("lang.row.current_older_pack"));
-            Assert.Equal("Current, using the pack from {version}",
+            Assert.Equal("Current \u00b7 pack from {version}; newer sentences in English until the {app} pack is out",
                 catalog["lang.row.current_older_pack"].GetProperty("lore").GetString());
-            // The same slot the row below it uses, so the two sentences stay one idea.
-            Assert.Equal("Using the pack from {version}",
+            // The same two slots the row below it uses, so the two sentences stay one idea.
+            Assert.Equal("Pack from {version}; newer sentences in English until the {app} pack is out",
                 catalog["lang.row.older_pack"].GetProperty("lore").GetString());
         }
 

@@ -376,5 +376,287 @@ else
   echo "  the start with windows selftest is missing: $STARTWIN_SELFTEST"; fail=1
 fi
 
+echo "== 24. the two Hearth cards after a realm switch =="
+# The real-app walk, two realms up. The World saves card kept one set of write times for the
+# whole window, so a switch left the header reading the previous realm's clock over a body
+# that said nothing had been measured; and uptime counted from the switch rather than from
+# the moment the server came up. The rules drive the real chooser and the real painters out
+# of app.js and hold the seam that carries the session's own start time across the bridge.
+SWITCH_CARDS_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/realm_switch_cards_selftest.js"
+if [ -f "$SWITCH_CARDS_SELFTEST" ]; then
+  if out=$(node "$SWITCH_CARDS_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the realm switch cards selftest is missing: $SWITCH_CARDS_SELFTEST"; fail=1
+fi
+
+echo "== 25. the Saga console's empty states =="
+# 1.2.6 gave the console a "no lines match" state for a pill or a search that hides every
+# line. It was drawn only when the host changed the pill, and the next log line tore it out
+# and put nothing back, so on a running server it lived about a second. These drive the real
+# append road and hold the note against the traffic that used to wipe it.
+SAGA_EMPTY_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/saga_empty_selftest.js"
+if [ -f "$SAGA_EMPTY_SELFTEST" ]; then
+  if out=$(node "$SAGA_EMPTY_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the saga empty selftest is missing: $SAGA_EMPTY_SELFTEST"; fail=1
+fi
+
+echo "== 26. the world integrity note on the Worlds card =="
+# The note that says a world's chunk files hold fewer records than its own index promises was
+# painted only in front of a start, and never cleared, so a host who never pressed Kindle
+# never saw it and a realm switch left the previous realm's warning about lost data standing.
+# These drive the real painter and the real refresher.
+WORLD_INTEGRITY_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/world_integrity_card_selftest.js"
+if [ -f "$WORLD_INTEGRITY_SELFTEST" ]; then
+  if out=$(node "$WORLD_INTEGRITY_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the world integrity card selftest is missing: $WORLD_INTEGRITY_SELFTEST"; fail=1
+fi
+
+echo "== 27. what the page still holds about the previous realm =="
+# Eight pieces of state that belong to ONE realm were read for the whole window, and two of
+# them wrote to disk: the Runes editor kept the previous realm's text while the list redrew
+# for the new one, so one press of Save wrote realm A's scroll into realm B's file; and the
+# difficulty dials were keyed on the world NAME alone, so a set abandoned on one realm rode
+# into the next and was written by that realm's Save Config. These drive the real choosers
+# out of app.js and hold the seam that carries the realm on the scan reply and the write.
+SWITCH_STATE_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/realm_switch_state_selftest.js"
+if [ -f "$SWITCH_STATE_SELFTEST" ]; then
+  if out=$(node "$SWITCH_STATE_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the realm switch state selftest is missing: $SWITCH_STATE_SELFTEST"; fail=1
+fi
+
+echo "== 28. the armed one-shot cleanse, from the switch to the reply that puts it down =="
+# The switch is a field on ONE realm's profile and the sweep it arms fires while nobody is
+# watching, so the two things that can quietly be wrong are a switch showing another realm's
+# answer and a refusal being read as a result. These drive the real painter and hold both the
+# host's reading and the page's wording.
+CLEANSE_ARMED_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/cleanse_armed_selftest.js"
+if [ -f "$CLEANSE_ARMED_SELFTEST" ]; then
+  if out=$(node "$CLEANSE_ARMED_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the cleanse armed selftest is missing: $CLEANSE_ARMED_SELFTEST"; fail=1
+fi
+
+echo "== 29. every small word against every ground it can sit on =="
+# Measured rather than eyeballed. Four colour tokens were under AA on the lighter cards, and
+# the one a microlabel's rune was drawn in came out at 2.5 composited. Nothing in the suite
+# had an opinion about any of it until this existed. It reads the tokens out of app.css, works
+# out which grounds the stylesheet actually paints, and measures every small-text rule whose
+# colour is a token against all of them. What it cannot resolve it PRINTS rather than passes.
+CONTRAST_GATE="$(dirname "$(dirname "$HERE")")/scripts/ui/contrast_gate.js"
+if [ -f "$CONTRAST_GATE" ]; then
+  if out=$(node "$CONTRAST_GATE"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the contrast gate is missing: $CONTRAST_GATE"; fail=1
+fi
+
+echo "== 30. no file gains a UTF-8 BOM =="
+# A byte-order mark is invisible in every editor and in every diff, and it changes the file.
+# A .cs file that gains one still compiles; app.js that gains one is served with three bytes
+# in front of its first statement; a shell script that gains one no longer runs at all. One
+# batch of edits in 1.2.6 added a BOM to twenty files that had none, which is the whole
+# reason this check exists.
+#
+# It used to compare the CHANGED files against the commit they were changed from, and that
+# gave it a lifetime: the moment the work was committed there were no changed files left and
+# the rule could never fail again, whatever a later commit did. It reads every tracked text
+# file now. The rule is still not "no BOMs", because 34 files here have carried one since
+# Visual Studio wrote them; scripts/copy-gate/bom_baseline.txt is the whole of what is
+# forgiven, and a file in that list that no longer has one fails too, so the list stays true.
+BOM_BASE_LIST="$HERE/bom_baseline.txt"
+if git -C . rev-parse --git-dir >/dev/null 2>&1; then
+  bomfail=0
+  checked=0
+  bomseen=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [ -f "$f" ] || continue
+    case "$f" in
+      *.png|*.jpg|*.jpeg|*.gif|*.ico|*.webp|*.zip|*.dll|*.exe|*.pdb|*.bin|*.snk) continue;;
+      *.ttf|*.otf|*.woff|*.woff2|*.mp3|*.wav|*.ogg|*.fwl2|*.db2|*.chunk|*.chunks) continue;;
+    esac
+    checked=$((checked+1))
+    now=$(head -c3 "$f" | od -An -tx1 | tr -d ' 
+')
+    vouched=0
+    if [ -f "$BOM_BASE_LIST" ] && grep -qxF -- "$f" "$BOM_BASE_LIST"; then vouched=1; fi
+    if [ "$now" = "efbbbf" ]; then
+      bomseen="$bomseen$f
+"
+      if [ "$vouched" -ne 1 ]; then echo "  gained a BOM: $f"; bomfail=1; fi
+    elif [ "$vouched" -eq 1 ]; then
+      echo "  the BOM baseline names a file that no longer starts with one: $f (delete the line)"
+      bomfail=1
+    fi
+  done < <(git ls-files 2>/dev/null)
+  if [ "$bomfail" -ne 0 ]; then fail=1
+  else
+    echo "  0 hits ($checked tracked text files read; $(printf '%s' "$bomseen" | grep -c . || true) vouched for in bom_baseline.txt)"
+  fi
+else
+  echo "  not a git checkout, so there is nothing to read"
+fi
+
+echo "== 31. every link to this repository names this repository =="
+# A link with the wrong owner in it is a 404 for every reader, and nothing in the suite reads
+# a URL. 1.2.6 shipped three: the README's new privacy link and two inside the client
+# companion's own files, which go out in the release zip and into a Thunderstore listing. The
+# rule is narrow on purpose: a github.com link to somebody else's project is ordinary and
+# stays, and only a link whose path IS this repository has to name this repository's owner.
+# The test project is left out because it holds wrong-owner URLs on purpose, as the fixtures
+# that prove the app refuses to open a release page somewhere else.
+OWNER="RyanDMcAfee"
+linkhits=$(grep -rnoE "github[.]com/[A-Za-z0-9_.-]+/ValheimBakaLoader" \
+  --include='*.md' --include='*.json' --include='*.cs' --include='*.js' \
+  --include='*.html' --include='*.ps1' --include='*.css' --include='*.sh' \
+  --exclude-dir='ValheimBakaLoader.Tests' --exclude-dir='bin' --exclude-dir='obj' \
+  --exclude-dir='BuildStaging126' --exclude-dir='Build' \
+  . 2>/dev/null | grep -v "github[.]com/$OWNER/ValheimBakaLoader" || true)
+if [ -n "$linkhits" ]; then
+  printf '%s\n' "$linkhits" | sed 's/^/  wrong owner: /'
+  fail=1
+else
+  echo "  0 hits (every github.com/<owner>/ValheimBakaLoader names $OWNER)"
+fi
+
+echo "== 32. the BepInEx notice bar: one fact, one notice, one action =="
+# The owner closed the same "BepInEx was left as it was" bar after every launch for two days,
+# because a scheduled restart window records the same refusal every few hours and the page
+# stood the same fact up again. Beside it were two buttons that both only closed the bar.
+# These drive the real painters: a fact that has been read raises nothing, a reason a press
+# cannot help with carries its wiki link inside the sentence and one button, and a reason
+# where a press does work keeps its offer.
+BEP_NOTICE_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/bepinex_notice_selftest.js"
+if [ -f "$BEP_NOTICE_SELFTEST" ]; then
+  if out=$(node "$BEP_NOTICE_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the BepInEx notice selftest is missing: $BEP_NOTICE_SELFTEST"; fail=1
+fi
+
+echo "== 33. no English sentence written straight into a call that paints the window =="
+# A sentence written into a toast, a dialog or the condition bar reads English on a
+# Japanese, Russian or Chinese host, the dash gate counts dashes rather than asking where a
+# sentence came from, and check_catalog.py cannot see a sentence that never became an id.
+# This reads the title and message arguments of every toast / confirmModal / promptModal /
+# setCondition call and fails on prose that is not a catalog lookup.
+# logLine is not scanned. The Saga log is English and verbatim by decision, so a sentence
+# written straight into a log line is the right thing there rather than a finding.
+"$py" "$HERE/scan_copy_literals.py" "$APP/WebUI/app.js" > /tmp/copylit.$$ 2>&1 || true
+litn=$(tail -1 /tmp/copylit.$$ | awk '{print $2}')
+if [ "$litn" = "0" ]; then sed 's/^/  /' /tmp/copylit.$$
+else sed 's/^/  /' /tmp/copylit.$$; fail=1; fi
+rm -f /tmp/copylit.$$
+
+echo "== 34. the contrast gate's own blind spots, each proved with a planted defect =="
+# A gate is worth what it FAILS on. This one went green over four readable words under 4.5,
+# because of five things it could not read: an opacity written as a percentage, an opacity on an
+# ancestor rule, a compound class on one element, a colour form the parser did not know, and a
+# @keyframes strip that stopped at the first inner brace. Each of those gets a defect planted
+# into a scratchpad copy of app.css, and the copy has to fail.
+CONTRAST_PROOFS="$(dirname "$(dirname "$HERE")")/scripts/ui/contrast_gate_proofs.js"
+if [ -f "$CONTRAST_PROOFS" ]; then
+  if out=$(node "$CONTRAST_PROOFS"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the contrast gate proofs are missing: $CONTRAST_PROOFS"; fail=1
+fi
+
+echo "== 35. no listener on a shared control is registered above its generic handler =="
+# 1.2.6 shipped this twice and nothing could see it: two click listeners on one element run in
+# the order they were ADDED, so a listener above the generic one reads the state the element is
+# LEAVING. Arming the cheat-mark sweep from the window was impossible, and the App tab's own
+# two re-reads were dead. Neither is a syntax error and neither fails a unit test; the only
+# thing that tells them apart is source position.
+"$py" "$HERE/scan_listener_order.py" "$APP/WebUI/app.js" "$APP/WebUI/index.html" > /tmp/lorder.$$ 2>&1 || true
+lon=$(tail -1 /tmp/lorder.$$ | awk '{print $2}')
+sed 's/^/  /' /tmp/lorder.$$
+[ "$lon" = "0" ] || fail=1
+rm -f /tmp/lorder.$$
+
+echo "== 36. every wiki line that says where a control is, against index.html =="
+# 1.2.6 moved nine rows off the Upkeep card and the pages went on sending a host to the old
+# place in several sentences. Nothing in the suite reads a wiki page, so a page that points at a
+# card a switch is not on is exactly as green as one that does not. The pages live outside the
+# repository until release day, so the folder is handed in with BAKA_WIKI_DIR, or found beside
+# the repository, or the run says out loud with BAKA_WIKI_SKIP=1 that it is not checking them.
+PLACEMENT_GATE="$(dirname "$(dirname "$HERE")")/scripts/docs/placement_gate.py"
+# NOT RUN used to be a pass, which made the one gate that reads the documentation the one
+# gate a run could skip by saying nothing at all. So the folder is looked for before it is
+# given up on, and giving up costs the run.
+#
+# Where a wiki clone sits on a machine that has one: cloning the wiki remote makes
+# ValheimBakaLoader.wiki beside the repository, and the publishing script clones the same
+# remote into a folder it simply calls wiki. Both names are tried beside the repository and
+# one level above it, and a candidate counts only if it holds Home.md, so a stale empty
+# folder of that name cannot turn this gate off by existing.
+if [ -z "${BAKA_WIKI_DIR:-}" ]; then
+  REPO_ROOT="$(dirname "$(dirname "$HERE")")"
+  for guess in \
+    "$REPO_ROOT/../ValheimBakaLoader.wiki" \
+    "$REPO_ROOT/../wiki" \
+    "$REPO_ROOT/../../ValheimBakaLoader.wiki" \
+    "$REPO_ROOT/../../wiki"
+  do
+    if [ -f "$guess/Home.md" ]; then
+      BAKA_WIKI_DIR="$guess"
+      echo "  found the wiki pages at $guess"
+      break
+    fi
+  done
+fi
+if [ ! -f "$PLACEMENT_GATE" ]; then
+  echo "  the placement gate is missing: $PLACEMENT_GATE"; fail=1
+elif [ -z "${BAKA_WIKI_DIR:-}" ] && [ "${BAKA_WIKI_SKIP:-}" = "1" ]; then
+  echo "  NOT RUN: no wiki folder was found and BAKA_WIKI_SKIP=1 says that is on purpose."
+  echo "  Set BAKA_WIKI_DIR to the pages to check them."
+elif [ -z "${BAKA_WIKI_DIR:-}" ]; then
+  echo "  NOT RUN, and that is a failure: no wiki folder was found, so the pages were not"
+  echo "  checked against index.html. Set BAKA_WIKI_DIR to them, or set BAKA_WIKI_SKIP=1 to"
+  echo "  say out loud that this run is not checking them."
+  fail=1
+elif [ ! -d "${BAKA_WIKI_DIR}" ]; then
+  echo "  BAKA_WIKI_DIR is set to something that is not a folder: ${BAKA_WIKI_DIR}"; fail=1
+else
+  "$py" "$PLACEMENT_GATE" "${BAKA_WIKI_DIR}" "$APP/WebUI/index.html" > /tmp/place.$$ 2>&1 || true
+  sed 's/^/  /' /tmp/place.$$
+  pn=$(tail -1 /tmp/place.$$ | awk '{print $2}')
+  [ "$pn" = "0" ] || fail=1
+  rm -f /tmp/place.$$
+fi
+
+echo "== 37. the Settings hall's tab strip, its App tab, the Connection fold and the switches =="
+# Everything the 1.2.6 regroup moved kept its id, so every existing test went on passing and the
+# three things the move actually changed had no test at all: which tab is showing (and what goes
+# with it), the Connection card's fold, and the palette still landing on the moved controls. Plus
+# the switches, which answered a mouse and nothing else.
+APP_TAB_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/app_tab_selftest.js"
+if [ -f "$APP_TAB_SELFTEST" ]; then
+  if out=$(node "$APP_TAB_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the App tab selftest is missing: $APP_TAB_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail
