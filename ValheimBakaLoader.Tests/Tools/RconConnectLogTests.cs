@@ -27,7 +27,15 @@ namespace ValheimBakaLoader.Tests.Tools
     /// once, going away says so once, and the hundreds of routine re-connects in between go to
     /// Debug where they belong.
     /// </para>
+    /// <para>
+    /// In the wall-clock collection because every connection here is a real socket against the
+    /// client's own five second connect and read budgets, answered by a fake server that lives
+    /// on the thread pool. On the two-core runner, in the first half minute of the run, that
+    /// pool could not give the fake server a thread inside the budget, so "connection 1 did not
+    /// complete" held the 1.2.6 release. The budgets are the product's and stay as they are.
+    /// </para>
     /// </summary>
+    [Collection(WallClockCollection.Name)]
     public class RconConnectLogTests
     {
         /// <summary>

@@ -3,8 +3,9 @@ using Xunit;
 namespace ValheimBakaLoader.Tests
 {
     /// <summary>
-    /// The tests that read a stopwatch or poll a real window against a deadline, kept out of
-    /// the parallel run.
+    /// The tests that read a stopwatch, poll a real window against a deadline, or drive a real
+    /// socket against one of the product's own timeouts with a fake server on the thread pool,
+    /// kept out of the parallel run.
     /// <para>
     /// A test that asserts "this was over in under ten seconds" is measuring the machine as
     /// much as the code. On the two-core runner the suite starts every collection at once, and
