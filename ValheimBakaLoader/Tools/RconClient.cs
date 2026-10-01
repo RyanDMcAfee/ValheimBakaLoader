@@ -79,8 +79,10 @@ namespace ValheimBakaLoader.Tools
         // runs, and every one of those used to write "RCON connected" at Information. On a box
         // that leaves a world up all evening that one line was most of the application log and
         // most of the Recent log on screen. These two fields remember what was last said out
-        // loud, so the routine re-connects go to Debug and only a real change of state reaches
-        // the host: one "connected" when it comes up, one "lost" when it goes away.
+        // loud, so the routine re-connects are Verbose (the Detailed log switch) and only a real
+        // change of state reaches the host: one "connected" when it comes up, one "lost" when it
+        // goes away. Debug was tried first and, being the level every install writes at, it
+        // still filled half the log.
         private string ReportedEndpoint;
         private string ReportedState;
 
@@ -138,7 +140,12 @@ namespace ValheimBakaLoader.Tools
                 }
                 else
                 {
-                    Logger.Debug("RCON reconnected to {host}:{port}", host, port);
+                    // Verbose, not Debug: Debug is the level every install runs at, and the roster
+                    // poller reconnects every five seconds for as long as a world is up, so at Debug
+                    // this one line was still half of the application log and most of the Saga on
+                    // screen. It is only worth reading while chasing a problem, which is what the
+                    // Detailed log switch is for.
+                    Logger.Verbose("RCON reconnected to {host}:{port}", host, port);
                 }
 
                 return true;
@@ -148,7 +155,7 @@ namespace ValheimBakaLoader.Tools
                 var wasConnected = WasConnected(host, port);
                 if (!NoteState(host, port, FailureState(e)))
                 {
-                    Logger.Debug("RCON connection error ({host}:{port}): {message}", host, port, e.Message);
+                    Logger.Verbose("RCON connection error ({host}:{port}): {message}", host, port, e.Message);
                 }
                 else if (wasConnected)
                 {
@@ -166,15 +173,15 @@ namespace ValheimBakaLoader.Tools
         /// <summary>
         /// Writes one of the connection failures at the level a host deserves: an Information
         /// "lost" line the first time a connection that was up goes away, the warning once when
-        /// it never came up at all, and Debug for every repeat of the same state at the same
-        /// address.
+        /// it never came up at all, and Verbose for every repeat of the same state at the same
+        /// address, so a world that is down does not write a line every five seconds either.
         /// </summary>
         private void ReportLost(string host, int port, string state, string template)
         {
             var wasConnected = WasConnected(host, port);
             if (!NoteState(host, port, state))
             {
-                Logger.Debug(template, host, port);
+                Logger.Verbose(template, host, port);
                 return;
             }
 

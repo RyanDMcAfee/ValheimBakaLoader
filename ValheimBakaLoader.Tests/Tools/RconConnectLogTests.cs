@@ -24,8 +24,9 @@ namespace ValheimBakaLoader.Tests.Tools
     /// </para>
     /// <para>
     /// The rule these hold is: one Information line per change of state. Coming up says so
-    /// once, going away says so once, and the hundreds of routine re-connects in between go to
-    /// Debug where they belong.
+    /// once, going away says so once, and the hundreds of routine re-connects in between are
+    /// Verbose, which only the Detailed log switch turns on: Debug is the level every install
+    /// writes at, and at Debug they were still half of the log.
     /// </para>
     /// <para>
     /// In the wall-clock collection because every connection here is a real socket against the
@@ -134,7 +135,11 @@ namespace ValheimBakaLoader.Tests.Tools
             }
 
             Assert.Equal(1, logger.Count(LogEventLevel.Information, "RCON connected"));
-            Assert.Equal(49, logger.Count(LogEventLevel.Debug, "RCON reconnected"));
+            // The routine re-connects are Verbose, which only the Detailed log switch turns on:
+            // Debug is the level every install writes at, and at Debug this line was still half
+            // of the owner's application log after 1.2.6 moved it there.
+            Assert.Equal(0, logger.Count(LogEventLevel.Debug, "RCON reconnected"));
+            Assert.Equal(49, logger.Count(LogEventLevel.Verbose, "RCON reconnected"));
         }
 
         /// <summary>
@@ -162,6 +167,9 @@ namespace ValheimBakaLoader.Tests.Tools
 
             Assert.Equal(1, logger.Count(LogEventLevel.Information, "RCON lost"));
             Assert.Equal(0, logger.Count(LogEventLevel.Warning, "RCON connection error"));
+            // The nine repeats of the same closed port are Verbose, never Debug.
+            Assert.Equal(0, logger.Count(LogEventLevel.Debug, "RCON connection error"));
+            Assert.Equal(9, logger.Count(LogEventLevel.Verbose, "RCON connection error"));
 
             // Nothing above the Debug floor beyond the one "connected" and the one "lost".
             var loud = logger.Lines.Count(l => l.Level >= LogEventLevel.Information);

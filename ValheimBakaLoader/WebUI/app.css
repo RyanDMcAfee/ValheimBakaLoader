@@ -739,6 +739,16 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .savecap{flex:none;font-size:9px;letter-spacing:.6px;color:var(--bone-faint-text);margin-top:5px;line-height:1.35;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .savebars .empty{align-self:center;font-size:11.5px;color:var(--bone-faint-text);font-family:var(--sans)}
+/* AN EMPTY CHART OWNS THE ROW rather than standing in it the way a bar does. .savebars is a flex
+   row with align-items:flex-end, so the empty state that replaces the bars arrived as a flex
+   ITEM: content width, bottom aligned, and on a height-constrained card taller than the row it
+   sat in. It overflowed UPWARD, which is how the ᛉ came to sit on the "until next save" line
+   between the two metric columns instead of above "No saves timed yet". Full width, centred in
+   whatever room the row has, and clipped to the row so nothing can reach the lines above it
+   again. app.js adds es-norune when there is not room for all three lines; see saveBarsEmptyFit. */
+.savebars:has(>.empty-state){align-items:stretch;overflow:hidden}
+.savebars>.empty-state{flex:1 1 100%;min-width:0;min-height:0;padding:0;gap:3px;justify-content:center}
+.savebars.es-norune>.empty-state>.es-mark{display:none}
 .savebars i{flex:1;background:linear-gradient(180deg,var(--bronze-hi),rgba(140,109,63,.25));border-radius:2px 2px 0 0}
 .savebars i.hot{background:linear-gradient(180deg,var(--ember-hi),var(--ember));box-shadow:0 0 8px rgba(255,122,26,.4)}
 

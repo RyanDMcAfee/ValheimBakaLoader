@@ -81,6 +81,7 @@ function element(id, classes) {
     style: { display: "" },
     dataset: {},
     attrs: {},
+    textContent: "",
     classList: {
       contains: c => held.has(c),
       add: c => held.add(c),
@@ -96,7 +97,14 @@ function element(id, classes) {
       if (name === "data-wtab") return el.attrs["data-wtab"] || null;
       return Object.prototype.hasOwnProperty.call(el.attrs, name) ? el.attrs[name] : null;
     },
-    scrollIntoView() { el.scrolled = (el.scrolled || 0) + 1; },
+    scrollIntoView(how) { el.scrolled = (el.scrolled || 0) + 1; el.scrolledHow = how; },
+    /* The palette's landing focuses the control it named and lights the row around it, so both
+       have to exist here or openAppTab throws inside the frame callback. */
+    focus(how) { el.focused = (el.focused || 0) + 1; el.focusedHow = how; },
+    closest(selector) {
+      if (selector === ".togglerow") return el.row || null;
+      return null;
+    },
     held,
   };
   return el;
@@ -114,10 +122,17 @@ function hall() {
   tabServer.attrs["data-wtab"] = "server";
   tabApp.attrs["data-wtab"] = "app";
 
+  /* Each of the three controls the palette can land on sits in a row of its own, which is what
+     carries the words and therefore what the landing lights. */
+  const rowed = id => {
+    const el = element(id);
+    el.row = element(id + "Row", ["togglerow"]);
+    return el;
+  };
   const byId = {
     "#worldTabServer": server, "#worldTabApp": app, "#worldUnsaved": band,
-    "#page-world": page, "#selTextSize": element("selTextSize"),
-    "#selAppLang": element("selAppLang"), "#tStartWin": element("tStartWin"),
+    "#page-world": page, "#selTextSize": rowed("selTextSize"),
+    "#selAppLang": rowed("selAppLang"), "#tStartWin": rowed("tStartWin"),
   };
   const opened = [];
 
@@ -132,8 +147,13 @@ function hall() {
     refreshStartWinNote() { context.asked.push("startWinNote"); },
     langRefresh() { context.asked.push("langRefresh"); },
     refreshScrollCues() {},
+    /* The realm band at the top of the window, which belongs to the Server tab. Recorded rather
+       than drawn: what it really does is held by its own rule further down. */
+    renderEditBar() { context.asked.push("editBar"); },
+    flashRow(el) { context.flashed.push(el && el.id); },
     goPage(name) { opened.push("page:" + name); },
     asked: [],
+    flashed: [],
     opened,
     parts: { server, app, save, band, page, tabServer, tabApp },
   };
@@ -208,7 +228,8 @@ test("the App tab asks for the two things only it can answer", () => {
 
   const s = hall();
   vm.runInContext('worldTab("server")', s);
-  assert.strictEqual(s.asked.length, 0, "the Server tab asked for the App tab's own reads");
+  assert.ok(s.asked.indexOf("startWinNote") < 0 && s.asked.indexOf("langRefresh") < 0,
+    "the Server tab asked for the App tab's own reads: " + s.asked.join(", "));
 });
 
 /* --------------------------------------- rule 3: the palette lands on the moved controls */
@@ -360,6 +381,8 @@ function switches() {
   };
   vm.createContext(context);
   vm.runInContext(fn("function markSwitch(t){"), context, { filename: "app.js#aria" });
+  vm.runInContext(fn1("let SWITCH_LABEL_SEQ="), context, { filename: "app.js#labelSeq" });
+  vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
   const from = SOURCE.indexOf('$$("[data-t]").forEach(t=>{');
   assert.ok(from > 0, "app.js no longer wires every switch in one place");
   const to = SOURCE.indexOf("\n});", from) + 4;
@@ -421,6 +444,368 @@ test("a switch set from the host side takes its aria with it", () => {
 test("a focused switch shows that it is focused", () => {
   assert.ok(/\.toggle:focus-visible\{[^}]*outline/.test(STYLE),
     "a switch is in the tab order with nothing to show that a key would move it");
+});
+
+/* ------------------------------------------- 1.2.7: what a switch is CALLED, not just how it is set
+
+   The walk of 1.2.6 read the accessibility tree over the real window: all 35 switches carried
+   role=switch, tabindex and a correct aria-checked, and every one of them had the name "". A
+   screen reader announced "switch, on" thirty-five times and never once said what had moved,
+   because the words beside a switch are a sibling <span class="tl"> and that is a label to a
+   reader with eyes and nothing at all to the tree. */
+
+/** Every switch index.html ships, with the label span that stands beside it. Read out of the
+ *  markup rather than listed, so a switch added later is a switch this rule covers. */
+function switchesInMarkup() {
+  const found = [];
+  const tag = /<(span|div)\b[^>]*\bdata-t\b[^>]*>/g;
+  for (let m = tag.exec(HTML); m; m = tag.exec(HTML)) {
+    const id = /\bid="([^"]+)"/.exec(m[0]);
+    if (!id) continue;
+    const rowAt = HTML.lastIndexOf('class="togglerow', m.index);
+    const label = rowAt < 0 ? null
+      : /<span class="tl"([^>]*)>([\s\S]*?)<\/span>/.exec(HTML.slice(rowAt, m.index));
+    found.push({
+      id: id[1],
+      title: (/\btitle="([^"]*)"/.exec(m[0]) || [])[1] || "",
+      labelId: label ? (/\bid="([^"]+)"/.exec(label[1]) || [])[1] || "" : "",
+      labelText: label ? label[2].replace(/<[^>]*>/g, "").trim() : "",
+      inRow: rowAt >= 0,
+    });
+  }
+  return found;
+}
+
+/** The real naming pass, run over one switch with one label beside it. */
+function named(one) {
+  const label = { id: one.labelId || "", textContent: one.labelText };
+  const row = {
+    textContent: one.labelText,
+    querySelector: selector => (selector === ".tl" && one.labelText ? label : null),
+  };
+  const attrs = one.title ? { title: one.title } : {};
+  const el = {
+    id: one.id,
+    classList: { contains: () => false, toggle: () => false },
+    getAttribute: name => (Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null),
+    setAttribute(name, value) { attrs[name] = String(value); },
+    closest: selector => (selector === ".togglerow" && one.inRow ? row : null),
+  };
+  const context = { Object, String, console, el, label, attrs };
+  vm.createContext(context);
+  vm.runInContext(fn1("let SWITCH_LABEL_SEQ="), context, { filename: "app.js#labelSeq" });
+  vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
+  const answer = vm.runInContext("nameSwitch(el)", context);
+  return { answer, attrs, label };
+}
+
+test("every switch in the window has a name, and the name is the words beside it", () => {
+  const all = switchesInMarkup();
+  assert.ok(all.length >= 30, "found only " + all.length + " switches in index.html");
+
+  const nameless = [];
+  for (const one of all) {
+    const read = named(one);
+    const points = read.attrs["aria-labelledby"];
+    const spelled = read.attrs["aria-label"];
+    if (!points && !spelled) { nameless.push(one.id + " (no name at all)"); continue; }
+    if (points) {
+      if (points !== read.label.id) nameless.push(one.id + " points at " + points + " and the label is " + read.label.id);
+      else if (!read.label.textContent) nameless.push(one.id + " points at an empty label");
+    } else if (!String(spelled).trim()) {
+      nameless.push(one.id + " is named with an empty string");
+    }
+  }
+  assert.strictEqual(nameless.length, 0,
+    nameless.length + " of " + all.length + " switches resolve to no accessible name: "
+    + nameless.join("; "));
+});
+
+test("the name is a pointer at the label rather than a copy of its words", () => {
+  const one = switchesInMarkup().find(s => s.labelText && !s.labelId);
+  assert.ok(one, "every label in the markup already carries an id, so this rule cannot be read");
+
+  const read = named(one);
+  assert.strictEqual(read.attrs["aria-labelledby"], one.id + "-label",
+    "a label with no id of its own was not given one derived from the switch");
+  assert.strictEqual(read.label.id, one.id + "-label", "the id was not written onto the label");
+  assert.ok(!read.attrs["aria-label"],
+    "the words were COPIED onto the switch, so the name stops following a language switch");
+});
+
+test("a label that already has an id keeps it", () => {
+  const one = switchesInMarkup().find(s => s.labelId);
+  assert.ok(one, "no label in the markup carries an id of its own any more");
+  assert.strictEqual(named(one).attrs["aria-labelledby"], one.labelId);
+});
+
+test("the generic pass is what names them, so a switch added later cannot be the forgotten one", () => {
+  const from = SOURCE.indexOf('$$("[data-t]").forEach(t=>{');
+  const to = SOURCE.indexOf("\n});", from);
+  const pass = SOURCE.slice(from, to);
+  assert.ok(pass.indexOf("nameSwitch(t);") > 0,
+    "the one pass that sets role and tabindex does not set a name");
+  // And no switch is named by hand in the markup instead, which is how 34 of 35 get forgotten.
+  const byHand = [...HTML.matchAll(/<[^>]*\bdata-t\b[^>]*\baria-label(?:ledby)?="[^"]*"[^>]*>/g)];
+  assert.strictEqual(byHand.length, 0,
+    "a switch is named in the markup rather than by the pass: " + byHand.map(m => m[0]).join(" "));
+});
+
+/* --------------------------- 1.2.7: the switches a DIALOG builds, which the pass never reaches */
+
+/** The real dialog wiring, over one switch its dialog wires a click on AFTERWARDS, which is the
+ *  order modalOpen really runs in: the pass happens as the dialog is written and the opener
+ *  registers its own listeners on the next line. */
+function dialogSwitch(opts) {
+  const held = new Set((opts && opts.classes) || []);
+  const listeners = { click: [], keydown: [] };
+  const watchers = [];
+  const label = { id: "", textContent: (opts && opts.labelText) || "Separate install (own mods)" };
+  const row = {
+    textContent: label.textContent,
+    querySelector: selector => (selector === ".tl" ? label : null),
+  };
+  const attrs = {};
+  const flips = [];
+  /* A class watcher, run on the spot rather than on a microtask. The browser's is asynchronous;
+     what is being read here is that the aria is taken from the class AFTER it moved, whichever
+     listener moved it, which is the property a second click listener cannot have. */
+  const fire = () => { for (const watch of watchers.slice()) watch(); };
+  const el = {
+    id: (opts && opts.id) || "wsIso",
+    classList: {
+      contains: c => held.has(c),
+      toggle(c, on) {
+        if (on === undefined) {
+          if (held.has(c)) held.delete(c); else held.add(c);
+          fire();
+          return held.has(c);
+        }
+        if (on) held.add(c); else held.delete(c);
+        fire();
+        return !!on;
+      },
+    },
+    getAttribute: name => (Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null),
+    setAttribute(name, value) { attrs[name] = String(value); },
+    closest: selector => (selector === ".togglerow" ? row : null),
+    addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); },
+    click() { for (const fn of listeners.click.slice()) fn({ type: "click" }); },
+    key(name) {
+      let stopped = false;
+      for (const fn of listeners.keydown.slice()) fn({ key: name, preventDefault() { stopped = true; } });
+      return stopped;
+    },
+    held,
+  };
+  function Watcher(fn) { this.fn = fn; }
+  Watcher.prototype.observe = function () { watchers.push(this.fn); };
+  const context = {
+    Object, String, console, el, attrs, label, flips,
+    MutationObserver: Watcher,
+  };
+  vm.createContext(context);
+  vm.runInContext(fn1("let SWITCH_LABEL_SEQ="), context, { filename: "app.js#labelSeq" });
+  vm.runInContext(fn("function markSwitch(t){"), context, { filename: "app.js#aria" });
+  vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
+  vm.runInContext(fn("function wireDialogSwitch(t){"), context, { filename: "app.js#dialogSwitch" });
+  vm.runInContext(fn("function gateDialogSwitch(t){"), context, { filename: "app.js#gate" });
+
+  // The pass runs FIRST, as modalOpen runs it, and the dialog registers its own click after.
+  vm.runInContext("wireDialogSwitch(el)", context);
+  el.addEventListener("click", () => { el.classList.toggle("on"); flips.push(el.held.has("on")); });
+  return { el, attrs, label, flips, context };
+}
+
+test("a dialog's switch is a switch, with a name, and in the tab order", () => {
+  const one = dialogSwitch({ classes: ["toggle", "on"] });
+  assert.strictEqual(one.attrs.role, "switch", "a dialog switch is still a bare div to a reader");
+  assert.strictEqual(one.attrs.tabindex, "0", "a dialog switch is still out of the tab order");
+  assert.strictEqual(one.attrs["aria-checked"], "true", "it does not say which way it is set");
+  assert.strictEqual(one.attrs["aria-labelledby"], "wsIso-label", "it does not say what it is");
+  assert.strictEqual(one.label.id, "wsIso-label");
+});
+
+test("Enter and Space move a dialog's switch, down the road its own dialog wired", () => {
+  const one = dialogSwitch({ classes: ["toggle"] });
+
+  assert.ok(one.el.key("Enter"), "Enter does not even stop the page scrolling");
+  assert.deepStrictEqual(one.flips, [true], "Enter did not go through the dialog's own listener");
+  assert.strictEqual(one.attrs["aria-checked"], "true", "the aria did not follow the flip");
+
+  assert.ok(one.el.key(" "));
+  assert.deepStrictEqual(one.flips, [true, false]);
+  assert.strictEqual(one.attrs["aria-checked"], "false");
+
+  one.el.key("a");
+  assert.deepStrictEqual(one.flips, [true, false], "any key at all moves it");
+});
+
+test("the aria follows the class whoever moved it, with no listener order to be wrong about", () => {
+  const one = dialogSwitch({ classes: ["toggle"] });
+
+  /* A press, through a listener registered AFTER this pass ran. A second click listener here
+     would have read the class the switch was leaving, which is the bug 1.2.6 shipped twice. */
+  one.el.click();
+  assert.strictEqual(one.attrs["aria-checked"], "true",
+    "a press left the aria on the state the switch was leaving");
+
+  /* And the host side's own answer, which is not a press at all: the Forge dialog turns the copy
+     switch off when the host side says the world cannot be copied. */
+  one.el.classList.toggle("on", false);
+  assert.strictEqual(one.attrs["aria-checked"], "false",
+    "a switch moved by an answer rather than a finger still tells a reader the old state");
+
+  const watching = fn("function wireDialogSwitch(t){");
+  assert.ok(watching.indexOf("MutationObserver") > 0,
+    "the aria is back on a click listener, which has an order to be on the wrong side of");
+  assert.ok(watching.indexOf('attributeFilter:["class"]') > 0,
+    "the watcher is not narrowed to the class, so it fires on every attribute this pass sets");
+});
+
+test("a dialog switch the host side refused leaves the tab order with its pointer events", () => {
+  const one = dialogSwitch({ classes: ["toggle", "on"] });
+  vm.runInContext("gateDialogSwitch(el)", one.context);
+  assert.strictEqual(one.attrs.tabindex, "-1",
+    "a keyboard walker still lands on a control whose press is already being ignored");
+  assert.strictEqual(one.attrs["aria-disabled"], "true");
+});
+
+test("and it answers neither Enter nor Space, which was the one road left into it", () => {
+  const one = dialogSwitch({ classes: ["toggle", "on"] });
+  vm.runInContext("gateDialogSwitch(el)", one.context);
+
+  /* The gate took the tab stop and marked it disabled, and the pointer road was already told to
+     ignore it; the keyboard road read neither attribute, so a switch the host side had REFUSED
+     could still be moved with a key. A tab stop of -1 is not a wall either: the dialog focuses
+     controls itself, and a reader's own navigation reaches it.
+     The key is not swallowed, so Space still scrolls the dialog the way it does over anything
+     that is not a control. */
+  assert.strictEqual(one.el.key(" "), false,
+    "the refused switch still swallows Space, so the dialog does not scroll under it");
+  assert.strictEqual(one.el.key("Enter"), false);
+  assert.deepStrictEqual(one.flips, [], "a switch the host side refused was moved from the keyboard");
+  assert.strictEqual(one.attrs["aria-checked"], "true", "the aria moved with a press that never happened");
+
+  // And an ungated switch beside it still answers both, so this is a gate rather than a wall.
+  const live = dialogSwitch({ classes: ["toggle"] });
+  assert.ok(live.el.key(" "));
+  assert.deepStrictEqual(live.flips, [true]);
+});
+
+test("every switch a dialog builds is wired by one pass over the dialog, not by the dialog", () => {
+  /* The ONE call, beside esWire, in the one place that knows a dialog exists. A per-dialog call
+     is how four of twelve got forgotten in the first place: it is a line somebody has to
+     remember to write, and the dialog it is forgotten in is the one nobody walks. */
+  const open = fn("function modalOpen(html,again){");
+  assert.ok(open.indexOf("wireDialogSwitches(modalBg);") > 0,
+    "modalOpen does not wire the switches in the dialog it just wrote");
+  assert.ok(open.indexOf("esWire(modalBg);") < open.indexOf("wireDialogSwitches(modalBg);"),
+    "the switch pass runs before the dialog is even on screen");
+
+  const pass = fn("function wireDialogSwitches(root){");
+  assert.ok(/querySelectorAll\(["']\.toggle["']\)/.test(pass),
+    "the pass no longer looks for switches by the class every switch carries: " + pass);
+
+  // And no dialog wires one of its own any more, which is the state this replaced.
+  const perDialog = [...SOURCE.matchAll(/wireDialogSwitch\(/g)];
+  assert.strictEqual(perDialog.length, 2,
+    "wireDialogSwitch is called " + perDialog.length + " times: it is declared once and called"
+    + " once, from the pass. A third call is a dialog wiring its own switch again.");
+
+  // Nor does any dialog spell the role or the tab stop into its own markup.
+  const byHand = [...SOURCE.matchAll(/class="toggle[^"]*"[^>]*\b(?:role|tabindex|aria-checked)=/g)];
+  assert.strictEqual(byHand.length, 0,
+    "a dialog writes a switch's own role or tab stop into its markup: " + byHand.map(m => m[0]).join(" "));
+});
+
+test("the pass reaches every switch in a dialog with more than one", () => {
+  /* Three switches in one dialog, which is the Forge wizard's shape: the pass has to reach all of
+     them rather than the first. */
+  const made = [];
+  const built = ["wsIso", "wsSeed", "wsSaveIso"].map(id => {
+    const attrs = {};
+    const listeners = [];
+    const label = { id: "", textContent: id + " label" };
+    const el = {
+      id, attrs,
+      classList: { contains: () => false, toggle: () => false },
+      getAttribute: name => (Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null),
+      setAttribute(name, value) { attrs[name] = String(value); },
+      closest: () => ({ textContent: label.textContent, querySelector: () => label }),
+      addEventListener(type) { listeners.push(type); },
+      listeners,
+    };
+    made.push(el);
+    return el;
+  });
+  function Watcher() {}
+  Watcher.prototype.observe = function () {};
+  const context = {
+    Object, String, console, MutationObserver: Watcher,
+    root: { querySelectorAll: () => built },
+  };
+  vm.createContext(context);
+  vm.runInContext(fn1("let SWITCH_LABEL_SEQ="), context, { filename: "app.js#labelSeq" });
+  vm.runInContext(fn("function markSwitch(t){"), context, { filename: "app.js#aria" });
+  vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
+  vm.runInContext(fn("function wireDialogSwitch(t){"), context, { filename: "app.js#dialogSwitch" });
+  vm.runInContext(fn("function wireDialogSwitches(root){"), context, { filename: "app.js#pass" });
+
+  assert.strictEqual(vm.runInContext("wireDialogSwitches(root)", context), 3,
+    "the pass did not wire all three switches");
+  for (const el of made) {
+    assert.strictEqual(el.attrs.role, "switch", el.id + " is still a bare div");
+    assert.strictEqual(el.attrs.tabindex, "0", el.id + " is still out of the tab order");
+    assert.strictEqual(el.attrs["aria-labelledby"], el.id + "-label", el.id + " has no name");
+    assert.ok(el.listeners.indexOf("keydown") >= 0, el.id + " answers no key");
+  }
+  assert.strictEqual(vm.runInContext("wireDialogSwitches(null)", context), 0,
+    "a dialog with nothing in it threw instead of wiring nothing");
+});
+
+/* ------------------------------- 1.2.7: the realm band belongs to the Server tab */
+
+test("the realm band is not drawn on the App tab", () => {
+  const body = fn("async function renderEditBar(){");
+  const guard = body.slice(0, body.indexOf("\n", body.indexOf("currentPage!==\"world\"")));
+  assert.ok(guard.indexOf('WORLD_TAB==="app"') > 0,
+    "the band that says which realm is being edited still stands over a page where nothing belongs"
+    + " to a realm: " + guard);
+  assert.ok(guard.indexOf('bar.style.display="none"') > 0, "the guard no longer takes the band down");
+
+  // And the tab press repaints it, or the band would only change on the next walk into the hall.
+  const tab = fn("function worldTab(name){");
+  const moved = tab.indexOf("WORLD_TAB=want;");
+  const painted = tab.indexOf("renderEditBar();");
+  assert.ok(painted > 0, "pressing the tab no longer repaints the band");
+  assert.ok(moved < painted,
+    "the band is repainted before WORLD_TAB moves, so it reads the tab the hall is leaving");
+});
+
+/* ------------------------------- 1.2.7: the palette points AT the setting it landed on */
+
+test("the palette's landing lights the row and focuses the control", () => {
+  const h = hall();
+  vm.runInContext('openAppTab("selTextSize")', h);
+
+  const want = vm.runInContext('$("#selTextSize")', h);
+  assert.strictEqual(want.scrolled, 1, "the control was not scrolled to");
+  assert.strictEqual(want.scrolledHow && want.scrolledHow.block, "center",
+    'a row already inside the scroller is left where it is by block:"nearest", which on a short'
+    + " window is the row the host cannot find");
+  assert.deepStrictEqual(h.flashed, ["selTextSizeRow"],
+    "the row the palette promised is not marked, so the landing points at nothing: "
+    + JSON.stringify(h.flashed));
+  assert.strictEqual(want.focused, 1, "the control was not focused");
+  assert.strictEqual(want.focusedHow && want.focusedHow.preventScroll, true,
+    "the focus scrolls again and fights the scroll above it");
+
+  // And the bare landing still just opens the tab, with nothing to point at.
+  const bare = hall();
+  vm.runInContext("openAppTab()", bare);
+  assert.strictEqual(bare.parts.app.scrolled, 1);
+  assert.deepStrictEqual(bare.flashed, [], "openAppTab with no control named lit a row anyway");
 });
 
 console.log("");

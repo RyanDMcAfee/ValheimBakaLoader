@@ -841,6 +841,61 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.True(File.Exists(Path.Combine(held, "keepme.txt")));
         }
 
+        /// <summary>
+        /// Quiet means UNASKED FOR, not unreported. This passed <c>progress: null</c> straight to
+        /// the download, so no window could know a pack was being written: the row went on offering
+        /// an Update for the very pack that was being replaced as it drew, and the press came back
+        /// as "a language pack is already downloading" with nothing on screen that said one was.
+        /// <para>
+        /// The ending matters as much as the middle. A row the host did not put up has no reply to
+        /// wait for, so the last report is the only thing that can take it down again, and every
+        /// ending of a download reports one.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task The_quiet_fetch_reports_its_progress_so_a_window_can_say_what_is_running()
+        {
+            PlaceInstalled("ru", "1.1.9", catalog: 6);
+            var zip = PackZip("ru", AppVersion, 7);
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var seen = new List<LanguagePackProgress>();
+            var said = await service.EnsureCurrentQuietlyAsync(
+                true, "ru", AppVersion, new Inline<LanguagePackProgress>(seen.Add));
+
+            Assert.Equal(LanguageQuietFetch.Started, said);
+            Assert.NotEmpty(seen);
+            Assert.All(seen, push => Assert.Equal("ru", push.Code));
+            Assert.Contains(LanguagePackPhases.Downloading, seen.Select(p => p.Phase));
+            Assert.Equal(LanguagePackPhases.Done, seen[^1].Phase);
+        }
+
+        /// <summary>
+        /// And a refresh that cannot be made says so to the same handler, because the row it would
+        /// have put up has to come down whatever happened. A pack the release page does not serve
+        /// is the ending that used to be invisible from the page's side.
+        /// </summary>
+        [Fact]
+        public async Task A_quiet_fetch_that_fails_still_reports_an_ending()
+        {
+            PlaceInstalled("ru", "1.1.9", catalog: 6);
+            var zip = PackZip("ru", AppVersion, 7);
+            var (service, _) = Build(request =>
+            {
+                var url = request.RequestUri?.ToString() ?? "";
+                if (url == TagsUrl) return Json(ReleaseJson());
+                if (url == ManifestUrl) return Json(ManifestJson(Entry("ru", RuPackUrl, zip, 7)));
+                return Missing();
+            });
+
+            var seen = new List<LanguagePackProgress>();
+            var said = await service.EnsureCurrentQuietlyAsync(
+                true, "ru", AppVersion, new Inline<LanguagePackProgress>(seen.Add));
+
+            Assert.Equal(LanguageQuietFetch.Started, said);
+            Assert.Equal(LanguagePackPhases.Failed, seen[^1].Phase);
+        }
+
         // ------------------------------------------------------------------ 10. the unchanged catalogue
 
         [Fact]
@@ -1598,6 +1653,120 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.False(japanese.Installed);
             Assert.Equal(zip.Length, japanese.Bytes);
             Assert.Equal(7, japanese.Catalog);
+        }
+
+        /// <summary>
+        /// A HOST HOLDING AN OLDER PACK IS TOLD THE NEWER ONE IS THERE.
+        /// <para>
+        /// The menu could only ask whether a pack was installed at all until 1.2.7, so the row for
+        /// a language with the 1.2.0 pack on disk read "newer sentences in English until the 1.2.6
+        /// pack is out", with no size and nothing to press, while the manifest the same call had
+        /// just fetched named lang-ja-1.2.6.zip with every key in it. The one road to that pack was
+        /// relaunching the app with that language already saved.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public async Task The_menu_offers_the_newer_pack_for_a_language_already_installed()
+        {
+            PlaceInstalled("ru", "1.1.9", catalog: 6);
+            var zip = PackZip("ru", AppVersion, 7);
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var listing = await service.ListAsync();
+
+            var russian = listing.Languages.Single(l => l.Code == "ru");
+            Assert.True(russian.Installed);
+            Assert.Equal("1.1.9", russian.InstalledVersion);
+            Assert.False(russian.MatchesApp);
+            Assert.True(russian.Available);
+            Assert.True(russian.UpdateAvailable,
+                "the manifest names a 1.2.0 pack and the host is holding 1.1.9, and the row is still"
+                + " telling them to wait for it");
+            Assert.Equal(AppVersion, russian.PackVersion);
+            Assert.Equal(zip.Length, russian.Bytes);
+        }
+
+        /// <summary>
+        /// And the waiting sentence is kept for the case it is actually true of: a manifest with no
+        /// pack for this language at all. That is the half the fix must not break.
+        /// </summary>
+        [Fact]
+        public async Task A_manifest_with_no_pack_for_that_language_offers_nothing()
+        {
+            PlaceInstalled("ru", "1.1.9", catalog: 6);
+            var zip = PackZip("ja", AppVersion, 7);
+            var (service, _) = Build(Serving(ManifestJson(Entry("ja", JaPackUrl, zip, 7)), (JaPackUrl, zip)));
+
+            var listing = await service.ListAsync();
+
+            var russian = listing.Languages.Single(l => l.Code == "ru");
+            Assert.True(russian.Installed);
+            Assert.False(russian.Available);
+            Assert.False(russian.UpdateAvailable, "a row with nothing published behind it offered a download");
+            Assert.Null(russian.PackVersion);
+        }
+
+        /// <summary>
+        /// The same version cut again with new words in it is an update too, which is exactly what
+        /// a release day that re-cuts the packs produces. The service already knows how to place
+        /// that one without fetching a byte (TryUnchangedCatalog); what was missing was the menu
+        /// being able to say it is there.
+        /// </summary>
+        [Fact]
+        public async Task A_pack_re_cut_for_the_same_version_is_an_update()
+        {
+            PlaceInstalled("ru", AppVersion, catalog: 6);
+            var zip = PackZip("ru", AppVersion, 7);
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var listing = await service.ListAsync();
+
+            var russian = listing.Languages.Single(l => l.Code == "ru");
+            Assert.True(russian.MatchesApp);
+            Assert.True(russian.UpdateAvailable,
+                "the manifest names catalogue 7 and the pack on disk carries 6, which is new words"
+                + " the host is not reading");
+        }
+
+        /// <summary>
+        /// And the pack the host already has is not offered to them again, which is the one way
+        /// this could go wrong in the other direction: a button that fetches what is already here,
+        /// on every row, for ever.
+        /// </summary>
+        [Fact]
+        public async Task The_pack_already_on_disk_is_not_offered_again()
+        {
+            PlaceInstalled("ru", AppVersion, catalog: 7);
+            var zip = PackZip("ru", AppVersion, 7);
+            var (service, _) = Build(Serving(ManifestJson(Entry("ru", RuPackUrl, zip, 7)), (RuPackUrl, zip)));
+
+            var listing = await service.ListAsync();
+
+            var russian = listing.Languages.Single(l => l.Code == "ru");
+            Assert.True(russian.MatchesApp);
+            Assert.False(russian.UpdateAvailable);
+        }
+
+        /// <summary>
+        /// A version neither side can read is not an update. The same rule the download path
+        /// already holds: an unreadable field is a manifest this app cannot honour, not a
+        /// comparison that came out favourably.
+        /// </summary>
+        [Fact]
+        public async Task A_version_the_app_cannot_read_is_not_an_update()
+        {
+            PlaceInstalled("ru", "1.1.9", catalog: 6);
+            var zip = PackZip("ru", AppVersion, 7);
+            var (service, _) = Build(Serving(
+                ManifestJson(Entry("ru", RuPackUrl, zip, 7, appVersion: "latest")), (RuPackUrl, zip)));
+
+            var listing = await service.ListAsync();
+
+            var russian = listing.Languages.Single(l => l.Code == "ru");
+            Assert.True(russian.Available);
+            Assert.False(russian.UpdateAvailable,
+                "a manifest that spells a version \"latest\" made the menu offer a download that"
+                + " cannot be made");
         }
 
         /// <summary>

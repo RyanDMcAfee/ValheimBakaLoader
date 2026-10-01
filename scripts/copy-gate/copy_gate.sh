@@ -658,5 +658,62 @@ else
   echo "  the App tab selftest is missing: $APP_TAB_SELFTEST"; fail=1
 fi
 
+echo "== 38. the Atlas's place names, at every text size and in the host's own words =="
+# Two findings from the real-app walk of 1.2.6, and nothing in the suite could see either. Choosing
+# a bigger text size REMOVED every place name from the chart: text size is a page zoom, so the atlas
+# wrap shrinks and the auto-fit lands at more metres per CSS pixel, and the label cull was written
+# against that number. And the Waypoints list printed Valheim's own localization keys ($enemy_eikthyr,
+# $hud_pin_hildir1) while the altars group two rows above already read "Eikthyr". The rules drive the
+# real fit arithmetic, the real cull and the real resolver, and hold the pin names against the altar
+# names the host side uses for the same bosses.
+ATLAS_NAMES_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/atlas_names_selftest.js"
+if [ -f "$ATLAS_NAMES_SELFTEST" ]; then
+  if out=$(node "$ATLAS_NAMES_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the atlas names selftest is missing: $ATLAS_NAMES_SELFTEST"; fail=1
+fi
+
+echo "== 39. a language row with a newer pack published behind it =="
+# The owner's own machine read "Pack from 1.2.0; newer sentences in English until the 1.2.6 pack is
+# out" on the Russian and Japanese rows while the manifest in the same install named lang-ja-1.2.6.zip
+# with every key in it. langRowLine could only ask whether a pack was installed AT ALL, so
+# installed-but-older never offered a download and the sentence it did show was not true. The rules
+# drive the real choosers and the real row painter over all three states, and hold the one thing an
+# Update press must not do: switch the window's language out from under the host.
+LANG_ROWS_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/lang_rows_selftest.js"
+if [ -f "$LANG_ROWS_SELFTEST" ]; then
+  if out=$(node "$LANG_ROWS_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the language rows selftest is missing: $LANG_ROWS_SELFTEST"; fail=1
+fi
+
+echo "== 40. the page in a real browser: the names a reader hears and the ink on the chart =="
+# Four of the 1.2.7 findings are invisible to every check above, because what they are about is
+# what a BROWSER makes of the page: the accessibility tree reported the name "" for every switch
+# in the window, the new-realm dialog's four answered a mouse and nothing else, a bigger text size
+# took every place name off the map (text size is a page zoom, so it only reads at a real
+# devicePixelRatio), and the empty saves chart overflowed its own row. The probe serves WebUI over
+# http, drives it headless and reads the tree and the canvas pixels.
+#
+# It needs node, the playwright package and the chromium build it drives, so it is the one check
+# here that can be unavailable. Unavailable is NOT RUN rather than a failure, and it names what is
+# missing: the probe answers that question itself (--check), because a gate that worked it out
+# for itself would eventually say yes to a box the probe then failed on.
+SWITCH_PROBE="$(dirname "$(dirname "$HERE")")/scripts/ui/switch_names_probe.js"
+if [ ! -f "$SWITCH_PROBE" ]; then
+  echo "  the switch names probe is missing: $SWITCH_PROBE"; fail=1
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  NOT RUN: there is no node on this box, so nothing read the page in a browser."
+elif ! ready=$(node "$SWITCH_PROBE" --check); then
+  printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
+  echo "  Nothing above reads the accessibility tree or the chart's pixels, so install it before"
+  echo "  a release: npm install -g playwright && npx playwright install chromium"
+else
+  if out=$(node "$SWITCH_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

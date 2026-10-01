@@ -55,13 +55,21 @@ function test(name, body) {
   }
 }
 
-/** One whole top level function out of app.js, named by its opening line. */
+/** One whole top level function out of app.js, named by its opening line. Without the brace that
+ *  closes it, which every caller here adds back: the older rules were written that way. */
 function fn(opening) {
   const from = SOURCE.indexOf(opening);
   assert.ok(from > 0, "app.js no longer holds " + JSON.stringify(opening));
   const to = SOURCE.indexOf("\n}", from);
   assert.ok(to > from, JSON.stringify(opening) + " no longer closes at the left margin");
   return SOURCE.slice(from, to);
+}
+
+/** One whole statement on one line, named by its opening. */
+function fn1(opening) {
+  const from = SOURCE.indexOf(opening);
+  assert.ok(from > 0, "app.js no longer holds " + JSON.stringify(opening));
+  return SOURCE.slice(from, SOURCE.indexOf("\n", from));
 }
 
 /* ------------------------------------------------- rule 1: uptime is the session's */
@@ -141,7 +149,14 @@ test("the header and the body of the saves card give one answer", () => {
   const made = {};
   const context = {
     S: { saveDur: [], lastSaveAt: null, lastSaveMs: null },
-    $: id => (made[id] = made[id] || { id, textContent: "", innerHTML: "", style: {} }),
+    $: id => (made[id] = made[id] || {
+      id, textContent: "", innerHTML: "", style: {},
+      /* The chart row carries a class now, for the row that has no height for the empty state's
+         ornament. Its own rule drives the real measurement; here it only has to exist. */
+      classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+    }),
+    /* Measured on screen, so it has its own rule rather than a reading here. */
+    saveBarsEmptyFit() {},
     T: (id) => id,
     pad: n => String(n).padStart(2, "0"),
     /* The clock face is written by the lookup's own formatter, the way every other time in
@@ -183,6 +198,118 @@ test("the header and the body of the saves card give one answer", () => {
 
   assert.ok(KEYS["hearth.saves.last.none"], "the catalog has no hearth.saves.last.none");
   assert.ok(KEYS["hearth.saves.last.value"], "the catalog has no hearth.saves.last.value");
+});
+
+/* ------------------------------- 1.2.7: the empty chart stays inside the chart's own row */
+
+/* The walk found the ᛉ of the empty state sitting on the "until next save" line, between the two
+   metric columns, whenever the card was height-constrained. .savebars is a flex ROW of bars with
+   align-items:flex-end, so the empty state that replaces them arrived as a flex ITEM: content
+   width, bottom aligned, and taller than the row it was in, so it overflowed UPWARD into the
+   lines above. The stylesheet gives it the whole row and clips it; whether there is room for all
+   three lines is a measurement, and that half is here. */
+test("the empty chart gives up its rune when the row is too short to hold it", () => {
+  const CSS = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "WebUI", "app.css"), "utf8");
+
+  const held = new Set();
+  const box = {
+    clientHeight: 0,
+    innerHTML: "<empty>",
+    querySelector: selector => (box.innerHTML.indexOf("<empty>") >= 0 && selector === ".empty-state"
+      ? { id: "empty" } : null),
+    classList: {
+      contains: c => held.has(c),
+      add: c => held.add(c),
+      remove: c => held.delete(c),
+      toggle(c, on) {
+        if (on === undefined) { if (held.has(c)) held.delete(c); else held.add(c); return held.has(c); }
+        if (on) held.add(c); else held.delete(c);
+        return !!on;
+      },
+    },
+  };
+  const context = { Number, String, console, $: () => box, box, held };
+  vm.createContext(context);
+  vm.runInContext(fn1("const SAVE_EMPTY_FULL_PX="), context, { filename: "app.js#fullPx" });
+  vm.runInContext(fn("function saveBarsEmptyFit(") + "\n}\nthis.fit=saveBarsEmptyFit;", context,
+    { filename: "app.js#emptyFit" });
+
+  // A card with room for the whole stack keeps the ornament.
+  box.clientHeight = 110;
+  assert.strictEqual(context.fit(), false, "a tall card was treated as cramped");
+  assert.ok(!held.has("es-norune"), "a tall card lost the rune it had room for");
+
+  // The row the walk measured: 26 CSS pixels is the row's own minimum, and the stack needs more.
+  box.clientHeight = 26;
+  assert.strictEqual(context.fit(), true, "a 26 pixel row was treated as having room for three lines");
+  assert.ok(held.has("es-norune"),
+    "the rune is still drawn in a row that cannot hold it, so it overflows into the metric line above");
+
+  // Back to a tall card: the class comes off again rather than sticking.
+  box.clientHeight = 110;
+  context.fit();
+  assert.ok(!held.has("es-norune"), "the rune never comes back once the card has room again");
+
+  // A chart with bars in it is not an empty state at all.
+  box.innerHTML = "<i></i><i></i>";
+  box.clientHeight = 26;
+  assert.strictEqual(context.fit(), false);
+  assert.ok(!held.has("es-norune"), "a chart of real bars was marked as a cramped empty state");
+
+  // And the half that can be written down once is written down once.
+  assert.ok(CSS.indexOf(".savebars:has(>.empty-state){align-items:stretch;overflow:hidden}") > 0,
+    "app.css no longer gives the empty state the whole chart row and clips it to it, so it can"
+    + " overflow upward into the metric columns again");
+  assert.ok(/\.savebars\.es-norune>\.empty-state>\.es-mark\{display:none\}/.test(CSS),
+    "app.css has no rule for the row that has no room for the ornament");
+  assert.ok(/\.savebars>\.empty-state\{[^}]*flex:1 1 100%/.test(CSS),
+    "the empty state is a content-width flex item again rather than the whole row");
+});
+
+test("the painter and the window's own size both ask", () => {
+  const bars = fn("function renderSaveBars(");
+  assert.ok(bars.indexOf("saveBarsEmptyFit();") > 0,
+    "the painter draws the empty state and never measures the room it has");
+  assert.ok(bars.indexOf('box.classList.remove("es-norune");') > 0,
+    "a chart that has bars again keeps the class an empty one left behind");
+  assert.ok(SOURCE.indexOf('new ResizeObserver(()=>{try{saveBarsEmptyFit();}catch(_){}}).observe($("#saveBars"))') > 0,
+    "nothing re-measures when the card's own height changes, and its height is the bento grid's:"
+    + " it moves with the window and with the text size rather than with anything this file does");
+});
+
+/* ------------------------------- 1.2.7: the clock half of "1d ago at 19:37" */
+
+test("the ago line's clock goes through the same formatter every other clock uses", () => {
+  const context = {
+    Date, Math, Number, String, console,
+    T: (id, params) => (id === "common.ago.at" ? params.ago + " at " + params.clock : id),
+    pad: n => String(n).padStart(2, "0"),
+    intl: () => null,
+  };
+  vm.createContext(context);
+  vm.runInContext(fn("function fmtT(d){") + "\n}", context, { filename: "app.js#fmtT" });
+  vm.runInContext(fn("function agoAt(d){") + "\n}\nthis.agoAt=agoAt;", context,
+    { filename: "app.js#agoAt" });
+
+  const when = new Date(2026, 9, 1, 12, 13, 0);
+  const said = context.agoAt(when.getTime() - 0);
+  assert.ok(/ at \d\d:\d\d$/.test(said),
+    "the clock half is still a bare four-digit string: " + said + ". Everything else on screen"
+    + " writes a colon, and a twelve hour locale never gets a twelve hour reading out of this one");
+
+  // And it is fmtT that writes it, so a locale that puts the hour another way is honoured.
+  context.intl = () => ({
+    fmtTime: () => "7:45 PM",
+    fmtRelative: () => "1d ago",
+    locale: () => "en-US",
+  });
+  const american = context.agoAt(when.getTime() - 86400 * 1000);
+  assert.ok(american.indexOf("7:45 PM") > 0,
+    "the lookup's own time format is bypassed: " + american);
+
+  const body = fn("function agoAt(d){");
+  assert.ok(body.indexOf("clock:fmtT(t)") > 0, "agoAt builds its own clock again: " + body);
+  assert.ok(body.indexOf("pad(t.getHours())") < 0, "the hand-built clock is still in agoAt");
 });
 
 /* ------------------------------------------------- rule 4: the times are kept per realm */

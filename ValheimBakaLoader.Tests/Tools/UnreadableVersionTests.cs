@@ -200,7 +200,17 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void The_pack_gate_in_the_source_refuses_the_unreadable_answer()
         {
-            var source = AppSourceTree.Read("ValheimBakaLoader", "Tools", "LanguagePackService.cs");
+            var whole = AppSourceTree.Read("ValheimBakaLoader", "Tools", "LanguagePackService.cs");
+
+            // Scoped to the one method that reads minAppVersion, rather than to the first match in
+            // the file. "if (against > 0)" is a comparison any version question in this service can
+            // ask, and the day a second one was added above this method the rule below failed over
+            // a line that has nothing to do with it.
+            var at = whole.IndexOf("if (!string.IsNullOrWhiteSpace(entry.MinAppVersion))",
+                StringComparison.Ordinal);
+            Assert.True(at > 0, "the pack gate no longer reads the minimum app version at all");
+            var source = whole.Substring(at, 2200);
+
             Assert.Contains("if (against == -2)", source);
             Assert.Contains("LanguagePackReasons.MinUnreadable", source);
             Assert.Contains("if (against > 0)", source);

@@ -379,8 +379,17 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// A scan says it has begun and says what it found, and the second sentence counts
-        /// its updates through a plural the language picks rather than an English "s".
+        /// A scan says it has begun and says what it found, and the sentence counts its MODS
+        /// through a plural the language picks rather than an English "s".
+        /// <para>
+        /// A host with one mod installed read "Scan complete · 1 mods · 0 updates" on the walk of
+        /// 1.2.6: the plural was on the updates half and the mods half was plural whatever the
+        /// count. The lookup carries one plural per entry, and the noun that is wrong at one is the
+        /// one the host is reading, so the plural is on the count and the updates half is worded so
+        /// it needs no inflection in English at all. The slots are the same two, which matters: a
+        /// host holding a pack cut for an older release reads that pack's sentence for this id, and
+        /// a slot renamed under them would render a literal {count} on screen.
+        /// </para>
         /// </summary>
         [Fact]
         public void The_scan_toasts_are_the_catalogs_and_the_count_is_a_real_plural()
@@ -394,11 +403,27 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal("Thunderstore scan begun", Lore("mods.scan.begun.toast"));
 
             var done = catalog["mods.scan.done.toast"];
-            Assert.Equal("updates", done.GetProperty("plural").GetString());
-            Assert.Equal("Scan complete · {count} mods · {updates} update",
+            Assert.Equal("count", done.GetProperty("plural").GetString());
+            Assert.Equal("Scan complete · {count} mod · {updates} to update",
                 done.GetProperty("lore").GetProperty("one").GetString());
-            Assert.Equal("Scan complete · {count} mods · {updates} updates",
+            Assert.Equal("Scan complete · {count} mods · {updates} to update",
                 done.GetProperty("lore").GetProperty("other").GetString());
+        }
+
+        /// <summary>
+        /// The BepInEx row's sentence about a shared install, which read as though a word had been
+        /// left out of it: "Counted as loading this same BepInEx as 3 other servers."
+        /// </summary>
+        [Fact]
+        public void The_shared_loader_row_reads_as_a_sentence()
+        {
+            var shared = Catalog()["bepinex.row.note.shared"];
+
+            Assert.Equal("count", shared.GetProperty("plural").GetString());
+            Assert.Equal("Shares this BepInEx with {count} other server.",
+                shared.GetProperty("lore").GetProperty("one").GetString());
+            Assert.Equal("Shares this BepInEx with {count} other servers.",
+                shared.GetProperty("lore").GetProperty("other").GetString());
         }
 
         // ------------------------------------------------------------- C. the quiet pill

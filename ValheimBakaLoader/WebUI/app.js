@@ -73,10 +73,14 @@ function fmtT(d){
   const L=intl();
   return L?L.fmtTime(t):pad(t.getHours())+":"+pad(t.getMinutes());
 }
-/* "3d ago at 1945" - delta plus wall-clock, the way you'd tell a friend.
+/* "3d ago at 19:45" - delta plus wall-clock, the way you'd tell a friend.
    The span is the lookup's, and the two words around it are the catalog's: the
    joiner is one key with both halves in it, because a language that puts the
-   clock first cannot reorder two string concatenations. */
+   clock first cannot reorder two string concatenations.
+   The clock half is fmtT, which is the formatter every other time in the window goes
+   through. It was pad(h)+pad(m) here and nowhere else, so the Statistics hall read
+   "1d ago at 1937" beside "seen 19:08" and "12:32 · 1319ms", and a host on a twelve
+   hour locale never got a twelve hour reading out of this one line. */
 function agoAt(d){
   const t=new Date(d); if(isNaN(t)) return "-";
   const s=Math.max(0,(Date.now()-t.getTime())/1000);
@@ -84,7 +88,7 @@ function agoAt(d){
   const ago=s<60?T("common.ago.just_now")
     :L?L.fmtRelative(s)
     :s<3600?Math.floor(s/60)+"m ago":s<86400?Math.floor(s/3600)+"h ago":Math.floor(s/86400)+"d ago";
-  return T("common.ago.at",{ago,clock:pad(t.getHours())+pad(t.getMinutes())});
+  return T("common.ago.at",{ago,clock:fmtT(t)});
 }
 
 /* RPC wrapper: every call catches + toasts; returns FAIL sentinel instead of rejecting
@@ -150,6 +154,10 @@ const HOST_SENTENCES=[
   /* The three the language bridge throws. The endings a pack DOWNLOAD can have are not
      throws at all, so they are a table of their own below. */
   {named:"lang.busy",         textId:"lang.reason.busy"},
+  /* The same refusal with the running language named, which is the one the host side gives
+     whenever it knows which pack is being written. The nameless one above is left for the boot
+     sweep, which holds the same latch and is about no language in particular. */
+  {named:"lang.busyLanguage", textId:"lang.reason.busy_language"},
   {named:"lang.unknownCode",  textId:"lang.reason.unknown_code"},
   {named:"lang.notInstalled", textId:"lang.reason.not_installed"},
   /* A second press while the first scan is still out. The host side refuses it by name,
@@ -772,9 +780,16 @@ const LANG={
   /* The last lang.list answer, which is everything the menu draws. Null until the host
      opens the globe or expands the Upkeep card. */
   list:null,
-  /* The code being downloaded right now, or null. One at a time, app wide: the service
-     owns that latch and refuses a second with lang.busy. */
+  /* The code being written right now, or null. One at a time, app wide: the service owns that
+     latch and refuses a second with lang.busy. Whoever asked for the write: a row the host
+     pressed and the app's own refresh after an update both land here, because the row is drawn
+     the same way for both and nothing else may be pressed while either is in flight. */
   busyCode:null,
+  /* Whether THIS window asked for the write busyCode names. It matters for one thing only: how
+     the row ends. A download this window started ends with the answer to the call it is waiting
+     on, and a refresh the app made on its own has no answer to wait for, so its ending is the
+     last progress report. Without this the refresh's row stood until something else redrew it. */
+  busyMine:false,
   /* The last lang.downloadProgress for busyCode. */
   prog:null,
   /* The row that keeps a Try again, and the ending that put it there. */
@@ -835,23 +850,53 @@ function langNameOf(code){
 function langAppVersion(){
   return (LANG.list&&LANG.list.appVersion)||S.version||"";
 }
+/* A PACK ON DISK WITH A NEWER ONE PUBLISHED BEHIND IT, which is a state the menu could not
+   see until 1.2.7. langRowLine only reached the "there is a pack to fetch" branch when NOTHING
+   was installed, so a host holding the 1.2.0 Japanese pack read "newer sentences in English
+   until the 1.2.6 pack is out" with no size and no button, while the manifest the same call had
+   just fetched named lang-ja-1.2.6.zip with all 1898 keys in it. The one road to that pack was
+   relaunching the app with Japanese already saved.
+   The host side works the answer out, because it is the side that knows which release the
+   manifest came off and which catalogue revision the installed pack carries: see
+   LanguagePackService.NewerPackIsPublished. */
+function langRowUpdatable(l){
+  return !!(l&&!l.builtIn&&l.installed&&l.updateAvailable);
+}
+/* The version the pack behind an update press would be installed as. The manifest's own answer
+   when it has one, because it is NOT always this app's version: with no packs cut for the
+   running version the manifest comes off the newest release at or below it, and a row that
+   named this app's version would be promising a pack nobody published. */
+function langRowPackVersion(l){
+  return (l&&l.packVersion)||langAppVersion();
+}
 function langRowLine(l){
   if(l.code===langCurrent()){
-    /* Current AND behind. The two facts are not alternatives and the row used to show
-       only the first, so the one host who most needs to know the words on screen come
-       from an older pack - the host reading them right now - was the only one the menu
-       did not tell. The line below it is where every other language says the same
-       thing, and this is the same sentence with what it is joined to the front. */
+    /* Current AND behind, with the newer pack already published: the one host who most needs
+       to know is the host reading these words right now, and what they need is the offer
+       rather than a sentence saying to wait. */
+    if(langRowUpdatable(l))
+      return T("lang.row.current_update_ready",{version:l.installedVersion||"",
+        pack:langRowPackVersion(l),size:fmtBytes(l.bytes||0)});
+    /* Current AND behind with nothing published yet. The two facts are not alternatives and
+       the row used to show only the first. The line below it is where every other language
+       says the same thing, and this is the same sentence with what it is joined to the front. */
     return (l.installed&&!l.matchesApp&&!l.builtIn)
       ?T("lang.row.current_older_pack",
          {version:l.installedVersion||"",app:langAppVersion()})
       :T("lang.row.current");
   }
   if(l.builtIn) return T("lang.row.built_in");
+  /* Ahead of the two "installed" lines below, because it is the more specific fact: both of
+     those describe a pack with nothing behind it. */
+  if(langRowUpdatable(l))
+    return T("lang.row.update_ready",{version:l.installedVersion||"",
+      pack:langRowPackVersion(l),size:fmtBytes(l.bytes||0)});
   if(l.installed&&l.matchesApp) return T("lang.row.installed");
   /* A pack cut for an older release is used, not refused: the ids it does not carry fall
      back to English, which is how every catalog in this app is read. The line says both
-     versions so a host reading English inside their own language knows exactly why. */
+     versions so a host reading English inside their own language knows exactly why.
+     Reached only when the manifest really has no newer pack, which is the whole of what the
+     sentence claims. */
   if(l.installed) return T("lang.row.older_pack",
     {version:l.installedVersion||"",app:langAppVersion()});
   if(l.available) return T("lang.row.not_installed",{size:fmtBytes(l.bytes||0)});
@@ -929,7 +974,17 @@ function langRowHtml(l){
      itself again; the reason is the only thing on that row that is about right now. The
      note at the foot of the menu still carries the machine sentence for the language
      actually being read, so nothing is lost by holding it back here. */
-  const machine=(l.status==="machine"&&!l.builtIn&&!failed)
+  /* The offer for a pack on disk that has a newer one published behind it. Same button shape as
+     Try again, same delegated handler, and the same flow a fresh download takes: the service
+     replaces the installed pack with the newer one. */
+  /* A pack is being written somewhere in this menu, so no row may offer to start a second one:
+     the service takes one at a time and the press would come back as a refusal. The button says
+     why on its tooltip rather than disappearing, which would move every row under it. */
+  const update=(!failed&&langRowUpdatable(l))
+    ?`<button class="lm-act" data-lang-update="${esc(l.code)}"${LANG.busyCode
+        ?` disabled title="${esc(T("lang.reason.busy_language",{language:langNameOf(LANG.busyCode)}))}"`
+        :""}>${esc(T("lang.update"))}</button>`:"";
+  const machine=(l.status==="machine"&&!l.builtIn&&!failed&&!update)
     ?`<span class="lm-tag">${esc(T("lang.row.machine"))}</span>`:"";
   const retry=failed
     ?`<button class="lm-act" data-lang-retry="${esc(l.code)}">${esc(T("lang.retry"))}</button>`:"";
@@ -947,7 +1002,7 @@ function langRowHtml(l){
   return `<div class="lm-row${here?" on":""}" role="menuitem" tabindex="0" data-lang-row="${esc(l.code)}">`+
     `<span class="lm-mark">${here?"ᚠ":""}</span>`+
     `<span class="lm-text"><span class="lm-name">${esc(l.nativeName||l.code)}</span>`+
-    `<span class="lm-sub">${esc(line)}</span></span>${machine}${retry}</div>`;
+    `<span class="lm-sub">${esc(line)}</span></span>${machine}${retry}${update}</div>`;
 }
 /* The whole menu, drawn from LANG and nothing else, so the language switch redraws it by
    calling this again. */
@@ -1014,12 +1069,35 @@ async function langRefresh(){
   LANG.asking=false;
   if(!r) return false;
   LANG.list=r;
+  langAdoptBusy(r.busyCode);
   renderLangMenu();
   renderPlayerMsgLang();
   /* And the App tab's Interface language select, which reads the same rows. Without this the
      list would land and the one select the host is looking at while it lands would keep the
      single English row it fell back to. */
   renderAppLang();
+  return true;
+}
+/* WHAT THE HOST SIDE SAYS IS BEING WRITTEN, for a write this window did not start.
+   The app refreshes the pack for the language on screen on its own account after it updates
+   itself, and until 1.2.7 the page was never told: the row went on offering an Update for a pack
+   that was being replaced as it drew, and the press came back as a busy refusal the host could
+   not have seen coming. The host posts the same progress reports it posts for a press, which is
+   how the row is painted; this is the other half, for the two cases a report cannot cover.
+   The globe can be OPENED in the middle of a refresh, in which case no report has reached this
+   window at all, and a refresh that ends while the menu is shut leaves a row that nothing has
+   redrawn. Either way the menu's own answer is the authority, and it is read on every refresh.
+   A download THIS window started is left alone: its ending is the answer it is waiting on, and
+   taking its row down from here would race that.
+   @param {string} code what the host says is coming down, or null for nothing
+   @returns {boolean} whether this changed what the page believes */
+function langAdoptBusy(code){
+  if(LANG.busyMine) return false;
+  const now=code||null;
+  if(now===(LANG.busyCode||null)) return false;
+  LANG.busyCode=now;
+  LANG.cancelling=null;
+  LANG.prog=now?{code:now,phase:"resolving",percent:-1,bytesDone:0,bytesTotal:0}:null;
   return true;
 }
 /* The first frame's language. Runs inside the catalog boot, between the English catalog
@@ -1173,21 +1251,34 @@ async function langSet(code){
 /* The download, start to finish. The RPC is awaited for the whole of it and the bar is
    driven by the events that arrive meanwhile, which is why the row can show a phase the
    answer has not reported yet. */
-async function langDownload(code){
+/**
+ * @param {string} code the language to fetch a pack for.
+ * @param {boolean} [andSwitch=true] whether the window reads that language when the pack lands.
+ *   True for a row the host PICKED, which is a request to read it. False for an Update press on
+ *   a language that is not the one on screen: the host asked for a newer pack, not for the
+ *   window to change language under them.
+ */
+async function langDownload(code,andSwitch){
   /* A second pack while one is coming down is refused by the service, and the host has to
      be told why rather than pressing a row that does nothing. The service's own words,
      since it is the service's own rule. */
   if(LANG.busyCode){
-    if(LANG.busyCode!==code) toast("ᚦ "+T("lang.reason.busy"));
+    /* Named, because the write may be one the host never asked for: the app refreshes the pack
+       for the language on screen by itself after an update, and "a language pack is already
+       downloading" sent a host looking for a download they had not started. */
+    if(LANG.busyCode!==code)
+      toast("ᚦ "+T("lang.reason.busy_language",{language:langNameOf(LANG.busyCode)}));
     return false;
   }
   LANG.busyCode=code;
+  LANG.busyMine=true;
   LANG.cancelling=null;
   LANG.failed=null;
   LANG.prog={code,phase:"resolving",percent:-1,bytesDone:0,bytesTotal:0};
   renderLangMenu();
   const r=await rpc("lang.download",{code});
   LANG.busyCode=null;
+  LANG.busyMine=false;
   LANG.cancelling=null;
   LANG.prog=null;
   if(r===FAIL){renderLangMenu();return false;}
@@ -1206,6 +1297,10 @@ async function langDownload(code){
   /* The list is stale the moment a pack lands, so it is asked for again before the row is
      drawn as Downloaded. */
   await langRefresh();
+  if(andSwitch===false){
+    toast("ᚠ "+T("lang.update.done.toast",{language:langNameOf(code)}));
+    return true;
+  }
   return langSet(code);
 }
 /* The cancel, and the one thing it must never do. The service answers whether the press
@@ -1330,12 +1425,33 @@ $("#langMenu")?.addEventListener("click",e=>{
   }
   const retry=t.closest("[data-lang-retry]");
   if(retry){langDownload(retry.getAttribute("data-lang-retry"));return;}
+  /* An Update press is about the PACK and not about which language the window reads, so a
+     language that is not the one on screen stays off screen: the host asked for newer words,
+     not for the window to change under them. The language they are reading right now is the one
+     exception, because the new words only reach the screen by being loaded. */
+  const update=t.closest("[data-lang-update]");
+  if(update){
+    /* Held while any pack is being written, the way Cancel is: the row says why on its tooltip
+       and a press that arrives anyway (a stale DOM under a redraw) must not ask for a second
+       write the service would refuse. */
+    if(update.disabled) return;
+    const code=update.getAttribute("data-lang-update");
+    langDownload(code,code===langCurrent());
+    return;
+  }
   const row=t.closest("[data-lang-row]");
   if(row) langPick(row.getAttribute("data-lang-row"));
 });
 $("#langMenu")?.addEventListener("keydown",e=>{
   if(e.key!=="Enter"&&e.key!==" ") return;
-  const row=e.target&&typeof e.target.closest==="function"?e.target.closest("[data-lang-row]"):null;
+  const t=e.target&&typeof e.target.closest==="function"?e.target:null;
+  if(!t) return;
+  /* A button inside a row answers Enter and Space itself, and the press turns into a click the
+     delegated handler above reads. Picking the language here as well would run two commands off
+     one key: an Update press on a row that is not the current language would fetch the pack AND
+     switch the window to it. */
+  if(t.closest("[data-lang-update]")||t.closest("[data-lang-retry]")||t.closest("[data-lang-cancel]")) return;
+  const row=t.closest("[data-lang-row]");
   if(!row) return;
   e.preventDefault();
   langPick(row.getAttribute("data-lang-row"));
@@ -1355,12 +1471,34 @@ $("#selPlayerMsgLang")?.addEventListener("change",()=>{
   if(Native.available) rpc("userprefs.save",{prefs:{PlayerMessageLanguage:asked}});
 });
 
-/* Every report the host pushes while a pack comes down. The bar is painted in place; the
-   ending is the RPC's answer, not an event, so nothing here toasts. */
+/* The three phases a pack write ends on. The service reports exactly one of them whatever
+   happens, including a refusal it made before it read a byte, which is what lets a row this
+   window did not start be taken down by the same road it was put up by. */
+const LANG_PHASE_ENDED={done:1,failed:1,cancelled:1};
+/* Every report the host pushes while a pack is written. The bar is painted in place.
+   For a download THIS window asked for, the ending is the RPC's answer rather than an event, so
+   nothing here toasts and nothing here clears the row.
+   For the app's own refresh after an update there is no answer to wait for: these reports are the
+   whole of what the row knows, so the latch is taken on the first one and dropped on the last. */
 Native.on("lang.downloadProgress",d=>{
   if(!d||!d.code) return;
   if(LANG.busyCode&&d.code!==LANG.busyCode) return;
+  /* A write nothing in this window started: the quiet refresh. */
+  if(!LANG.busyCode){LANG.busyCode=d.code;LANG.busyMine=false;}
   LANG.prog=d;
+  if(!LANG.busyMine&&LANG_PHASE_ENDED[d.phase]){
+    LANG.busyCode=null;
+    LANG.cancelling=null;
+    LANG.prog=null;
+    /* A pack that landed makes every row's version stale, so the list is asked for again, and only
+       while the host is LOOKING at the menu: lang.list is the one call allowed to reach the release
+       page and it is the host opening the globe that allows it, so a window with the globe shut
+       redraws what it has and waits to be opened. An ending that wrote nothing only has to put the
+       rows back as they were. Neither toasts: the host did not ask for this and has nothing to
+       answer. */
+    if(d.phase==="done"&&langMenuIsOpen()) langRefresh(); else renderLangMenu();
+    return;
+  }
   langPaintProgress();
 });
 /* Another window switched language. Every window on this install follows, because the
@@ -2241,6 +2379,10 @@ async function addServerProfile(source){
       copyT.classList.add("off");
       copyT.style.opacity=".4";
       copyT.style.pointerEvents="none";
+      /* And out of the tab order with it, or a keyboard walker lands on a control whose press
+         the pointer road has already been told to ignore. */
+      gateDialogSwitch(copyT);
+      markSwitch(copyT);
       if(copyNote){
         copyNote.textContent=hostSentence(r.reasonId,r.reasonParams)
           ||T("realm.new.copy.unavailable");
@@ -2950,13 +3092,40 @@ function renderSaveBars(){
       reason:T("hearth.saves.empty.reason")});
     esWire(box);
     if(cap) cap.style.display="none";
+    saveBarsEmptyFit();
     return;
   }
+  box.classList.remove("es-norune");
   if(cap) cap.style.display="";
   const max=Math.max.apply(null,d.concat([1]));
   box.innerHTML=d.map((ms,i)=>
     `<i class="${i===d.length-1?"hot":""}" style="height:${Math.max(10,Math.round(ms/max*100))}%" title="${esc(T("hearth.saves.ms",{ms}))}"></i>`
   ).join("");
+}
+/* The chart row's own height, below which the empty state's rune has nowhere to stand.
+   Measured in the mock preview: the mark, the title and the reason together need about 56 CSS
+   pixels, and the row gives up as little as 26. */
+const SAVE_EMPTY_FULL_PX=56;
+/* THE ORNAMENT STANDS DOWN WHEN THE CHART ROW IS TOO SHORT TO HOLD THE WHOLE STACK.
+   .savebars is a flex ROW of bars with align-items:flex-end, so the empty state that replaces
+   them arrived as a flex ITEM: content width, bottom aligned, and on a height-constrained card
+   TALLER than the row it sat in, so it overflowed upward and the ᛉ landed on the "until next
+   save" line between the two metric columns. The stylesheet now gives the empty state the whole
+   row and clips it to it, which is the half that can be written down once; whether there is
+   room for three lines is a measurement, so it is made here, where the card is on screen. */
+function saveBarsEmptyFit(){
+  const box=$("#saveBars"); if(!box||!box.classList) return false;
+  const empty=box.querySelector?box.querySelector(".empty-state"):null;
+  if(!empty){box.classList.remove("es-norune");return false;}
+  const room=Number(box.clientHeight)||0;
+  const tight=room>0&&room<SAVE_EMPTY_FULL_PX;
+  box.classList.toggle("es-norune",tight);
+  return tight;
+}
+/* The card is in a bento grid, so its height is the grid's and moves with the window and with
+   the text size rather than with anything this file does. */
+if(typeof ResizeObserver!=="undefined"){
+  try{new ResizeObserver(()=>{try{saveBarsEmptyFit();}catch(_){}}).observe($("#saveBars"));}catch(_){}
 }
 
 /* Named empty-state actions. Each one is a command the interface already offers,
@@ -6403,6 +6572,39 @@ $("#capsInstallBtn")?.addEventListener("click",async()=>{
   renderCaps();
 });
 
+/* Only used when a label span has no id of its own to point at and the switch beside it has
+   no id either, which nothing in the window is today. It exists so the one that is added
+   next cannot be the one that quietly gets no name. */
+let SWITCH_LABEL_SEQ=0;
+/* WHAT A SWITCH IS CALLED. role and aria-checked say that it IS a switch and which way it is
+   set, and 1.2.6 gave all thirty-five of them both. What none of them had was a NAME: the
+   words beside a switch are a sibling <span class="tl">, which is a label to a reader with
+   eyes and nothing at all to the accessibility tree, so a screen reader announced "switch,
+   on" thirty-five times and never once said what had moved. A title attribute is not a name
+   either; it is a description, and only a handful carry one.
+   aria-labelledby POINTS AT the sibling rather than copying its words, so the name follows a
+   language switch with nothing here hearing about it: the walker rewrites the span and the
+   name changes with it. The span is given an id derived from the switch's own when it has
+   none, which is most of them.
+   Answers with the name, or with "" when there was nothing to name it from, which is what the
+   selftest reads. */
+function nameSwitch(t){
+  if(!t||!t.setAttribute) return "";
+  const already=t.getAttribute("aria-labelledby")||t.getAttribute("aria-label");
+  if(already) return already;
+  const row=t.closest?t.closest(".togglerow"):null;
+  const label=row&&row.querySelector?row.querySelector(".tl"):null;
+  if(label){
+    if(!label.id) label.id=(t.id||("switch"+(++SWITCH_LABEL_SEQ)))+"-label";
+    t.setAttribute("aria-labelledby",label.id);
+    return label.id;
+  }
+  /* No label span to point at. The row's own words, then the description, because a name
+     taken from the second best place still beats a switch that says nothing about itself. */
+  const said=String((row&&row.textContent)||t.getAttribute("title")||"").trim();
+  if(said) t.setAttribute("aria-label",said);
+  return said;
+}
 /* ---------- TOGGLES ----------
    THE GENERIC HANDLER FOR EVERY SWITCH, AND EVERYTHING ELSE COMES AFTER IT. Two click
    listeners on one element run in the order they were ADDED, so a listener registered above
@@ -6423,6 +6625,7 @@ $$("[data-t]").forEach(t=>{
   if(!t.getAttribute("role")) t.setAttribute("role","switch");
   if(t.getAttribute("tabindex")==null) t.setAttribute("tabindex","0");
   markSwitch(t);
+  nameSwitch(t);
   t.addEventListener("click",()=>{t.classList.toggle("on");markSwitch(t);syncAdvGates();});
   /* ONE keydown for every switch, beside the one click. Enter and Space go down the SAME
      road a press does rather than flipping the class themselves: every listener added after
@@ -6443,6 +6646,72 @@ $$("[data-t]").forEach(t=>{
    first cut of 1.2.6, and arming a sweep from the window was impossible.
    The catalog's own toast wording lives in onCleanseArmedClick. */
 $("#tCleanseArmed")?.addEventListener("click",()=>{onCleanseArmedClick();});
+
+/* A SWITCH A DIALOG BUILDS, given the same road the window's own switches have.
+   The generic pass above runs ONCE, over the markup index.html shipped, so a switch written
+   into a modal by a template string never went through it. The Forge wizard's four were bare
+   <div class="toggle"> with no role, no tab stop, no name and no key: a keyboard-only host
+   could not list a new realm publicly, and could not stop it inheriting the current realm's
+   mods. Every other dialog that carries a switch was the same.
+   ONE road for all of them, run from modalOpen over whatever the dialog just wrote, so a dialog
+   added later cannot be the one that was forgotten and no dialog wires a switch of its own.
+   THE ARIA IS KEPT IN STEP BY WATCHING THE CLASS rather than by a second click listener. Two
+   listeners on one element run in the order they were ADDED, and this pass runs BEFORE the
+   dialog registers its own: a click listener here would read the class the switch is leaving,
+   which is the bug 1.2.6 shipped twice. A class watcher has no order to be on the wrong side
+   of, and it catches the class being set by the host side's answer as well as by a press.
+   @param {object} t a switch element a dialog has just written
+   @returns {string} the name it resolved to, or "" when there was nothing to name it from
+ */
+function wireDialogSwitch(t){
+  if(!t||!t.setAttribute) return "";
+  if(!t.getAttribute("role")) t.setAttribute("role","switch");
+  if(t.getAttribute("tabindex")==null) t.setAttribute("tabindex","0");
+  markSwitch(t);
+  const name=nameSwitch(t);
+  if(typeof MutationObserver!=="undefined"){
+    try{
+      new MutationObserver(()=>markSwitch(t))
+        .observe(t,{attributes:true,attributeFilter:["class"]});
+    }catch(_){}
+  }
+  /* Enter and Space go down the SAME road a press does rather than flipping anything here, for
+     the reason the generic pass gives: a key that flipped the class itself would be a second
+     order of events for every listener after it to disagree about.
+     A switch the host side has refused answers neither. gateDialogSwitch takes it out of the tab
+     order and marks it disabled for a reader, and the pointer road is already told to ignore it;
+     without this line the keyboard road was the one way left to press a control whose press does
+     nothing. The key is not swallowed either, so Space still scrolls the dialog the way it does
+     over anything else that is not a control. */
+  t.addEventListener("keydown",e=>{
+    if(e.key!=="Enter"&&e.key!==" "&&e.key!=="Spacebar") return;
+    if(t.getAttribute("aria-disabled")==="true") return;
+    e.preventDefault();
+    t.click();
+  });
+  return name;
+}
+/**
+ * Every switch inside one piece of the window, wired. Called from modalOpen with the dialog
+ * that has just been written, which is the one place that knows a dialog exists at all.
+ * @param {object} root the element to look inside
+ * @returns {number} how many switches were wired
+ */
+function wireDialogSwitches(root){
+  if(!root||!root.querySelectorAll) return 0;
+  let wired=0;
+  root.querySelectorAll(".toggle").forEach(t=>{wireDialogSwitch(t);wired++;});
+  return wired;
+}
+/* A dialog switch the host side has refused, taken out of the tab order with it. Without this
+   the keyboard road added above would walk into a control whose pointer events are already off
+   and whose press does nothing. */
+function gateDialogSwitch(t){
+  if(!t||!t.setAttribute) return false;
+  t.setAttribute("tabindex","-1");
+  t.setAttribute("aria-disabled","true");
+  return true;
+}
 
 /* ---------- UPKEEP (app self-update + start with Windows) ---------- */
 wireCollapsible("upkeepHead",$("#upkeepBody"),$("#upkeepCard"));
@@ -7098,6 +7367,12 @@ function modalOpen(html,again){
   modalBg.innerHTML=`<div class="modal">${html}</div>`;
   modalBg.classList.add("open");
   esWire(modalBg);
+  /* Every switch this dialog just wrote, given a role, a tab stop, a name and a key. The pass
+     that does that for the window's own switches runs once over the markup index.html shipped,
+     so until 1.2.7 a switch written into a dialog by a template string answered a mouse and
+     nothing else: the Forge wizard's four meant a keyboard-only host could not list a new realm
+     publicly. Here rather than in each dialog, beside esWire for the same reason it is. */
+  wireDialogSwitches(modalBg);
   refreshScrollCues();
   updateToastLift();
   return modalBg.firstElementChild;
@@ -8512,7 +8787,19 @@ function openAppTab(focusId){
   /* The control the host asked for, when they asked through the palette, and the tab itself
      otherwise. One scroll rather than two, because two would fight each other. */
   const want=focusId?$("#"+focusId):null;
-  requestAnimationFrame(()=>{try{(want||tab)?.scrollIntoView({block:"nearest"});}catch(_){}});
+  requestAnimationFrame(()=>{
+    /* "center", not "nearest". A row already somewhere inside the scroller is left exactly
+       where it is by "nearest", which on a short window is the row the host cannot find: the
+       palette had opened the right tab and pointed at nothing. */
+    try{want?want.scrollIntoView({block:"center"}):tab?.scrollIntoView({block:"nearest"});}catch(_){}
+    if(!want) return;
+    /* And the same brief ember the BepInEx row's landing uses, on the row rather than on the
+       control, because the row is what carries the words. Then the focus, so a keyboard host
+       can change the setting without hunting for it with Tab. preventScroll because the scroll
+       above has already chosen where the row sits. */
+    flashRow(want.closest?want.closest(".togglerow")||want:want);
+    try{want.focus({preventScroll:true});}catch(_){try{want.focus();}catch(_){}}
+  });
 }
 /* Opens the Upkeep card, where the auto-update switch lives. */
 function openUpkeepCard(){
@@ -9971,6 +10258,10 @@ function worldTab(name){
     try{refreshStartWinNote();}catch(_){}
     try{langRefresh();}catch(_){}
   }
+  /* And the realm band at the top of the window, which belongs to the Server tab for the same
+     reason Save Config does. renderEditBar reads WORLD_TAB, so this has to be called after the
+     line above that moves it. */
+  try{renderEditBar();}catch(_){}
   try{refreshScrollCues();}catch(_){}
   return want;
 }
@@ -11617,7 +11908,12 @@ function editBarValues(){
 async function renderEditBar(){
   const bar=$("#editBar"); if(!bar) return;
   // The bar belongs to the World hall - that's where the identity fields live.
-  if(currentPage!=="world"||!S.prefs){bar.style.display="none";return;}
+  // And to the SERVER tab of it. The App tab is install-wide: Start with Windows, the interface
+  // language, the text size, the usage switch. "EDITING Second Sunset · world There and Back
+  // again · port 2460 · RCON 25577" was still the first thing under the title bar there, over a
+  // page where nothing on screen belongs to a realm. Same rule that already hides Save Config
+  // and the unsaved band, read off the same WORLD_TAB.
+  if(currentPage!=="world"||WORLD_TAB==="app"||!S.prefs){bar.style.display="none";return;}
   const v=editBarValues();
   const rconTxt=v.rconEnabled?T("world.editbar.rcon",{port:v.rconPort||"?"}):T("world.editbar.rcon.off");
   bar.innerHTML=
@@ -12612,6 +12908,93 @@ function atlasNoDbText(info){
     return T("atlas.save.unparsed");
   return T("atlas.save.none");
 }
+/* THE NAMES VALHEIM WRITES INTO A MAP-TABLE PIN, which are not names at all but the game's
+   own localization keys: a shared map table carries `$enemy_eikthyr` for the stone at Eikthyr's
+   altar and `$hud_pin_hildir1` for the first of Hildir's three errands. Nothing in BakaLoader
+   resolved them, so the Waypoints list and the chart's own labels read those keys out verbatim
+   while the altars group two rows above already said "Eikthyr" and "Moder".
+   One table, from the token to a catalog id, so each name is a sentence a translator can move
+   and the boss names are the SAME words the altar rows use. The English is the game's own, read
+   out of Valheim's localization (localization.bin, the English column).
+   A token this table has never heard of is still made readable rather than shown raw: the $ and
+   the underscores come off and the words are capitalised, which turns `$enemy_newboss` into
+   "Newboss" instead of a key. A pin the host typed themselves carries no $ at all and is passed
+   through untouched, which is most pins on most worlds. */
+const ATLAS_PIN_TOKENS=[
+  {token:"enemy_eikthyr",     nameId:"atlas.pin.token.enemy_eikthyr"},
+  {token:"enemy_gdking",      nameId:"atlas.pin.token.enemy_gdking"},
+  {token:"enemy_bonemass",    nameId:"atlas.pin.token.enemy_bonemass"},
+  {token:"enemy_dragon",      nameId:"atlas.pin.token.enemy_dragon"},
+  {token:"enemy_goblinking",  nameId:"atlas.pin.token.enemy_goblinking"},
+  {token:"enemy_seekerqueen", nameId:"atlas.pin.token.enemy_seekerqueen"},
+  {token:"enemy_fader",       nameId:"atlas.pin.token.enemy_fader"},
+  {token:"hud_pin_hildir1",   nameId:"atlas.pin.token.hud_pin_hildir1"},
+  {token:"hud_pin_hildir2",   nameId:"atlas.pin.token.hud_pin_hildir2"},
+  {token:"hud_pin_hildir3",   nameId:"atlas.pin.token.hud_pin_hildir3"},
+];
+const ATLAS_PIN_BY_TOKEN=(()=>{
+  const map=Object.create(null);
+  ATLAS_PIN_TOKENS.forEach(row=>{map[row.token]=row.nameId;});
+  return map;
+})();
+/**
+ * One pin name, as a person would read it.
+ * @param {string} raw whatever the save file carried: a name the host typed, or one of the
+ *   game's own `$`-prefixed localization keys.
+ * @returns {string} the name, or "" when there was nothing there at all.
+ */
+function atlasPinName(raw){
+  const said=String(raw==null?"":raw).trim();
+  if(!said||said.charAt(0)!=="$") return said;
+  const token=said.slice(1).trim();
+  const known=ATLAS_PIN_BY_TOKEN[token.toLowerCase()];
+  if(known) return T(known);
+  /* An unknown key, made readable. The last resort rather than a second table: the game adds
+     locations between releases, and a host should read "Sealed Tower" or at worst "Newboss",
+     never a key. */
+  const words=token.replace(/^(?:enemy|hud_pin|location|piece)_/i,"").replace(/[_-]+/g," ").trim();
+  if(!words) return said;
+  return words.charAt(0).toUpperCase()+words.slice(1);
+}
+/* THE ALTARS AND TRADERS GROUP, from the save file's own prefab to the SAME catalog entry the pin
+   above it reads. The host side finds these in the world's location list and sends the English it
+   has for each one (BlendWindow.Bridge.cs, AtlasPoiLabels); that English is a fallback here and
+   nothing more, because a group whose names come straight off the wire is a group that stays in
+   English in a translated window while the pins two rows below it are translated. Eikthyr's altar
+   and Eikthyr's pin are now literally one entry, which is the whole point: the two groups sit two
+   rows apart in one list and a world where they disagree reads as two different places.
+   The four with no pin token of their own are the ones Valheim never writes into a map table: the
+   sacrificial stones, Haldor, Hildir's camp and the Bog Witch. */
+const ATLAS_POI_NAMES=[
+  {prefab:"StartTemple",                  nameId:"atlas.poi.start_temple"},
+  {prefab:"Eikthyrnir",                   nameId:"atlas.pin.token.enemy_eikthyr"},
+  {prefab:"GDKing",                       nameId:"atlas.pin.token.enemy_gdking"},
+  {prefab:"Bonemass",                     nameId:"atlas.pin.token.enemy_bonemass"},
+  {prefab:"Dragonqueen",                  nameId:"atlas.pin.token.enemy_dragon"},
+  {prefab:"GoblinKing",                   nameId:"atlas.pin.token.enemy_goblinking"},
+  {prefab:"Mistlands_DvergrBossEntrance1",nameId:"atlas.pin.token.enemy_seekerqueen"},
+  {prefab:"FaderLocation",                nameId:"atlas.pin.token.enemy_fader"},
+  {prefab:"Vendor_BlackForest",           nameId:"atlas.poi.trader"},
+  {prefab:"Hildir_camp",                  nameId:"atlas.poi.hildir"},
+  {prefab:"BogWitch_Camp",                nameId:"atlas.poi.bog_witch"},
+];
+const ATLAS_POI_BY_PREFAB=(()=>{
+  const map=Object.create(null);
+  ATLAS_POI_NAMES.forEach(row=>{map[String(row.prefab).toLowerCase()]=row.nameId;});
+  return map;
+})();
+/**
+ * One altar, trader or landmark name, as a person would read it.
+ * @param {object} poi a row out of the host's pois list: prefab, label, x, z
+ * @returns {string} the catalog's words for it, or the host's English when this page has never
+ *   heard of the prefab, which is what a location added in a later release looks like from here.
+ */
+function atlasPoiName(poi){
+  if(!poi) return "";
+  const id=ATLAS_POI_BY_PREFAB[String(poi.prefab==null?"":poi.prefab).toLowerCase()];
+  const said=id?T(id):"";
+  return said&&said!==id?said:String(poi.label==null?"":poi.label);
+}
 function renderAtlasSide(){
   const info=ATLAS.info;
   $("#atlasWorldName").textContent=ATLAS.world||"-";
@@ -12661,9 +13044,10 @@ function renderAtlasSide(){
   if(wp){
     const rows=[];
     if(info&&info.hasDb){
-      (info.pois||[]).forEach(l=>rows.push({r:"ᛒ",n:l.label,x:l.x,z:l.z}));
+      (info.pois||[]).forEach(l=>rows.push({r:"ᛒ",n:atlasPoiName(l),x:l.x,z:l.z}));
       (info.portals||[]).forEach(p=>rows.push({r:"ᛈ",n:p.tag||T("atlas.waypoint.portal.untagged"),x:p.x,z:p.z}));
-      (info.pins||[]).forEach(p=>rows.push({r:"ᛘ",n:p.name||T("atlas.waypoint.pin.unnamed"),x:p.x,z:p.z}));
+      (info.pins||[]).forEach(p=>rows.push(
+        {r:"ᛘ",n:atlasPinName(p.name)||T("atlas.waypoint.pin.unnamed"),x:p.x,z:p.z}));
     }
     wp.innerHTML=rows.map((w,i)=>
       `<div class="wp" data-i="${i}"><span class="wr">${w.r}</span><span class="wn">${esc(w.n)}</span><span class="wc">${Math.round(w.x)}, ${Math.round(w.z)}</span></div>`
@@ -12912,6 +13296,29 @@ function atlasFitPpm(){
   const s=atlasWrapSize();
   return s.w&&s.h?Math.min(s.w,s.h)/(2*ATLAS.mapExtent):0;
 }
+/* THE CHART'S DENSITY, IN DEVICE PIXELS PER METRE rather than CSS ones, which is the only
+   unit a "is there room to read this" question can be asked in.
+   Text size is the page's zoom: it shrinks the CSS viewport and raises devicePixelRatio by
+   the same factor. The atlas wrap shrinks with it, so the auto-fit lands at a HIGHER number
+   of metres per CSS pixel at every larger size, and a threshold written against ppm answered
+   differently at every text size on one unchanged window. The place-name cull answered "no
+   labels at all": the owner's world fitted to 22 m/px at Normal and drew every portal and
+   altar name, then to 29 m/px at Large and drew none of them, while the release note said
+   text size zooms the map's labels with everything else.
+   ppm times devicePixelRatio is the same number for the same world in the same window at
+   every text size, because the two move by the same factor and against each other.
+   THE OTHER NUMBERS IN THIS SECTION ARE NOT THIS KIND OF GATE and are right as they stand:
+   the 4 px floor under a build-site circle, the 28 px floor under the veil's feather and the
+   10 and 11 px canvas fonts are SIZES in CSS pixels, and a CSS pixel size is exactly what
+   grows on screen with the zoom, the same way an 11px rule in the stylesheet does. The wheel's
+   ceiling and its floor are limits on how far a host may travel rather than a decision about
+   whether ink is drawn, and they stay in CSS pixels so a high-density display does not get a
+   smaller maximum zoom than a low-density one. */
+function atlasPpmDev(ppm){
+  return (Number(ppm)||0)*(window.devicePixelRatio||1);
+}
+/* Device pixels to the metre under which a place name is more ink than information. */
+const ATLAS_LABEL_PPM_DEV=0.045;
 function atlasFit(){
   ATLAS.cam.cx=0; ATLAS.cam.cz=0; ATLAS.cam.ppm=atlasFitPpm()||0.03;
 }
@@ -13099,7 +13506,7 @@ function atlasDraw(){
     }
   }
   const info=ATLAS.info;
-  const showLbl=c.ppm>0.045;
+  const showLbl=atlasPpmDev(c.ppm)>ATLAS_LABEL_PPM_DEV;
   ctx.font=atlasFont(10); ctx.textBaseline="middle";
   if(info&&info.hasDb){
     if(ATLAS.layers.builds)(info.builds||[]).forEach(b=>{
@@ -13113,7 +13520,10 @@ function atlasDraw(){
       const x=w2sX(p.x),y=w2sY(p.z);
       ctx.fillStyle="rgba(226,217,196,.85)";
       ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill();
-      if(showLbl&&p.name){ctx.fillStyle="rgba(226,217,196,.6)";ctx.fillText(p.name,x+6,y);}
+      /* The same resolver the Waypoints list uses, so the chart and the list never disagree
+         about what a pin is called. */
+      const said=atlasPinName(p.name);
+      if(showLbl&&said){ctx.fillStyle="rgba(226,217,196,.6)";ctx.fillText(said,x+6,y);}
     });
     if(ATLAS.layers.portals)(info.portals||[]).forEach(p=>{
       if(atlasFogHides(p.x,p.z)) return;
@@ -13128,7 +13538,10 @@ function atlasDraw(){
       const x=w2sX(l.x),y=w2sY(l.z);
       ctx.fillStyle="#FF7A1A"; ctx.strokeStyle="rgba(8,12,18,.9)"; ctx.lineWidth=1;
       ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill(); ctx.stroke();
-      if(showLbl){ctx.fillStyle="rgba(255,164,92,.95)";ctx.fillText(l.label,x+8,y);}
+      /* The same resolver the Waypoints list uses, so the chart and the list never disagree about
+         what an altar is called, and neither of them is in English in a translated window. */
+      const said=atlasPoiName(l);
+      if(showLbl&&said){ctx.fillStyle="rgba(255,164,92,.95)";ctx.fillText(said,x+8,y);}
     });
     if(info.eventName&&!atlasFogHides(info.eventX,info.eventZ)){
       const x=w2sX(info.eventX),y=w2sY(info.eventZ);

@@ -217,6 +217,25 @@ namespace ValheimBakaLoader.Forms
         private static HostFacingException UnknownLanguage() =>
             new HostFacingException("lang.unknownCode", "BakaLoader has no language by that name.");
 
+        /// <summary>
+        /// The refusal a press gets while a pack is already being written, NAMING the one that is
+        /// running. One pack at a time is the service's rule and the sentence used to say only
+        /// that, which is no help at all when the write was the app's own quiet refresh: the host
+        /// pressed a row, read "a language pack is already downloading", and had seen nothing
+        /// anywhere that said one was. The boot sweep holds the same latch and is about no
+        /// language in particular, so that keeps the sentence without a name.
+        /// </summary>
+        private static HostFacingException LanguageIsBusy(string runningCode)
+        {
+            var name = LanguageCodes.Find(runningCode)?.NativeName;
+            if (string.IsNullOrWhiteSpace(name))
+                return new HostFacingException("lang.busy", "A language pack is already downloading.");
+
+            return new HostFacingException("lang.busyLanguage",
+                $"The {name} pack is being written right now. One pack at a time.",
+                ("language", name));
+        }
+
         // When each live server process was started, so the load check has something to
         // compare BepInEx/LogOutput.log against. Set the moment a start is taken, cleared
         // when the server stops.
@@ -244,20 +263,21 @@ namespace ValheimBakaLoader.Forms
         // declines for the same reason every single time: the owner's application log carried
         // eight identical Information lines about it over two days. The same pattern the RCON
         // client uses for "connected": a change is news, a repeat is Debug.
-        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> BepInExWindowReported =
-            new(StringComparer.OrdinalIgnoreCase);
+        //
+        // It covered the three endings where the window DID look at the install and left it alone,
+        // and not the three where the window never got that far: a deferral because another server
+        // is up, a restart window that ran out, and another write already running. Two windows a
+        // minute apart on the 1.2.6 walk both wrote the deferral at Information. All six go through
+        // this now, each under its own state word, so a different pack or a different reason is
+        // still said out loud once.
+        private readonly Tools.Logging.OncePerChange BepInExWindowReported = new();
 
         /// <summary>
         /// Whether this profile's restart window ended on something DIFFERENT from last time,
         /// which is the question "is this worth saying out loud" reduced to one word.
         /// </summary>
-        private bool BepInExWindowStateChanged(string profile, string state)
-        {
-            var key = profile ?? "";
-            var was = BepInExWindowReported.TryGetValue(key, out var held) ? held : null;
-            BepInExWindowReported[key] = state ?? "";
-            return !string.Equals(was, state ?? "", StringComparison.Ordinal);
-        }
+        private bool BepInExWindowStateChanged(string profile, string state) =>
+            BepInExWindowReported.Changed(profile, state);
         private bool _requiredModInstallInProgress;
         private bool _maxPlayersSaveInProgress;
         private bool _atlasRenderInProgress;
@@ -830,12 +850,18 @@ namespace ValheimBakaLoader.Forms
                 // No log capture (stdout was not redirected by us).
                 try
                 {
+                    // Nobody asked the launch guard anything here, so this opens its own start.
+                    OpenStartAttempt();
                     Server.AdoptProcess(existing, BuildServerOptions(LoadStartupPrefs()));
                     Logger.Information("Adopted server process PID {pid}", existing.Id);
                 }
                 catch (Exception ex)
                 {
                     Logger.Warning(ex, "Failed to adopt server process");
+                }
+                finally
+                {
+                    CloseStartAttempt();
                 }
             }
             else if (result == DialogResult.No)
@@ -906,13 +932,19 @@ namespace ValheimBakaLoader.Forms
 
                 // Auto-start is unattended by definition, so it goes through the launch guard
                 // as an automatic launch: a changed build holds it and raises a banner rather
-                // than quietly upgrading every world on the way up.
+                // than quietly upgrading every world on the way up. There is no launch check in
+                // front of it either, so it opens its own start. See OpenStartAttempt.
+                OpenStartAttempt();
                 Server.StartAutomatically(BuildServerOptions(prefs));
                 Logger.Information("Auto-start requested for profile {profile}", StartProfile);
             }
             catch (Exception ex)
             {
                 Logger.Error(ex, "Failed to auto-start server for profile {profile}", StartProfile);
+            }
+            finally
+            {
+                CloseStartAttempt();
             }
         }
 
@@ -2787,8 +2819,20 @@ namespace ValheimBakaLoader.Forms
                 if (decision == Tools.BepInExUnattendedAction.Defer)
                 {
                     _bepInExUpdateWaiting = latest;
-                    Logger.Information(
-                        "A newer BepInEx pack ({0}) is waiting for every server on this install to stop.", latest);
+
+                    // Once per change of state, the same gate the three endings further down this
+                    // method already use. A scheduled restart runs every few hours and an install
+                    // with another server up defers for the same reason every single time: two
+                    // windows a minute apart on the 1.2.6 walk both wrote this line at
+                    // Information, which is the very noise the once-per-fact rule exists for.
+                    // A DIFFERENT pack, or a different reason for waiting, is news again.
+                    if (BepInExWindowStateChanged(profile, "defer:" + (latest ?? "")))
+                        Logger.Information(
+                            "A newer BepInEx pack ({0}) is waiting for every server on this install to stop.", latest);
+                    else
+                        Logger.Debug(
+                            "A newer BepInEx pack ({0}) is waiting for every server on this install to stop.", latest);
+
                     PostBepInExChanged();
                     return;
                 }
@@ -2802,9 +2846,18 @@ namespace ValheimBakaLoader.Forms
                 if (stop.IsCancellationRequested)
                 {
                     _bepInExUpdateWaiting = latest;
-                    Logger.Information(
-                        "A newer BepInEx pack ({0}) is waiting: the restart window ran out before the write began.",
-                        latest);
+
+                    // The same once-per-change gate. A box whose restart window is routinely too
+                    // short writes this every window, and the second one is not news.
+                    if (BepInExWindowStateChanged(profile, "expired:" + (latest ?? "")))
+                        Logger.Information(
+                            "A newer BepInEx pack ({0}) is waiting: the restart window ran out before the write began.",
+                            latest);
+                    else
+                        Logger.Debug(
+                            "A newer BepInEx pack ({0}) is waiting: the restart window ran out before the write began.",
+                            latest);
+
                     PostBepInExChanged();
                     return;
                 }
@@ -2815,8 +2868,16 @@ namespace ValheimBakaLoader.Forms
                 if (!TryBeginBepInExWrite())
                 {
                     _bepInExUpdateWaiting = latest;
-                    Logger.Information(
-                        "A newer BepInEx pack ({0}) is waiting: another BepInEx write is running.", latest);
+
+                    // And the same gate here, for the same reason: the third of the three ways a
+                    // window can end without writing anything.
+                    if (BepInExWindowStateChanged(profile, "busy:" + (latest ?? "")))
+                        Logger.Information(
+                            "A newer BepInEx pack ({0}) is waiting: another BepInEx write is running.", latest);
+                    else
+                        Logger.Debug(
+                            "A newer BepInEx pack ({0}) is waiting: another BepInEx write is running.", latest);
+
                     PostBepInExChanged();
                     return;
                 }
@@ -3868,6 +3929,10 @@ namespace ValheimBakaLoader.Forms
             // land in an RPC reply the way a Start button press would.
             try
             {
+                // A start of its own: the host pressed Update rather than Start, so no launch check
+                // opened one. See OpenStartAttempt.
+                OpenStartAttempt();
+
                 var prefs = ServerPrefsProvider.LoadPreferences(profile);
                 if (prefs == null)
                 {
@@ -3908,6 +3973,10 @@ namespace ValheimBakaLoader.Forms
                     reason = LaunchReasons.Manual,
                     message = ex.Message,
                 });
+            }
+            finally
+            {
+                CloseStartAttempt();
             }
         }
 
@@ -4924,12 +4993,26 @@ namespace ValheimBakaLoader.Forms
                 var prefs = UserPrefsProvider.LoadPreferences();
                 var listing = await LanguagePacks.ListAsync();
 
+                // THE QUIET REFRESH, FOR THE LANGUAGE THE WINDOW IS READING NOW, after the
+                // manifest has been fetched. It used to be asked once per window from the
+                // language saved at the first frame, so a host whose window opened in English and
+                // then switched to Japanese never refreshed the Japanese pack at all: the only
+                // road to a newer pack was relaunching with that language already saved. The
+                // decision is still made once per language per window, so opening the globe three
+                // times is one answer and not three downloads.
+                QuietLanguageFetch(prefs, CurrentLanguage(prefs));
+
                 return new
                 {
                     current = CurrentLanguage(prefs),
                     appVersion = listing.AppVersion,
                     checkEnabled = prefs.CheckForUpdates,
                     busy = LanguagePacks.IsBusy,
+                    // WHICH pack is being written, not only that one is. A host who opens the globe
+                    // while the quiet refresh above is running has had no progress report in this
+                    // window yet, and a flag alone cannot tell the row that it is the one coming
+                    // down: it drew an Update button over a pack that was being replaced as it drew.
+                    busyCode = LanguagePacks.BusyCode,
                     languages = (listing.Languages ?? new List<LanguagePackEntry>()).Select(l => new
                     {
                         code = l.Code,
@@ -4940,6 +5023,12 @@ namespace ValheimBakaLoader.Forms
                         installedVersion = l.InstalledVersion,
                         matchesApp = l.MatchesApp,
                         available = l.Available,
+                        // What the manifest has for this language that the host has not got. The
+                        // row used to be able to ask only whether a pack was installed at all, so
+                        // a host holding a 1.2.0 pack was told the newer one was not out yet while
+                        // the manifest this very call fetched named it.
+                        packVersion = l.PackVersion,
+                        updateAvailable = l.UpdateAvailable,
                         bytes = l.Bytes,
                         keys = l.Keys,
                         translated = l.Translated,
@@ -4972,6 +5061,9 @@ namespace ValheimBakaLoader.Forms
                     matchesApp = LanguageCodes.IsEnglish(code) || (install?.MatchesApp ?? false),
                     missingKeys = LanguageMissingKeys(install),
                     busy = LanguagePacks.IsBusy,
+                    // The same pair the menu's answer carries, for the same reason: the first frame
+                    // can land in the middle of a write this window did not start.
+                    busyCode = LanguagePacks.BusyCode,
                     stringsUrl = LanguageStringsUrl(code, install?.Version),
                     fonts = LanguageFonts(install),
                     quietFetch = QuietLanguageFetch(prefs, code),
@@ -4986,21 +5078,11 @@ namespace ValheimBakaLoader.Forms
                 var code = LanguageCodes.Normalize(p.Value<string>("code")) ?? throw UnknownLanguage();
 
                 if (LanguagePacks.IsBusy)
-                    throw new HostFacingException("lang.busy", "A language pack is already downloading.");
+                    throw LanguageIsBusy(LanguagePacks.BusyCode);
 
-                // SynchronousProgress, never Progress<T>: a bar that is handed "done" before
-                // "downloading" is worse than a bar that does not move.
-                var progress = new SynchronousProgress<LanguagePackProgress>(pr =>
-                    PostEvent("lang.downloadProgress", new
-                    {
-                        code = pr.Code,
-                        phase = pr.Phase,
-                        percent = pr.Percent,
-                        bytesDone = pr.BytesDone,
-                        bytesTotal = pr.BytesTotal,
-                        messageId = pr.MessageId,
-                        messageParams = pr.MessageParams,
-                    }));
+                // One producer for both roads, so a pack the app fetched on its own paints the row
+                // the same way a pack the host pressed does. See LanguageProgressToPage.
+                var progress = LanguageProgressToPage();
 
                 var result = await LanguagePacks.DownloadAsync(code, progress);
 
@@ -6259,6 +6341,11 @@ namespace ValheimBakaLoader.Forms
             // can put a changed build (or a waiting Steam update) to the host first.
             RegisterRpc("server.launchCheck", async p =>
             {
+                // The host's press begins HERE, not at server.start: this is the first half of one
+                // start and the start that follows joins it. Without that, the one world-header
+                // line a start may write was written twice for one press. See OpenStartAttempt.
+                OpenStartAttempt();
+
                 var prefs = ResolveStartPrefs(p);
                 var profile = string.IsNullOrWhiteSpace(prefs.ProfileName) ? ActiveProfileName : prefs.ProfileName;
                 var options = BuildServerOptions(prefs);
@@ -6269,28 +6356,39 @@ namespace ValheimBakaLoader.Forms
 
             RegisterRpc("server.start", p =>
             {
-                var prefs = (p["prefs"] ?? throw new ArgumentException("prefs is required"))
-                    .ToObject<ServerPreferences>();
-                var session = GetOrCreateSession(
-                    string.IsNullOrWhiteSpace(prefs.ProfileName) ? CurrentProfile : prefs.ProfileName);
-                var options = BuildServerOptions(MergeLaunchHistory(prefs));
+                // The second half of a press the launch check already opened, or the whole of a
+                // start that never asked the question. Closed whatever happens below, so the next
+                // start is a new one. See OpenStartAttempt.
+                OpenStartAttempt();
+                try
+                {
+                    var prefs = (p["prefs"] ?? throw new ArgumentException("prefs is required"))
+                        .ToObject<ServerPreferences>();
+                    var session = GetOrCreateSession(
+                        string.IsNullOrWhiteSpace(prefs.ProfileName) ? CurrentProfile : prefs.ProfileName);
+                    var options = BuildServerOptions(MergeLaunchHistory(prefs));
 
-                // Steam or steamcmd is rewriting this install folder right now, so valheim_server.exe
-                // and the managed assemblies beside it are mid write. The launch guard cannot catch
-                // this: it compares builds, and the build on disk during a rewrite is whatever the
-                // writer has got to. Nothing is staged and nothing is started.
-                if (IsServerUpdateRunning(options?.ServerExePath))
-                    return Task.FromResult(RefusedRpc(ValheimServer.LaunchBlockedMessage, "updateRunning"));
+                    // Steam or steamcmd is rewriting this install folder right now, so valheim_server.exe
+                    // and the managed assemblies beside it are mid write. The launch guard cannot catch
+                    // this: it compares builds, and the build on disk during a rewrite is whatever the
+                    // writer has got to. Nothing is staged and nothing is started.
+                    if (IsServerUpdateRunning(options?.ServerExePath))
+                        return Task.FromResult(RefusedRpc(ValheimServer.LaunchBlockedMessage, "updateRunning"));
 
-                EnsureNoServerCollisions(session, options);
-                StageLaunchAnswer(session.ProfileName, p.Value<string>("guard"));
+                    EnsureNoServerCollisions(session, options);
+                    StageLaunchAnswer(session.ProfileName, p.Value<string>("guard"));
 
-                // Start() does nothing at all when the server is not startable, which would
-                // leave the answer armed for whatever launches next. Take it back.
-                if (!session.Server.CanStart) DropLaunchAnswer(session.ProfileName);
-                else session.Server.Start(options);
+                    // Start() does nothing at all when the server is not startable, which would
+                    // leave the answer armed for whatever launches next. Take it back.
+                    if (!session.Server.CanStart) DropLaunchAnswer(session.ProfileName);
+                    else session.Server.Start(options);
 
-                return Task.FromResult<object>(BuildServerState(session));
+                    return Task.FromResult<object>(BuildServerState(session));
+                }
+                finally
+                {
+                    CloseStartAttempt();
+                }
             });
 
             // What updating this server would mean right now: how it was installed, whether
@@ -9196,11 +9294,20 @@ namespace ValheimBakaLoader.Forms
         #region Language
 
         /// <summary>
-        /// Set the first time this window answers lang.status, and never unset: the quiet
-        /// post-update fetch is started once per window, and every later answer reports what
-        /// that one call decided rather than deciding again.
+        /// What the quiet post-update fetch decided, PER LANGUAGE, set the first time this window
+        /// is asked about one and never unset: the fetch is started once per language per window
+        /// and every later answer reports what that one call decided rather than deciding again.
+        /// <para>
+        /// It was one field for the whole window until 1.2.7, filled from the language saved at
+        /// the first frame. On a machine whose window opens in English that answer is "nothing to
+        /// do", and it was then the answer for every language the host switched to for the rest of
+        /// the session: a Japanese pack cut for an older release was never refreshed, however many
+        /// times the globe was opened, and the only road to the newer pack was relaunching the app
+        /// with Japanese already saved.
+        /// </para>
         /// </summary>
-        private string LanguageQuietFetchAnswer;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string>
+            LanguageQuietFetchAnswers = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The language the interface is saved in, always a spelling the app knows.</summary>
         private string CurrentLanguage(UserPreferences prefs) =>
@@ -9278,26 +9385,66 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
-        /// The word the page shows beside the status, and, the first time this window asks,
-        /// the fetch itself. It runs on a worker rather than here: this handler answers on the
-        /// UI thread and the page is waiting on it, so a pack fetched at boot must never be
-        /// something the first frame waits for. It is never a splash step for the same reason.
+        /// The reports the page paints a pack's progress from, whoever asked for the pack. One
+        /// producer for both roads on purpose: a press awaits lang.download and learns the ending
+        /// from the answer, and the app's own refresh after an update has no answer for the page to
+        /// read, so these events are the whole of what that row knows. The refresh passed NO
+        /// progress at all until 1.2.7, which left the row offering an Update for a pack that was
+        /// being replaced as it drew, and the press came back as a busy refusal.
+        /// <para>
+        /// SynchronousProgress, never Progress&lt;T&gt;: a bar that is handed "done" before
+        /// "downloading" is worse than a bar that does not move. Posting is safe from the download
+        /// thread; PostEvent marshals before it touches the WebView.
+        /// </para>
+        /// </summary>
+        private IProgress<LanguagePackProgress> LanguageProgressToPage() =>
+            new SynchronousProgress<LanguagePackProgress>(pr =>
+                PostEvent("lang.downloadProgress", new
+                {
+                    code = pr.Code,
+                    phase = pr.Phase,
+                    percent = pr.Percent,
+                    bytesDone = pr.BytesDone,
+                    bytesTotal = pr.BytesTotal,
+                    messageId = pr.MessageId,
+                    messageParams = pr.MessageParams,
+                }));
+
+        /// <summary>
+        /// The word the page shows beside the status, and, the first time this window asks about
+        /// THIS language, the fetch itself. It runs on a worker rather than here: this handler
+        /// answers on the UI thread and the page is waiting on it, so a pack fetched at boot must
+        /// never be something the first frame waits for. It is never a splash step for the same
+        /// reason.
+        /// <para>
+        /// Keyed by language, not once for the window. See <see cref="LanguageQuietFetchAnswers"/>.
+        /// </para>
+        /// <para>
+        /// The window is TOLD while it runs. Every ending of a download reports a terminal phase
+        /// (done, failed or cancelled), so the row this starts is taken back by the same road it
+        /// was put up by, and a window that opened the globe in the middle of one reads busyCode
+        /// off the menu's own answer instead.
+        /// </para>
         /// </summary>
         private string QuietLanguageFetch(UserPreferences prefs, string code)
         {
-            if (LanguageQuietFetchAnswer != null) return LanguageQuietFetchAnswer;
+            var key = LanguageCodes.Normalize(code) ?? LanguageCodes.English;
+            if (LanguageQuietFetchAnswers.TryGetValue(key, out var answered)) return answered;
 
             var version = AssemblyHelper.GetApplicationVersion();
             var decision = LanguagePacks.QuietFetchDecision(prefs?.CheckForUpdates ?? true, code, version);
-            LanguageQuietFetchAnswer = decision;
+            LanguageQuietFetchAnswers[key] = decision;
 
             if (decision != LanguageQuietFetch.Started) return decision;
+
+            var progress = LanguageProgressToPage();
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await LanguagePacks.EnsureCurrentQuietlyAsync(prefs?.CheckForUpdates ?? true, code, version);
+                    await LanguagePacks.EnsureCurrentQuietlyAsync(
+                        prefs?.CheckForUpdates ?? true, code, version, progress);
                 }
                 catch (Exception ex)
                 {
@@ -10084,6 +10231,60 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
+        // What the first meeting with each world under each save folder last found, so the line
+        // that says a world has no readable header is written once per START rather than once per
+        // ASK. BuildServerOptions is the one place every start path builds its options, which is
+        // why the import hangs there, and a start asks it more than once; the Settings hall asks
+        // about the same world again through worldgen.get and worldgen.save. One start on the
+        // 1.2.6 walk wrote the same Debug line nine times.
+        private readonly Tools.Logging.OncePerChange WorldHeaderReported = new();
+
+        // WHICH START an ask belongs to. Keyed on the window alone the line was written once and
+        // then never again, so the second start of the same world said nothing about it at all:
+        // "once per start" was the rule and "once per window" was the code. The id goes in the
+        // state the gate holds, so a new start is a new fact and is said out loud again.
+        private int StartAttemptId;
+
+        // One start the host pressed is TWO calls: server.launchCheck asks what a start would mean
+        // on this build and server.start then starts, and both build the options and so both ask
+        // about the world. Counting each of them would write the line twice for one press, so the
+        // check OPENS the attempt and the start that follows joins the one that is open. A start
+        // with no check in front of it (auto start, adopting a running process, the relaunch after
+        // an update) opens its own. A host who opens the guard dialog and cancels leaves one open,
+        // so the next start joins it and writes its line quietly; one line fewer in that case is
+        // worth more than a second line on every press.
+        private int StartAttemptOpen;
+
+        /// <summary>
+        /// Begins a start attempt, or joins the one a launch check has already opened. Everything
+        /// asked between here and <see cref="CloseStartAttempt"/> belongs to the same start.
+        /// </summary>
+        private int OpenStartAttempt()
+        {
+            if (Interlocked.CompareExchange(ref StartAttemptOpen, 1, 0) == 0)
+                Interlocked.Increment(ref StartAttemptId);
+
+            return Volatile.Read(ref StartAttemptId);
+        }
+
+        /// <summary>Ends the attempt, so the next start is a new one whether it is checked or not.</summary>
+        private void CloseStartAttempt() => Interlocked.Exchange(ref StartAttemptOpen, 0);
+
+        /// <summary>
+        /// Whether this world under this folder has just answered DIFFERENTLY from last time,
+        /// which is "is this worth saying out loud" reduced to one word. The world and the folder
+        /// together, because two realms can hold a world of the same name in two save folders.
+        /// </summary>
+        private bool WorldHeaderStateChanged(string world, string saveFolder, string state) =>
+            WorldHeaderReported.Changed((world ?? "") + "\n" + (saveFolder ?? ""), state);
+
+        /// <summary>
+        /// The state the gate holds for a world whose header would not read, with the start it was
+        /// asked in. A second start of the same world is a different state and is news again.
+        /// </summary>
+        private string WorldHeaderNoneState() =>
+            "none@" + Volatile.Read(ref StartAttemptId).ToString(CultureInfo.InvariantCulture);
+
         private void ImportWorldKeysOnFirstMeeting(string world, string saveFolderHint)
         {
             try
@@ -10108,11 +10309,34 @@ namespace ValheimBakaLoader.Forms
                 {
                     // Either there is no world there yet (the ordinary case for a realm about to
                     // make one) or the header would not read. Neither is a reason to stop.
-                    AppLogger.Debug(
-                        "No readable world header for '{0}' under {1}, so nothing was brought in and the start goes ahead.",
-                        world, saveFolder);
+                    //
+                    // ONCE PER START, not once per ask and not once per window. Every start path
+                    // builds its options through BuildServerOptions and the Settings hall reads the
+                    // same world through worldgen.get, so one start wrote this nine times: four at
+                    // 12:36:36, one at 12:36:36.870 and four more at 12:37:00 on the 1.2.6 walk.
+                    // The state is the world and the folder together with the start it was asked
+                    // in, so a second realm under the same folder still says so once, a SECOND
+                    // START of the same world says it again, and a world that later GAINS a
+                    // readable header clears the note below, which makes a header that stops
+                    // reading news again.
+                    //
+                    // The repeats inside one start are written at Verbose rather than dropped. A
+                    // host chasing why a world came up with nothing of its own needs to see every
+                    // ask, and Verbose is the level the Detailed log switch turns on; dropping them
+                    // left the Detailed log quieter about this than the ordinary one.
+                    if (WorldHeaderStateChanged(world, saveFolder, WorldHeaderNoneState()))
+                        AppLogger.Debug(
+                            "No readable world header for '{0}' under {1}, so nothing was brought in and the start goes ahead.",
+                            world, saveFolder);
+                    else
+                        AppLogger.Verbose(
+                            "No readable world header for '{0}' under {1}, so nothing was brought in and the start goes ahead.",
+                            world, saveFolder);
                     return;
                 }
+
+                // The header read, so whatever this world said last time is not what it says now.
+                WorldHeaderStateChanged(world, saveFolder, outcome.Kind.ToString());
 
                 if (outcome.Kind != WorldKeyImportKind.Imported) return;
 

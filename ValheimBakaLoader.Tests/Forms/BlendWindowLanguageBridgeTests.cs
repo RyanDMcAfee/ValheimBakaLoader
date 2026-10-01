@@ -36,6 +36,40 @@ namespace ValheimBakaLoader.Tests.Forms
             return map;
         }
 
+        /// <summary>
+        /// ONE RPC HANDLER, from its registration to the next one's. Every rule below used to take
+        /// a window measured in characters, and every time the block grew a paragraph of comment
+        /// one of them quietly stopped reaching the line it was aimed at: three of them had to be
+        /// widened by hand in 1.2.7 alone, and a rule that silently stops looking at the thing it
+        /// names is worse than no rule. The next registration is the boundary because that is what
+        /// the file actually has between two handlers.
+        /// </summary>
+        private static string Handler(string method)
+        {
+            var bridge = Bridge();
+            var at = bridge.IndexOf("RegisterRpc(\"" + method + "\"", StringComparison.Ordinal);
+            Assert.True(at > 0, "the bridge no longer registers " + method);
+
+            var next = bridge.IndexOf("RegisterRpc(\"", at + 13, StringComparison.Ordinal);
+            return next > at ? bridge.Substring(at, next - at) : bridge.Substring(at);
+        }
+
+        /// <summary>
+        /// ONE METHOD of the bridge, from its signature to the brace that closes it at the class's
+        /// own indent. Same reason as <see cref="Handler"/>: a window counted in characters stops
+        /// reaching what it was aimed at the moment the method grows a paragraph.
+        /// </summary>
+        private static string Member(string signature)
+        {
+            var bridge = Bridge();
+            var at = bridge.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at > 0, "the bridge no longer has " + signature);
+
+            var end = bridge.IndexOf("\n        }", at, StringComparison.Ordinal);
+            Assert.True(end > at, signature + " does not close");
+            return bridge.Substring(at, end - at);
+        }
+
         // ------------------------------------------------------------------ the five methods
 
         [Theory]
@@ -58,15 +92,31 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_menus_answer_says_whether_update_checking_is_on()
         {
-            var bridge = Bridge();
-            var at = bridge.IndexOf("RegisterRpc(\"lang.list\"", StringComparison.Ordinal);
-            Assert.True(at > 0);
-
-            var block = bridge.Substring(at, 2000);
+            var block = Handler("lang.list");
             Assert.Contains("checkEnabled = prefs.CheckForUpdates", block, StringComparison.Ordinal);
             Assert.Contains("busy = LanguagePacks.IsBusy", block, StringComparison.Ordinal);
             Assert.Contains("manifest = new", block, StringComparison.Ordinal);
             Assert.Contains("errorId = listing.Manifest?.ErrorId", block, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// WHICH pack is being written, on both answers the page reads a row from. A flag alone
+        /// cannot tell a row that it is the one coming down, so a window that opened the globe in
+        /// the middle of the app's own refresh drew an Update button over a pack that was being
+        /// replaced as it drew, and the press came back as a busy refusal.
+        /// </summary>
+        [Theory]
+        [InlineData("lang.list")]
+        [InlineData("lang.status")]
+        public void Both_answers_say_which_pack_is_being_written(string method)
+        {
+            var block = Handler(method);
+            Assert.Contains("busyCode = LanguagePacks.BusyCode", block, StringComparison.Ordinal);
+
+            // And the service answers it from the run it is holding rather than from a field
+            // somebody has to remember to clear.
+            Assert.Contains("get { lock (Gate) return Current?.Code; }",
+                AppSourceTree.Files()["LanguagePackService.cs"], StringComparison.Ordinal);
         }
 
         // ------------------------------------------------------------------ item 12: the two that matter
@@ -80,12 +130,9 @@ namespace ValheimBakaLoader.Tests.Forms
         public void A_second_download_is_refused_by_name()
         {
             var bridge = Bridge();
-            var at = bridge.IndexOf("RegisterRpc(\"lang.download\"", StringComparison.Ordinal);
-            Assert.True(at > 0);
-
-            var block = bridge.Substring(at, 2200);
+            var block = Handler("lang.download");
             Assert.Contains("if (LanguagePacks.IsBusy)", block, StringComparison.Ordinal);
-            Assert.Contains("throw new HostFacingException(\"lang.busy\"", block, StringComparison.Ordinal);
+            Assert.Contains("throw LanguageIsBusy(LanguagePacks.BusyCode);", block, StringComparison.Ordinal);
 
             // One factory for the refusal both language methods give a code the app has never
             // heard of, written once because an id is an identity.
@@ -95,9 +142,56 @@ namespace ValheimBakaLoader.Tests.Forms
                 bridge,
                 StringComparison.Ordinal);
 
-            // The bar is driven by pushes made in the order the service makes them.
+            // The bar is driven by pushes made in the order the service makes them, out of the one
+            // producer both roads into a pack write use.
+            Assert.Contains("var progress = LanguageProgressToPage();", block, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// A refusal that NAMES the pack being written. "A language pack is already downloading" is
+        /// no help when the write is the app's own refresh after an update: the host pressed a row,
+        /// read that, and had seen nothing anywhere saying a download was running. The nameless
+        /// sentence is kept for the boot sweep, which holds the same latch for no one language.
+        /// </summary>
+        [Fact]
+        public void The_busy_refusal_names_the_pack_that_is_being_written()
+        {
+            var bridge = Bridge();
+            var block = Member("private static HostFacingException LanguageIsBusy(");
+            Assert.Contains("LanguageCodes.Find(runningCode)?.NativeName", block, StringComparison.Ordinal);
+            Assert.Contains("new HostFacingException(\"lang.busy\", \"A language pack is already downloading.\")",
+                block, StringComparison.Ordinal);
+            Assert.Contains("\"lang.busyLanguage\"", block, StringComparison.Ordinal);
+            Assert.Contains("(\"language\", name)", block, StringComparison.Ordinal);
+
+            // And the page has words for it, in its own table, with the slot the refusal fills.
+            Assert.Contains("{named:\"lang.busyLanguage\", textId:\"lang.reason.busy_language\"}",
+                AppJs(), StringComparison.Ordinal);
+
+            var catalog = Catalog();
+            Assert.True(catalog.ContainsKey("lang.reason.busy_language"),
+                "the catalog has no lang.reason.busy_language");
+            Assert.Contains("{language}",
+                catalog["lang.reason.busy_language"].GetProperty("lore").GetString() ?? "",
+                StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// One producer for the reports both roads into a pack write make, so a pack the app
+        /// fetched on its own paints the row exactly the way a pack the host pressed does. Two
+        /// copies of this are two chances for the quiet one to be written without a handler, which
+        /// is what it had.
+        /// </summary>
+        [Fact]
+        public void The_progress_reports_have_one_producer()
+        {
+            var bridge = Bridge();
+            var block = Member("private IProgress<LanguagePackProgress> LanguageProgressToPage()");
             Assert.Contains("new SynchronousProgress<LanguagePackProgress>", block, StringComparison.Ordinal);
             Assert.Contains("PostEvent(\"lang.downloadProgress\"", block, StringComparison.Ordinal);
+
+            // Nothing else in the bridge posts that event, so neither road can drift from the other.
+            Assert.Equal(1, Regex.Matches(bridge, Regex.Escape("PostEvent(\"lang.downloadProgress\"")).Count);
         }
 
         /// <summary>
@@ -132,11 +226,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_switch_refuses_a_language_that_is_not_downloaded()
         {
-            var bridge = Bridge();
-            var at = bridge.IndexOf("RegisterRpc(\"lang.set\"", StringComparison.Ordinal);
-            Assert.True(at > 0);
-
-            var block = bridge.Substring(at, 2200);
+            var block = Handler("lang.set");
             Assert.Contains("LanguageCodes.IsEnglish(code) ? null : LanguagePacks.InstalledAny(code)", block, StringComparison.Ordinal);
             Assert.Contains(
                 "if (!LanguageCodes.IsEnglish(code) && install == null)\n                    throw new HostFacingException(\"lang.notInstalled\"",
@@ -210,11 +300,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_status_answer_reads_the_newest_pack_on_disk()
         {
-            var bridge = Bridge();
-            var at = bridge.IndexOf("RegisterRpc(\"lang.status\"", StringComparison.Ordinal);
-            Assert.True(at > 0);
-
-            var block = bridge.Substring(at, 1600);
+            var block = Handler("lang.status");
             Assert.Contains("LanguagePacks.InstalledAny(code)", block, StringComparison.Ordinal);
             Assert.Contains("installedVersion = install?.Version", block, StringComparison.Ordinal);
             Assert.Contains("stringsUrl = LanguageStringsUrl(code, install?.Version)", block, StringComparison.Ordinal);
@@ -222,22 +308,85 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The quiet fetch is started once per window, off the thread the page is waiting on.
-        /// An await here would make the first frame wait for a download on a household
+        /// The quiet fetch is started once per LANGUAGE per window, off the thread the page is
+        /// waiting on. An await here would make the first frame wait for a download on a household
         /// connection, and the whole point of the quiet fetch is that nobody waits for it.
+        /// <para>
+        /// It was once per window, from one field, filled with the language saved at the first
+        /// frame. On a machine whose window opens in English that answer is "nothing to do", and it
+        /// was then the answer for every language the host switched to for the rest of the session:
+        /// the owner's Japanese pack was two releases behind and no number of trips to the globe
+        /// could refresh it.
+        /// </para>
         /// </summary>
         [Fact]
-        public void The_quiet_fetch_runs_on_a_worker_and_only_once_per_window()
+        public void The_quiet_fetch_runs_on_a_worker_and_once_per_language_per_window()
         {
-            var bridge = Bridge();
-            var at = bridge.IndexOf("private string QuietLanguageFetch(", StringComparison.Ordinal);
-            Assert.True(at > 0);
-
-            var block = bridge.Substring(at, 1400);
-            Assert.Contains("if (LanguageQuietFetchAnswer != null) return LanguageQuietFetchAnswer;", block, StringComparison.Ordinal);
+            var block = Member("private string QuietLanguageFetch(");
+            Assert.Contains("if (LanguageQuietFetchAnswers.TryGetValue(key, out var answered)) return answered;",
+                block, StringComparison.Ordinal);
+            Assert.Contains("LanguageQuietFetchAnswers[key] = decision;", block, StringComparison.Ordinal);
             Assert.Contains("LanguagePacks.QuietFetchDecision(", block, StringComparison.Ordinal);
             Assert.Contains("_ = Task.Run(async () =>", block, StringComparison.Ordinal);
             Assert.Contains("EnsureCurrentQuietlyAsync(", block, StringComparison.Ordinal);
+
+            // AND THE WINDOW IS TOLD. It passed no progress handler at all, so while the refresh
+            // ran the row offered an Update for the pack that was being replaced as it drew and the
+            // press came back as a busy refusal. The handler is the same one a press is given.
+            Assert.Contains("var progress = LanguageProgressToPage();", block, StringComparison.Ordinal);
+            Assert.Contains("prefs?.CheckForUpdates ?? true, code, version, progress);",
+                block, StringComparison.Ordinal);
+            // And the service hands it straight on rather than keeping the old null.
+            var service = AppSourceTree.Files()["LanguagePackService.cs"];
+            Assert.Contains("await DownloadAsync(code, progress, ct, userInitiated: false);",
+                service, StringComparison.Ordinal);
+            Assert.DoesNotContain("DownloadAsync(code, progress: null", service, StringComparison.Ordinal);
+
+            // The one field that made the answer the window's rather than the language's is gone,
+            // not merely unused: left standing it is the thing somebody reads next.
+            Assert.DoesNotContain("LanguageQuietFetchAnswer ", Bridge(), StringComparison.Ordinal);
+            Assert.DoesNotContain("LanguageQuietFetchAnswer;", Bridge(), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// And it is asked again after every manifest fetch, for the language the window is reading
+        /// NOW. lang.list is the one call that reaches the release page, so it is the one moment the
+        /// app knows a newer pack exists, and the host switching language in-session goes through it.
+        /// </summary>
+        [Fact]
+        public void The_menus_own_call_asks_about_the_language_on_screen()
+        {
+            var block = Handler("lang.list");
+            var listed = block.IndexOf("await LanguagePacks.ListAsync()", StringComparison.Ordinal);
+            var asked = block.IndexOf("QuietLanguageFetch(prefs, CurrentLanguage(prefs));", StringComparison.Ordinal);
+
+            Assert.True(listed > 0, "the menu's call no longer reads the listing");
+            Assert.True(asked > 0,
+                "lang.list does not ask about the language on screen, so a host who switches language"
+                + " in-session never refreshes that language's pack");
+            Assert.True(listed < asked,
+                "the quiet fetch is asked for BEFORE the manifest has been fetched, so it decides on a"
+                + " manifest this window has not read yet");
+        }
+
+        /// <summary>
+        /// The two facts the row needs to offer a newer pack, carried on every row. Without them the
+        /// page can only ask whether a pack is installed at all, which is the question that produced
+        /// "newer sentences in English until the 1.2.6 pack is out" over a manifest naming it.
+        /// </summary>
+        [Fact]
+        public void Every_row_says_whether_a_newer_pack_is_published()
+        {
+            var block = Handler("lang.list");
+
+            Assert.Contains("packVersion = l.PackVersion", block, StringComparison.Ordinal);
+            Assert.Contains("updateAvailable = l.UpdateAvailable", block, StringComparison.Ordinal);
+
+            // And the page reads both of them rather than working it out for itself: the version the
+            // pack would install as is the manifest's answer, not this app's version.
+            var app = AppJs();
+            Assert.Contains("l.updateAvailable", app, StringComparison.Ordinal);
+            Assert.Contains("(l&&l.packVersion)||langAppVersion()", app, StringComparison.Ordinal);
         }
 
         // ------------------------------------------------------------------ the events

@@ -205,6 +205,25 @@ namespace ValheimBakaLoader.Tools
         /// <summary>True when the manifest names a pack for this language.</summary>
         public bool Available { get; set; }
 
+        /// <summary>
+        /// The app version the pack the manifest names is cut for, which is NOT always this app's
+        /// version: when no packs were cut for the running version the manifest comes off the
+        /// newest release at or below it. Null when the manifest names no pack for this language.
+        /// </summary>
+        public string PackVersion { get; set; }
+
+        /// <summary>
+        /// True when the manifest names a pack this host has not got: a newer version than the
+        /// one on disk, or the same version cut again with a different catalogue revision.
+        /// <para>
+        /// This is the fact the globe menu was missing. A row read "Pack from 1.2.0; newer
+        /// sentences in English until the 1.2.6 pack is out" while the manifest the app had
+        /// already fetched named lang-ja-1.2.6.zip with every key in it, because the only
+        /// question the row could ask was whether a pack was installed at all.
+        /// </para>
+        /// </summary>
+        public bool UpdateAvailable { get; set; }
+
         /// <summary>The published size of the pack, from the manifest. Zero when unknown.</summary>
         public long Bytes { get; set; }
 
@@ -385,6 +404,15 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         bool IsBusy { get; }
 
+        /// <summary>
+        /// WHICH language is being written right now, or null when nothing is. The page needs the
+        /// code and not only the flag: a window that opens the globe while the quiet refresh is
+        /// running has to draw that row as the one coming down, and a press that is refused has to
+        /// be able to say what is already running. Null while the boot sweep holds the latch,
+        /// because a sweep is not about one language.
+        /// </summary>
+        string BusyCode { get; }
+
         /// <summary>Raised after a language actually changed, for every window to follow.</summary>
         event EventHandler<LanguageChangedEventArgs> LanguageChanged;
 
@@ -424,15 +452,22 @@ namespace ValheimBakaLoader.Tools
         string QuietFetchDecision(bool prefsCheckForUpdates, string savedLanguage, string runningVersion);
 
         /// <summary>
-        /// After an app update, fetch the pack for the version now running, without a bar, a
-        /// toast or a splash step. Does nothing for English, nothing when the folder is already
-        /// there, and nothing when update checking is off. Answers the same word
+        /// After an app update, fetch the pack for the version now running, without a toast or a
+        /// splash step. Does nothing for English, nothing when the folder is already there, and
+        /// nothing when update checking is off. Answers the same word
         /// <see cref="QuietFetchDecision"/> does.
+        /// <para>
+        /// Quiet means UNASKED FOR, not unreported: the progress handler is passed straight through
+        /// to <see cref="DownloadAsync"/>, so the window can draw the row as the one coming down and
+        /// hold its Update button while the write is in flight. It used to pass none, and the row
+        /// went on offering a download of a pack that was being replaced as it drew.
+        /// </para>
         /// </summary>
         Task<string> EnsureCurrentQuietlyAsync(
             bool prefsCheckForUpdates,
             string savedLanguage,
             string runningVersion,
+            IProgress<LanguagePackProgress> progress = null,
             CancellationToken ct = default);
 
         /// <summary>
@@ -588,6 +623,11 @@ namespace ValheimBakaLoader.Tools
             get { lock (Gate) return Current != null || Sweeping; }
         }
 
+        public string BusyCode
+        {
+            get { lock (Gate) return Current?.Code; }
+        }
+
         private string StagingRoot => Path.Combine(RootFolder, StagingFolderName);
 
         private string FontsRoot => Path.Combine(RootFolder, FontsFolderName);
@@ -713,8 +753,18 @@ namespace ValheimBakaLoader.Tools
                     string.Equals(LanguageCodes.Normalize(l?.Code), known.Code, StringComparison.Ordinal));
                 var install = InstalledAny(known.Code);
 
+                // The version the pack behind this row would be installed as, read the same way
+                // DownloadAsync reads it so the menu cannot promise a version the fetch would not
+                // produce. Not always this app's version: with no packs cut for the running one
+                // the manifest comes off the newest release at or below it.
+                var packVersion = entry == null
+                    ? null
+                    : FirstNotBlank(entry.AppVersion, manifest?.AppVersion);
+
                 rows.Add(new LanguagePackEntry
                 {
+                    PackVersion = packVersion,
+                    UpdateAvailable = NewerPackIsPublished(known, install, entry, packVersion),
                     Code = known.Code,
                     NativeName = known.NativeName,
                     EnglishName = known.EnglishName,
@@ -742,6 +792,36 @@ namespace ValheimBakaLoader.Tools
             };
         }
 
+        /// <summary>
+        /// Whether the manifest names a pack this host has not got yet, for a language they are
+        /// already holding an older one of.
+        /// <para>
+        /// Two ways that can be true, and both have to be: a NEWER version than the one on disk,
+        /// and the SAME version cut again with a different catalogue revision, which is what a
+        /// re-cut release day produces and what <see cref="TryUnchangedCatalog"/> already knows
+        /// how to place without fetching a byte. Versions are compared with the comparator rather
+        /// than as text, and a version either side cannot read is not an update: a manifest that
+        /// spells a version "latest" must not make a row offer a download that cannot be made.
+        /// </para>
+        /// </summary>
+        private static bool NewerPackIsPublished(
+            LanguageCode known,
+            LanguagePackInstall install,
+            LanguageManifestEntry entry,
+            string packVersion)
+        {
+            if (known == null || known.BuiltIn) return false;
+            if (install == null || entry == null) return false;
+            if (string.IsNullOrWhiteSpace(packVersion) || string.IsNullOrWhiteSpace(install.Version)) return false;
+            if (!Readable(packVersion) || !Readable(install.Version)) return false;
+
+            var newer = AssemblyHelper.CompareVersion(packVersion, install.Version);
+            if (newer > 0) return true;
+
+            return newer == 0 && entry.Catalog > 0 && install.Catalog > 0
+                && entry.Catalog != install.Catalog;
+        }
+
         // ------------------------------------------------------------------ the quiet fetch
 
         public string QuietFetchDecision(bool prefsCheckForUpdates, string savedLanguage, string runningVersion)
@@ -765,6 +845,7 @@ namespace ValheimBakaLoader.Tools
             bool prefsCheckForUpdates,
             string savedLanguage,
             string runningVersion,
+            IProgress<LanguagePackProgress> progress = null,
             CancellationToken ct = default)
         {
             var decision = QuietFetchDecision(prefsCheckForUpdates, savedLanguage, runningVersion);
@@ -772,9 +853,12 @@ namespace ValheimBakaLoader.Tools
 
             var code = LanguageCodes.Normalize(savedLanguage);
 
-            // No progress, so no events: the host sees their language with the keys the older
-            // pack has, and the new keys quietly stop being English if this works.
-            var result = await DownloadAsync(code, progress: null, ct, userInitiated: false);
+            // The caller's own progress handler, whatever it is, rather than none. Quiet is about
+            // who ASKED for the fetch and not about whether the window may know it is happening:
+            // this passed null until 1.2.7, so a row whose pack was being replaced went on
+            // offering an Update and the press came back as a busy refusal the host could not
+            // have seen coming. A caller that really wants nothing said still passes null.
+            var result = await DownloadAsync(code, progress, ct, userInitiated: false);
             if (!result.Ok)
             {
                 Logger.Information(

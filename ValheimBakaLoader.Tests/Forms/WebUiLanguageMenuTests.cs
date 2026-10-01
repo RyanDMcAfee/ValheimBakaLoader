@@ -358,7 +358,7 @@ namespace ValheimBakaLoader.Tests.Forms
             // The cancelled toast is NOT here. It belongs to the ending, one level up.
             Assert.DoesNotContain("lang.toast.cancelled", cancel);
 
-            var download = Body("async function langDownload(code){");
+            var download = Body("async function langDownload(code,andSwitch){");
             Assert.Contains("if(r.cancelled){", download);
             Assert.Contains("T(\"lang.toast.cancelled\")", download);
             Assert.Equal("Download cancelled. Nothing changed.", Lore("lang.toast.cancelled"));
@@ -372,7 +372,7 @@ namespace ValheimBakaLoader.Tests.Forms
         public void A_failed_download_leaves_the_reason_on_the_row_and_a_try_again_beside_it()
         {
             var row = Body("function langRowHtml(l){");
-            var download = Body("async function langDownload(code){");
+            var download = Body("async function langDownload(code,andSwitch){");
 
             Assert.Contains("LANG.failed&&LANG.failed.code===l.code", row);
             Assert.Contains("langReasonText(failed.reasonId,failed.reasonParams)||T(\"common.error.unknown\")", row);
@@ -387,7 +387,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // browser probe measured the reason at 99px and six lines deep at three words a
             // line; without it, 236px and two. A sentence a host has to work at is not a
             // sentence that told them anything.
-            Assert.Contains("const machine=(l.status===\"machine\"&&!l.builtIn&&!failed)", row);
+            // And it stands down beside an Update button for the same reason, which is why the
+            // reading is now "no failure and no update" rather than "no failure".
+            Assert.Contains("const machine=(l.status===\"machine\"&&!l.builtIn&&!failed&&!update)", row);
 
             // And the Try again runs the same download rather than a second road into it.
             Assert.Contains("langDownload(retry.getAttribute(\"data-lang-retry\"))", AppJs());
@@ -485,14 +487,18 @@ namespace ValheimBakaLoader.Tests.Forms
 
             Assert.DoesNotContain("lang.list", Body("async function langBootCatalog(){"));
 
-            // Every caller of langRefresh, named. Three, and each is a host acting.
+            // Every caller of langRefresh, named. Four, and each is a host acting: three presses,
+            // and a pack the app fetched on its own landing UNDER AN OPEN GLOBE, which is a menu
+            // the host opened and is reading. A window with the globe shut redraws what it has.
             var callers = Regex.Matches(js, @"[^\w$.]langRefresh\(\)")
                 .Cast<Match>().Select(m => Line(js, m.Index)).ToList();
-            Assert.Equal(4, callers.Count);   // the declaration line plus the three calls
+            Assert.Equal(5, callers.Count);   // the declaration line plus the four calls
             Assert.Contains(callers, l => l.Contains("async function langRefresh()", StringComparison.Ordinal));
             Assert.Contains(callers, l => l.Trim() == "langRefresh();");                     // the globe opening
             Assert.Contains(callers, l => l.Contains("try{langRefresh();}catch(_){}", StringComparison.Ordinal)); // the App tab opening
             Assert.Contains(callers, l => l.Contains("await langRefresh();", StringComparison.Ordinal)); // after a pack lands
+            Assert.Contains(callers,
+                l => l.Contains("if(d.phase===\"done\"&&langMenuIsOpen()) langRefresh();", StringComparison.Ordinal));
 
             // The globe's own call sits in langMenuOpen and nowhere earlier.
             Assert.Contains("langRefresh();", Body("function langMenuOpen(){"));

@@ -308,7 +308,11 @@ namespace ValheimBakaLoader.Tests.Forms
             // 216 with the six 1.2.6 added: four for the armed one-shot cleanse (armed, put
             // down, it landed, it was turned away) and two for Text size (chosen, and the
             // browser preview where only the map's own labels can follow it).
-            Assert.Equal(216, marked.Count);
+            // 217 with the one 1.2.7 added: a language pack updated in place. A host holding a
+            // pack cut for an older release can fetch the newer one from the globe now, and a
+            // pack that lands for a language the window is NOT reading cannot say so by
+            // switching to it, so it says so in a toast.
+            Assert.Equal(217, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

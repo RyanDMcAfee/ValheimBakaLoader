@@ -389,9 +389,15 @@ function pressHarness() {
   let pending = null;
   context.onCleanseArmedClick = () => { pending = real(); return pending; };
 
-  // The generic wiring calls this, so it is lifted rather than stubbed: what it writes is the
-  // aria half of a switch, and a stub here would be a copy of the thing under test.
+  // The generic wiring calls both of these, so they are lifted rather than stubbed: what they
+  // write is the aria half of a switch and its name, and a stub here would be a copy of the
+  // thing under test. The fake switch below carries no row and no label, so nameSwitch answers
+  // with nothing and writes nothing, which is the shape this rule wants: it is about the press.
   vm.runInContext(fn("function markSwitch(t){"), context, { filename: "app.js#aria" });
+  const seq = SOURCE.indexOf("let SWITCH_LABEL_SEQ=");
+  assert.ok(seq > 0, "app.js no longer holds the switch label counter");
+  vm.runInContext(SOURCE.slice(seq, SOURCE.indexOf("\n", seq)), context, { filename: "app.js#seq" });
+  vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
 
   for (const line of lines) vm.runInContext(line.code, context, { filename: "app.js#wire" });
 

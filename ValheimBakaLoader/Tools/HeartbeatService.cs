@@ -21,13 +21,22 @@ namespace ValheimBakaLoader.Tools
 
     /// <summary>
     /// Sends a tiny anonymous usage heartbeat every few minutes so aggregate install and
-    /// live-server counts can be tracked. The payload is exactly three fields:
-    /// { deviceHash, appVersion, serverRunning } - deviceHash is a one-way MD5 of
-    /// MAC address + machine name (the same anonymous install ID used for crash reports),
-    /// so no IPs, server names, world names, passwords, or any personal data ever leave
-    /// the machine. Gated on the "Share anonymous usage stats" preference, which is on by
-    /// default and can be switched off in the Hearth's Upkeep card. Delivery is
-    /// best-effort: failures are logged at debug level and never surface to the user.
+    /// live-server counts can be tracked.
+    /// <para>
+    /// The payload is three fields, and a fourth whenever the command tally is not empty:
+    /// { deviceHash, appVersion, serverRunning } plus { commands }. deviceHash is a one-way MD5
+    /// of MAC address + machine name (the same anonymous install ID used for crash reports).
+    /// commands is a count per command per server profile, each profile keyed under a one-way
+    /// hash over this install's own random salt and the profile name, counts only, capped at 64
+    /// keys a profile with console verbs cut to 24 characters: see <see cref="CommandTally"/>.
+    /// So no IPs, server names, world names, passwords, or any personal data ever leave the
+    /// machine.
+    /// </para>
+    /// <para>
+    /// Gated on the "Share anonymous usage stats" preference, which is on by default and lives on
+    /// the Settings hall's App tab. Delivery is best-effort: failures are logged at debug level
+    /// and never surface to the user.
+    /// </para>
     /// </summary>
     public class HeartbeatService : IHeartbeatService
     {
