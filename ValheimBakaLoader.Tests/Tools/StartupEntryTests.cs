@@ -649,6 +649,62 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         /// <summary>
+        /// And the shape the 2026-10-04 quarantine left behind: NO entry at all, with the switch
+        /// still reading on. Defender took ValheimBakaLoader.exe, Windows dropped the Run value
+        /// that named a file which was no longer there, and userprefs.json was never touched, so
+        /// the switch says yes and the registry knows nothing about it. Starting BakaLoader once
+        /// is the whole of the remedy: the launch writes the entry again, naming wherever the exe
+        /// is now.
+        /// <para>
+        /// The wiki's Troubleshooting page told hosts to turn the switch off and on again
+        /// instead, "because the switch only writes the entry when it has actually moved". That
+        /// is true of the SAVE road and has nothing to do with a launch, which looks at this
+        /// every single run whatever the switch did last, so the page was sending people round a
+        /// loop they did not need. This test is what the page now rests on, the log line
+        /// included.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void A_launch_writes_the_entry_a_quarantine_took_away()
+        {
+            var registry = new FakeRunKeyRegistry();     // nothing in either hive
+            var logger = new Remembering();
+
+            // The copy is back on disk after a restore, and nothing names it.
+            var outcome = new StartupEntry(registry, StillInstalled)
+                .RepointIfMoved(true, Name, ExePath, logger);
+
+            Assert.True(outcome.Changed);
+            Assert.Equal(ExePath, registry.Value(RunKeyHive.CurrentUser, Name));
+            Assert.False(registry.Has(RunKeyHive.LocalMachine, Name));
+            Assert.Null(outcome.NoticeId);
+
+            // The line the page quotes, word for word.
+            Assert.Single(logger.Lines);
+            Assert.Equal(
+                "The startup entry for this account was missing, so BakaLoader wrote it again",
+                logger.Lines[0]);
+
+            // The launch after it finds the entry naming this copy and says nothing more.
+            var settled = new StartupEntry(registry, StillInstalled)
+                .RepointIfMoved(true, Name, ExePath, logger);
+
+            Assert.False(settled.Changed);
+            Assert.Single(logger.Lines);
+
+            // With the switch OFF it stays gone, and the registry is not even looked at. Off is
+            // the host saying no, and a quarantine is not a reason to write it back for them.
+            var declined = new FakeRunKeyRegistry();
+            var quiet = new StartupEntry(declined, StillInstalled)
+                .RepointIfMoved(false, Name, ExePath, logger);
+
+            Assert.False(quiet.Changed);
+            Assert.False(declined.Has(RunKeyHive.CurrentUser, Name));
+            Assert.Empty(declined.Calls);
+            Assert.Single(logger.Lines);
+        }
+
+        /// <summary>
         /// A launch with the switch OFF looks at nothing and writes nothing. Turning it off is
         /// the host saying no, and the next launch must not undo that.
         /// <para>

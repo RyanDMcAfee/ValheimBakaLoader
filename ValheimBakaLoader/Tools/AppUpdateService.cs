@@ -141,6 +141,33 @@ namespace ValheimBakaLoader.Tools
         };
 
         /// <summary>
+        /// The version this install reads as its own, which is the DLL's.
+        /// <para>
+        /// None of that moved in 1.2.8. <see cref="AssemblyHelper.GetApplicationVersion"/> reads
+        /// the informational version off the assembly it is compiled into, which is
+        /// ValheimBakaLoader.dll, and this comparison has always been handed that rather than
+        /// anything out of the exe. What 1.2.8 adds is a seam that PINS it there, because the exe
+        /// is now a frozen launcher: the same bytes in every release, with a version resource
+        /// that reads 1.2.6 forever. A reading taken off the exe would put every host two
+        /// releases behind and never done being updated, so the installed side is named here
+        /// rather than implied, the log line says which version it compared, and
+        /// FrozenAppHostTests refuses any reading of a version off the launcher anywhere in the
+        /// code that ships.
+        /// </para>
+        /// <para>
+        /// Internal, and null in every shipped path. The suite sets it to put a host on a
+        /// version this build is not, which is the only way to prove that a 1.2.7 install reads
+        /// itself as current against a 1.2.6 stable release and is offered 1.2.8 when 1.2.8 is
+        /// published.
+        /// </para>
+        /// </summary>
+        internal string InstalledVersion { get; set; }
+
+        private string Installed() => string.IsNullOrWhiteSpace(InstalledVersion)
+            ? AssemblyHelper.GetApplicationVersion()
+            : InstalledVersion.Trim();
+
+        /// <summary>
         /// The longest staging one update can take by its own clocks. The header wait and the
         /// body deadline are separate: the body's clock starts once the headers are in, so the
         /// two add up. The minute on top covers the release call before the download and reading
@@ -230,10 +257,13 @@ namespace ValheimBakaLoader.Tools
                     return StageOutcome.NoRelease;
                 }
 
-                // CompareVersion returns 1 when the release is newer than the running app.
-                if (AssemblyHelper.CompareVersion(release.TagName) != 1)
+                // CompareVersion returns 1 when the release is newer than the running app. The
+                // installed side is the DLL's version, never the exe's: see InstalledVersion.
+                if (AssemblyHelper.CompareVersion(release.TagName, Installed()) != 1)
                 {
-                    Logger.Information("Self-update: already current (installed vs release {0}).", release.TagName);
+                    Logger.Information(
+                        "Self-update: already current (installed {0} vs release {1}).",
+                        Installed(), release.TagName);
                     return StageOutcome.AlreadyCurrent;
                 }
 
@@ -599,7 +629,30 @@ try {{
     Stop-Update ('The update could not be written: robocopy answered ' + $copyCode + '. The files that were there before were put back, and BakaLoader is still on the version it was. Trying again later is safe.')
   }}
 
-  Copy-Item -Path $exeFile.FullName -Destination $exePath -Force
+  # 4c. The launcher, and only when it is genuinely a different file.
+  #     From 1.2.8 the exe is frozen: the same bytes in every release, because it is the SDK's
+  #     generic apphost and the only thing in it that ever changed was the version resource. On
+  #     2026-10-04 that was enough to end an update badly: Defender's local model looked at the
+  #     brand new 1.2.7 hash on a host's PC, called it a trojan, quarantined the file and took
+  #     the app and the live Valheim server down with it. So when the download carries the same
+  #     launcher that is already installed, the file is not written at all. No new bytes, no new
+  #     write time, nothing for a local model to form an opinion about. A future deliberate
+  #     launcher change hashes differently and is copied exactly as before, and a hash that
+  #     cannot be read falls back to copying rather than to skipping.
+  $sameHost = $false
+  try {{
+    if (Test-Path $exePath) {{
+      $here = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
+      $there = (Get-FileHash -LiteralPath $exeFile.FullName -Algorithm SHA256).Hash
+      $sameHost = $here -eq $there
+    }}
+  }} catch {{ $sameHost = $false }}
+
+  if ($sameHost) {{
+    Write-Note '{RoutineNoteMark}The update is in place. The launcher was already these exact bytes, so it was left alone: BakaLoader ships the same launcher in every release and reads its own version from the library beside it.'
+  }} else {{
+    Copy-Item -Path $exeFile.FullName -Destination $exePath -Force
+  }}
 }} catch {{
   # Anything that threw: a zip that would not open, a folder that could not be made, the exe
   # itself that could not be replaced. The last of those happens after the rest of the install
@@ -617,6 +670,27 @@ try {{ Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }} cat
         }
 
         private static string Escape(string path) => path?.Replace("'", "''");
+
+        /// <summary>
+        /// What a note starts with when it is an account of an update that WORKED rather than a
+        /// problem to be put in front of the host.
+        /// <para>
+        /// Every note the watchdog left used to be a failure, so the launch logged all of them
+        /// as warnings. From 1.2.8 one note is written on the way through a good update, the one
+        /// that says the launcher was already the right bytes and was left alone, and that is an
+        /// ordinary line about a release going the way it was designed to. The mark is stripped
+        /// before the line is logged, so nothing in the log reads like a code.
+        /// </para>
+        /// </summary>
+        internal const string RoutineNoteMark = "ok: ";
+
+        /// <summary>Whether this note is an account of a good update rather than a problem.</summary>
+        public static bool IsRoutineNote(string note) =>
+            note != null && note.StartsWith(RoutineNoteMark, StringComparison.Ordinal);
+
+        /// <summary>The note as a host should read it, with the mark taken off the front.</summary>
+        public static string NoteText(string note) =>
+            IsRoutineNote(note) ? note.Substring(RoutineNoteMark.Length).Trim() : note;
 
         /// <summary>
         /// Where the watchdog leaves a note about an update it could not write. It sits

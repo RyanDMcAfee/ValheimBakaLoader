@@ -1,0 +1,16 @@
+# One rule, for one file, and deliberately nothing else.
+#
+# ValheimBakaLoader/Resources/host/ValheimBakaLoader.exe is the frozen launcher, and the whole
+# point of it is that its bytes never change: every release ships that exact file so a
+# self-update writes no new exe and a virus scanner has no new hash to form an opinion about.
+# A checkout with Git's Windows default, core.autocrlf true, rewrites line endings in anything
+# Git thinks is text. Git's own heuristic calls this file binary today, because it is full of
+# zero bytes, so nothing is broken; but a file whose entire value is its hash should not be
+# resting on a heuristic. This says it outright.
+#
+# There is deliberately no repository wide rule here, no pattern matching every path. This
+# repository has been checked out and committed under autocrlf for its whole life and its
+# files carry a mix of endings; a rule over all of them would renormalise every file in one
+# commit, which is a large diff saying nothing and a gate reading the wrong line endings.
+# Keep this file narrow: one line per file that genuinely needs one.
+ValheimBakaLoader/Resources/host/ValheimBakaLoader.exe binary

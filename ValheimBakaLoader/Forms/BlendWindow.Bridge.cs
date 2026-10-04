@@ -898,12 +898,32 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
-        /// <summary>Product version of a process's main module ("0.9.26"), or null when unreadable.</summary>
+        /// <summary>
+        /// The version of another BakaLoader on this machine ("1.2.8"), or null when it cannot
+        /// be read.
+        /// <para>
+        /// Read off the DLL beside that process's exe, never off the exe. From 1.2.8 the exe is
+        /// a frozen launcher: the same bytes in every release, with a version resource that says
+        /// 1.2.6 forever, because a brand new hash on every release was what Defender's local
+        /// model formed its opinion about. So the exe would have told every host that the window
+        /// standing in their way was version 1.2.6 whatever it really was, which is a false
+        /// statement about their own machine in the one dialog that exists to explain the
+        /// standoff. When the DLL cannot be read the answer is null and the dialog names the
+        /// process without a version, which it already knew how to do.
+        /// </para>
+        /// </summary>
         private static string TryGetProcessVersion(Process process)
         {
             try
             {
-                var version = process.MainModule?.FileVersionInfo?.ProductVersion;
+                var exe = process?.MainModule?.FileName;
+                var folder = string.IsNullOrWhiteSpace(exe) ? null : Path.GetDirectoryName(exe);
+                if (string.IsNullOrWhiteSpace(folder)) return null;
+
+                var library = Path.Combine(folder, "ValheimBakaLoader.dll");
+                if (!File.Exists(library)) return null;
+
+                var version = FileVersionInfo.GetVersionInfo(library)?.ProductVersion;
                 if (string.IsNullOrWhiteSpace(version)) return null;
 
                 // Trim SourceRevisionId build metadata: "0.9.26+build2026-..." -> "0.9.26"

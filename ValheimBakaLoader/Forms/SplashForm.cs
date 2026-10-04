@@ -296,13 +296,24 @@ namespace ValheimBakaLoader.Forms
         /// Reads and clears the note the update watchdog leaves when it could not write the
         /// new files. Never throws: a report that cannot be read is not a reason to fail a
         /// launch.
+        /// <para>
+        /// From 1.2.8 one note is left on the way through an update that WORKED: the launcher
+        /// is frozen, so the watchdog finds the same bytes already installed and does not write
+        /// the exe at all, and it says so. That is an ordinary line rather than a warning, and
+        /// a host reading the log should not have to work out which of the two they are looking
+        /// at.
+        /// </para>
         /// </summary>
         private void ReportLastUpdateAttempt()
         {
             try
             {
                 var note = Tools.AppUpdateService.ReadAndClearUpdateReport();
-                if (!string.IsNullOrWhiteSpace(note)) Logger.Warning("{note}", note);
+                if (string.IsNullOrWhiteSpace(note)) return;
+
+                var said = Tools.AppUpdateService.NoteText(note);
+                if (Tools.AppUpdateService.IsRoutineNote(note)) Logger.Information("{note}", said);
+                else Logger.Warning("{note}", said);
             }
             catch (Exception e)
             {

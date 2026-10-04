@@ -75,6 +75,77 @@ namespace ValheimBakaLoader.Tests.Tools
             }
         }
 
+        /// <summary>
+        /// Every folder of C# that ends up on a host's disk. Four rather than one, and the
+        /// three after the first are the ones a sweep forgets: ValheimBakaLoader.Tools is a
+        /// second assembly beside the app, SolutionResources\ClientSecrets.cs is compiled
+        /// straight into the app by the csproj, and BakaLoaderItemIndexer is one of the bundled
+        /// plugins, built into Resources\ItemIndexer and installed into a host's server.
+        /// </summary>
+        public static readonly string[] ShippedProjects =
+        {
+            "ValheimBakaLoader", "ValheimBakaLoader.Tools", "SolutionResources",
+            "BakaLoaderItemIndexer",
+        };
+
+        private static Dictionary<string, string> CachedShipped;
+
+        /// <summary>
+        /// Every .cs file in every folder that ships, keyed by its path from the repository
+        /// root with forward slashes, build folders left out.
+        /// <para>
+        /// <see cref="Files"/> reads the app project alone and keys by bare file name, which is
+        /// what the gates asking "does this one file say X" want. A gate whose answer is
+        /// "nothing ANYWHERE does X" needs two other things: every folder in
+        /// <see cref="ShippedProjects"/>, because a rule that stops at the app's own folder is a
+        /// rule with a blind half; and a key that names the path, because a finding somebody has
+        /// to go and look at is worth a path rather than a file name two folders might share.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyDictionary<string, string> ShippedFiles()
+        {
+            lock (Lock)
+            {
+                if (CachedShipped != null) return CachedShipped;
+
+                var root = RepoRoot();
+                var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var project in ShippedProjects)
+                {
+                    var folder = Path.Combine(root, project);
+                    if (!Directory.Exists(folder))
+                        throw new DirectoryNotFoundException(
+                            "a folder the gates sweep is not on disk: " + folder
+                            + ". A sweep that quietly reads some of the folders rather than all "
+                            + "of them is the false green those gates exist to avoid.");
+
+                    WalkByPath(folder, root, map);
+                }
+
+                CachedShipped = map;
+                return CachedShipped;
+            }
+        }
+
+        private static void WalkByPath(
+            string directory, string root, Dictionary<string, string> map)
+        {
+            foreach (var file in Directory.EnumerateFiles(directory, "*.cs"))
+            {
+                var key = Path.GetRelativePath(root, file).Replace('\\', '/');
+                map[key] = Lf(File.ReadAllText(file));
+            }
+
+            foreach (var child in Directory.EnumerateDirectories(directory))
+            {
+                var name = Path.GetFileName(child);
+                if (name.Equals("bin", StringComparison.OrdinalIgnoreCase)) continue;
+                if (name.Equals("obj", StringComparison.OrdinalIgnoreCase)) continue;
+                WalkByPath(child, root, map);
+            }
+        }
+
         private static void Walk(string directory, Dictionary<string, string> map)
         {
             foreach (var file in Directory.EnumerateFiles(directory, "*.cs"))

@@ -10,7 +10,7 @@
 		<Description>A simple user interface for running Valheim Dedicated Server on Windows.</Description>
 		<Copyright>2026</Copyright>
 		<PackageLicenseFile>LICENSE</PackageLicenseFile>
-		<Version>1.2.7</Version>
+		<Version>1.2.8</Version>
     <!-- Build date adapted from: https://rmauro.dev/add-build-time-to-your-csharp-assembly/ -->
     <SourceRevisionId>build$([System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"))</SourceRevisionId>
 	</PropertyGroup>
@@ -22,6 +22,78 @@
 
 	<Target Name="PostPublish" AfterTargets="Publish" Condition="'$(Configuration)'=='Release'">
 		<Exec Command="post-publish.bat" />
+	</Target>
+
+	<!--
+	  THE FROZEN LAUNCHER. The exe is not the program: the SDK generates it for every build,
+	  353,280 bytes of generic startup code carrying the name of the assembly to load, and
+	  everything BakaLoader does lives in the DLL beside it. Because the version resource is
+	  inside those bytes, every release used to ship an exe nobody had ever seen before: 1.2.6
+	  and 1.2.7 differ in fourteen bytes, all of them the version strings. On 2026-10-04
+	  Defender's local model called the fresh 1.2.7 hash Trojan:Win32/Bearfoos.A!ml on a host's
+	  PC and quarantined it, which took the app and the live server down with it.
+
+	  So from 1.2.8 the launcher is a committed artefact, Resources\host\ValheimBakaLoader.exe
+	  (the 1.2.6 bytes, which have run everywhere since 2026-09-30 undetected), copied over
+	  whatever the SDK just generated. Every release ships the same exe, and the self-update
+	  compares hashes and does not write the file at all when they match, so there is no new
+	  file for a local model to judge. The app's version is the DLL's, which is where the
+	  window, the log and the update check all read it from already; 1.2.8 pins it there rather
+	  than moving it.
+
+	  The frozen host is the SDK's generic apphost with three things of its own in it: the
+	  assembly name, the target framework it was generated for, and the application icon, which
+	  the SDK writes into the apphost's resources rather than into the DLL. All three are checked
+	  here rather than assumed. The first two are an app that does not start; the third is
+	  quieter and worse, because a new ApplicationIcon.ico would build, pass and ship while every
+	  host went on seeing the old picture, the frozen bytes having been generated before it. Any
+	  of the three moving must stop the build rather than ship.
+
+	  The copy happens TWICE, and the first one is the one that matters. The SDK writes the
+	  apphost it generates into the intermediate folder (obj\...\apphost.exe) and every
+	  consumer takes its copy from there: the output folder, a publish, and any project that
+	  references this one. Freezing only the output folder left the test project's own copy
+	  unfrozen, which is how this was caught, and a release cut with publish rather than build
+	  would have shipped the generated exe. So the intermediate copy is replaced the moment it
+	  is made, and the output folder is done again after Build because an incremental build can
+	  skip the step that copies it there.
+	-->
+	<PropertyGroup>
+		<FrozenAppHost>$(MSBuildProjectDirectory)\Resources\host\ValheimBakaLoader.exe</FrozenAppHost>
+		<FrozenAppHostIcon>$(MSBuildProjectDirectory)\$(ApplicationIcon)</FrozenAppHostIcon>
+		<!-- The sha256 of the icon the frozen launcher was generated with. Moving the icon means
+		     generating and committing a new apphost, so this is pinned rather than read. -->
+		<FrozenAppHostIconSha256>193a8d1a11345b22ad213954ae5dc860c6bf381c3a7df4cbe3f21c1191ec2dac</FrozenAppHostIconSha256>
+	</PropertyGroup>
+
+	<Target Name="CheckFrozenAppHost">
+		<Error Condition="!Exists('$(FrozenAppHost)')"
+		       Text="The frozen launcher is missing: $(FrozenAppHost). See Resources\host\README.md; every release has to ship those exact bytes." />
+		<Error Condition="!Exists('$(FrozenAppHostIcon)')"
+		       Text="The application icon is missing: $(FrozenAppHostIcon). It is baked into the frozen launcher's bytes, so the build cannot tell whether what ships still matches it. See Resources\host\README.md." />
+		<GetFileHash Files="$(FrozenAppHostIcon)" Algorithm="SHA256" HashEncoding="hex"
+		             Condition="Exists('$(FrozenAppHostIcon)')">
+			<Output TaskParameter="Hash" PropertyName="FrozenAppHostIconNow" />
+		</GetFileHash>
+		<Error Condition="Exists('$(FrozenAppHostIcon)') and '$(FrozenAppHostIconNow)' != '$(FrozenAppHostIconSha256)'"
+		       Text="The application icon has changed: $(ApplicationIcon) is now sha256 $(FrozenAppHostIconNow), and the frozen launcher in Resources\host was generated with $(FrozenAppHostIconSha256). The icon lives INSIDE the launcher's bytes, not in the DLL, so freezing the launcher would keep shipping the old picture while every gate went green. The frozen host has to be rebuilt and re-frozen deliberately: generate a new apphost from the SDK, replace Resources\host\ValheimBakaLoader.exe with it, update FrozenAppHostTests.FrozenSha256 and FrozenAppHostIconSha256 here, and expect the first release carrying it to be a new hash in the world again. See Resources\host\README.md." />
+		<Error Condition="'$(AssemblyName)' != 'ValheimBakaLoader'"
+		       Text="The assembly name is now '$(AssemblyName)', and the frozen launcher in Resources\host has 'ValheimBakaLoader' baked into it, so it would look for a DLL that is not there. Generate a new apphost, replace that file, and update FrozenAppHostTests. See Resources\host\README.md." />
+		<!-- The empty case is the outer cross-targeting build, which names no framework and
+		     builds nothing. MSBuild runs a dependency even when the target that needs it is
+		     skipped, so this has to let that one through or every build stops. -->
+		<Error Condition="'$(TargetFramework)' != '' and '$(TargetFramework)' != 'net6.0-windows'"
+		       Text="The target framework is now '$(TargetFramework)', and the frozen launcher in Resources\host was generated for net6.0-windows. Generate a new apphost, replace that file, and update FrozenAppHostTests. See Resources\host\README.md." />
+	</Target>
+
+	<Target Name="FreezeAppHostIntermediate" AfterTargets="_CreateAppHost" DependsOnTargets="CheckFrozenAppHost"
+	        Condition="'$(AppHostIntermediatePath)' != ''">
+		<Copy SourceFiles="$(FrozenAppHost)" DestinationFiles="$(AppHostIntermediatePath)" />
+	</Target>
+
+	<Target Name="FreezeAppHost" AfterTargets="Build" DependsOnTargets="CheckFrozenAppHost"
+	        Condition="'$(TargetFramework)' != ''">
+		<Copy SourceFiles="$(FrozenAppHost)" DestinationFiles="$(OutDir)ValheimBakaLoader.exe" />
 	</Target>
 
 	<ItemGroup>
