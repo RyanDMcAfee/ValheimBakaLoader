@@ -151,6 +151,15 @@ const HOST_SENTENCES=[
   /* Removing a mod while a server is up. Windows will not let a loaded plugin be deleted,
      so this is a refusal now rather than a warning the host could walk past. */
   {named:"mods.remove.serverRunning",        textId:"mods.remove.reason.server_running"},
+  /* The three refusals behind the "move the folder" button on the stray save folder row.
+     All of them are things the host can act on, so all of them are said in their own words. */
+  {named:"paths.stray.nothingToMove",        textId:"paths.stray.reason.nothing_to_move"},
+  {named:"paths.stray.moveFailed",           textId:"paths.stray.reason.move_failed"},
+  {named:"paths.stray.serverRunning",        textId:"paths.stray.reason.server_running"},
+  /* Every numbered name a new realm's own save folder could take is already a folder with
+     something in it. It used to hand back the last number it tried and make the folder over
+     whatever was in it; now it refuses, and a refusal needs words. */
+  {named:"paths.isolated.noFreeName",        textId:"paths.isolated.reason.no_free_name"},
   /* The three the language bridge throws. The endings a pack DOWNLOAD can have are not
      throws at all, so they are a table of their own below. */
   {named:"lang.busy",         textId:"lang.reason.busy"},
@@ -2178,9 +2187,11 @@ async function switchServer(name,opts){
   S.modFilter=""; if($("#modSearch")) $("#modSearch").value="";
   S.runeFilter=""; if($("#runeSearch")) $("#runeSearch").value="";
   cfgFindReset();
-  /* conditions belong to the realm that raised them */
-  ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate","restartPending"]
-    .forEach(clearCondition);
+  /* conditions belong to the realm that raised them. saveFolderStray is one of them: the
+     stored save folder is a per-realm field, so the row is cleared here and asked again
+     below for the realm the host has just switched to. */
+  ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate","restartPending",
+   "saveFolderStray"].forEach(clearCondition);
   /* and so does a dismissal: the settings the host waved away were that realm's. All
      three of these are memos about ONE realm's bar, and two of them used to stand: a
      mod-updates bar dismissed on a realm with three waiting suppressed the next realm's
@@ -2220,6 +2231,9 @@ async function switchServer(name,opts){
   const sbuf=await rpc("logs.serverBuffer");
   if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length) sbuf.slice(-200).forEach(logRaw);
   logLine("info","[BakaLoader] switched to profile '"+name+"'");
+  /* This realm's own stored save folder, asked fresh. The row was cleared above with the
+     rest of the previous realm's conditions. */
+  refreshStraySaveFolder();
   toast("ᛒ "+T("realm.switched.toast",{name:prefs.ProfileName}));
   if(currentPage==="mods") scanMods({force:false});
   if(currentPage==="runes") refreshCfgList(true);
@@ -8207,10 +8221,25 @@ function renderUpdatePill(){
    whole mod set doing nothing, and a loader file an antivirus took, are both things that
    are wrong right now. bepinexAsk sits with the notices, because nothing is wrong: it is
    a question, and it is the one row that answers itself the moment it is answered. */
+/* saveFolderStray sits BELOW every row about something happening right now, and above the
+   two that are only lists. It began the release above all of them and that was wrong, for a
+   reason worth writing down because it is a whole class.
+   Two of its three shapes are raised from facts this app cannot change: worlds in both
+   folders, and a destination that is there holding nothing, both STAND until the host does
+   folder surgery in Explorer. A standing row that outranks everything hides the rows that
+   are about this second, and both of those shapes coexist with a RUNNING server: a world
+   save that just failed, or a world copy that just failed, would have been replaced on the
+   bar by a sentence about a folder the host had already read and could not act on from here.
+   The failure is the one with minutes of play in memory behind it.
+   So the rule is rank by WHEN rather than by how bad it sounds: a live failure, a live state
+   and a press waiting on an answer all come first, and a standing fact about something an
+   older build did sits under them and over the two lists (mods with updates, a restart
+   pending). It still never disappears on its own: waving it away is remembered per FACT, so
+   the same one is not said again, and the moment the folders change it is news. */
 const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
   "bepinexNoMods","bepinexNotLoaded","bepinexMissingFiles","serverUpdate","pluginFailure",
   "bepinexNotice","appUpdate","bepinexAsk","bepinexLeftAlone","bepinexWaiting",
-  "bepinexWritten","modUpdates","restartPending"];
+  "bepinexWritten","saveFolderStray","modUpdates","restartPending"];
 const CONDITIONS=new Map();
 function setCondition(kind,cond){
   if(!cond) CONDITIONS.delete(kind); else CONDITIONS.set(kind,cond);
@@ -8311,6 +8340,151 @@ function setLaunchHold(g){LAUNCH_HOLD=g||null;renderLaunchHold();}
 function clearLaunchHold(){LAUNCH_HOLD=null;renderLaunchHold();}
 
 /* ---- the other conditions, each raised by a real signal ---- */
+
+/* A save folder a build before 1.2.9 anchored at the BakaLoader install folder.
+ *
+ * WHAT HAPPENED. The shipped default save folder is the literal string
+ * "%USERPROFILE%\AppData\LocalLow\IronGate\Valheim", and a raw %USERPROFILE% is a FOLDER
+ * NAME until something fills it in. Nothing did, so Windows anchored it at the working
+ * directory and a duplicated server's worlds went into a real folder called %USERPROFILE%
+ * inside the install. 1.2.9 fills the variable in on every read, which means the app now
+ * looks in LocalLow and the worlds are out of its sight: the server would come up on an
+ * empty world. That is the whole reason this row is loud.
+ *
+ * NOTHING IS MOVED ON ITS OWN. The row names both folders and offers one button, and a
+ * host who has already moved the folder by hand sees nothing at all. When there is anything
+ * at all at the destination it says what is in which folder and offers nothing: which worlds
+ * to keep is a decision about worlds, and a move into a folder that exists is a merge.
+ *
+ * FOUR SENTENCES, NOT TWO. "stray" is the one with a button. "both" is worlds in both
+ * places, which is a decision. "destination_empty" is the folder the app reads being there
+ * and holding no worlds, which is the one with real loss in it: a start comes up on a brand
+ * new world while the real one sits in the old folder on the same disk. That one gets no
+ * button either, because moving into a folder that exists would be a merge, and it names
+ * which of the two folders the worlds are in so the host can do it in Explorer. "many" is
+ * worlds in MORE than one old folder, which an install launched from two different working
+ * directories can have: every folder is named and nothing is moved, because moving one and
+ * leaving the other is a half repair reported as a whole one.
+ *
+ * AND A DISMISSAL IS REMEMBERED PER FACT. Three of the four shapes stand until somebody
+ * moves folders about in Explorer, and this row is asked for on the first frame, on every
+ * realm switch and after every Save Config. Clearing the bar alone meant the host read the
+ * same sentence on the next boot, the next switch and the next save, for ever, about a
+ * decision they had already made. So the host side names the FACT (the shape and every
+ * folder it is about) and says whether a row about exactly it has been waved away; a folder
+ * that moves, or worlds appearing at the other path, is a different fact and is news again.
+ * `Check again` is the other half of that: the row never promises to go away on its own, so
+ * it offers the one press that asks the disk now.
+ */
+function conditionStraySaveFolder(found,opts){
+  /* A reply for a realm the host has LEFT paints nothing. refreshStraySaveFolder is fire
+     and forget from the realm switch, so on a quick A to B to C the answer for A can come
+     back after the window is showing C, and this row is one row about ONE realm's folders
+     with that realm's move button wired under it. The same guard the launch hold and the
+     server-update row carry, for the same reason. */
+  if(found&&found.profile&&!isActiveProfile(found.profile)) return;
+  const s=found&&found.shape&&found.shape!=="none"?found:null;
+  if(!s){clearCondition("saveFolderStray");return;}
+  /* A fact this host has already read and waved away. The row is not raised again: the
+     folders are still where they were, and saying so on every boot, switch and save was a
+     bar the host had to close after every launch over a decision they had made.
+     `asked` is the one way past it, and it is the press of `Check again`: a host who asks
+     the question out loud is answered, whatever they decided about it before. */
+  if(s.seen&&!(opts&&opts.asked)){clearCondition("saveFolderStray");return;}
+  const both=s.shape==="both";
+  const destinationEmpty=s.shape==="destination_empty";
+  const many=s.shape==="many";
+  /* {strays} is every old folder this answer is about, which is the one slot "many" needs.
+     One folder renders the same either way, so the single-folder sentences keep {stray}. */
+  const list=Array.isArray(s.strays)&&s.strays.length?s.strays:[String(s.stray||"")];
+  const paths={stray:String(s.stray||""),resolved:String(s.resolved||""),
+               strays:list.map(String).join(", ")};
+  setCondition("saveFolderStray",{
+    /* Worlds in both folders is a warning: nothing is lost, there is a decision to make.
+       The other three are errors, because in all of them a start loads an empty world. */
+    sev:both?"warn":"err",
+    title:T("cond.stray_save.title"),
+    msg:both?T("cond.stray_save.both",paths)
+        :destinationEmpty?T("cond.stray_save.destination_empty",paths)
+        :many?T("cond.stray_save.many",paths)
+        :T("cond.stray_save.body",paths),
+    /* Offered only for the one shape it is a true answer to: one old folder, and nothing at
+       the destination. With a folder already there a move would be a merge, and with two old
+       folders it would move one and leave the other, which is a half repair reported as a
+       whole one. This row has no business deciding either.
+       `Check again` is on every shape, because the row never goes away on its own: the three
+       without a button end in Explorer, and this is the press that asks the disk now instead
+       of waiting for the next launch or realm switch. */
+    actionsHtml:((both||destinationEmpty||many)?"":
+      `<button class="btn btn-ember btn-sm" id="cbStrayMove">${esc(T("cond.stray_save.move"))}</button>`)
+      +`<button class="btn btn-ghost btn-sm" id="cbStrayRecheck">${esc(T("cond.stray_save.recheck"))}</button>`,
+    again:()=>conditionStraySaveFolder(s,opts),
+    /* Closing it writes the FACT down, so this exact one is not raised again. */
+    onDismiss:()=>straySaveFolderNoticeDrawn(s),
+    wire:bar=>{
+      bar.querySelector("#cbStrayMove")?.addEventListener("click",()=>moveStraySaveFolder(s,paths));
+      bar.querySelector("#cbStrayRecheck")?.addEventListener("click",()=>recheckStraySaveFolder(s));
+    },
+  });
+}
+/* The row waved away, named by the fact it was about. The answer in hand is marked too, so
+   a repaint or a language switch (which replays every condition) cannot put it straight
+   back up before the write has landed. */
+function straySaveFolderNoticeDrawn(found){
+  if(found) found.seen=true;
+  if(Native.available&&found&&found.key) Native.call("paths.strayNoticeSeen",{key:found.key});
+}
+/* `Check again`, which is the row's answer to "when does this go away": now, if the host
+   has just moved the folders about. rpc rather than the quiet call, because this one IS a
+   press and a disk that did not answer owes it a word.
+   And a press says what it found, which is the half a plain redraw cannot: an answer that
+   has not changed redraws the identical row, so without the second toast the press reads as
+   a button that does nothing. A CHANGED answer is not toasted, because the row itself is
+   now saying the new sentence and that is the louder of the two. */
+async function recheckStraySaveFolder(was){
+  if(!Native.available) return;
+  const found=await rpc("paths.strayCheck",{profile:S.profileName||null});
+  if(found===FAIL) return;
+  const shape=found&&found.shape?found.shape:"none";
+  /* Nothing left to say is itself the answer, and it is the one the host is hoping for. */
+  if(shape==="none") toast("ᛉ "+T("cond.stray_save.rechecked.clear"));
+  else if(was&&found.key&&found.key===was.key) toast("ᛉ "+T("cond.stray_save.rechecked.same"));
+  conditionStraySaveFolder(found,{asked:true});
+}
+/* The press, held OUT of the condition object on purpose: the copy gate reads every string
+   literal inside a setCondition call as a sentence painted into the window, and the Saga
+   line below is English and verbatim by decision. Out here it is an ordinary log line. */
+async function moveStraySaveFolder(found,paths){
+  /* rpc, not the quiet call: this is a press, and a refusal is said in words. */
+  const after=await rpc("paths.moveStray",{profile:found.profile||null});
+  if(after===FAIL) return;
+  toast("ᛉ "+T("cond.stray_save.moved.toast",{resolved:paths.resolved}));
+  logLine("ok","[BakaLoader] save folder moved from "+paths.stray+" to "+paths.resolved);
+  /* The reply is the state AFTER the move, so the row answers itself rather than standing
+     over a folder that is no longer there. */
+  conditionStraySaveFolder(after);
+  /* The worlds are where the app reads now, so every card built on them is asked again
+     instead of waiting for the next realm switch or save. The integrity note alone was not
+     enough: the Worlds card's own list comes off the disk through worlds.list, and the
+     Hearth card's world line comes off the prefs, and both of those were still describing
+     the folder as it was before the move. The prefs come back FIRST because every card below
+     is painted from them. */
+  const prefs=await rpc("profiles.get",
+    {name:S.profileName||(S.prefs&&S.prefs.ProfileName)||found.profile||"Default"});
+  if(prefs!==FAIL&&prefs){S.prefs=prefs;S.profileName=prefs.ProfileName;}
+  /* renderAllFromPrefs re-reads the worlds list and the integrity note and repaints the
+     Hearth card, so it is the one call rather than three. */
+  try{renderAllFromPrefs();}catch(_){}
+}
+/* Asked on the first frame and after every realm switch. Quiet: a host whose disk did not
+   answer must not get a toast about a check they never asked for. */
+async function refreshStraySaveFolder(){
+  if(!Native.available) return;
+  const found=await Native.call("paths.strayCheck",
+    {profile:S.profileName||null}).catch(()=>null);
+  if(!found) return;
+  conditionStraySaveFolder(found);
+}
 function conditionSaveFailed(ms){
   setCondition("saveFailed",{sev:"err",title:T("cond.save.title"),
     /* The write time is a whole second shape rather than a bracket that is
@@ -11849,10 +12023,29 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
      playing. Say that instead of a plain confirmation the host would read as "in force now". */
   /* And when the difficulty write was refused, that is what the host is told, instead of a
      confirmation that would cover a hall still carrying unsaved dials. */
-  if(worldGenFailed) toast("ᚦ "+T("world.difficulty.save_failed.toast"));
+  /* And the one case the plain "running" sentence is not enough for: the save folder
+     itself moved while the server is up. Everything on this side follows the saved value
+     from the next call on (the player lists, the worlds list, Open), and the game was
+     handed its folder on the command line at launch and goes on writing its world there
+     until it restarts. Two sentences, because they are two different facts and a host who
+     reads only the first would go looking for their world in the new folder. */
+  /* And BOTH of those at once, which is a save that moved a running server's worlds AND had
+     its difficulty write refused. The difficulty refusal is the one with a press waiting on
+     it, so it leads; the running server's folder is a fact the host would otherwise go
+     looking for their world over, so it is carried rather than dropped. Written as one
+     sentence each way rather than as a branch that only says the first thing it finds. */
+  const savedirMoved=!!r.SaveFolderMovedWhileRunning;
+  if(worldGenFailed)
+    toast("ᚦ "+T("world.difficulty.save_failed.toast")
+      +(savedirMoved?" "+T("world.saved.savedir.running"):""));
+  else if(savedirMoved)
+    toast("ᛉ "+T("world.saved.savedir.toast")+" "+T("world.saved.savedir.running"));
   else if(cfgServerIsUp()) toast("ᛉ "+T("world.saved.running.toast"));
   else toast("ᛉ "+T("world.saved.toast",{profile:r.ProfileName}));
   logLine("ok","[BakaLoader] profile '"+r.ProfileName+"' saved");
+  /* A save can take a realm out of the stray shape (the host typed the folder out by
+     hand) or into one, so the row is asked again rather than left standing. */
+  refreshStraySaveFolder();
 });
 function renderAllFromPrefs(){
   if(!S.prefs) return;
@@ -13954,6 +14147,11 @@ if(Native.available){
     /* first-launch guided setup: only when never completed AND the exe isn't already valid */
     const setup=await rpc("setup.status");
     if(setup!==FAIL&&setup&&!setup.setupCompleted&&!setup.exeValid) wizardOpen(setup);
+
+    /* Worlds an older build left in a folder named for an environment variable. Read on
+       the first frame, because a host whose worlds are out of the app's sight has to be
+       told BEFORE they press Start on what would look like an empty world. */
+    await refreshStraySaveFolder();
 
     /* 1s heartbeat: uptime + save countdown (ticks only while Running) */
     setInterval(()=>{

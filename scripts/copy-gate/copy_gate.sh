@@ -715,5 +715,24 @@ else
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 fi
 
+echo "== 41. a save folder an older build put in the wrong place, and one that moves while the world is up =="
+# Issue 17. The shipped default save folder is the literal string
+# "%USERPROFILE%\AppData\LocalLow\IronGate\Valheim", and a raw %USERPROFILE% is a folder NAME
+# until something fills it in: a duplicate on 1.2.8 made a real folder called %USERPROFILE%
+# inside the tester's install and put his world in it. 1.2.9 expands on every read, which
+# leaves those worlds out of the app's sight, so the fix owes the host two sentences no unit
+# test can see: the condition bar row that names BOTH folders and offers ONE button, and the
+# save toast that says BakaLoader follows the new folder while the running server does not.
+# The rules hold the row's place in the bar, that both paths reach both sentences, that the
+# button is offered for one shape only, both refusals, both roads the row is asked for on,
+# the clear on a realm switch, and that the toast branch sits ABOVE the plain running one.
+SAVEDIR_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/save_folder_row_selftest.js"
+if [ -f "$SAVEDIR_SELFTEST" ]; then
+  if out=$(node "$SAVEDIR_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the save folder row selftest is missing: $SAVEDIR_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

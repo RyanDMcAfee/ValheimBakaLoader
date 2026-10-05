@@ -65,7 +65,7 @@ namespace ValheimBakaLoader.Tools
         public static void RememberVersion(string version) => RememberVersionIn(ExpandedMarkerPath(), version);
 
         /// <summary>The marker's full path, with the environment variables in it resolved.</summary>
-        internal static string ExpandedMarkerPath() => Environment.ExpandEnvironmentVariables(MarkerFilePath);
+        internal static string ExpandedMarkerPath() => PathCheck.Resolve(MarkerFilePath);
 
         /// <summary>The version a marker file holds, or null when it is missing or unreadable.</summary>
         internal static string ReadLastVersionFrom(string path)

@@ -120,7 +120,21 @@ namespace ValheimBakaLoader.Tests.Forms
             // remaining TT() sites were keyed. 35 once the composed ones came with it, and
             // 36 with the world-copy toast that counts the worlds it copied aside.
             new object[] { "srvupd.", 36 },
-            new object[] { "cond.", 35 },
+            // 41 with the six 1.2.9 added for the save folder an older build left behind: the
+            // row's heading, its three bodies (one per shape on disk, and the third is the one
+            // with the real loss in it, a destination folder that is THERE and holds no worlds),
+            // the button, and the toast after a move. The refusals behind that button are
+            // paths.stray.reason.*, named after the RPC that raises them the way every other
+            // host refusal in HOST_SENTENCES is, and that family is reached by id through that
+            // table rather than by a T() call, which is what this rule means by run-time copy.
+            // 45 after the second read of that row. A fourth body, for worlds in MORE than one
+            // old folder, which an install launched from two different working directories can
+            // have and which used to be told about one of the two and nothing about the other.
+            // And three for Check again: the button, and the two answers a press can have, a
+            // disk with nothing left to say and a disk that has not changed. The row never goes
+            // away on its own, so it owes the host a press that asks now, and a press that
+            // redraws the identical row owes them a word for what it found.
+            new object[] { "cond.", 45 },
         };
 
         [Theory]
@@ -312,7 +326,11 @@ namespace ValheimBakaLoader.Tests.Forms
             // pack cut for an older release can fetch the newer one from the globe now, and a
             // pack that lands for a language the window is NOT reading cannot say so by
             // switching to it, so it says so in a toast.
-            Assert.Equal(217, marked.Count);
+            // 219 with the two 1.2.9 added: the save folder was moved, and a save that
+            // pointed a running server's worlds somewhere else.
+            // 221 with the two the second read of that row added: the two answers Check again
+            // can have, a disk with nothing left to say and a disk that has not changed.
+            Assert.Equal(221, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

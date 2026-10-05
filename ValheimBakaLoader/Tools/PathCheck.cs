@@ -178,14 +178,66 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
+        /// THE ONE BOUNDARY between a path as it is STORED and a path a caller may open:
+        /// <see cref="Expand"/>, and then made full, so what comes back always names one
+        /// place on this machine.
+        /// <para>
+        /// Every reader of a stored folder or file path goes through this, and the reason is
+        /// issue 17. The shipped default save folder is the literal string
+        /// <c>%USERPROFILE%\AppData\LocalLow\IronGate\Valheim</c>. A caller that passed that
+        /// straight to <c>Path.Combine</c> and <c>Directory.CreateDirectory</c> got a
+        /// RELATIVE path, because <c>%USERPROFILE%</c> is a folder name until something
+        /// expands it: Windows resolved it against the working directory and made a real
+        /// folder called <c>%USERPROFILE%</c> inside the BakaLoader install. The raw string
+        /// was then stored as a realm's save folder, so from then on every reader that
+        /// expanded it looked in LocalLow and every reader that did not looked in the install
+        /// folder, and the two halves of the app disagreed about where the worlds were.
+        /// </para>
+        /// <para>
+        /// <see cref="Path.GetFullPath(string)"/> is the half that makes the failure
+        /// impossible rather than unlikely: a path that is still relative after expansion
+        /// (an unset variable, a path a host typed as <c>saves\mine</c>) comes back anchored
+        /// here, once, where it can be read in a log line, instead of being anchored again by
+        /// every separate call that touches the disk. Trimmed, quote stripped and never a
+        /// throw, exactly like Expand, because the same text boxes feed both.
+        /// </para>
+        /// <para>
+        /// What is stored is NOT rewritten. A host who typed <c>%USERPROFILE%</c> keeps it,
+        /// and their preferences stay portable between machines; the expansion happens on
+        /// every read. The one exception is a folder BakaLoader itself creates for an
+        /// isolated realm, which is a concrete place and is stored as one.
+        /// </para>
+        /// </summary>
+        public static string Resolve(string raw)
+        {
+            var expanded = Expand(raw);
+            if (expanded.Length == 0) return "";
+            try { return Path.GetFullPath(expanded); }
+            catch { return expanded; }
+        }
+
+        /// <summary>
+        /// <see cref="Resolve"/> for a path that is allowed to be absent: nothing typed stays
+        /// null rather than becoming an empty string, so a fallback chain that asks
+        /// "did this profile name a folder of its own" still gets a straight answer.
+        /// </summary>
+        public static string ResolveOrNull(string raw)
+            => string.IsNullOrWhiteSpace(raw) ? null : Resolve(raw);
+
+        /// <summary>
         /// The path BakaLoader will really use for one server, and where it came from.
         /// A profile that names its own wins; anything else falls back to the app wide
         /// setting, which is where the first time setup writes its answers.
+        /// <para>
+        /// Resolved rather than merely expanded, because this is the path the Directories
+        /// card shows as the one in force and the host compares it with what Explorer shows
+        /// them. A relative remnant printed as if it were a place is the thing issue 17 was.
+        /// </para>
         /// </summary>
         public static (string Path, string Source) Effective(string profileValue, string appValue)
             => string.IsNullOrWhiteSpace(profileValue)
-                ? (Expand(appValue), SourceDefault)
-                : (Expand(profileValue), SourceProfile);
+                ? (Resolve(appValue), SourceDefault)
+                : (Resolve(profileValue), SourceProfile);
 
         /// <summary>
         /// The one sentence for a path, from facts somebody else gathered. Pure: hand it a
@@ -439,11 +491,18 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
-        /// The whole answer for one path: expand it, look at the disk, judge what was found.
+        /// The whole answer for one path: resolve it, look at the disk, judge what was found.
+        /// <para>
+        /// <see cref="Resolve"/> rather than <see cref="Expand"/>, so the path the line under
+        /// the box NAMES is the path the questions below it were asked about. The two used to
+        /// be able to part company: a stored <c>%USERPROFILE%\...</c> was expanded for the
+        /// existence question and the sentence printed whatever came back, while the folder
+        /// the app went on to create was anchored at the working directory instead.
+        /// </para>
         /// </summary>
         public static PathCheckAnswer Check(string kind, string raw)
         {
-            var expanded = Expand(raw);
+            var expanded = Resolve(raw);
             return Judge(kind, expanded, Look(kind, expanded));
         }
     }

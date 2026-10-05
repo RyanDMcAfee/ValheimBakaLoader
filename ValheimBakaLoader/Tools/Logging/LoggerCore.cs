@@ -269,7 +269,11 @@ namespace ValheimBakaLoader.Tools.Logging
                 // fall back to in-memory/live-stream only and keep running.
                 try
                 {
-                    var folder = Environment.ExpandEnvironmentVariables(ResolveLogFolder());
+                    // Through the one expansion boundary, like every other stored folder. A
+                    // custom logs folder is a path a host typed, so it can carry a variable
+                    // and it can be relative; resolved here it names one place, and the folder
+                    // created below is the folder the Saga hall's Open button opens.
+                    var folder = PathCheck.Resolve(ResolveLogFolder());
                     Directory.CreateDirectory(folder);
                     try { PruneOldLogs(folder); } catch { /* best-effort cleanup */ }
 

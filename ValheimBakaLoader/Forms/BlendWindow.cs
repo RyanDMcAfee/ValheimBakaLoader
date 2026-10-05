@@ -187,7 +187,7 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         internal static string GetLanguagesDir()
         {
-            var dir = Environment.ExpandEnvironmentVariables(Properties.Resources.LanguagesFolderPath);
+            var dir = PathCheck.Resolve(Properties.Resources.LanguagesFolderPath);
             Directory.CreateDirectory(dir);
             return dir;
         }

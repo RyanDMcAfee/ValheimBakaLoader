@@ -35,6 +35,14 @@ namespace ValheimBakaLoader.Tests.Forms
         /// </summary>
         private static string WorldStore() => AppSourceTree.Files()["WorldStore.cs"];
 
+        /// <summary>
+        /// And the third, for the same reason as the second. The rule about what a new
+        /// server's own save folder may be CALLED lives with the folder planner rather than
+        /// with the bridge that calls it, so the refusal when every numbered name under it is
+        /// taken is thrown from there.
+        /// </summary>
+        private static string IsolatedSaveFolder() => AppSourceTree.Files()["IsolatedSaveFolder.cs"];
+
         private static string AppJs() => AppSourceTree.Web("app.js");
 
         private static Dictionary<string, JsonElement> Catalog()
@@ -677,7 +685,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_pages_pairing_table_names_no_refusal_that_is_gone()
         {
-            var thrown = Service() + Bridge() + WorldStore();
+            var thrown = Service() + Bridge() + WorldStore() + IsolatedSaveFolder();
             var table = HostSentencesTable();
             var named = Regex.Matches(table, "named:\"([^\"]+)\"")
                 .Cast<Match>()

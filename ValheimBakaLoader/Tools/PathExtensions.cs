@@ -6,6 +6,13 @@ namespace ValheimBakaLoader.Tools
     /// <summary>
     /// Path validation helpers. Inputs may contain environment variables;
     /// failures throw with a message suitable for showing the user.
+    /// <para>
+    /// Both of these go through <see cref="PathCheck.Resolve"/>, which is the one place a
+    /// stored path turns into a place on this machine. That matters most for the message:
+    /// the sentence a host reads when a save folder is missing names the path the app really
+    /// looked at, which used to be able to be a relative remnant printed as if it were a
+    /// folder. See issue 17.
+    /// </para>
     /// </summary>
     public static class PathExtensions
     {
@@ -15,7 +22,7 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         public static FileInfo GetFileInfo(string path, string extension = null)
         {
-            var expanded = Environment.ExpandEnvironmentVariables(path);
+            var expanded = PathCheck.Resolve(path);
 
             if (string.IsNullOrWhiteSpace(expanded))
                 throw new ArgumentException("Cannot open file, path is not defined.");
@@ -32,7 +39,7 @@ namespace ValheimBakaLoader.Tools
         /// <summary>Resolves a directory path, optionally requiring it to exist.</summary>
         public static DirectoryInfo GetDirectoryInfo(string path, bool checkExists = false)
         {
-            var expanded = Environment.ExpandEnvironmentVariables(path);
+            var expanded = PathCheck.Resolve(path);
 
             if (string.IsNullOrWhiteSpace(expanded))
                 throw new ArgumentException("Cannot open directory, path is not defined.");

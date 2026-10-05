@@ -69,16 +69,22 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.8
+## What is new in 1.2.9
 
-- **The launcher never changes, so a virus scanner has nothing new to judge.** Windows Defender's local scoring model quarantined a freshly self-updated 1.2.7 `ValheimBakaLoader.exe` on a host's PC and took the app and the live server with it. Every release ships the same launcher now, and from 1.2.8 on an update does not rewrite the file at all. The update into 1.2.8 writes it one last time, because the step that swaps the files comes from the version you are leaving. [Updating BakaLoader](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-BakaLoader#the-launcher-never-changes-from-128)
-- **The exe's file properties read 1.2.6 on every release, and that is correct.** That is the launcher's own version; BakaLoader's version is the library's, which is what the window, the sidebar, the status bar and the log show. [Updating BakaLoader](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-BakaLoader#the-launcher-never-changes-from-128)
-- **If Defender quarantined your copy,** the steps to get it back are written out, and the taskbar pin is the only thing you put back by hand: `Start with Windows` comes back on the next launch. Nothing of yours was damaged. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting#windows-defender-quarantined-bakaloader-after-an-update)
-- **Not signed yet.** A code signature is the proper answer to this and is a separate piece of work. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
-- **A failed mod scan keeps your mod table on screen,** with the Status column reading `Not checked` rather than clearing the table. Unchanged since 1.2.6, and worth knowing. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
-- **Everything 1.2.7 brought** is in here too: the quiet RCON line, map names at every text size, readable map-table pin names, the newer language pack offered to older ones, and the screen reader and keyboard pass over every switch. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **A save folder written as `%USERPROFILE%` is a folder, not a name.** A raw `%USERPROFILE%\...` is a relative path until something fills the variable in, and the place that built a new server's own save folder was handed it raw: the folder landed inside the BakaLoader install, under a real directory with a percent sign in its name. One place turns a stored path into a folder now and every reader goes through it. [Settings (World)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-(World)#directories)
+- **Worlds an older build left in that folder are offered a one-button move.** The condition bar names the folder they are in and the folder BakaLoader reads now, nothing moves until you press it, and the move takes the empty `%USERPROFILE%` folder away with it. With worlds in both folders, with the new folder there and holding none, or with worlds in more than one old folder, it names them and offers no move; `Check again` asks the disk once you have sorted them out in Explorer. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting#a-userprofile-folder-appeared-inside-the-bakaloader-folder)
+- **A save folder changed while the world is up says what is really true:** BakaLoader follows the new folder from now on, and the running server keeps writing its world to the old one until it restarts. [Settings (World)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-(World)#directories)
+- **Everything 1.2.8 brought** is in here too: the frozen launcher, so an update has no new bytes for a virus scanner to judge. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
+---
+
+## What was new in 1.2.8
+
+- **The launcher never changes, so a virus scanner has nothing new to judge.** Every release ships the same `ValheimBakaLoader.exe`, and an update does not rewrite the file at all. Its file properties read 1.2.6 on every release, which is the launcher's own version; BakaLoader's version is the one the window, the sidebar, the status bar and the log show. [Updating BakaLoader](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-BakaLoader#the-launcher-never-changes-from-128)
+- **If Defender quarantined your copy,** the steps to get it back are written out, and nothing of yours was damaged. BakaLoader is not code signed yet, which is the proper answer to this and a separate piece of work. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting#windows-defender-quarantined-bakaloader-after-an-update)
+- **A failed mod scan keeps your mod table on screen,** with the Status column reading `Not checked` rather than clearing the table. Unchanged since 1.2.6, and worth knowing. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
 
 ---
 

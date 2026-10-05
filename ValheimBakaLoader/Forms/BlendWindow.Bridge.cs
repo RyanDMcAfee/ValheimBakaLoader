@@ -710,13 +710,22 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
+        /// <summary>
+        /// Whether two stored paths name one place. Both sides go through
+        /// <see cref="PathCheck.Resolve"/> first, because that is what the question means: a
+        /// profile holding <c>%USERPROFILE%\AppData\LocalLow\IronGate\Valheim</c> and one
+        /// holding the same folder written out ARE sharing a save folder, and a bare
+        /// <c>Path.GetFullPath</c> answered no. It answered no in the two places a no is
+        /// expensive: the clash check in front of a start, which let two servers load one
+        /// world, and the delete guard, which would have taken the other realm's worlds.
+        /// </summary>
         private static bool SamePath(string a, string b)
         {
             if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
                 return string.IsNullOrWhiteSpace(a) && string.IsNullOrWhiteSpace(b);
             try
             {
-                return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+                return string.Equals(PathCheck.Resolve(a), PathCheck.Resolve(b), StringComparison.OrdinalIgnoreCase);
             }
             catch
             {
@@ -774,10 +783,91 @@ namespace ValheimBakaLoader.Forms
                 return;
             }
 
+            // Every realm's stored save folder, named in the log before anything is launched.
+            // The condition bar only ever asks about the realm on screen, and an auto-start
+            // realm is launched by the splash BEFORE the page has asked anything: without this
+            // the log would carry a start that refused with "Directory not found" and nothing
+            // at all about the folder the worlds are actually in. Once per app launch, in the
+            // first window, because the sweep is about the install rather than about a window.
+            if (SplashIndex == 0) NameStraySaveFoldersInTheLog();
+
             if (StartServerAutomatically)
             {
                 AutoStartServer();
             }
+        }
+
+        /// <summary>
+        /// The sentence a start that refused over a missing save folder owes the host: where
+        /// the worlds actually are, and that there is one button for it. Written whatever the
+        /// start failed on, because the answer is only ever non-empty for a realm in one of the
+        /// shapes, and a realm in one of them could not have started anyway.
+        /// </summary>
+        private void TieAFailedStartToTheStraySaveFolder(string profileName)
+        {
+            try
+            {
+                var found = StraySaveFolderFor(profileName);
+                if (string.Equals(found.Shape, StraySaveFolder.ShapeNone, StringComparison.Ordinal)) return;
+
+                // The sentence does not promise a BUTTON, because only one of the four shapes has
+                // one: with anything at the destination a move would be a merge, and with two old
+                // folders it would move one and leave the other. It promises the row, which every
+                // shape has, and names the shape so the log says which of the four this is.
+                Logger.Warning(
+                    "'{profile}' reads its worlds from {resolved}, and a build before 1.2.9 left them "
+                    + "at {stray}. Switch to that server in BakaLoader: the bar at the top of the window "
+                    + "names every folder and says what to do about this shape ({shape}).",
+                    string.IsNullOrWhiteSpace(profileName) ? ActiveProfileName : profileName,
+                    found.Resolved, string.Join(", ", found.StrayFolders), found.Shape);
+            }
+            catch (Exception asking)
+            {
+                Logger.Debug(asking, "Could not check the save folder after a failed start");
+            }
+        }
+
+        /// <summary>
+        /// Asks about every realm's stored save folder once, for the log alone. Nothing is
+        /// moved, nothing is raised on the bar (the bar is one row about the realm on screen),
+        /// and the line per realm is the one <see cref="BuildStraySaveFolderAnswer"/> writes,
+        /// which is held to once per realm per state.
+        /// </summary>
+        /// <remarks>
+        /// ON A WORKER, and never waited on, for the reason <c>paths.strayCheck</c> runs on one:
+        /// this walks folders on disk, once per realm, and one of the two places it looks is
+        /// wherever BakaLoader was unzipped, which on the install this was reported from was an
+        /// external drive. On the window's own thread an install with six realms on a drive that
+        /// has spun down would hold the first frame while every one of them was asked. Nothing
+        /// reads the answer: the only output is log lines, so there is nothing to wait for.
+        /// </remarks>
+        private void NameStraySaveFoldersInTheLog()
+        {
+            List<string> realms;
+            try
+            {
+                realms = ServerPrefsProvider.LoadPreferences()
+                    .Where(prefs => !string.IsNullOrWhiteSpace(prefs?.ProfileName))
+                    .Select(prefs => prefs.ProfileName)
+                    .ToList();
+            }
+            catch (Exception loading)
+            {
+                Logger.Debug(loading, "Could not read the profiles to check their save folders");
+                return;
+            }
+
+            _ = Task.Run(() =>
+            {
+                foreach (var who in realms)
+                {
+                    try { BuildStraySaveFolderAnswer(who); }
+                    catch (Exception asking)
+                    {
+                        Logger.Debug(asking, "Could not check the save folder for {profile}", who);
+                    }
+                }
+            });
         }
 
         /// <summary>
@@ -961,6 +1051,11 @@ namespace ValheimBakaLoader.Forms
             catch (Exception ex)
             {
                 Logger.Error(ex, "Failed to auto-start server for profile {profile}", StartProfile);
+                // And WHY, when the why is the one issue 17 left behind: a save folder an older
+                // build put somewhere else makes the launch refuse with a path the host has
+                // never seen, and the repair is one button on a bar they have to switch realms
+                // to reach. Said here rather than left to be worked out from two log lines.
+                TieAFailedStartToTheStraySaveFolder(StartProfile);
             }
             finally
             {
@@ -1708,7 +1803,10 @@ namespace ValheimBakaLoader.Forms
 
             try
             {
-                return ServerBuildTracker.Probe(serverExePath, alwaysFingerprint: true).Fingerprint;
+                // Through the one boundary: this is handed a STORED path, so it can carry a
+                // variable, and what it does with it is read bytes off a disk.
+                return ServerBuildTracker
+                    .Probe(PathCheck.Resolve(serverExePath), alwaysFingerprint: true).Fingerprint;
             }
             catch (Exception ex)
             {
@@ -4114,7 +4212,19 @@ namespace ValheimBakaLoader.Forms
                     savedSession.Server.ArmEmptyCleanseWatch();
                 // The same shape the page was handed on the way in, so the Directories lines
                 // are answered from the save rather than left describing the state before it.
-                return Task.FromResult<object>(BuildProfilePrefsDto(prefs, UserPrefsProvider.LoadPreferences()));
+                var reply = BuildProfilePrefsDto(prefs, UserPrefsProvider.LoadPreferences());
+
+                // One answer this save has that no later read of the profile has: whether the
+                // save folder just moved out from under a server that is UP. Everything
+                // BakaLoader itself does follows the saved value from the next call on - the
+                // access lists, the worlds list, Open - but the game was handed -savedir on the
+                // command line at launch and goes on writing its world to the old folder until
+                // it restarts. The two really do disagree, and the toast says so rather than
+                // leaving the host to find out. Carried on the save's own reply and not on
+                // BuildProfilePrefsDto, because it is a fact about this press.
+                reply["SaveFolderMovedWhileRunning"] = SaveFolderMovedWhileTheServerIsUp(prefs);
+
+                return Task.FromResult<object>(reply);
             });
 
             RegisterRpc("profiles.remove", p =>
@@ -4896,7 +5006,7 @@ namespace ValheimBakaLoader.Forms
                             prefs.LogsFolderPath = null;
                             return;
                         }
-                        var expanded = Environment.ExpandEnvironmentVariables(path);
+                        var expanded = PathCheck.Expand(path);
                         if (!Path.IsPathRooted(expanded))
                             throw new ArgumentException("The logs folder must be a full path (e.g. D:\\ValheimLogs).");
                         Directory.CreateDirectory(expanded); // throws if unusable
@@ -5489,7 +5599,7 @@ namespace ValheimBakaLoader.Forms
                     throw new HostFacingException("worlds.delete.confirmNameMismatch",
                         $"Type the world's name exactly as it is spelled ('{world}') to delete it.", ("world", world));
 
-                var saveFolder = Path.GetFullPath(folder);
+                var saveFolder = PathCheck.Resolve(folder);
                 var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
 
                 // A live server holds the files open and writes the world back out as it saves,
@@ -5578,7 +5688,7 @@ namespace ValheimBakaLoader.Forms
                 {
                     if (!KnownSaveFolders().Any(k => SameFolder(k, folder)))
                         throw new HostFacingException("worlds.copyUnknownSaveFolder", "Unknown save folder.");
-                    saveFolder = Path.GetFullPath(folder);
+                    saveFolder = PathCheck.Resolve(folder);
                 }
 
                 RefuseWhileTheWorldIsBeingWritten(source, saveFolder);
@@ -7735,10 +7845,17 @@ namespace ValheimBakaLoader.Forms
                     "config" => GetConfigDirectory(),
                     "plugins" => GetPluginsDirectory(),
                     "logs" => ResolveLogsFolder(),
-                    "appData" => Path.GetDirectoryName(Resources.UserPrefsFilePathV2),
+                    // Resolved like every other target here. The shipped constant carries
+                    // %USERPROFILE%, so the raw string named a folder that is never there and
+                    // this button answered "Folder not found: %USERPROFILE%\AppData\..." about
+                    // the one folder on the machine that certainly does exist.
+                    "appData" => Path.GetDirectoryName(PathCheck.Resolve(Resources.UserPrefsFilePathV2)),
                     _ => throw new ArgumentException($"Unknown shell.open target: {target}"),
                 };
 
+                // The path named in the refusal is the path that was tested, which is the
+                // resolved one: a sentence naming a variable sends the reader looking for a
+                // folder with a percent sign in its name. See issue 17.
                 if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
                     throw new DirectoryNotFoundException($"Folder not found: {path ?? "(unset)"}");
 
@@ -7880,6 +7997,148 @@ namespace ValheimBakaLoader.Forms
                 }));
             });
 
+            // Whether a build before 1.2.9 left this realm's worlds in a folder literally named
+            // for an environment variable inside the BakaLoader install. Read only: the move is
+            // paths.moveStray below, and it only ever runs on a press. See Tools.StraySaveFolder
+            // for the whole of why this exists.
+            //
+            // AND IT NEVER BLOCKS THE WINDOW, for the same reason paths.check does not. An RPC
+            // handler runs on the window's own thread up to its first await, and what this one
+            // asks is Directory.Exists and a shallow walk of up to three folders, twice over:
+            // one of those folders is under the user profile and the other is wherever
+            // BakaLoader was unzipped, which on the install this was reported from was an
+            // external drive. A drive that has spun down holds Directory.Exists until the
+            // platters are back and a disconnected network share holds it until SMB gives up,
+            // and this is asked on the first frame, on every realm switch and after every Save
+            // Config. So the disk work goes to a worker and this thread waits on it with a
+            // budget, and running out is an ANSWER: nothing to say, said in the log, with the
+            // row's own Check again button and the next switch or launch as the way back.
+            RegisterRpc("paths.strayCheck", async p =>
+            {
+                var profile = p.Value<string>("profile");
+                var who = string.IsNullOrWhiteSpace(profile) ? ActiveProfileName : profile;
+
+                // Preferences and the folder names are string work over files this app owns, and
+                // they stay here: the worker is handed values, not a window field.
+                var stored = StoredSaveFolderToAskAbout(profile);
+                var roots = InstallFoldersAStrayPathCouldBeUnder().ToArray();
+
+                var looking = Task.Run(() => StraySaveFolder.For(stored, roots));
+                var finished = await Task.WhenAny(looking, Task.Delay(StrayCheckBudget));
+
+                if (finished != looking)
+                {
+                    // Left to finish in its own time, so nothing here waits on it, which means
+                    // a throw on the way out would sit unobserved until a collection noticed.
+                    // Read it and write it down instead.
+                    _ = looking.ContinueWith(
+                        t => Logger.Warning(
+                            t.Exception,
+                            "Looking for a stray save folder for '{profile}' failed after it was given up on",
+                            who),
+                        TaskContinuationOptions.OnlyOnFaulted);
+
+                    // No row is raised on this arm, so the line does not send the host to a
+                    // button that is not on screen: it names the two roads that ask again.
+                    Logger.Warning(
+                        "The stray save folder check for '{profile}' did not finish within {ms}ms, so no row "
+                        + "was raised about it. It is asked again at the next realm switch and at the next launch.",
+                        who, (int)StrayCheckBudget.TotalMilliseconds);
+
+                    return StraySaveFolderDto(
+                        new StrayFolderAnswer
+                        {
+                            Shape = StraySaveFolder.ShapeNone,
+                            Stored = stored ?? "",
+                            Resolved = PathCheck.Resolve(stored),
+                        },
+                        who);
+                }
+
+                // StraySaveFolder.For wraps every disk question it asks, so a faulted task here
+                // is something nobody has seen. It still gets an answer rather than a refusal:
+                // this check is quiet by design and a toast about a question the host never
+                // asked is the one thing it must not produce.
+                StrayFolderAnswer found;
+                try { found = await looking; }
+                catch (Exception asking)
+                {
+                    Logger.Warning(asking, "Looking for a stray save folder for '{profile}' failed", who);
+                    found = new StrayFolderAnswer
+                    {
+                        Shape = StraySaveFolder.ShapeNone,
+                        Stored = stored ?? "",
+                        Resolved = PathCheck.Resolve(stored),
+                    };
+                }
+
+                return StraySaveFolderDto(found, who);
+            });
+
+            // The host has read one of these rows and waved it away. The FACT is written down,
+            // so the same one is not raised again on the next first frame, realm switch or Save
+            // Config, while a different fact (a folder moved, worlds appearing at the other
+            // path, one of two trees tidied up by hand) names a different key and is said once,
+            // properly. The key comes from the page because it is the key of the sentence the
+            // host actually read: asking the disk again here could write down a fact that
+            // appeared in the meantime and silence a row nobody has ever seen.
+            RegisterRpc("paths.strayNoticeSeen", p =>
+            {
+                var closed = p.Value<string>("key");
+                if (!string.IsNullOrWhiteSpace(closed))
+                    UserPrefsProvider.Mutate(prefs =>
+                    {
+                        var kept = StraySaveFolder.Remember(prefs.StraySaveFolderSeenKeys, closed);
+                        if (prefs.StraySaveFolderSeenKeys != null
+                            && kept.SequenceEqual(prefs.StraySaveFolderSeenKeys, StringComparer.Ordinal))
+                            return false;
+
+                        prefs.StraySaveFolderSeenKeys = kept;
+                        return true;
+                    });
+
+                return Task.FromResult<object>(new { ok = true });
+            });
+
+            // Moves it, after the host has read both paths and pressed the button. Refuses
+            // rather than merging when there is already a folder at the destination.
+            RegisterRpc("paths.moveStray", p =>
+            {
+                var profile = p.Value<string>("profile");
+                var found = StraySaveFolderFor(profile);
+                if (found.Shape != StraySaveFolder.ShapeStray)
+                    throw new HostFacingException("paths.stray.nothingToMove",
+                        "Nothing was moved. What is on disk is no longer the state this offer was about, "
+                        + "so the folders were left exactly as they are.");
+
+                // Every other world-touching call goes through a running-server check, and so
+                // does this one. The shape that offers the move is one where a start refuses
+                // anyway, so this is the small end of the exposure rather than the big one, but
+                // a folder being moved out from under a process that has files open in it is the
+                // same accident whichever path reaches it.
+                RefuseWhileASessionIsWritingTo(found.Stray, found.Resolved);
+
+                try
+                {
+                    StraySaveFolder.Move(found.Stray, found.Resolved, found.Install);
+                }
+                catch (Exception moving)
+                {
+                    // Named rather than generic: the reasons a folder will not move are the
+                    // ordinary Windows ones (a file open in it, no permission at the
+                    // destination) and the host can do something about every one of them.
+                    Logger.Error(moving, "Could not move the save folder from {from} to {to}.",
+                        found.Stray, found.Resolved);
+                    throw new HostFacingException("paths.stray.moveFailed",
+                        "The folder was not moved. " + moving.Message, ("reason", moving.Message));
+                }
+
+                Logger.Information("Moved the save folder for '{profile}' from {from} to {to}.",
+                    string.IsNullOrWhiteSpace(profile) ? ActiveProfileName : profile, found.Stray, found.Resolved);
+
+                return Task.FromResult<object>(BuildStraySaveFolderAnswer(profile));
+            });
+
             // What is at a path, while the host is still typing it. This never refuses
             // anything and never blocks a save: it answers, the page writes one sentence
             // under the box, and Save Config behaves exactly as it did before.
@@ -7911,7 +8170,13 @@ namespace ValheimBakaLoader.Forms
 
                 // Filling in %VARIABLES% is string work and stays here. Only the questions
                 // that reach a disk go to the worker.
-                var expanded = PathCheck.Expand(p.Value<string>("path") ?? "");
+                //
+                // Resolve rather than Expand, so the path this line NAMES is the path it asked
+                // the disk about. They could part company: the existence question expanded the
+                // variable while the folder the app would really have created was anchored at
+                // the working directory, and the sentence reported the first of the two. That
+                // is issue 17 read off the box the host is typing into.
+                var expanded = PathCheck.Resolve(p.Value<string>("path") ?? "");
                 var looking = Task.Run(() => PathCheck.Look(kind, expanded));
                 var finished = await Task.WhenAny(looking, Task.Delay(PathCheckBudget));
 
@@ -7971,7 +8236,10 @@ namespace ValheimBakaLoader.Forms
                 string expanded;
                 try
                 {
-                    expanded = Environment.ExpandEnvironmentVariables(raw.Trim());
+                    // Through the one boundary, like every other reader of a path: the wizard's
+                    // answer has to be the answer the app will give about the same text, and
+                    // Expand alone can leave a path that is still relative.
+                    expanded = PathCheck.Resolve(raw);
                 }
                 catch
                 {
@@ -8249,7 +8517,7 @@ namespace ValheimBakaLoader.Forms
             if (!(prefs.IsolatedInstall) || string.IsNullOrWhiteSpace(prefs.ServerExePath)) return null;
             try
             {
-                var dir = Path.GetDirectoryName(prefs.ServerExePath);
+                var dir = Path.GetDirectoryName(PathCheck.Resolve(prefs.ServerExePath));
                 return InstallIsolation.IsManagedInstall(dir) ? dir : null;
             }
             catch { return null; }
@@ -8266,7 +8534,11 @@ namespace ValheimBakaLoader.Forms
             if (string.IsNullOrWhiteSpace(path)) return null;
             try
             {
-                var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+                // Resolved, not merely made full: a stored "%USERPROFILE%\...\servers\<name>"
+                // used to come back anchored at the install folder, where the parent is still
+                // called "servers", so the guard below said yes about a folder that is not the
+                // one the realm's worlds are in.
+                var full = PathCheck.Resolve(path).TrimEnd(Path.DirectorySeparatorChar);
                 // Guard: only a folder whose parent directory is literally "servers" is one we made.
                 var parent = Directory.GetParent(full)?.Name;
                 if (!string.Equals(parent, "servers", StringComparison.OrdinalIgnoreCase)) return null;
@@ -8353,7 +8625,11 @@ namespace ValheimBakaLoader.Forms
                 if (string.IsNullOrWhiteSpace(path)) return;
                 try
                 {
-                    var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+                    // Resolved rather than made full. These come straight off stored
+                    // preferences, so a profile holding the shipped %USERPROFILE% default was
+                    // asked about a folder inside the install and dropped for not existing:
+                    // the Barrow then showed no worlds for a realm that has them.
+                    var full = PathCheck.Resolve(path).TrimEnd(Path.DirectorySeparatorChar);
                     if (Directory.Exists(full) && seen.Add(full)) list.Add(full);
                 }
                 catch { /* ignore unreadable paths */ }
@@ -8387,14 +8663,21 @@ namespace ValheimBakaLoader.Forms
         /// True when two paths point at the same directory (full-path normalized,
         /// trailing-separator and case insensitive). False on any unresolvable path.
         /// </summary>
+        /// <summary>
+        /// The same question as <see cref="SamePath"/> for two folders, with a trailing
+        /// separator forgiven, and resolved on both sides for the same reason: the realm that
+        /// still has a world chosen is often the one whose folder is stored with a variable
+        /// in it, and reading that as somewhere else is how a delete takes a world out from
+        /// under a realm that is simply stopped.
+        /// </summary>
         private static bool SameFolder(string a, string b)
         {
             if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
             try
             {
                 return string.Equals(
-                    Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                    Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    PathCheck.Resolve(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    PathCheck.Resolve(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
                     StringComparison.OrdinalIgnoreCase);
             }
             catch { return false; }
@@ -8465,7 +8748,7 @@ namespace ValheimBakaLoader.Forms
             if (string.IsNullOrWhiteSpace(folder) || !KnownSaveFolders().Any(k => SameFolder(k, folder)))
                 throw new ArgumentException("Unknown save folder.");
 
-            var saveFolder = Path.GetFullPath(folder);
+            var saveFolder = PathCheck.Resolve(folder);
             var dir = Path.Combine(saveFolder, sub);
             if (!Directory.Exists(dir)) throw new ArgumentException("Save subfolder does not exist.");
 
@@ -8693,36 +8976,18 @@ namespace ValheimBakaLoader.Forms
         /// <summary>
         /// Builds a per-server save-data folder path under the base save location so each
         /// server's worlds and backups stay in their own directory (no cross-server mingling).
+        /// <para>
+        /// The work itself is <see cref="IsolatedSaveFolder.Create"/>, which takes the base
+        /// folder as an argument so it can be driven over a temporary folder in a test. This
+        /// reads the base, and nothing else.
+        /// </para>
         /// </summary>
         private string MakeIsolatedSaveFolder(string profileName)
-        {
             // Always anchor at the USER-level base save folder, never the current profile's:
             // an isolated profile's own save folder ends in "servers/<name>", and anchoring
             // there would nest every realm created from it ("servers/A/servers/B/...").
-            var baseSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
-            if (string.IsNullOrWhiteSpace(baseSave))
-            {
-                // No configured save folder yet: fall back to the Valheim LocalLow default.
-                var localLow = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    "AppData", "LocalLow", "IronGate", "Valheim");
-                baseSave = localLow;
-            }
-
-            var parent = Path.Combine(baseSave, "servers");
-            var safe = InstallIsolationService.MakeSafeName(profileName);
-            var candidate = Path.Combine(parent, safe);
-            var n = 2;
-            while (Directory.Exists(candidate) && Directory.EnumerateFileSystemEntries(candidate).Any())
-                candidate = Path.Combine(parent, $"{safe}-{n++}");
-
-            Directory.CreateDirectory(candidate);
-
-            // Shape it like a save folder the game made itself: worlds_local plus the cache/
-            // sibling it drops "{world}_biomedatacache.bin" into on every world load.
-            WorldStore.EnsureSaveFolderLayout(candidate);
-            return candidate;
-        }
+            => IsolatedSaveFolder.Create(
+                UserPrefsProvider.LoadPreferences().SaveDataFolderPath, profileName);
 
         private object BuildPlayerDto(PlayerInfo player)
         {
@@ -9289,6 +9554,20 @@ namespace ValheimBakaLoader.Forms
         internal static readonly TimeSpan PathCheckBudget = TimeSpan.FromMilliseconds(1500);
 
         /// <summary>
+        /// How long <c>paths.strayCheck</c> waits for the disk before it answers that there is
+        /// nothing to say.
+        /// <para>
+        /// Longer than <see cref="PathCheckBudget"/>, because this one is not asked per
+        /// keystroke and it walks folders rather than asking about one: up to three shallow
+        /// directory listings in each of two places, one of which is the folder BakaLoader was
+        /// unzipped into and may well be an external drive. Still a ceiling, because the whole
+        /// reason it is here is that a drive which is not answering must not be able to hold
+        /// the window's own thread while it decides.
+        /// </para>
+        /// </summary>
+        internal static TimeSpan StrayCheckBudget { get; set; } = TimeSpan.FromSeconds(4);
+
+        /// <summary>
         /// Where a picker should open: the folder the path in force for this server already
         /// points at, when that folder is really there. Null otherwise, which is Windows'
         /// own "wherever you were last", and never a refusal: this only decides a starting
@@ -9300,12 +9579,12 @@ namespace ValheimBakaLoader.Forms
             {
                 if (string.Equals(kind, PathCheck.KindExe, StringComparison.Ordinal))
                 {
-                    var exe = PathCheck.Expand(GetServerExePath());
+                    var exe = GetServerExePath();
                     var folder = string.IsNullOrWhiteSpace(exe) ? null : Path.GetDirectoryName(exe);
                     return !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder) ? folder : null;
                 }
 
-                var save = PathCheck.Expand(ResolveSaveDataFolder(null));
+                var save = ResolveSaveDataFolder(null);
                 return !string.IsNullOrWhiteSpace(save) && Directory.Exists(save) ? save : null;
             }
             catch { return null; }
@@ -9757,11 +10036,13 @@ namespace ValheimBakaLoader.Forms
             {
                 prefs.ServerExePath,
                 prefs.SaveDataFolderPath,
-                // The same two paths with their variables filled in, which is what the
-                // Directories boxes show as "default: ..." when a profile overrides nothing.
-                // Named the way DefaultLogsFolderPath below already is.
-                DefaultServerExePath = PathCheck.Expand(prefs.ServerExePath),
-                DefaultSaveDataFolderPath = PathCheck.Expand(prefs.SaveDataFolderPath),
+                // The same two paths resolved, which is what the Directories boxes show as
+                // "default: ..." when a profile overrides nothing. Named the way
+                // DefaultLogsFolderPath below already is. Resolved rather than merely
+                // expanded, because the sentence is telling the host where their worlds are
+                // and it has to be the place the app really reads. See issue 17.
+                DefaultServerExePath = PathCheck.Resolve(prefs.ServerExePath),
+                DefaultSaveDataFolderPath = PathCheck.Resolve(prefs.SaveDataFolderPath),
                 prefs.CheckForUpdates,
                 prefs.AutoUpdateMods,
                 prefs.UseHexiumSource,
@@ -9801,7 +10082,7 @@ namespace ValheimBakaLoader.Forms
                 // and refuses to move it rather than offering a choice that is not there.
                 DetailedLogForcedByCommandLine = LogLevel?.ForcedByCommandLine ?? false,
                 prefs.LogsFolderPath,
-                DefaultLogsFolderPath = Environment.ExpandEnvironmentVariables(Resources.LogsFolderPath),
+                DefaultLogsFolderPath = PathCheck.Resolve(Resources.LogsFolderPath),
                 prefs.EnablePasswordValidation,
                 prefs.BypassSystemProxy,
                 prefs.ForceIPv4,
@@ -9912,14 +10193,17 @@ namespace ValheimBakaLoader.Forms
             bool exeValid = false, saveValid = false;
             try
             {
-                var exe = Environment.ExpandEnvironmentVariables(GetServerExePath() ?? "");
+                var exe = GetServerExePath() ?? "";
                 exeValid = !string.IsNullOrWhiteSpace(exe) && File.Exists(exe);
             }
             catch { /* invalid path characters - treat as not found */ }
 
             try
             {
-                var dir = Environment.ExpandEnvironmentVariables(ResolveSaveDataFolder(null) ?? "");
+                // Both of these arrive resolved from the two readers above: the expansion is at
+                // that boundary now rather than repeated here. Doing it twice was harmless;
+                // relying on it being done at all, at every separate site, was not.
+                var dir = ResolveSaveDataFolder(null) ?? "";
                 saveValid = !string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir);
             }
             catch { /* invalid path characters - treat as not found */ }
@@ -10004,7 +10288,7 @@ namespace ValheimBakaLoader.Forms
         private string ResolveLogsFolder()
         {
             var custom = UserPrefsProvider.LoadPreferences().LogsFolderPath;
-            var folder = Environment.ExpandEnvironmentVariables(
+            var folder = PathCheck.Resolve(
                 string.IsNullOrWhiteSpace(custom) ? Resources.LogsFolderPath : custom);
             Directory.CreateDirectory(folder);
             return folder;
@@ -10249,6 +10533,61 @@ namespace ValheimBakaLoader.Forms
                         $"'{session.ProfileName}' is running world '{world}' right now. Stop it before copying the world.",
                         ("profile", session.ProfileName), ("world", world));
             }
+        }
+
+        /// <summary>
+        /// The same refusal as <see cref="RefuseWhileTheWorldIsBeingWritten"/> for a whole
+        /// FOLDER rather than one world in it, which is what moving a save folder is.
+        /// <para>
+        /// Either end counts, and so does a folder INSIDE either end: the folder a stray-save
+        /// move picks up is often the parent of the per-realm folders under it, so a running
+        /// realm's own folder can be inside the thing being moved without being equal to it.
+        /// </para>
+        /// </summary>
+        private void RefuseWhileASessionIsWritingTo(params string[] folders)
+        {
+            var userSave = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
+            foreach (var session in Sessions.Values)
+            {
+                if (session.Server.Status == ServerStatus.Stopped) continue;
+
+                var live = session.Server.Options;
+                var liveFolder = string.IsNullOrWhiteSpace(live?.SaveDataFolderPath)
+                    ? userSave
+                    : live.SaveDataFolderPath;
+
+                foreach (var folder in folders)
+                {
+                    if (string.IsNullOrWhiteSpace(folder)) continue;
+                    if (!SameFolder(liveFolder, folder) && !FolderIsInside(liveFolder, folder)) continue;
+
+                    throw new HostFacingException("paths.stray.serverRunning",
+                        $"'{session.ProfileName}' is running and writing to {folder} right now. "
+                        + "Stop it and press the button again.",
+                        ("profile", session.ProfileName), ("folder", folder));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Whether one folder sits inside another, both sides resolved first for the same
+        /// reason <see cref="SameFolder"/> resolves them. Equal folders answer no: that is
+        /// <see cref="SameFolder"/>'s question, and the two are asked together.
+        /// </summary>
+        private static bool FolderIsInside(string inner, string outer)
+        {
+            if (string.IsNullOrWhiteSpace(inner) || string.IsNullOrWhiteSpace(outer)) return false;
+            try
+            {
+                var within = Path.TrimEndingDirectorySeparator(PathCheck.Resolve(inner));
+                var around = Path.TrimEndingDirectorySeparator(PathCheck.Resolve(outer));
+                if (within.Length <= around.Length) return false;
+                if (!within.StartsWith(around, StringComparison.OrdinalIgnoreCase)) return false;
+
+                var next = within[around.Length];
+                return next == Path.DirectorySeparatorChar || next == Path.AltDirectorySeparatorChar;
+            }
+            catch { return false; }
         }
 
         // What the first meeting with each world under each save folder last found, so the line
@@ -10524,8 +10863,192 @@ namespace ValheimBakaLoader.Forms
             return (list, id);
         }
 
-        /// <summary>Save-data folder: explicit value → current profile prefs → user prefs → Valheim default.</summary>
+        /// <summary>
+        /// The disagreement one realm's save toast has already been told about, so the second
+        /// save in a row does not say it again. See
+        /// <see cref="SaveFolderMovedWhileTheServerIsUp"/>.
+        /// </summary>
+        private readonly Tools.Logging.OncePerChange SaveFolderDisagreementTold = new();
+
+        /// <summary>
+        /// Whether the save that just landed pointed a RUNNING server's worlds somewhere else,
+        /// AND that is news.
+        /// <para>
+        /// Compared as places rather than as strings, so filling in a variable by hand (typing
+        /// the folder out where the box held <c>%USERPROFILE%\...</c>) is correctly NOT a move
+        /// and raises nothing. False whenever that realm's server is not up, because then
+        /// there is nothing to disagree with.
+        /// </para>
+        /// <para>
+        /// AND NEWS, which is the second half and was missing. The disagreement STANDS until the
+        /// server restarts: it is two paths that do not match, not an event. So every later save
+        /// of anything at all on that card, a port, a password, a backup count, came back with
+        /// the two sentences about the save folder again, and a host saving three times in a row
+        /// read them three times. The pair of paths is written down per realm, so the save that
+        /// CHANGED the folder says it and the saves after it do not, while a folder changed a
+        /// second time is a new pair and is news again. Agreement forgets the realm, so a
+        /// restart followed by another move says it once more.
+        /// </para>
+        /// </summary>
+        private bool SaveFolderMovedWhileTheServerIsUp(ServerPreferences prefs)
+        {
+            try
+            {
+                if (prefs == null || string.IsNullOrWhiteSpace(prefs.ProfileName)) return false;
+                if (!Sessions.TryGetValue(prefs.ProfileName, out var session)
+                    || session.Server.Status == ServerStatus.Stopped)
+                {
+                    // Not up, so there is nothing to disagree with and nothing to remember: the
+                    // next start is a fresh launch-time folder, and a move after it is news.
+                    SaveFolderDisagreementTold.Forget(prefs?.ProfileName);
+                    return false;
+                }
+
+                var launchedWith = session.Server.Options?.SaveDataFolderPath;
+                if (string.IsNullOrWhiteSpace(launchedWith)) return false;
+
+                var savedNow = !string.IsNullOrWhiteSpace(prefs.SaveDataFolderPath)
+                    ? prefs.SaveDataFolderPath
+                    : UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
+
+                if (SamePath(launchedWith, savedNow ?? ""))
+                {
+                    SaveFolderDisagreementTold.Forget(prefs.ProfileName);
+                    return false;
+                }
+
+                // The PAIR, both ends through the same boundary SamePath uses and folded to one
+                // case, so the same two folders written two ways are one fact and a third
+                // folder is a new one. OncePerChange compares a state exactly, and these are
+                // Windows paths: a retyped path in another case is the same place.
+                return SaveFolderDisagreementTold.Changed(
+                    prefs.ProfileName,
+                    (PathCheck.Resolve(launchedWith) + "|" + PathCheck.Resolve(savedNow ?? ""))
+                        .ToUpperInvariant());
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// The folders a build before 1.2.9 could have anchored a relative save path at: where
+        /// the program sits, and the working directory it was started with. They are the same
+        /// folder for a shortcut and for Explorer, and they are not for a server-style launch,
+        /// so both are asked rather than one guessed at.
+        /// </summary>
+        private static IEnumerable<string> InstallFoldersAStrayPathCouldBeUnder()
+            => StraySaveFolder.FoldersToAsk(
+                new[] { AppContext.BaseDirectory, Environment.CurrentDirectory });
+
+        /// <summary>
+        /// What is on disk for one realm's stored save folder: the shape, both paths by name,
+        /// and the install folder the second of them was anchored at. Never throws and never
+        /// moves anything.
+        /// <para>
+        /// THE FALLBACK IS THE WHOLE POINT OF THE SECOND BRANCH. A realm that named no folder
+        /// of its own reads the app wide string, which is the PARENT of every isolated realm's
+        /// folder, so two realms ask about one place and a move under one of them is a change
+        /// to what the other one sees. <see cref="StraySaveFolder.StoredFor"/> is that fallback
+        /// named, and <see cref="StraySaveFolder.For"/> is the rest, both of them out here where
+        /// a test can drive them.
+        /// </para>
+        /// </summary>
+        private StrayFolderAnswer StraySaveFolderFor(string profileName)
+            => StraySaveFolder.For(
+                StoredSaveFolderToAskAbout(profileName), InstallFoldersAStrayPathCouldBeUnder());
+
+        /// <summary>
+        /// The stored save-folder string one realm's row is about, with no disk in it.
+        /// <para>
+        /// Named on its own because of where it is called from. <c>paths.strayCheck</c> hands the
+        /// DISK half of this question to a worker and waits on it with a budget, and the half
+        /// that reads preferences has to happen before that so the worker is handed a string
+        /// rather than a window field. The STORED string, not the resolved one: the whole
+        /// question is what the old build made of the text, so the text is what it has to be
+        /// asked about.
+        /// </para>
+        /// </summary>
+        private string StoredSaveFolderToAskAbout(string profileName)
+            => string.IsNullOrWhiteSpace(profileName)
+                ? StoredSaveDataFolder(null)
+                : StraySaveFolder.StoredFor(
+                    ServerPrefsProvider.LoadPreferences(profileName)?.SaveDataFolderPath,
+                    UserPrefsProvider.LoadPreferences().SaveDataFolderPath);
+
+        /// <summary>
+        /// The one line the log gets about a stray save folder, written once per realm per state
+        /// rather than on every ask: the page asks on the first frame and again on every realm
+        /// switch, and a host flipping between two realms must not fill the log with it. The
+        /// state is the fact's own key, which is the shape plus every folder it is about, so a
+        /// folder that is moved or appears says so again.
+        /// </summary>
+        private readonly Tools.Logging.OncePerChange StraySaveFolderReported = new();
+
+        /// <summary>The same answer as an object the page reads.</summary>
+        private object BuildStraySaveFolderAnswer(string profileName)
+            => StraySaveFolderDto(
+                StraySaveFolderFor(profileName),
+                string.IsNullOrWhiteSpace(profileName) ? ActiveProfileName : profileName);
+
+        /// <summary>
+        /// One answer as the page reads it, from an answer that has already been worked out.
+        /// Split from the asking because <c>paths.strayCheck</c> does the asking on a worker:
+        /// the log line and the "has the host already waved this exact fact away" question are
+        /// window-side work over a value, and only the disk reads needed moving.
+        /// </summary>
+        private object StraySaveFolderDto(StrayFolderAnswer found, string who)
+        {
+            var key = StraySaveFolder.KeyFor(found);
+
+            if (key != null && StraySaveFolderReported.Changed(who, key))
+            {
+                Logger.Warning(
+                    "The save folder for '{profile}' is stored as {stored}, which an older build "
+                    + "made at {stray}; BakaLoader reads {resolved} ({shape}).",
+                    who, found.Stored, string.Join(", ", found.StrayFolders), found.Resolved, found.Shape);
+            }
+
+            return new
+            {
+                shape = found.Shape,
+                profile = who,
+                stored = found.Stored,
+                resolved = found.Resolved,
+                stray = found.Stray,
+                // Every folder this answer is about, for the one shape that is about more than
+                // one of them. The page joins them into the sentence.
+                strays = found.StrayFolders,
+                // The name of this FACT, and whether the host has already waved a row about
+                // exactly it away. Two of the shapes are states BakaLoader cannot end, so
+                // without these the row came back on every boot, switch and save for ever.
+                key,
+                seen = StraySaveFolder.Seen(
+                    key, UserPrefsProvider.LoadPreferences()?.StraySaveFolderSeenKeys),
+            };
+        }
+
+        /// <summary>
+        /// Save-data folder: explicit value → current profile prefs → user prefs → Valheim
+        /// default, and then RESOLVED, which is the half issue 17 was missing.
+        /// <para>
+        /// Every caller of this opens a folder, lists worlds in it, or writes an access list
+        /// into it, and the stored default is the literal string
+        /// <c>%USERPROFILE%\AppData\LocalLow\IronGate\Valheim</c>. Handed on raw it is a
+        /// RELATIVE path, so Windows anchored it at the folder BakaLoader runs from: Open
+        /// said "Folder not found: %USERPROFILE%\...", an admin add wrote its temporary file
+        /// into the install folder and failed, and a duplicate created its realm there. The
+        /// expansion is here, once, so no caller has to remember it.
+        /// </para>
+        /// <para>
+        /// <see cref="StoredSaveDataFolder"/> is the fallback order on its own, unresolved,
+        /// for the two readers that need the string as the host stored it: the stray-folder
+        /// check, which is about what the OLD build made of that string, and nothing else.
+        /// </para>
+        /// </summary>
         private string ResolveSaveDataFolder(string explicitPath)
+            => PathCheck.Resolve(StoredSaveDataFolder(explicitPath));
+
+        /// <inheritdoc cref="ResolveSaveDataFolder"/>
+        private string StoredSaveDataFolder(string explicitPath)
         {
             if (!string.IsNullOrWhiteSpace(explicitPath)) return explicitPath;
 
@@ -10558,7 +11081,7 @@ namespace ValheimBakaLoader.Forms
             try
             {
                 if (string.IsNullOrWhiteSpace(exe)) return exe;
-                var dir = Path.GetDirectoryName(Path.GetFullPath(exe));
+                var dir = Path.GetDirectoryName(exe);
                 var parent = string.IsNullOrWhiteSpace(dir) ? null : Directory.GetParent(dir);
                 if (parent != null && string.Equals(parent.Name, InstallIsolationService.InstancesRootName,
                         StringComparison.OrdinalIgnoreCase))
@@ -10570,7 +11093,7 @@ namespace ValheimBakaLoader.Forms
                         if (File.Exists(hoisted)) return hoisted;
                     }
 
-                    var userExe = UserPrefsProvider.LoadPreferences().ServerExePath;
+                    var userExe = PathCheck.Resolve(UserPrefsProvider.LoadPreferences().ServerExePath);
                     if (!string.IsNullOrWhiteSpace(userExe) && File.Exists(userExe)) return userExe;
                 }
             }
@@ -10594,7 +11117,16 @@ namespace ValheimBakaLoader.Forms
             catch { return null; }
         }
 
+        /// <summary>
+        /// The server executable for one profile: its own when it names one, else the app wide
+        /// one, resolved at the same boundary the save folder goes through. The shipped default
+        /// carries <c>%ProgramFiles(x86)%</c>, so the same relative-path trap applies to it.
+        /// </summary>
         private string GetServerExePathFor(string profileName)
+            => PathCheck.Resolve(StoredServerExePathFor(profileName));
+
+        /// <inheritdoc cref="GetServerExePathFor"/>
+        private string StoredServerExePathFor(string profileName)
         {
             var profilePrefs = profileName != null ? ServerPrefsProvider.LoadPreferences(profileName) : null;
             if (!string.IsNullOrWhiteSpace(profilePrefs?.ServerExePath)) return profilePrefs.ServerExePath;

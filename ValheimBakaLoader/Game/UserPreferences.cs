@@ -46,6 +46,13 @@ namespace ValheimBakaLoader.Game
         // every launch; see Tools.BepInExNoticeKey for what a fact is named by.
         public string BepInExNoticeSeenKey { get; set; }
 
+        // The stray-save-folder facts the host has waved the condition-bar row away for. A LIST
+        // rather than the one field above it, because this fact is per SERVER where that one is
+        // per install: an isolated server's folders are its own. Two of the shapes are states
+        // only folder surgery in Explorer ends, so without this the same row came back on every
+        // boot, every server switch and every Save Config; see Tools.StraySaveFolder.KeyFor.
+        public List<string> StraySaveFolderSeenKeys { get; set; } = new();
+
         public bool StartWithWindows { get; set; }
 
         // Anonymous usage heartbeat (install count / servers online); see HeartbeatService.
@@ -174,6 +181,11 @@ namespace ValheimBakaLoader.Game
                 BepInExMaintained = file.BepInExMaintained ?? defaults.BepInExMaintained,
                 BepInExMaintenanceAsked = file.BepInExMaintenanceAsked ?? defaults.BepInExMaintenanceAsked,
                 BepInExNoticeSeenKey = file.BepInExNoticeSeenKey ?? defaults.BepInExNoticeSeenKey,
+                // Blanks dropped on the way in, so a hand-edited document cannot put an entry in
+                // the list that matches an answer naming no fact.
+                StraySaveFolderSeenKeys = (file.StraySaveFolderSeenKeys ?? new())
+                    .Where(k => !string.IsNullOrWhiteSpace(k))
+                    .ToList(),
                 StartWithWindows = file.StartWithWindows ?? defaults.StartWithWindows,
                 ShareAnonymousStats = file.ShareAnonymousStats ?? defaults.ShareAnonymousStats,
                 AnalyticsSalt = file.AnalyticsSalt ?? defaults.AnalyticsSalt,
@@ -237,6 +249,9 @@ namespace ValheimBakaLoader.Game
             BepInExMaintained = BepInExMaintained,
             BepInExMaintenanceAsked = BepInExMaintenanceAsked,
             BepInExNoticeSeenKey = BepInExNoticeSeenKey,
+            StraySaveFolderSeenKeys = (StraySaveFolderSeenKeys ?? new())
+                .Where(k => !string.IsNullOrWhiteSpace(k))
+                .ToList(),
             StartWithWindows = StartWithWindows,
             ShareAnonymousStats = ShareAnonymousStats,
             AnalyticsSalt = AnalyticsSalt,

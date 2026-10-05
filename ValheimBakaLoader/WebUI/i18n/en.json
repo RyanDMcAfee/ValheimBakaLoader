@@ -1,8 +1,8 @@
 {
   "_meta": {
     "language": "en",
-    "appVersion": "1.2.8",
-    "catalog": 7
+    "appVersion": "1.2.9",
+    "catalog": 8
   },
   "keys": {
     "pal.cmd.restart_server": { "lore": "Restart server" },
@@ -799,6 +799,10 @@
     "paths.problem.dir_is_file": { "lore": "This path names a file rather than a folder, and the server cannot make a folder where a file of that name already sits." },
     "paths.problem.unreadable": { "lore": "Windows will not take a path written this way. A name in it uses a mark that is not allowed in a file name, or is one Windows keeps for a device." },
     "paths.problem.timed_out": { "lore": "This path could not be checked in time. A drive that is asleep or a folder on a machine that is not answering takes longer than the line under the box waits, so nothing here says the path is wrong." },
+    "paths.stray.reason.nothing_to_move": { "lore": "Nothing was moved. What is on disk is no longer the state that offer was about, so both folders were left exactly as they are." },
+    "paths.stray.reason.move_failed": { "lore": "The folder was not moved. {reason}" },
+    "paths.isolated.reason.no_free_name": { "lore": "No save folder was made. There is already a folder called {name} under {folder}, and every numbered name up to {ceiling} is taken as well. Give this server a different name, or tidy up the folders under that one." },
+    "paths.stray.reason.server_running": { "lore": "The folder was not moved. The server for {profile} is up and writing to {folder}. Stop it and press the button again." },
 
     "atlas.head.title": { "lore": "MAP" },
     "atlas.head.sub": { "lore": "the known world" },
@@ -1004,6 +1008,16 @@
     "cond.restart.title": { "lore": "Restart pending" },
     "cond.restart.body": { "lore": "Saved settings differ from what the running server started with. They apply at the next restart." },
     "cond.restart.act": { "lore": "Restart" },
+    "cond.stray_save.title": { "lore": "Save folder left behind by an older build" },
+    "cond.stray_save.body": { "lore": "A build before 1.2.9 put the worlds for this save folder in {stray}, because the folder was stored as a name with a variable in it and nothing filled the variable in. BakaLoader reads {resolved} now, so those worlds are out of its sight until that folder is moved." },
+    "cond.stray_save.both": { "lore": "There are worlds in {stray}, which a build before 1.2.9 made, and there are worlds in {resolved}, which is the folder BakaLoader reads. Nothing has been moved, because which set of worlds to keep is a decision about worlds. Both paths are named here so they can be opened in Explorer." },
+    "cond.stray_save.destination_empty": { "lore": "The worlds BakaLoader expects under {resolved} are in {stray}, which a build before 1.2.9 made. The folder at {resolved} is there holding no worlds at all, so a start would come up on a brand new world. Nothing is moved from here while a folder is already at that path: move the worlds across in Explorer with the server stopped. One old folder can hold more than one server's worlds, under servers, so open it and look before you move anything." },
+    "cond.stray_save.many": { "lore": "The worlds BakaLoader expects under {resolved} are in more than one folder a build before 1.2.9 made: {strays}. Nothing is moved from here, because moving one of them and leaving the other would look like a finished repair. Open them in Explorer with the server stopped, decide which worlds to keep, and move those into {resolved}." },
+    "cond.stray_save.move": { "lore": "Move the folder" },
+    "cond.stray_save.recheck": { "lore": "Check again" },
+    "cond.stray_save.rechecked.clear": { "lore": "The worlds are where BakaLoader reads them now, so there is nothing left to move.", "mark": "ᛉ" },
+    "cond.stray_save.rechecked.same": { "lore": "Nothing has changed on disk, so the row above says what it said before.", "mark": "ᛉ" },
+    "cond.stray_save.moved.toast": { "lore": "The save folder was moved to {resolved}.", "mark": "ᛉ" },
     "cond.appupd.manual.running": { "lore": "It will not install while a world is up. Open Update BakaLoader to set it for the next restart, or turn auto-update on in Upkeep." },
     "cond.appupd.manual.idle": { "lore": "It will not install on its own. Install it now with Update BakaLoader, or turn auto-update on in Upkeep and it goes in the next time you close the app." },
     "cond.appupd.title": { "lore": "BakaLoader update" },
@@ -1340,6 +1354,8 @@
     "world.difficulty.not_saved.toast": { "lore": "World difficulty and switches were not saved for this world. Reopen Settings and save again.", "mark": "ᚷ" },
     "world.difficulty.save_failed.toast": { "lore": "The profile was saved, but writing the world difficulty was refused. The dials and switches are still marked unsaved, so press Save Config again.", "mark": "ᚦ" },
     "world.saved.running.toast": { "lore": "Saved. The running server keeps its current settings until it restarts.", "mark": "ᛉ" },
+    "world.saved.savedir.toast": { "lore": "Saved. The new save folder is the one BakaLoader reads from now on: the player lists, the worlds list and Open all use it.", "mark": "ᛉ" },
+    "world.saved.savedir.running": { "lore": "The server that is up was handed its save folder when it launched, so it keeps writing its world to the old folder until it restarts." },
     "world.pwcheck.on.toast": { "lore": "password rule on · a short password stops the start", "mark": "ᛃ" },
     "world.pwcheck.off.toast": { "lore": "password rule off · the game has the last word", "mark": "ᛃ" },
     "world.format.legacy.toast": { "lore": "Old world format · the next save converts it", "mark": "ᛉ" },

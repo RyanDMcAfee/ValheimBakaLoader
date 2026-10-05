@@ -195,7 +195,7 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        private string ExpandedPath => Environment.ExpandEnvironmentVariables(FilePath);
+        private string ExpandedPath => PathCheck.Resolve(FilePath);
 
         /// <summary>
         /// One journal file, read and repaired. Every name in it was learned from the server's

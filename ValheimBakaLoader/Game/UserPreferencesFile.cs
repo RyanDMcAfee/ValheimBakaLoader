@@ -29,6 +29,9 @@ namespace ValheimBakaLoader.Game
         // The fact the host last closed the unattended-BepInEx notice for; see
         // UserPreferences.BepInExNoticeSeenKey and Tools.BepInExNoticeKey.
         [JsonProperty("bepInExNoticeSeenKey")] public string BepInExNoticeSeenKey { get; set; }
+        // The stray-save-folder rows the host has waved away, by fact; see
+        // UserPreferences.StraySaveFolderSeenKeys and Tools.StraySaveFolder.KeyFor.
+        [JsonProperty("straySaveFolderSeenKeys")] public List<string> StraySaveFolderSeenKeys { get; set; }
         [JsonProperty("shareAnonymousStats")] public bool? ShareAnonymousStats { get; set; }
         // Random, made once per install, never sent; see Tools.AnalyticsSalt.
         [JsonProperty("analyticsSalt")] public string AnalyticsSalt { get; set; }

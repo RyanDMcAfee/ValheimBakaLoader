@@ -554,7 +554,7 @@ namespace ValheimBakaLoader.Tools
         /// only and a self update robocopies over it.
         /// </summary>
         public string RootFolder { get; set; } =
-            Environment.ExpandEnvironmentVariables(Properties.Resources.LanguagesFolderPath);
+            PathCheck.Resolve(Properties.Resources.LanguagesFolderPath);
 
         /// <summary>The version of the app these packs are for.</summary>
         public string AppVersion { get; set; } = AssemblyHelper.GetApplicationVersion();

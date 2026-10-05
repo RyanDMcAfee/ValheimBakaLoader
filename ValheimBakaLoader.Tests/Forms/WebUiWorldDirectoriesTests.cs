@@ -224,8 +224,8 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // The app wide default arrives with its variables filled in.
             var bridge = AppSourceTree.Files()["BlendWindow.Bridge.cs"];
-            Assert.Contains("DefaultServerExePath = PathCheck.Expand(prefs.ServerExePath),", bridge);
-            Assert.Contains("DefaultSaveDataFolderPath = PathCheck.Expand(prefs.SaveDataFolderPath),", bridge);
+            Assert.Contains("DefaultServerExePath = PathCheck.Resolve(prefs.ServerExePath),", bridge);
+            Assert.Contains("DefaultSaveDataFolderPath = PathCheck.Resolve(prefs.SaveDataFolderPath),", bridge);
             Assert.Contains("S.userPaths={exe:up.DefaultServerExePath||null,dir:up.DefaultSaveDataFolderPath||null};", js);
         }
 

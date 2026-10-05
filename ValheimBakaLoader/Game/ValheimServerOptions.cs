@@ -121,12 +121,21 @@ namespace ValheimBakaLoader.Game
                 BackupShort = serverPrefs.BackupIntervalShort,
                 BackupLong = serverPrefs.BackupIntervalLong,
                 AdditionalArgs = serverPrefs.AdditionalArgs,
-                ServerExePath = !string.IsNullOrWhiteSpace(serverPrefs.ServerExePath)
-                    ? serverPrefs.ServerExePath
-                    : userPrefs.ServerExePath,
-                SaveDataFolderPath = !string.IsNullOrWhiteSpace(serverPrefs.SaveDataFolderPath)
-                    ? serverPrefs.SaveDataFolderPath
-                    : userPrefs.SaveDataFolderPath,
+                // Both paths go through the one expansion boundary on the way in, so nothing
+                // downstream of a launch ever holds a raw %VARIABLE%: not the -savedir on the
+                // command line, not the access lists written beside the worlds, not the
+                // fingerprint the "restart pending" row is keyed on. Issue 17 is what happens
+                // without it, and the launch arguments are the place it would have been worst:
+                // a relative -savedir makes the game itself create a folder next to whatever
+                // its working directory happens to be.
+                ServerExePath = Tools.PathCheck.Resolve(
+                    !string.IsNullOrWhiteSpace(serverPrefs.ServerExePath)
+                        ? serverPrefs.ServerExePath
+                        : userPrefs.ServerExePath),
+                SaveDataFolderPath = Tools.PathCheck.Resolve(
+                    !string.IsNullOrWhiteSpace(serverPrefs.SaveDataFolderPath)
+                        ? serverPrefs.SaveDataFolderPath
+                        : userPrefs.SaveDataFolderPath),
                 LogToFile = serverPrefs.WriteServerLogsToFile,
                 LogFolderPath = userPrefs.LogsFolderPath,
                 AutoRestart = serverPrefs.AutoRestart,
