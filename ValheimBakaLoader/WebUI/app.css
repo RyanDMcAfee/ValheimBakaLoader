@@ -459,6 +459,20 @@ html.lang-pending body>*{visibility:hidden}
    together instead, and end level with the head's right edge at every width. */
 .pagehead .headpair{margin-left:auto;display:flex;align-items:center;gap:10px;
   flex-wrap:wrap;justify-content:flex-end;row-gap:6px}
+/* The Hearth's World upkeep group: a quiet label and the tools it names, set off from the
+   join button beside it by a hairline so the two read as different kinds of thing. */
+/* The pair that holds the group and Copy join info never wraps inside itself, so when the
+   head is short of room the whole pair takes the next line at the right edge and the hairline
+   always sits between the group and the button. The group inside may still wrap its own tools
+   if it ever grows wider than the head. */
+/* From 1.2.10 the group also holds Clear cheat marks and its armed switch, which is wider than
+   the head at the window's minimum size, so there the group wraps onto two lines. Centred, the
+   join button then floated between the two; on the baseline it stays level with the first line
+   of tools, and on one line it reads exactly as it did. */
+.pagehead .hearthtools{flex-wrap:nowrap;align-items:baseline}
+.pagehead .worldupkeep{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;
+  gap:8px;row-gap:6px;padding-right:12px;border-right:1px solid var(--bronze)}
+.pagehead .worldupkeep .sub{white-space:nowrap}
 /* The Settings hall's two tabs. Server is everything the hall has always held, saved by the
    button in the header; App holds the preferences that belong to BakaLoader itself, each of
    which saves itself as it is moved. A tab strip rather than a second hall in the sidebar:
@@ -2266,3 +2280,21 @@ html[data-lang="ru"]{
   overflow-wrap:break-word;
   hyphens:none;
 }
+
+/* ---------- IDLE: the window behind something else ----------
+   The host side says window.active on every activate and deactivate, and app.js puts
+   body.idle on while the window is not the one in front. Behind a game nobody sees the
+   runes smoulder or the bars sweep, but the renderer and the gpu still drew every frame
+   of them, so the endless animations stop where they stand and pick up again from the
+   same point when the window comes back. Only the infinite ones are listed: a toast or a
+   hall sliding in is over in a third of a second, and code waits on some of those ending. */
+body.idle .lm-bar.indeterminate .lm-fill,
+body.idle .side-foot .foot-ver.upd .mc,
+body.idle .mead .mc,body.idle .lchip.on .mc,
+body.idle .upkeep-head .r,
+body.idle .updpill.ember .mc,
+body.idle .formsec.collapsible .r,
+body.idle .microlabel .r.glowr,
+body.idle .caret,
+body.idle #saveCfgBtn.pulse,
+body.idle .holdbar .hbprog.indet i,body.idle .modprog .hbprog.indet i{animation-play-state:paused}

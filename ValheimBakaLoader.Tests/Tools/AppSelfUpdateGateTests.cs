@@ -169,7 +169,16 @@ namespace ValheimBakaLoader.Tests.Tools
             // its next launch, because a host whose BakaLoader did not come back has nowhere
             // else to look: this one is the only one that does not relaunch anything, since the
             // copy that would not close is still running.
-            Assert.Contains("BakaLoader was still running two minutes after it was asked to close", script);
+            Assert.Contains("BakaLoader was still running four minutes after it was asked to close", script);
+
+            // The wait has to outlast the longest app close, or a host whose server saves slowly
+            // loses the update while the app is still stopping the server. The longest close is
+            // the save cap plus the close grace; the note above names the wait in minutes.
+            var longestClose = ValheimServer.CloseDeadlineFor(new[] { ValheimServer.StopSaveCap });
+            Assert.True(AppUpdateService.WatchdogCloseWait > longestClose,
+                "the watchdog waits " + AppUpdateService.WatchdogCloseWait + " but an app close can take " + longestClose);
+            Assert.Equal(TimeSpan.FromMinutes(4), AppUpdateService.WatchdogCloseWait);
+            Assert.Contains("Wait-Process -Id $appPid -Timeout 240 ", script);
 
             // And it looks after the wait and before anything is written, which is the only
             // place the look is worth anything.

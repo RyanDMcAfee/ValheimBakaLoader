@@ -134,7 +134,7 @@ namespace ValheimBakaLoader.Tests.Forms
             // disk with nothing left to say and a disk that has not changed. The row never goes
             // away on its own, so it owes the host a press that asks now, and a press that
             // redraws the identical row owes them a word for what it found.
-            new object[] { "cond.", 45 },
+            new object[] { "cond.", 48 },
         };
 
         [Theory]
@@ -330,7 +330,12 @@ namespace ValheimBakaLoader.Tests.Forms
             // pointed a running server's worlds somewhere else.
             // 221 with the two the second read of that row added: the two answers Check again
             // can have, a disk with nothing left to say and a disk that has not changed.
-            Assert.Equal(221, marked.Count);
+            // 228 with the seven the ground sweep answers with: cleared some, cleared nothing,
+            // still walking, already running, stopped part way with and without its counts, and
+            // a Commander too old to know the verb.
+            // 229 with the one the Mod folder button says in the browser preview, where there is
+            // no Explorer to open.
+            Assert.Equal(229, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the
@@ -381,7 +386,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 ("guard.btn.start_anyway", 2),
                 ("guard.btn.start_no_backup", 2),
                 ("guard.note.backup", 2),          // the guard, and the update's own prompt
-                ("cond.btn.open_log", 3),          // a failed save, a crash, a missing plugin
+                ("cond.btn.open_log", 4),          // a failed save, a crash, a missing plugin, a stop with no save
                 ("srvupd.row.title", 2),           // the row's title and its stopped button
                 ("srvupd.phase.finished", 2),      // the bar line and the toast
             })

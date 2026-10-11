@@ -205,5 +205,34 @@ namespace ValheimBakaLoader.Tests.Forms
                     < source.IndexOf("core.Navigate(", StringComparison.Ordinal),
                 "the state push is wired after Navigate, so the first load can slip past it");
         }
+
+        /// <summary>
+        /// The host half of the fire's gate. The page only stops the fire when it hears
+        /// window.active false, so the form has to say so on every activation change, and once
+        /// on load for the window that finished loading behind the game. Without these the
+        /// page selftest stays green while the fire burns behind Valheim.
+        /// </summary>
+        [Fact]
+        public void The_window_active_state_is_posted_on_activation_changes_and_once_on_load()
+        {
+            var source = BlendWindow();
+
+            var activated = Between(source, "protected override void OnActivated(EventArgs e)", "\n        }");
+            Assert.Contains("base.OnActivated(e);", activated);
+            Assert.Contains("PostWindowActive(true);", activated);
+
+            var deactivate = Between(source, "protected override void OnDeactivate(EventArgs e)", "\n        }");
+            Assert.Contains("base.OnDeactivate(e);", deactivate);
+            Assert.Contains("PostWindowActive(false);", deactivate);
+
+            Assert.Contains("PostEvent(\"window.active\", new { active });", source);
+
+            const string onLoad = "core.NavigationCompleted += (s, e) => PostWindowActive(ActiveForm == this);";
+            Assert.Contains(onLoad, source);
+            Assert.True(
+                source.IndexOf(onLoad, StringComparison.Ordinal)
+                    < source.IndexOf("core.Navigate(", StringComparison.Ordinal),
+                "the active state push is wired after Navigate, so the first load can slip past it");
+        }
     }
 }

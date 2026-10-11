@@ -49,9 +49,20 @@ namespace ValheimBakaLoader.Tests.Tools
             // Never start real processes in tests.
         }
 
+        /// <summary>
+        /// Every close request asked for, in order, so a test can say WHEN the stop let go of
+        /// the server (after the save line, after the bound, or at once).
+        /// </summary>
+        public ConcurrentQueue<string> KillRequests { get; } = new();
+
+        /// <summary>Raised on every close request, with the key, after it is recorded.</summary>
+        public event Action<string> KillRequested;
+
         public void SafelyKillProcess(string key)
         {
-            // Nothing to kill in tests.
+            // Nothing to kill in tests: the request is only written down.
+            KillRequests.Enqueue(key);
+            KillRequested?.Invoke(key);
         }
     }
 }

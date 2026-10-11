@@ -734,5 +734,62 @@ else
   echo "  the save folder row selftest is missing: $SAVEDIR_SELFTEST"; fail=1
 fi
 
+echo "== 42. what a ground sweep actually cleared, read rather than assumed =="
+# The rule 13 holds for the kill sweep, on the World upkeep group's Clear ground items.
+# baka_cleardrops answers with its counts, a started line, a busy line, a stopped line, a
+# usage sentence and its errors, and a Commander older than the verb forwards it to the
+# console and says so, which must read as "this server's plugin is too old" and never as a
+# sweep. The table drives the real reader out of app.js against every one of those, and the
+# dialog's builder against the plugin's own argument rules.
+CLEARDROPS_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/cleardrops_reply_selftest.js"
+if [ -f "$CLEARDROPS_SELFTEST" ]; then
+  if out=$(node "$CLEARDROPS_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the ground sweep reply table is missing: $CLEARDROPS_SELFTEST"; fail=1
+fi
+
+echo "== 43. the cheat-mark controls stand in World upkeep, not on the Players page =="
+# 1.2.10 moved Clear cheat marks and its armed switch out of the Players head and into the
+# Hearth's World upkeep group, ids and handlers unchanged. Because app.js finds both by id, a
+# merge that put the old head back would go on passing every other check here, with the
+# button on the wrong page or on two pages at once. The scan reads index.html with a real
+# parser and walks each control's parents.
+"$py" "$HERE/scan_world_upkeep.py" "$APP/WebUI/index.html" > /tmp/wupk.$$ 2>&1 || true
+sed 's/^/  /' /tmp/wupk.$$
+wn=$(tail -1 /tmp/wupk.$$ | awk '{print $2}')
+[ "$wn" = "0" ] || fail=1
+rm -f /tmp/wupk.$$
+
+echo "== 44. the Mod folder button is offered only when the folder is there =="
+# The Mods head opens this realm's BepInEx plugins folder. Offered on a realm with no such
+# folder it is a press that answers "Folder not found", and offered before the host side has
+# said where the folder is it opens the last realm's. The selftest drives the real gate and
+# click code out of app.js: a folder enables it and the press sends shell.open "plugins", no
+# folder or no answer yet keeps it disabled with a sentence, and a stale realm's reply is dropped.
+MODFOLDER_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/modfolder_selftest.js"
+if [ -f "$MODFOLDER_SELFTEST" ]; then
+  if out=$(node "$MODFOLDER_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the mod folder selftest is missing: $MODFOLDER_SELFTEST"; fail=1
+fi
+
+echo "== 45. a stop that ended without a world save: the row, its rank and its close =="
+# A stop asks for a save first and watches for the save line; when the process went with none,
+# the host sends the fact with every state and the page owes one row for it. The row ranks
+# below every live failure (the stop is over, a failing save on a running server is not) and
+# above the two lists, is cleared by a realm switch and by a live save, and its close tells
+# the host side so a reload does not raise it again.
+UNSAVED_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/unsaved_stop_row_selftest.js"
+if [ -f "$UNSAVED_SELFTEST" ]; then
+  if out=$(node "$UNSAVED_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the unsaved stop row selftest is missing: $UNSAVED_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

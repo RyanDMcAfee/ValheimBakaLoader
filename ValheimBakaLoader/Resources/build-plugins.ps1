@@ -61,9 +61,13 @@ $refs += (Join-Path $CoreDir "0Harmony.dll")
 # Commander as well as into KillAll, and BakaSpawnMark.cs into Commander as well as into
 # SpawnHelper, so whichever of a pair a host has installed answers the command the same way
 # and neither needs the other to be there. A shared file can never be left out of one of a
-# pair without this list saying so.
+# pair without this list saying so. BakaClearDropsPlan.cs and BakaClearDropsSweep.cs are the
+# other way round: baka_cleardrops is served by Commander alone, so they live in its folder
+# and appear in its entry only.
 $plugins = @(
     @{ Dir = "Commander";   Source = @("BakaLoaderCommander.cs",
+                                       "BakaClearDropsPlan.cs",
+                                       "BakaClearDropsSweep.cs",
                                        "..\KillAll\BakaKillAllPlan.cs",
                                        "..\KillAll\BakaKillAllSweep.cs",
                                        "..\KillAll\BakaCleansePlan.cs",

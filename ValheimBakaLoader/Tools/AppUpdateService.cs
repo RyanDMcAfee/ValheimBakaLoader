@@ -529,6 +529,16 @@ namespace ValheimBakaLoader.Tools
             Process.Start(psi);
         }
 
+        /// <summary>
+        /// How long the watchdog waits for this app to exit before it gives up on the update.
+        /// The app close can take as long as the longest save wait plus the grace the close
+        /// gives a server to go (<see cref="ValheimServer.CloseDeadlineFor"/>), so the watchdog
+        /// waits that long and a minute more. A shorter wait drops the update of a host whose
+        /// server saves slowly, because the app is still busy stopping it when the wait runs out.
+        /// </summary>
+        public static readonly TimeSpan WatchdogCloseWait =
+            ValheimServer.CloseDeadlineFor(new[] { ValheimServer.StopSaveCap }) + TimeSpan.FromMinutes(1);
+
         private static string BuildWatchdogScript(
             int appPid, string zipPath, string extractDir, string installDir, string exePath, string workDir)
         {
@@ -559,17 +569,17 @@ function Write-Note($note) {{
 }}
 
 # 1. Wait for BakaLoader to fully exit so its files unlock.
-try {{ Wait-Process -Id $appPid -Timeout 120 -ErrorAction SilentlyContinue }} catch {{}}
+try {{ Wait-Process -Id $appPid -Timeout {(int)WatchdogCloseWait.TotalSeconds} -ErrorAction SilentlyContinue }} catch {{}}
 Start-Sleep -Seconds 1
 
 # 1b. Still running after all that? Then leave the install alone and do nothing at all.
-#     The wait above gives up after two minutes, and writing the new files over an app that
+#     The wait above gives up after four minutes, and writing the new files over an app that
 #     is still holding them is the worst of both: the unlocked files are replaced, the locked
 #     exe is not, and what is left on disk is half one version and half the other. Skipping
 #     costs the host nothing; the update is staged again the next time BakaLoader looks.
 #     Nothing is relaunched here, because the copy that would not close is still running.
 if (Get-Process -Id $appPid -ErrorAction SilentlyContinue) {{
-  Write-Note 'BakaLoader was still running two minutes after it was asked to close, so the update was not written and nothing on disk was touched. Close BakaLoader, then check for updates again.'
+  Write-Note 'BakaLoader was still running four minutes after it was asked to close, so the update was not written and nothing on disk was touched. Close BakaLoader, then check for updates again.'
   exit 1
 }}
 

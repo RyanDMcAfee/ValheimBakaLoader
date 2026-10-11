@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.8.1 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.9.0 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -43,6 +43,12 @@
 //                                      Resources\KillAll\BakaKillAllSweep.cs and is
 //                                      compiled into this DLL and into BakaKillAll.dll,
 //                                      so either plugin serves the command alone.
+//   baka_cleardrops [keepgear=0|1] [radius=<m>] - clear items lying on the ground across the
+//                                      whole world, keeping gear and anything within the
+//                                      radius of a connected player unless told otherwise.
+//                                      The rule is in BakaClearDropsPlan.cs and the walk in
+//                                      BakaClearDropsSweep.cs, both beside this file and
+//                                      served by this plugin alone.
 //   anything else                    - forwarded to the in-game console if present
 //
 // CHEATED MARK (v1.6.0):
@@ -104,7 +110,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.8.1";
+        private const string PluginVersion = "1.9.0";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -460,6 +466,7 @@ namespace BakaLoaderCommander
             // every other command behind the very timeout this arrangement exists to cure.
             KillAllSweep.Pump();
             CleanseSweep.Pump();
+            ClearDropsSweep.Pump();
         }
 
         private string ExecuteCommand(string text)
@@ -481,6 +488,7 @@ namespace BakaLoaderCommander
                 case "baka_killall": return CmdKillAll(tokens);
                 case "baka_cleanse": return CmdCleanse();
                 case "baka_cleanse_status": return CleanseSweep.Status();
+                case "baka_cleardrops": return CmdClearDrops(tokens);
                 default: return CmdFallback(text);
             }
         }
@@ -1146,6 +1154,25 @@ namespace BakaLoaderCommander
                 delegate(string line) { Log.LogInfo(line); });
         }
 
+        // ---- baka_cleardrops [keepgear=0|1] [radius=<m>] -----------------------
+        //
+        // Items lying on the ground, world wide, and nothing else: no piece, no container or
+        // anything in one, no stand, no cart or ship, no creature. Gear and anything near a
+        // connected player are kept unless the line says otherwise. The work is in
+        // ClearDropsSweep (BakaClearDropsSweep.cs beside this file) and it is sliced the way
+        // the kill-all sweep is, for the same reason: Start() answers with the result line
+        // when the walk fits inside one slice and with "cleardrops: started on N ground
+        // items" when it does not, and Pump(), at the bottom of Update(), carries the rest and
+        // puts the counts in the server log.
+
+        private static string CmdClearDrops(string[] tokens)
+        {
+            return ClearDropsSweep.Start(
+                tokens,
+                delegate(string message) { Log.LogWarning(message); },
+                delegate(string line) { Log.LogInfo(line); });
+        }
+
         // ---- fallback: forward unknown commands to the in-game console --------
 
         private static string CmdFallback(string text)
@@ -1165,7 +1192,7 @@ namespace BakaLoaderCommander
                 return "Error forwarding '" + text + "' to console: " + ex.Message;
             }
 
-            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_cleanse, baka_cleanse_status)";
+            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_cleardrops, baka_cleanse, baka_cleanse_status)";
         }
     }
 }

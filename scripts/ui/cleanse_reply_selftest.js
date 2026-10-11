@@ -357,10 +357,10 @@ test("both ways in go through that one question, and the bridge answers the call
   assert.ok(/cmd==="clear_cheat_marks"[\s\S]{0,260}cleanseModal\(\)/.test(SOURCE),
     "the palette entry does not open the confirm");
 
-  // The Players hall.
-  assert.ok(MARKUP.indexOf('id="cleanseBtn"') > 0, "the Players hall has no way to the cleanse");
+  // The Hearth's World upkeep group (the Players hall until 1.2.10).
+  assert.ok(MARKUP.indexOf('id="cleanseBtn"') > 0, "the World upkeep group has no way to the cleanse");
   assert.ok(/\$\("#cleanseBtn"\)\?\.addEventListener\("click",\(\)=>cleanseModal\(\)\)/.test(SOURCE),
-    "the Players hall button is wired to nothing, or not to the confirm");
+    "the World upkeep button is wired to nothing, or not to the confirm");
 
   // The console picker, which sends a complete command on a click, is held behind the
   // same question rather than sending the sweep on one tap.

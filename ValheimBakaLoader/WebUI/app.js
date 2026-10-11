@@ -302,6 +302,7 @@ const S={
   /* How many mod folders are on this realm's disk, read without asking any site. The
      Hearth card and the rail stand on this until a scan gives them the real list. */
   modsOnDisk:null,
+  modsFolder:undefined,  // this realm's plugins folder: undefined until asked, null when not on disk
   /* BepInEx, as bepinex.status answers it and bepinex.changed pushes it. One fact for
      the whole install rather than for this profile: every server provisioned from one
      install loads the same loader through junctions and hard links. null means nothing
@@ -320,6 +321,10 @@ const S={
      the two ways in: the sweep is sliced on the server and the wait runs for up to ten
      minutes, so a page where nothing moves is a page a host presses again. */
   cleansing:false,
+  /* Whether the window is the one in front, as the host side says on every activate and
+     deactivate (window.active). True until told otherwise, so a page with no host, or one
+     that has not heard yet, draws as it always did. */
+  windowActive:true,
   hexium:false,           // the host's "Also check Hexium" switch, mirrored from userprefs
   /* The id of the note under Start with Windows, the last time the host side named one, or
      null for nothing to say. Kept here the way a failed scan's reason is, and for the same
@@ -454,6 +459,15 @@ function renderWinState(){
 Native.on("win.state",d=>{
   document.body.dataset.win=d&&d.maximized?"max":"normal";
   renderWinState();
+});
+/* The window behind the game. document.hidden stays false there, so this is the only word
+   the page gets that nobody is looking: the fire parks, and body.idle pauses the endless
+   CSS animations (the runes, the sweeps, the caret, the Save Config breath) where they
+   stand. Coming back to the front draws the fire at once rather than a frame late. */
+Native.on("window.active",d=>{
+  S.windowActive=!(d&&d.active===false);
+  document.body.classList.toggle("idle",!S.windowActive);
+  flameTick();
 });
 
 /* How far the pointer has to travel before a press on a maximized window's title bar is
@@ -641,6 +655,7 @@ function repaintBootCopy(){
   try{renderHearth();}catch(_){}          /* Hearth card, app bar, waiting-update pill */
   try{syncUpkeepGates();}catch(_){}       /* the gated auto-update row's tooltip */
   try{syncDetailedLogGate();}catch(_){}   /* the gated Detailed log row's tooltip */
+  try{gateClearDropsBtn();}catch(_){}     /* World upkeep's Clear ground items tooltip */
   try{renderSideVer();}catch(_){}         /* the sidebar version line */
   try{renderWinState();}catch(_){}        /* the maximize button, in whichever state */
   try{renderAppUpdatePill();}catch(_){}   /* the BakaLoader-update pill */
@@ -1823,9 +1838,11 @@ function goPage(name){
   });
   currentPage=name;
   setToastLift();
-  if(name==="vikings"){try{renderVikCols();}catch(_){}try{renderCleanseArmed();}catch(_){}}
+  if(name==="vikings"){try{renderVikCols();}catch(_){}}
   if(name==="world"){try{worldTab(WORLD_TAB);}catch(_){}}
-  if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();flameResize();}
+  /* The armed cheat-mark switch sits in the Hearth's World upkeep group from 1.2.10, so it is
+     redrawn when the Dashboard comes back on screen, where the Players hall used to do it. */
+  if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();flameResize();try{renderCleanseArmed();}catch(_){}}
   flameTick();   // the fire only burns while the Dashboard is on screen
   refreshScrollCues();
   try{renderEditBar();}catch(_){}
@@ -1833,6 +1850,9 @@ function goPage(name){
   if(name==="skald"){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
   if(Native.available){
     if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods({force:false});
+    /* The plugins folder can appear while the hall is off screen (BepInEx installed from
+       the row above the table), so the Mod folder button asks the disk again on the way in. */
+    if(name==="mods") refreshModCount();
     if(name==="vikings"){refreshPlayers();refreshJournal(true);}
     if(name==="runes") refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
     if(name==="herald") refreshHerald();      // re-read prefs so the hall always shows the saved truth
@@ -2191,7 +2211,7 @@ async function switchServer(name,opts){
      stored save folder is a per-realm field, so the row is cleared here and asked again
      below for the realm the host has just switched to. */
   ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate","restartPending",
-   "saveFolderStray"].forEach(clearCondition);
+   "saveFolderStray","unsavedStop"].forEach(clearCondition);
   /* and so does a dismissal: the settings the host waved away were that realm's. All
      three of these are memos about ONE realm's bar, and two of them used to stand: a
      mod-updates bar dismissed on a realm with three waiting suppressed the next realm's
@@ -2217,6 +2237,7 @@ async function switchServer(name,opts){
   if(st!==FAIL){S.state=null;applyState(st);}
   refreshUpdateInfo();   // this realm's own install, asked fresh
   S.modsOnDisk=null;     // the previous realm's mods are not this realm's
+  S.modsFolder=undefined;try{renderModFolderBtn();}catch(_){} // nor its plugins folder: the Mod folder button waits for this realm's
   refreshModCount();     // and this realm's own count, off its own disk
   renderAllFromPrefs();
   await refreshPlayers();
@@ -2530,8 +2551,9 @@ $("#srvStrip").addEventListener("contextmenu",e=>{
    The particle geometry is written in a fixed 260x320 space, and the context is
    transformed to whatever the card gives it multiplied by devicePixelRatio, so the
    fire is the same shape at 100% and at 150% Windows scaling and never renders
-   soft. The loop runs only while the Dashboard is the visible hall and the window
-   is not hidden; prefers-reduced-motion gets one still frame and no loop. Every
+   soft. The loop runs only while the Dashboard is the visible hall, the window is
+   not hidden and it is the window in front (window.active), and it paints at most
+   thirty frames a second; prefers-reduced-motion gets one still frame and no loop. Every
    entry point is a no-op if the canvas is not in the document. */
 /* var, not const: goPage() runs once while this file is still being evaluated, and a
    const would still be in its temporal dead zone when it calls flameTick(). */
@@ -2549,7 +2571,13 @@ const FLAME_PAL={
   crashed:{rate:2,lift:[.2,.5],life:[90,160],size:[2,4],wobble:.5,
     colors:["#5A5A60","#3A3A3E"],glow:"rgba(217,67,47,.18)",smoke:1,ember:0,coal:true},
 };
-const FLAME={cv:null,ctx:null,state:"cold",ps:[],t:0,raf:0,reduced:false,ro:null};
+const FLAME={cv:null,ctx:null,state:"cold",ps:[],t:0,raf:0,reduced:false,ro:null,last:0};
+/* The fire is drawn at most thirty times a second. The simulation still steps at the
+   sixty a second it was tuned at, two steps to a drawn frame, so the fire keeps its pace
+   and only the painting halves. FLAME.last is the timestamp of the last drawn frame, and
+   0 means the next frame draws whatever the clock says. */
+const FLAME_FRAME_MS=1000/30, FLAME_STEP_MS=1000/60;
+const flameNow=()=>(typeof performance!=="undefined"&&performance.now)?performance.now():0;
 function flamePal(){return FLAME_PAL[FLAME.state]||FLAME_PAL.burning;}
 function flameSpawn(){
   const s=flamePal();
@@ -2577,28 +2605,50 @@ function flameResize(){
   if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
   ctx.setTransform(cv.width/FLAME_VW,0,0,cv.height/FLAME_VH,0,0);
 }
-function flameFrame(){
-  FLAME.raf=0;
-  const ctx=FLAME.ctx, cv=FLAME.cv;
-  if(!ctx||!cv||!cv.isConnected) return;
-  const s=flamePal();
+/* One step of the simulation: spawn, move, age, and drop what burned out. Split from
+   the painting so a drawn frame can stand for more than one step. */
+function flameStep(s){
   FLAME.t++;
-  ctx.clearRect(0,0,FLAME_VW,FLAME_VH);
-  /* ground glow under the logs */
-  const g=ctx.createRadialGradient(FLAME_VW/2,FLAME_VH-40,4,FLAME_VW/2,FLAME_VH-40,110);
-  g.addColorStop(0,s.glow); g.addColorStop(1,"rgba(0,0,0,0)");
-  ctx.fillStyle=g; ctx.fillRect(0,0,FLAME_VW,FLAME_VH);
   let rate=s.rate;
   if(s.pulse) rate=s.rate*(.4+.6*(.5+.5*Math.sin(FLAME.t/38)));
   for(let i=0;i<rate*.12;i++){ if(Math.random()<rate*.12-i) flameSpawn(); }
-  ctx.globalCompositeOperation="lighter";
   for(let i=FLAME.ps.length-1;i>=0;i--){
     const p=FLAME.ps[i];
     p.life++;
     p.x+=p.vx+Math.sin((FLAME.t+p.y)/9)*s.wobble*.35;
     p.y+=p.vy; p.vy*=.995;
+    if(p.life>=p.max) FLAME.ps.splice(i,1);
+  }
+}
+function flameFrame(ts){
+  FLAME.raf=0;
+  const ctx=FLAME.ctx, cv=FLAME.cv;
+  if(!ctx||!cv||!cv.isConnected) return;
+  /* The cap. A frame that comes too soon is skipped and asked for again; a call with no
+     timestamp (the still frame, a direct redraw) always draws. */
+  let steps=1;
+  if(typeof ts==="number"&&FLAME.last){
+    const gap=ts-FLAME.last;
+    if(gap<FLAME_FRAME_MS-2){
+      if(flameShouldRun()) FLAME.raf=requestAnimationFrame(flameFrame);
+      return;
+    }
+    steps=Math.min(3,Math.max(1,Math.round(gap/FLAME_STEP_MS)));
+  }
+  /* rAF timestamps and performance.now() read the same clock, so a direct draw stamps
+     itself too and the loop it starts waits out the cap from there. */
+  FLAME.last=typeof ts==="number"?ts:flameNow();
+  const s=flamePal();
+  for(let n=0;n<steps;n++) flameStep(s);
+  ctx.clearRect(0,0,FLAME_VW,FLAME_VH);
+  /* ground glow under the logs */
+  const g=ctx.createRadialGradient(FLAME_VW/2,FLAME_VH-40,4,FLAME_VW/2,FLAME_VH-40,110);
+  g.addColorStop(0,s.glow); g.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,FLAME_VW,FLAME_VH);
+  ctx.globalCompositeOperation="lighter";
+  for(let i=FLAME.ps.length-1;i>=0;i--){
+    const p=FLAME.ps[i];
     const k=p.life/p.max;
-    if(k>=1){FLAME.ps.splice(i,1);continue;}
     const a=(1-k)*(p.smoke?.35:.95);
     const r=p.r*(p.smoke?1+k*2.2:1-k*.55);
     ctx.beginPath(); ctx.arc(p.x,p.y,Math.max(.5,r),0,Math.PI*2);
@@ -2621,17 +2671,22 @@ function flameFrame(){
   }
   if(flameShouldRun()) FLAME.raf=requestAnimationFrame(flameFrame);
 }
-/* The fire costs nothing while nobody is looking at it. */
+/* The fire costs nothing while nobody is looking at it: not on another hall, not
+   minimized, and not while the window sits behind something else (S.windowActive). */
 function flameShouldRun(){
   return !!FLAME.ctx && !FLAME.reduced && !document.hidden
-    && currentPage==="hearth" && FLAME.cv && FLAME.cv.isConnected;
+    && S.windowActive!==false
+    && currentPage==="hearth" && !!FLAME.cv && FLAME.cv.isConnected;
 }
 function flameTick(){
   if(!FLAME_READY||!FLAME.ctx) return;
   if(flameShouldRun()){
-    if(!FLAME.raf) FLAME.raf=requestAnimationFrame(flameFrame);
-  }else if(FLAME.raf){
-    cancelAnimationFrame(FLAME.raf); FLAME.raf=0;
+    /* Coming back from a park: the first frame draws at once, not after a wait for the
+       next animation frame, and it does not count the parked time as steps to catch up. */
+    if(!FLAME.raf){ FLAME.last=0; flameFrame(); }
+  }else{
+    if(FLAME.raf){ cancelAnimationFrame(FLAME.raf); FLAME.raf=0; }
+    FLAME.last=0;
   }
 }
 function flameSetState(state){
@@ -2952,6 +3007,8 @@ function applyState(st){
      different command line from the one saved on disk. Absent on an older host, which simply
      means the row is never raised. */
   if("restartPending" in st) conditionRestartPending(st.restartPending,st.restartPendingSig);
+  /* The last stop of this realm ended with no save line. Absent on an older host. */
+  if("unsavedStop" in st) conditionUnsavedStop(st.unsavedStop);
   /* BepInEx: a pack update waiting for every server on this install to stop, and a start
      where the loader never wrote its log. Absent on an older host. */
   if("bepinex" in st) conditionBepInEx(st.bepinex,st.status);
@@ -2963,6 +3020,8 @@ function applyState(st){
   /* BakaLoader's own update reads the same transition: what the dialog may offer turns on
      whether a server is up, so a stop is the moment "update now" becomes possible. */
   if(prev!==st.status){try{refreshUpdateInfo();}catch(_){} try{refreshAppUpdateInfo();}catch(_){}}
+  /* The World upkeep button needs a running server, so it follows every state change. */
+  try{gateClearDropsBtn();}catch(_){}
   renderHearthNative();
 }
 douseBtn.addEventListener("click",e=>{e.stopPropagation();lifecycleToggle();});
@@ -3040,11 +3099,67 @@ renderLastSave();
    keeps the dash it already has. */
 async function refreshModCount(){
   if(!Native.available) return;
+  const asked=S.profileName;
   const r=await rpc("mods.count");
-  if(r===FAIL||!r) return;
+  if(r===FAIL||!r){try{modFolderLookupFailed(asked);}catch(_){}return;}
+  if(!modFolderFromCount(r)) return;   // a reply for a realm the host has left
   S.modsOnDisk=(typeof r.count==="number")?r.count:null;
   try{renderMods();}catch(_){}
 }
+
+/* MODFOLDER-BEGIN
+   The Mod folder button in the Mods hall head. It opens this realm's BepInEx plugins folder
+   in Explorer, which is where a host goes to drop in a mod by hand or see what is really
+   there. The folder comes from the same mods.count reply the Hearth card stands on: the host
+   side names it when it is on disk and answers null when it is not, which on a fresh realm
+   means BepInEx has not been installed yet. Until that reply lands the button waits, greyed
+   out, rather than offering a press that may open nothing.
+   The press sends shell.open the keyword "plugins" and never the path. The path is shown in
+   the tooltip so the host knows which folder they are about to get, and the host side
+   resolves the same folder itself, so the page cannot be made to open anything else.
+   scripts/ui/modfolder_selftest.js drives these functions out of this block. */
+function modFolderFromCount(r){
+  if(!r||!isActiveProfile(r.profile)) return false;
+  S.modsFolder=(typeof r.folder==="string"&&r.folder.trim())?r.folder:null;
+  return true;
+}
+/* The question itself failed (the host side did not answer). The button says so and turns
+   into a "look again" press, instead of reading "Looking..." until the host leaves the hall
+   and comes back. A failure for a realm the host has already left is dropped, and a folder
+   already known is kept: one missed answer does not take away a press that worked. */
+function modFolderLookupFailed(asked){
+  if(!isActiveProfile(asked)) return false;
+  if(S.modsFolder===undefined) S.modsFolder=false;
+  renderModFolderBtn();
+  return true;
+}
+function modFolderGate(){
+  if(!Native.available) return {enabled:true,title:T("mods.folder.title",{path:"BepInEx\\plugins"})};
+  if(S.modsFolder===undefined) return {enabled:false,title:T("mods.folder.checking.title")};
+  if(S.modsFolder===false) return {enabled:true,retry:true,title:T("mods.folder.failed.title")};
+  if(!S.modsFolder) return {enabled:false,title:T("mods.folder.missing.title")};
+  return {enabled:true,title:T("mods.folder.title",{path:S.modsFolder})};
+}
+function renderModFolderBtn(){
+  const b=$("#modFolderBtn");
+  if(!b) return;
+  /* The label is the walker's (data-i18n on the button). This paints the state only. */
+  const g=modFolderGate();
+  b.disabled=!g.enabled;
+  b.title=g.title;
+}
+function modFolderClick(){
+  if(!Native.available){toast("ᛃ "+T("mods.folder.preview.toast"));return;}
+  const g=modFolderGate();
+  if(!g.enabled) return;
+  /* The last look failed: this press looks again rather than opening a folder nobody named. */
+  if(g.retry){S.modsFolder=undefined;renderModFolderBtn();refreshModCount();return;}
+  /* A folder that went away since the last look is refused by the host side with its own
+     sentence. Asking again afterwards puts the button back in step with the disk. */
+  return rpc("shell.open",{target:"plugins"}).then(r=>{if(r===FAIL) refreshModCount();});
+}
+/* MODFOLDER-END */
+$("#modFolderBtn")?.addEventListener("click",modFolderClick);
 
 /* The rolling average of the last dozen world writes, or a dash while nothing has been
    timed yet. A painter rather than five assignments, because the browser preview seeds
@@ -3943,6 +4058,7 @@ function renderMods(){
   $("#scanBtn").disabled=busy;
   $("#addModBtn").disabled=busy;
   renderModSourceLabels();
+  renderModFolderBtn();
   /* Above the table, and outside it: the loader is not a mod and never joins the list
      the counts, Update all and the waiting pill are taken from. */
   renderBepInExRow();
@@ -5595,8 +5711,11 @@ const palLabel=it=>[...it.childNodes].filter(n=>n.nodeType===3).map(n=>n.nodeVal
    start/stop follow canStart/canStop. Browser preview keeps everything clickable.
    Keyed on the command's NAME, never on its label: a translated label would have
    walked straight past a gate keyed on English. */
-const PAL_NEEDS_RUNNING={save_world:1,kill_monsters:1,clear_cheat_marks:1,broadcast:1,console_command:1};
+const PAL_NEEDS_RUNNING={save_world:1,kill_monsters:1,clear_cheat_marks:1,clear_drops:1,broadcast:1,console_command:1};
 function updatePalGating(){
+  /* The Hearth button for the ground sweep shares this gate. It is drawn first because the
+     early return below is about the palette alone. */
+  try{gateClearDropsBtn();}catch(_){}
   if(!Native.available) return;
   const st=S.state||{}, running=st.status==="Running";
   $$(".pitem").forEach(it=>{
@@ -5758,6 +5877,111 @@ function killAllCommand(s){
   return {cmd:"baka_killall"};
 }
 /* KILLALL-END */
+
+/* CLEARDROPS-BEGIN
+   ------------------------------------------------------------------------------------
+   The ground sweep: what the host is about to clear, and what the server said it did.
+
+   The same arrangement as the kill sweep above, for the same reason. baka_cleardrops
+   answers on the line RCON carries with its counts, a "started" line for a world too big
+   to walk inside the answer, a refusal because one is already walking, a stopped-early
+   line, its usage sentence and its "Error:" lines. And a Commander older than 1.9.0 does
+   not know the verb at all: it hands the line to the game's console and answers that it
+   did. Every one of those has to be read for what it is, and that last one most of all,
+   because "Forwarded to console" is not a sweep, and a host told it was would go looking
+   for a tidy world that is not there.
+
+   Pure functions of their arguments, driven as a table with no browser in the room by
+   scripts/ui/cleardrops_reply_selftest.js, which runs the real code out of this file
+   between these markers. The wording is not in here: these answer with what happened,
+   and the caller asks the catalog for the words.                                      */
+
+/** The counts out of a reply, or null when it carries none. The separators between the
+    clauses are read as any run of non-word characters, so a middle dot that crossed an
+    older encoding as a question mark still reads as one. */
+function clearDropsCounts(said){
+  const m=/removed\s+(\d+)\W+kept\s+(\d+)\s+gear\W+kept\s+(\d+)\s+near players\W+scanned\s+(\d+)\s+objects?(?:\W+kept\s+(\d+)\s+unreadable)?/i.exec(said);
+  return m?{removed:+m[1],gear:+m[2],near:+m[3],scanned:+m[4],unreadable:m[5]?+m[5]:0}:null;
+}
+
+/**
+ * What baka_cleardrops just said, read rather than assumed.
+ * @param {string} reply the server's answer, exactly as it arrived
+ * @returns {object} kind, plus whatever that kind carries:
+ *   complete     {removed,gear,near,scanned,unreadable} the sweep finished inside the answer
+ *   started      {items}   too big for the answer, the result is in the log
+ *   busy         {}        a sweep was already walking; nothing new was cleared
+ *   stopped      {removed,gear,near,scanned,unreadable}, or {counted:false}
+ *   unsupported  {}        the plugin on the server is older than this button
+ *   refused      {}        Error:, Usage:
+ *   silent       {}        RCON carried it and the server said nothing
+ *   unknown      {}        a shape this version has not met
+ */
+function clearDropsReply(reply){
+  const said=String(reply==null?"":reply).trim();
+  if(!said) return {kind:"silent"};
+  /* Ahead of the refusal test, because "Unknown command" is one of its openings. Here it
+     means something more useful than refused: the Commander on the server predates the
+     verb, and the cure is a restart that lets BakaLoader put the new one in place. One
+     that hands the line to the console instead is giving the same news in other words,
+     and nothing was cleared either way. */
+  if(/^Unknown command\b/i.test(said)||/^Forwarded to console:/i.test(said)) return {kind:"unsupported"};
+  if(consoleRefused(said)) return {kind:"refused"};
+  if(/^Usage:\s*baka_cleardrops\b/i.test(said)) return {kind:"refused"};
+  if(/^cleardrops:\s*already running\b/i.test(said)) return {kind:"busy"};
+  if(/^cleardrops:\s*stopped early\b/i.test(said)){
+    const c=clearDropsCounts(said);
+    /* No counts behind it means nobody counted: say it stopped and say nothing else. */
+    return c?Object.assign({kind:"stopped"},c):{kind:"stopped",counted:false};
+  }
+  const started=/^cleardrops:\s*started on\s+(\d+)\s+ground items?\b/i.exec(said);
+  if(started) return {kind:"started",items:+started[1]};
+  if(/^cleardrops:\s*removed\b/i.test(said)){
+    const c=clearDropsCounts(said);
+    /* "removed" with no counts behind it would put zeroes on screen that nobody counted. */
+    return c?Object.assign({kind:"complete"},c):{kind:"unknown"};
+  }
+  return {kind:"unknown"};
+}
+
+/** What the dialog holds before it is a command: both keeps on, 32 metres. */
+function clearDropsBlank(){return {keepGear:true,keepNear:true,radius:"32"};}
+
+/**
+ * The command line for what the dialog holds, or the reason it is not one yet.
+ * Both arguments are always written out, so the line the Saga log shows says exactly what
+ * was asked for and never leans on the plugin's own defaults.
+ * @param {object} s {keepGear,keepNear,radius}
+ * @returns {object} {cmd} when it is runnable, {problemId} when it is not. The id is a
+ *   catalog id rather than a sentence: this function does not know the window's language.
+ */
+function clearDropsCommand(s){
+  const keepGear=!(s&&s.keepGear===false);
+  const keepNear=!(s&&s.keepNear===false);
+  let metres=0;
+  if(keepNear){
+    /* A state that never held a radius is the blank one's 32; a box the host emptied is
+       not, and is refused below. */
+    const typed=String(s&&s.radius!=null?s.radius:clearDropsBlank().radius).trim();
+    /* A comma is read as a decimal point only in the one shape that can mean nothing else:
+       digits, a comma, then one or two digits, the way "12,5" is written across most of
+       Europe. Any other comma is refused rather than guessed at, because "1,000" read as a
+       decimal is a radius of 1 and clears nearly everything beside the players, the
+       opposite of what the host asked for. */
+    if(typed.indexOf(",")>=0){
+      if(!/^\d+,\d{1,2}$/.test(typed)) return {problemId:"pal.clear_drops.problem.radius"};
+      metres=Number(typed.replace(",","."));
+    }else{
+      metres=Number(typed);
+    }
+    /* Refused here first, so the host reads it beside the box rather than as a server
+       error afterwards. Zero is what the switch being off sends, so with the switch on a
+       zero is a slip rather than a wish. The ceiling is the plugin's own. */
+    if(!typed||!isFinite(metres)||metres<=0||metres>1000) return {problemId:"pal.clear_drops.problem.radius"};
+  }
+  return {cmd:"baka_cleardrops keepgear="+(keepGear?1:0)+" radius="+metres};
+}
+/* CLEARDROPS-END */
 
 /* CLEANSE-BEGIN
    ------------------------------------------------------------------------------------
@@ -6126,6 +6350,105 @@ function killAllModal(){
   };
   return again();
 }
+/** The toast for a ground sweep's reply, worded. Split from the reading for the reason
+    killAllToast is. */
+function clearDropsToast(read){
+  switch(read.kind){
+    case "complete":{
+      const kept={gear:read.gear,near:read.near,scanned:read.scanned};
+      /* Said only when there were any, the way the plugin itself only says it then. */
+      const tail=read.unreadable>0?" "+T("pal.clear_drops.toast.unreadable",{count:read.unreadable}):"";
+      return read.removed>0
+        ?"ᛉ "+T("pal.clear_drops.toast.done",Object.assign({removed:read.removed},kept))+tail
+        :"ᛉ "+T("pal.clear_drops.toast.none",kept)+tail;
+    }
+    case "started":     return "ᛉ "+T("pal.clear_drops.toast.started",{count:read.items});
+    case "busy":        return "ᛊ "+T("pal.clear_drops.toast.busy");
+    case "stopped":     if(read.counted===false) return "ᚦ "+T("pal.clear_drops.toast.stopped.nocounts");
+                        return "ᚦ "+T("pal.clear_drops.toast.stopped",{removed:read.removed});
+    case "unsupported": return "ᚦ "+T("pal.clear_drops.toast.unsupported");
+    case "refused":     return "ᚦ "+T("pal.console.refused.toast");
+    case "silent":      return "ᚦ "+T("pal.kill.toast.silent");
+    default:            return "ᚦ "+T("pal.kill.toast.unreadable");
+  }
+}
+
+/* The question before the ground sweep. What goes and what stays is said in one sentence,
+   the two keeps are switches the host can see the state of, and the radius box is only
+   there while the switch it belongs to is on. What is chosen and typed lives beside the
+   rebuilder, so a language switch redraws the dialog without losing any of it. */
+let CLEAR_DROPS=clearDropsBlank();
+function clearDropsModal(){
+  /* A refusal is about the radius box, so it goes the moment that box does or the host
+     starts typing in it. */
+  let problem="";
+  const again=()=>{
+    const st=CLEAR_DROPS;
+    if(!st.keepNear) problem="";
+    const row=(id,on,label,note)=>
+      `<label class="togglerow" style="height:auto;padding:7px 0;align-items:flex-start;cursor:pointer">`+
+        `<input type="checkbox" id="${id}"${on?" checked":""} style="margin:3px 9px 0 0">`+
+        `<span class="tl" style="display:block"><span style="display:block">${esc(label)}</span>`+
+        `<span class="subval" style="display:block;margin-top:2px">${esc(note)}</span></span></label>`;
+    const m=modalOpen(
+      `<div class="mtitle">${esc(T("pal.clear_drops.confirm.title"))}</div>`+
+      `<div class="mbody">`+
+        `<div class="subval">${esc(T("pal.clear_drops.confirm.body"))}</div>`+
+        `<div style="margin-top:10px">`+
+          row("cdGear",st.keepGear,T("pal.clear_drops.keep_gear"),T("pal.clear_drops.keep_gear.note"))+
+          row("cdNear",st.keepNear,T("pal.clear_drops.keep_near"),T("pal.clear_drops.keep_near.note"))+
+          (st.keepNear
+            ?`<div class="field" style="margin:2px 0 4px 25px;max-width:160px"><label>${esc(T("pal.clear_drops.field.radius"))}</label>`+
+               `<input type="text" id="cdRadius" inputmode="decimal" spellcheck="false" autocomplete="off" value="${esc(st.radius)}"></div>`
+            :"")+
+        `</div>`+
+        (problem?`<div class="subval" id="cdNote" style="color:var(--blood-text);margin-top:6px">${esc(T(problem))}</div>`:"")+
+      `</div>`+
+      `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="cdCancel">${esc(T("common.button.cancel"))}</button>`+
+        `<button class="btn btn-blood btn-sm" id="cdOk">${esc(T("pal.clear_drops.confirm.button"))}</button></div>`,
+      again);
+
+    m.querySelector("#cdGear").addEventListener("change",e=>{CLEAR_DROPS.keepGear=!!e.target.checked;});
+    /* The radius box comes and goes with this switch, so it is the one change that redraws. */
+    m.querySelector("#cdNear").addEventListener("change",e=>{CLEAR_DROPS.keepNear=!!e.target.checked;again();});
+    const rad=m.querySelector("#cdRadius");
+    /* Kept on every keystroke rather than read on the press, so a language switch that
+       redraws the dialog keeps a half-typed number. The complaint goes as soon as the host
+       starts fixing what it was about, hidden rather than redrawn so the caret stays put. */
+    if(rad) rad.addEventListener("input",()=>{
+      CLEAR_DROPS.radius=rad.value;
+      if(!problem) return;
+      problem="";
+      const note=m.querySelector("#cdNote");
+      if(note) note.style.display="none";
+    });
+
+    m.querySelector("#cdCancel").addEventListener("click",modalClose);
+    m.querySelector("#cdOk").addEventListener("click",()=>{
+      if(rad) CLEAR_DROPS.radius=rad.value;
+      const built=clearDropsCommand(CLEAR_DROPS);
+      /* A refusal keeps the dialog open with everything still in it. */
+      if(built.problemId){problem=built.problemId;again();return;}
+      modalClose();
+      sendConsole(built.cmd,reply=>clearDropsToast(clearDropsReply(reply)));
+    });
+    if(problem) setTimeout(()=>{m.querySelector("#cdRadius")?.focus();},30);
+    return m;
+  };
+  return again();
+}
+
+/* The Hearth's Clear ground items button asks a running server for its work, so with no
+   server running it is greyed and its tooltip says why, in the words the palette uses for
+   the same row. The title is drawn here rather than by the static walker because it changes
+   with the run state, and a walker repaint would put the enabled tooltip back on a button
+   that is still greyed. The browser preview keeps it clickable, as the palette does. */
+function gateClearDropsBtn(){
+  const btn=$("#clearDropsBtn"); if(!btn) return;
+  const off=!!Native.available&&(S.state||{}).status!=="Running";
+  btn.disabled=off;
+  btn.title=off?T("pal.gate.needs_running"):T("hearth.cleardrops.title");
+}
 function filterPal(q){
   const raw=q.trim(); q=raw.toLowerCase(); let first=true;
   $$(".pitem:not(.pconsole)").forEach(it=>{
@@ -6198,9 +6521,12 @@ function invokePal(){
         :"ᛉ "+T("pal.save_world.done.toast"));
     }else if(cmd==="kill_monsters"){
       killAllModal();
+    }else if(cmd==="clear_drops"){
+      /* The same question the Hearth's World upkeep button asks, from the same dialog. */
+      clearDropsModal();
     }else if(cmd==="clear_cheat_marks"){
-      /* The same question the Players hall asks, from the same dialog, so there is no
-         route to the sweep that skips it. */
+      /* The same question the Hearth's World upkeep group asks, from the same dialog, so
+         there is no route to the sweep that skips it. */
       cleanseModal();
     }else if(cmd==="broadcast"){
       promptModal(()=>T("vikings.broadcast.title"),()=>T("vikings.broadcast.placeholder"),m=>{
@@ -6563,9 +6889,12 @@ function renderCaps(){
     :T("saga.term.placeholder");
 }
 let capsInstallBusy=false;
-/* The Players hall's own way to the cleanse. The same dialog the palette opens, so the
-   question is asked once and in one place. */
+/* The World upkeep group's own way to the cleanse (it stood in the Players hall until 1.2.10).
+   The same dialog the palette opens, so the question is asked once and in one place. */
 $("#cleanseBtn")?.addEventListener("click",()=>cleanseModal());
+/* The Hearth's World upkeep group: the same dialog the palette opens. A greyed button fires
+   no click, so the running-server gate needs nothing here. */
+$("#clearDropsBtn")?.addEventListener("click",()=>clearDropsModal());
 $("#capsInstallBtn")?.addEventListener("click",async()=>{
   if(capsInstallBusy||!Native.available) return;
   capsInstallBusy=true;
@@ -7999,10 +8328,21 @@ window.BakaPreview={
   killAllSaid:reply=>({read:killAllReply(reply),toast:killAllToast(killAllReply(reply))}),
   /* The cleanse's two seams, the same pair for the same reason: the dialog is all page
      and can be opened by name, and a reply can be read and worded without a server.
-       cleanse        opens the question, as the palette and the Players hall do
+       cleanse        opens the question, as the palette and the World upkeep group do
        cleanseSaid    one reply, read and worded, exactly as the real path words it */
   cleanse:()=>{cleanseModal();return modalIsOpen();},
   cleanseSaid:reply=>({read:cleanseReply(reply),toast:cleanseToast(cleanseReply(reply))}),
+  /* The ground sweep's seams, the same pair for the same reason, plus a seed.
+       clearDrops       opens the question, as the Hearth button and the palette do
+       clearDropsState  seeds the switches and the radius, then redraws
+       clearDropsSaid   one reply, read and worded, exactly as the real path words it */
+  clearDrops:()=>{clearDropsModal();return modalIsOpen();},
+  clearDropsState:o=>{
+    CLEAR_DROPS=Object.assign(clearDropsBlank(),CLEAR_DROPS,o||{});
+    if(modalIsOpen()) redrawOpenModal();
+    return Object.assign({},CLEAR_DROPS);
+  },
+  clearDropsSaid:reply=>({read:clearDropsReply(reply),toast:clearDropsToast(clearDropsReply(reply))}),
   /* The armed one-shot's three seams. Nothing in a browser can arm a sweep on a realm, so
      a walk seeds the profile field, redraws, and feeds the two events the host posts.
        cleanseArmedState  what the switch shows for a given profile answer
@@ -8236,10 +8576,15 @@ function renderUpdatePill(){
    older build did sits under them and over the two lists (mods with updates, a restart
    pending). It still never disappears on its own: waving it away is remembered per FACT, so
    the same one is not said again, and the moment the folders change it is news. */
+/* unsavedStop sits with it and for the same reason. It is a fact about a stop that is
+   already over: the world may be one save interval behind, and nothing the host presses
+   now changes that. A save failing on a server that is up this second, a crash, a held
+   start, all come first. It sits just above the stray folder row because it is about the
+   last few minutes of play, and the folder row is about what an older build did. */
 const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
   "bepinexNoMods","bepinexNotLoaded","bepinexMissingFiles","serverUpdate","pluginFailure",
   "bepinexNotice","appUpdate","bepinexAsk","bepinexLeftAlone","bepinexWaiting",
-  "bepinexWritten","saveFolderStray","modUpdates","restartPending"];
+  "bepinexWritten","unsavedStop","saveFolderStray","modUpdates","restartPending"];
 const CONDITIONS=new Map();
 function setCondition(kind,cond){
   if(!cond) CONDITIONS.delete(kind); else CONDITIONS.set(kind,cond);
@@ -8484,6 +8829,28 @@ async function refreshStraySaveFolder(){
     {profile:S.profileName||null}).catch(()=>null);
   if(!found) return;
   conditionStraySaveFolder(found);
+}
+/* A stop that ended without the server reporting a world save.
+ *
+ * The stop asks for a save first when RCON is on, and watches the log either way. When the
+ * process went with no save line printed after the stop began, the host side keeps the fact
+ * and sends it with every state, so this row survives a reload and a realm switch. It names
+ * the realm and the world and says what it means in play: up to one save interval lost.
+ * Nothing here can undo that, so the row offers the log and a close. Closing it tells the
+ * host side, which forgets the fact; the next start that saves forgets it as well.
+ */
+function conditionUnsavedStop(u){
+  if(!u){clearCondition("unsavedStop");return;}
+  const realm=String(u.realm||S.profileName||"");
+  const world=String(u.world||"");
+  setCondition("unsavedStop",{sev:"warn",title:T("cond.unsaved_stop.title"),
+    msg:world?T("cond.unsaved_stop.body",{server:realm,world})
+             :T("cond.unsaved_stop.body.unnamed",{server:realm}),
+    actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbUnsavedSaga">${esc(T("cond.btn.open_log"))}</button>`,
+    again:()=>conditionUnsavedStop(u),
+    wire:bar=>bar.querySelector("#cbUnsavedSaga").addEventListener("click",()=>goPage("saga")),
+    onDismiss:()=>{if(Native.available) Native.call("server.unsavedStopSeen",{profile:S.profileName||null}).catch(()=>{});},
+  });
 }
 function conditionSaveFailed(ms){
   setCondition("saveFailed",{sev:"err",title:T("cond.save.title"),
@@ -9076,6 +9443,7 @@ const CONSOLE_CMDS=[
   {cmd:"playerlist",args:"",descId:"pal.console.cmd.playerlist"},
   {cmd:"baka_killall",args:"",descId:"pal.console.cmd.killall",asks:"killall"},
   {cmd:"baka_cleanse",args:"",descId:"pal.console.cmd.cleanse",asks:"cleanse"},
+  {cmd:"baka_cleardrops",args:"",descId:"pal.console.cmd.cleardrops",asks:"cleardrops"},
   {cmd:"broadcast center ",args:"<message>",descId:"pal.console.cmd.broadcast"},
   {cmd:"dmg ",args:"<player> <amount>",descId:"pal.console.cmd.dmg"},
   {cmd:"tp ",args:"<player> <x,z,y | player>",descId:"pal.console.cmd.tp"},
@@ -9110,6 +9478,7 @@ function consoleModal(){
        one that reads the server's answer afterwards. */
     if(r.dataset.asks==="killall"){modalClose();killAllModal();return;}
     if(r.dataset.asks==="cleanse"){modalClose();cleanseModal();return;}
+    if(r.dataset.asks==="cleardrops"){modalClose();clearDropsModal();return;}
     if(r.dataset.complete){modalClose();sendConsole(r.dataset.cmd);return;}
     inp.value=r.dataset.cmd;
     inp.dispatchEvent(new Event("input"));
@@ -13856,6 +14225,9 @@ if(Native.available){
     const ms=Math.round(Number(d?.seconds)||0); // bridge param is named 'seconds' but carries milliseconds
     toast("ᛉ "+T("hearth.saves.saved.toast",{ms}));
     clearCondition("saveFailed");   // a good write answers the failed one
+    /* and a save on a server that is up answers a stop that ended without one; the host
+       side forgot it on the same line. A save during a stop is the stop's own. */
+    if(S.state?.status!=="Stopping") clearCondition("unsavedStop");
     S.lastSaveAt=new Date();
     S.lastSaveMs=ms;
     renderLastSave();

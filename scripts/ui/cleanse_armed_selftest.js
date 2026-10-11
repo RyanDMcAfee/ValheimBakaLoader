@@ -1,7 +1,8 @@
-/* The armed one-shot cleanse, from the switch on the Players hall to the reply that puts it
+/* The armed one-shot cleanse, from the switch in the Hearth's World upkeep group to the reply that puts it
  * down again.
  *
- * WHY THIS EXISTS. The Players hall's Clear cheat marks button needs a host sitting at the
+ * WHY THIS EXISTS. The Clear cheat marks button (on the Players hall until 1.2.10, in the
+ * Hearth's World upkeep group since) needs a host sitting at the
  * window at a moment when nobody is playing, because the sweep rewrites containers and a
  * container somebody has open refuses to reload itself. On a server people actually use,
  * that moment is four in the morning. 1.2.6 added a switch beside the button that arms the
@@ -153,10 +154,10 @@ test("the first frame draws it from the profile the window opened on", () => {
     "the boot path never draws the armed switch, so it reads off on an armed realm");
 });
 
-test("walking into the Players hall redraws it", () => {
+test("coming back to the Dashboard redraws it", () => {
   const go = fn("function goPage(name){");
-  assert.ok(/name==="vikings"[\s\S]{0,120}renderCleanseArmed/.test(go),
-    "the hall does not redraw the switch when it is opened");
+  assert.ok(/name==="hearth"[^\n]{0,200}renderCleanseArmed/.test(go),
+    "the Dashboard does not redraw the switch when it is opened");
 });
 
 /* ------------------------------------------------------------------ the host's own reading */
@@ -280,10 +281,13 @@ test("the page words the two endings the button never has", () => {
     "another realm's sweep toasts over this one");
 });
 
-test("the switch is on the Players hall, beside the button, and the walker owns its words", () => {
+test("the switch is in World upkeep, beside the button, and the walker owns its words", () => {
   assert.ok(/id="tCleanseArmed"/.test(MARKUP), "the switch is not in the document");
-  const hall = MARKUP.slice(MARKUP.indexOf('id="page-vikings"'), MARKUP.indexOf('id="page-mods"'));
-  assert.ok(/id="tCleanseArmed"/.test(hall), "the switch is not on the Players hall");
+  /* The group is the div that opens at id="worldUpkeep"; Copy join info is the next thing
+     after it in the head, so the slice ends there. */
+  const g0 = MARKUP.indexOf('id="worldUpkeep"');
+  const hall = MARKUP.slice(g0, MARKUP.indexOf('id="sailBtn"', g0));
+  assert.ok(g0 > 0 && /id="tCleanseArmed"/.test(hall), "the switch is not in the World upkeep group");
   assert.ok(hall.indexOf('id="tCleanseArmed"') > hall.indexOf('id="cleanseBtn"'),
     "the switch does not stand beside the button it arms");
   assert.ok(/data-i18n="vikings\.cleanse\.armed\.label"/.test(hall),

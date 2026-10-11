@@ -73,8 +73,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // 22 with Clear cheat marks, which is a viking row like the kick beside it, and 25
             // from 1.2.6's batch D: Text size, Interface language and Start with Windows are rows
             // of their own now, because the controls they land on moved to the Settings hall's
-            // App tab and the palette's promise was that it would still reach them.
-            Assert.Equal(25, badges.Count);
+            // App tab and the palette's promise was that it would still reach them. 26 with
+            // Clear ground items, a rite like the kill sweep above it.
+            Assert.Equal(26, badges.Count);
             Assert.DoesNotContain("<span class=\"k\">", palette);   // none left unkeyed
 
             foreach (var (id, word) in badges)

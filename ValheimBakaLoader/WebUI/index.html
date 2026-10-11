@@ -17,7 +17,7 @@
 -->
 <script>
 (function(){
-  var v = window.BAKA_VERSION || "1.2.9";
+  var v = window.BAKA_VERSION || "1.2.10";
   window.BAKA_ASSET_VERSION = v;
   window.BAKA_ASSET = function(name){ return name + "?v=" + encodeURIComponent(v); };
   window.BAKA_ASSET_PLAIN = function(el){
@@ -125,7 +125,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.9</span><!--
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.10</span><!--
              The partial-translation mark. A standing fact about the words on screen, so it
              stands here rather than arriving as a toast; app.js lights it and writes the
              same sentence the globe menu carries onto its tooltip. -->
@@ -165,7 +165,40 @@
             <span class="hnorse" data-i18n="common.norse.hearth">Hearth</span>
             <span class="sub" id="hearthSub">Final Sunset · dedicated server ops</span>
             <div class="grow"></div>
+            <!-- WORLD UPKEEP. The Hearth's tools that act on the world itself rather than on the
+                 server process or a person: things a host does every so often to keep a long-lived
+                 world tidy. A group of its own in the head, so it reads as one set of controls and
+                 the bento below keeps the height it was measured at. Clear ground items opens a
+                 question first, from the same dialog the command palette opens, so there is no
+                 route to the sweep that skips it. The button's tooltip is drawn by app.js, because
+                 it changes with the run state: with no server running it says why it is greyed. -->
+            <!-- The group and Copy join info travel as one unit: when the head runs out of room
+                 the pair moves to the next line together, still against the right edge, so the
+                 join button never sits alone at the left with the hairline ending on nothing.
+                 See .pagehead .hearthtools. -->
+            <div class="headpair hearthtools">
+            <div class="worldupkeep" id="worldUpkeep" role="group" aria-labelledby="worldUpkeepLbl">
+              <span class="sub" id="worldUpkeepLbl" data-i18n="hearth.world_upkeep.label">World upkeep</span>
+              <button class="btn btn-ghost btn-sm" id="clearDropsBtn" data-i18n="hearth.cleardrops.label">Clear ground items</button>
+              <!-- Clear cheat marks and its armed switch lived in the Players head until 1.2.10. They
+                   are about the world rather than about a person, which is what this group is for,
+                   so they stand here now with their ids and handlers as they were. The button opens
+                   the same question the command palette opens, from the same dialog, so there is no
+                   route to the sweep that skips it. The switch is the same sweep armed and left: the
+                   button needs a host at the window at a moment when nobody is playing, and on a
+                   server people use that moment is four in the morning. It waits for it, one shot,
+                   and BakaLoader puts the switch down again the moment it lands. It is a setting on
+                   THIS realm's profile, so it survives closing the app, and it is off until a host
+                   turns it on. Static both ways: the walker owns the labels and the tooltips. The
+                   copy gate holds both ids inside this group and off the Players page. -->
+              <button class="btn btn-ghost btn-sm" id="cleanseBtn" title="Clears the cheat marks BakaLoader 1.0.9 to 1.1.2 left on things it spawned. Needs an empty server." data-i18n="vikings.cleanse.label" data-i18n-title="vikings.cleanse.title">Clear cheat marks</button>
+              <div class="togglerow" id="rowCleanseArmed" style="flex:0 0 auto;gap:10px;height:30px">
+                <span class="tl" data-i18n="vikings.cleanse.armed.label">Clear cheat marks when the realm is next empty</span>
+                <span class="toggle" id="tCleanseArmed" data-t title="Waits for a minute with nobody on this realm, runs the same sweep, writes what it cleared to the Saga and then turns itself off." data-i18n-title="vikings.cleanse.armed.title"></span>
+              </div>
+            </div>
             <button class="btn btn-ember btn-sm" id="sailBtn" title="Sail forth: copies everything a friend needs to join" data-i18n="hearth.sail.label" data-i18n-title="hearth.sail.title">ᛟ&nbsp; Copy join info</button>
+            </div>
           </div>
 
           <div class="bento">
@@ -324,26 +357,6 @@
             <span class="hnorse" data-i18n="common.norse.vikings">Vikings</span>
             <span class="sub" id="vikSub">2 of 10 online · right-click a player for actions</span>
             <span class="sub" id="vikColsNote"></span>
-            <!-- The hall's one command that is about the WORLD rather than about a person,
-                 which is why it stands here and not in the right-click menu. It opens the
-                 same question the command palette opens, from the same dialog, so there is
-                 no route to the sweep that skips it. Static both ways: the walker owns it. -->
-            <!-- The two cheat-mark controls wrap together, so the switch never lands on a line
-                 of its own at the left margin while the button sits right on the line above.
-                 See .pagehead .headpair. -->
-            <div class="headpair">
-            <button class="btn btn-ghost btn-sm" id="cleanseBtn" title="Clears the cheat marks BakaLoader 1.0.9 to 1.1.2 left on things it spawned. Needs an empty server." data-i18n="vikings.cleanse.label" data-i18n-title="vikings.cleanse.title">Clear cheat marks</button>
-            <!-- The same sweep, armed and left. The button beside it needs a host at the
-                 window at a moment when nobody is playing, and on a server people use that
-                 moment is four in the morning. This waits for it: one shot, and BakaLoader
-                 puts the switch down again the moment it lands. It is a setting on THIS
-                 realm's profile, so it survives closing the app, and it is off until a host
-                 turns it on. Static both ways: the walker owns the label and the tooltip. -->
-            <div class="togglerow" id="rowCleanseArmed" style="flex:0 0 auto;gap:10px;height:30px">
-              <span class="tl" data-i18n="vikings.cleanse.armed.label">Clear cheat marks when the realm is next empty</span>
-              <span class="toggle" id="tCleanseArmed" data-t title="Waits for a minute with nobody on this realm, runs the same sweep, writes what it cleared to the Saga and then turns itself off." data-i18n-title="vikings.cleanse.armed.title"></span>
-            </div>
-            </div>
           </div>
           <!-- missing required-mods banner (native only; hidden when all mods present) -->
           <div class="capsbanner" id="capsBanner" style="display:none">
@@ -383,6 +396,8 @@
             <input id="modSearch" class="pagesearch" placeholder="search the mods…" spellcheck="false" autocomplete="off" aria-label="Search the mods" data-i18n-aria="mods.search.aria" data-i18n-placeholder="mods.search.placeholder">
             <span class="sub pagesearch-count" id="modShowing"></span>
             <div class="grow"></div>
+            <!-- Opens this realm's BepInEx plugins folder. Greyed out with a sentence until the folder exists. -->
+            <button class="btn btn-ghost btn-sm" id="modFolderBtn" style="margin-right:8px" data-i18n="mods.folder.label" disabled>ᛃ&nbsp; Mod folder</button>
             <button class="btn btn-ghost btn-sm" id="addModBtn">ᚨ&nbsp; Add from Thunderstore</button>
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>
             <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
@@ -1007,7 +1022,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.9</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.10</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg"><span data-i18n="status.rcon.label">RCON</span> <span class="em" id="sbRcon">bound</span></span>
@@ -1037,6 +1052,7 @@
         <div class="pitem" data-cmd="save_world" data-i18n="pal.cmd.save_world"><span class="r">ᛉ</span>Save world now<span class="k" data-i18n="pal.k.rite">rite</span></div>
         <div class="pitem" data-cmd="kill_monsters" data-i18n="pal.cmd.kill_monsters"><span class="r">ᚦ</span>Kill all monsters<span class="k" data-i18n="pal.k.rite">rite</span></div>
         <div class="pitem" data-cmd="clear_cheat_marks" data-i18n="pal.cmd.clear_cheat_marks"><span class="r">ᛉ</span>Clear cheat marks<span class="k" data-i18n="pal.k.viking">viking</span></div>
+        <div class="pitem" data-cmd="clear_drops" data-i18n="pal.cmd.clear_drops"><span class="r">ᛉ</span>Clear ground items<span class="k" data-i18n="pal.k.rite">rite</span></div>
         <div class="pitem" data-cmd="broadcast" data-i18n="pal.cmd.broadcast"><span class="r">ᛒ</span>Broadcast message…<span class="k" data-i18n="pal.k.saga">saga</span></div>
         <div class="pitem" data-cmd="console_command" data-i18n="pal.cmd.console_command"><span class="r">ᛊ</span>Send console command…<span class="k" data-i18n="pal.k.rcon">rcon</span></div>
         <div class="pitem" data-cmd="kick_player" data-i18n="pal.cmd.kick_player"><span class="r">ᚲ</span>Kick player…<span class="k" data-i18n="pal.k.viking">viking</span></div>

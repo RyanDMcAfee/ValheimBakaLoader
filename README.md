@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest"><img src="https://img.shields.io/github/v/release/RyanDMcAfee/ValheimBakaLoader?color=FF7A1A&style=flat-square&label=version" alt="version"></a>
-  <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases"><img src="https://img.shields.io/github/downloads/RyanDMcAfee/ValheimBakaLoader/total?color=2E8B57&style=flat-square" alt="downloads"></a>
+  <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases"><img src="https://img.shields.io/github/downloads/RyanDMcAfee/ValheimBakaLoader/latest/total?color=2E8B57&style=flat-square&label=downloads%20(latest)" alt="downloads of the latest release"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-5B7A8C?style=flat-square" alt="platform"></a>
   <a href="https://dotnet.microsoft.com/download/dotnet/6.0"><img src="https://img.shields.io/badge/.NET-6.0-512BD4?style=flat-square" alt=".NET 6"></a>
   <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-source--available-E8A93C?style=flat-square" alt="license"></a>
@@ -69,12 +69,14 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.9
+## What is new in 1.2.10
 
-- **A save folder written as `%USERPROFILE%` is a folder, not a name.** A raw `%USERPROFILE%\...` is a relative path until something fills the variable in, and the place that built a new server's own save folder was handed it raw: the folder landed inside the BakaLoader install, under a real directory with a percent sign in its name. One place turns a stored path into a folder now and every reader goes through it. [Settings (World)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-(World)#directories)
-- **Worlds an older build left in that folder are offered a one-button move.** The condition bar names the folder they are in and the folder BakaLoader reads now, nothing moves until you press it, and the move takes the empty `%USERPROFILE%` folder away with it. With worlds in both folders, with the new folder there and holding none, or with worlds in more than one old folder, it names them and offers no move; `Check again` asks the disk once you have sorted them out in Explorer. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting#a-userprofile-folder-appeared-inside-the-bakaloader-folder)
-- **A save folder changed while the world is up says what is really true:** BakaLoader follows the new folder from now on, and the running server keeps writing its world to the old one until it restarts. [Settings (World)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-(World)#directories)
-- **Everything 1.2.8 brought** is in here too: the frozen launcher, so an update has no new bytes for a virus scanner to judge. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **Clear ground items.** A World upkeep group on the Dashboard clears the dropped items that pile up over months, across the whole world, and leaves build pieces, containers, item stands, carts, ships and creatures alone. Gear and anything within 32 metres of a player stay by default. [Dashboard (Hearth)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-(Hearth))
+- **Clear cheat marks moved** from the Players page into that same group; it does what it did before. [Dashboard (Hearth)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-(Hearth))
+- **A Mod folder button** on the Mods screen opens the realm's plugins folder in Explorer. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
+- **A stop asks for a save first** and waits for it, and a stop that ends without a reported save is said out loud in the Saga and the condition bar. [Running the server](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Running-the-server)
+- **BakaLoader sits lighter behind the game.** The hearth flame and the ember glow pause while another window is in front, and the flame runs at thirty frames a second when it runs. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **Everything 1.2.9 brought** is in here too: the save folder fix and the one-button move for worlds an older build left behind. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 

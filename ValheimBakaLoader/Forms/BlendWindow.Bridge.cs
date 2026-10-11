@@ -1170,10 +1170,15 @@ namespace ValheimBakaLoader.Forms
                 Logger.Information("Close requested while server(s) are running, saving worlds and shutting down first");
 
                 // Bounded wait so a wedged server can never trap the user in a window
-                // that refuses to close. Stop() is a graceful close request, so Valheim
-                // saves the world on the way down; it no-ops until CanStop (e.g. while
-                // the server is still Starting), hence the retry inside the loop.
-                var deadline = DateTime.UtcNow.AddSeconds(60);
+                // that refuses to close. Stop() asks a running server with RCON on to save
+                // first and waits a bounded time for the save line, then sends the graceful
+                // close request, so Valheim saves the world on the way down as well; it
+                // no-ops until CanStop (e.g. while the server is still Starting), hence the
+                // retry inside the loop. The deadline is the longest of those save waits plus
+                // the 60 seconds the close always gave a server to go, so the save wait can
+                // never eat the time the shutdown itself needs.
+                var deadline = DateTime.UtcNow + ValheimServer.CloseDeadlineFor(
+                    Sessions.Values.Select(s => s.Server.StopSaveBound));
                 while (Sessions.Values.Any(s => s.Server.Status != ServerStatus.Stopped)
                     && DateTime.UtcNow < deadline)
                 {
@@ -6674,6 +6679,18 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(true);
             });
 
+            // The host closed the "stopped without a save" row. It is one fact about one stop,
+            // so it is forgotten on this side too, and a page reload or a realm switch does not
+            // raise it again. The next stop that ends unsaved is a new fact and raises it anew.
+            RegisterRpc("server.unsavedStopSeen", p =>
+            {
+                var profile = p.Value<string>("profile");
+                var name = string.IsNullOrWhiteSpace(profile) ? ActiveProfileName : profile;
+                if (name != null && Sessions.TryGetValue(name, out var session))
+                    session.Server.AcknowledgeUnsavedStop();
+                return Task.FromResult<object>(true);
+            });
+
             RegisterRpc("server.stop", p =>
             {
                 Server.Stop();
@@ -6909,23 +6926,32 @@ namespace ValheimBakaLoader.Forms
             // host had not opened the Mods hall on read "-" while the Mods hall counted the
             // same mods perfectly well one click later. How many mod folders there are is a
             // fact about the disk: it never needed a site to be asked, and this asks none.
+            //
+            // The reply also names the plugins folder when it is really there, and which realm it
+            // was read for. The Mod folder button in the Mods hall stands on that: it is offered
+            // when the folder exists and greyed out with a sentence when it does not (BepInEx not
+            // installed yet), and a reply that lands after a realm switch is dropped by the page.
+            // The path is for the button's tooltip only. The press still sends shell.open the
+            // closed keyword "plugins", never a path, so the page cannot open anything else.
+            // GetPluginsDirectory already fills the stored exe path in through PathCheck.Resolve.
             RegisterRpc("mods.count", p =>
             {
+                var profile = CurrentProfile;
                 var pluginsDir = GetPluginsDirectory();
                 if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
-                    return Task.FromResult<object>(new { count = (int?)null });
+                    return Task.FromResult<object>(new { count = (int?)null, folder = (string)null, profile });
 
                 try
                 {
-                    return Task.FromResult<object>(new { count = (int?)ModScanner.ScanPlugins(pluginsDir).Count });
+                    return Task.FromResult<object>(new { count = (int?)ModScanner.ScanPlugins(pluginsDir).Count, folder = pluginsDir, profile });
                 }
                 catch (Exception e)
                 {
                     // A folder that could not be read is "not known", never zero: a card that
                     // says nothing is installed when something is is worse than one that says
-                    // it does not know.
+                    // it does not know. It is still a folder, so the button still opens it.
                     Logger.Debug("Could not count the mods in {folder}: {message}", pluginsDir, e.Message);
-                    return Task.FromResult<object>(new { count = (int?)null });
+                    return Task.FromResult<object>(new { count = (int?)null, folder = pluginsDir, profile });
                 }
             });
 
@@ -8452,6 +8478,14 @@ namespace ValheimBakaLoader.Forms
                 // and a start where the preloader never wrote its log. Null when the question
                 // could not be asked at all, which a page reads as "say nothing".
                 bepinex = BuildBepInExState(session),
+                // The last stop of this realm ended without the server reporting a save. Null
+                // normally, and null again once the host closes the row or the next start saves.
+                unsavedStop = server.UnsavedStop == null ? null : new
+                {
+                    realm = server.UnsavedStop.Realm,
+                    world = server.UnsavedStop.World,
+                    at = server.UnsavedStop.AtUtc.ToString("o", CultureInfo.InvariantCulture),
+                },
             };
         }
 

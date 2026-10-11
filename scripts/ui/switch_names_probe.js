@@ -355,6 +355,35 @@ async function probe() {
       await sized.context().close();
     }
 
+    /* ---------------------------------------------------- the Hearth head's right-hand pair
+       The World upkeep group and Copy join info are one unit. In the first 1.2.10 build the
+       group carried the head's auto margin on its own, so below about 1145px Copy join info
+       wrapped onto a row of its own at the head's LEFT edge and the group's hairline ended on
+       nothing. 1024x680 is the window's minimum (BlendWindow.cs). Wherever the pair lands,
+       the button sits on the same line as the group's tools, right after the hairline, level
+       with the head's right edge. */
+    for (const [w, h] of [[1024, 680], [1145, 800], [1408, 800]]) {
+      const sized = await (await browser.newContext({ viewport: { width: w, height: h } })).newPage();
+      await sized.goto(url, { waitUntil: "load" });
+      await sized.waitForTimeout(500);
+      const read = await sized.evaluate(() => {
+        goPage("hearth");
+        const box = sel => {
+          const r = document.querySelector(sel).getBoundingClientRect();
+          return { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom) };
+        };
+        return { head: box("#page-hearth .pagehead"), group: box("#worldUpkeep"),
+          clear: box("#clearDropsBtn"), sail: box("#sailBtn") };
+      });
+      const mid = b => (b.t + b.b) / 2;
+      const gap = read.sail.l - read.group.r;
+      ok("Copy join info stays beside the World upkeep group at " + w + "x" + h,
+        Math.abs(mid(read.sail) - mid(read.clear)) <= 2 && gap >= 0 && gap <= 16
+          && Math.abs(read.sail.r - read.head.r) <= 1,
+        JSON.stringify(read));
+      await sized.context().close();
+    }
+
     /* ---------------------------------------------------- the Atlas, at real zooms
 
        Text size is the page's zoom: the CSS viewport shrinks and devicePixelRatio rises by the

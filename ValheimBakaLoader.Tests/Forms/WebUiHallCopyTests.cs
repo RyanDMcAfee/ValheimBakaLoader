@@ -107,11 +107,8 @@ namespace ValheimBakaLoader.Tests.Forms
             TheHallNames(Hall("vikings", "<!-- ============ PAGE: MODS"), new[]
             {
                 "vikings.head.title", "common.norse.vikings",
-                // The hall's one command about the WORLD rather than about a person, and
-                // the switch 1.2.6 put beside it that arms the same sweep for the next
-                // moment nobody is playing.
-                "vikings.cleanse.label", "vikings.cleanse.title",
-                "vikings.cleanse.armed.label", "vikings.cleanse.armed.title",
+                // Clear cheat marks and its armed switch used to be listed here. 1.2.10 moved
+                // them into the World upkeep group on the Hearth, see the next test.
                 "vikings.caps.head",
                 "vikings.caps.note", "vikings.col.name", "common.sort.by_name",
                 "vikings.col.status", "vikings.col.status.title", "vikings.col.platform",
@@ -121,6 +118,43 @@ namespace ValheimBakaLoader.Tests.Forms
                 "vikings.col.deaths", "vikings.col.deaths.title", "vikings.col.pos",
                 "vikings.col.pos.title",
             });
+        }
+
+        /// <summary>
+        /// The World upkeep group on the Hearth. Clear cheat marks and the switch that arms
+        /// it are about the world rather than about a person, so 1.2.10 moved them here from
+        /// the Players head. Their ids kept their vikings.* spelling, because an id is a
+        /// place in a translation file and a released one never moves. The inventory holds
+        /// them inside the group, and the second half holds them off the Players page, so
+        /// neither a copy left behind nor a move back slips through.
+        /// </summary>
+        [Fact]
+        public void The_world_upkeep_group_reads_its_words_out_of_the_catalog()
+        {
+            // The Hearth opens as the active page, so its section tag is not the one Hall()
+            // looks for. The group is cut out of the page directly instead.
+            var html = Html();
+            var hearthAt = html.IndexOf("id=\"page-hearth\"", StringComparison.Ordinal);
+            var hearth = html.Substring(hearthAt, html.IndexOf("<!-- ============ PAGE: VIKINGS", hearthAt, StringComparison.Ordinal) - hearthAt);
+            var from = hearth.IndexOf("id=\"worldUpkeep\"", StringComparison.Ordinal);
+            Assert.True(from > 0, "the Hearth no longer has the World upkeep group");
+            var to = hearth.IndexOf("id=\"sailBtn\"", from, StringComparison.Ordinal);
+            Assert.True(to > from, "the World upkeep group no longer sits before Copy join info");
+            var group = hearth.Substring(from, to - from);
+
+            TheHallNames(group, new[]
+            {
+                "hearth.world_upkeep.label", "hearth.cleardrops.label",
+                "vikings.cleanse.label", "vikings.cleanse.title",
+                "vikings.cleanse.armed.label", "vikings.cleanse.armed.title",
+            });
+            foreach (var id in new[] { "cleanseBtn", "rowCleanseArmed", "tCleanseArmed" })
+                Assert.Contains("id=\"" + id + "\"", group);
+
+            var players = Hall("vikings", "<!-- ============ PAGE: MODS");
+            foreach (var id in new[] { "cleanseBtn", "rowCleanseArmed", "tCleanseArmed" })
+                Assert.DoesNotContain("id=\"" + id + "\"", players);
+            Assert.DoesNotContain("vikings.cleanse.", players);
         }
 
         /// <summary>
@@ -159,6 +193,8 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.col.installed.title", "mods.col.latest", "mods.col.latest.title",
                 "mods.col.status", "mods.col.status.title", "mods.col.possibly_outdated",
                 "mods.search.placeholder",
+                // The Mod folder button. The walker owns its label; app.js only paints its state.
+                "mods.folder.label",
             });
         }
 

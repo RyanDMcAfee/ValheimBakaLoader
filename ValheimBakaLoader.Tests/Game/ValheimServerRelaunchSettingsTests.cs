@@ -268,7 +268,7 @@ namespace ValheimBakaLoader.Tests.Game
             // somebody adds (or quietly moves) later, not a value this run produces.
             var restart = SourceBetween(
                 "public void Restart(IValheimServerOptions options = null, string reason = null)",
-                "private void BeginShutdown(bool restartAfter)");
+                "private void BeginShutdown(bool restartAfter, IValheimServerOptions live = null)");
             var resume = SourceBetween(
                 "private async Task ResumeAfterStopAsync()",
                 "#endregion");

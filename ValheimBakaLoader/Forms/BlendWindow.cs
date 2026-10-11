@@ -358,6 +358,35 @@ namespace ValheimBakaLoader.Forms
             PostWindowState();
         }
 
+        /// <summary>
+        /// The page cannot tell a window that sits behind the game from one the host is looking
+        /// at: document.hidden only turns true when the window is minimized, so the hearth fire
+        /// and the smouldering runes went on drawing at full rate behind a game in fullscreen,
+        /// and the renderer and gpu processes held about a tenth of a core each doing it. The
+        /// window knows, so it says so, and the page parks the fire and pauses the animations
+        /// until it is in front again.
+        /// </summary>
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            PostWindowActive(true);
+        }
+
+        protected override void OnDeactivate(EventArgs e)
+        {
+            base.OnDeactivate(e);
+            PostWindowActive(false);
+        }
+
+        /// <summary>
+        /// Pushes window.active to the page. A push before the page exists is dropped inside
+        /// PostEvent, which is why NavigationCompleted says it again with the real state.
+        /// </summary>
+        private void PostWindowActive(bool active)
+        {
+            PostEvent("window.active", new { active });
+        }
+
         /// <summary>Whether the page has already been told the window is maximized.</summary>
         private bool? PostedMaximized;
 
@@ -579,6 +608,11 @@ namespace ValheimBakaLoader.Forms
             // hand it to. Registered before Navigate, because the load this is waiting for is
             // the one the line at the bottom of this method starts.
             core.NavigationCompleted += (s, e) => PostWindowState(force: true);
+
+            // The page starts out believing it is in front. A window that finished loading
+            // behind the game (started with Windows, say) has to be told otherwise, or the
+            // fire runs until the first time the host clicks it and away again.
+            core.NavigationCompleted += (s, e) => PostWindowActive(ActiveForm == this);
 
             // Both halves of "the interface you see is the interface you installed". The
             // version reaches the page before any script of its own runs, so index.html can

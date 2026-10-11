@@ -151,6 +151,9 @@ namespace ValheimBakaLoader.Game
         /// <summary>One stdout pattern and the reaction it triggers.</summary>
         private sealed record LogLineRule(Regex Pattern, Action<Match> Handle);
 
+        /// <summary>A stop that ended with no world save reported: which realm, which world, and when.</summary>
+        public sealed record UnsavedStopRecord(string Realm, string World, DateTime AtUtc);
+
         /// <summary>The profile the current (or last-started) server was launched with.</summary>
         public IValheimServerOptions Options { get; private set; } = new ValheimServerOptions();
 
@@ -254,6 +257,94 @@ namespace ValheimBakaLoader.Game
 
         /// <summary>Fires when the game reports a world save, with the save duration in ms.</summary>
         public event EventHandler<decimal> WorldSaved;
+
+        #region The save on stop
+
+        /// <summary>
+        /// The shortest the stop waits for the save it asked for. A Valheim world save is a
+        /// few seconds on an ordinary world, so this is ample, and it is the whole wait when
+        /// no save has been timed yet this session.
+        /// </summary>
+        public static readonly TimeSpan DefaultStopSaveFloor = TimeSpan.FromSeconds(30);
+
+        /// <summary>The longest the stop ever waits for that save, however slow the last one was.</summary>
+        public static readonly TimeSpan StopSaveCap = TimeSpan.FromSeconds(120);
+
+        /// <summary>
+        /// What the app close allows on top of the save wait for the process to go once it has
+        /// been asked to: the 60 seconds the close always gave a server to shut down.
+        /// </summary>
+        public static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(60);
+
+        /// <summary>
+        /// How long the exit bookkeeping gives the last few output lines to arrive. The process
+        /// can report that it exited a moment before its final lines have been read off the
+        /// pipe, and the save line is one of the last things it prints.
+        /// </summary>
+        public static TimeSpan ExitLineDrain { get; set; } = TimeSpan.FromMilliseconds(1500);
+
+        /// <summary>
+        /// The floor of the save wait for this server. Settable so a test can wait for a short
+        /// while rather than half a minute; nothing in the app changes it.
+        /// </summary>
+        public TimeSpan StopSaveFloor { get; set; } = DefaultStopSaveFloor;
+
+        /// <summary>How long the last reported world save took, in ms, or null before the first.</summary>
+        public decimal? LastSaveDurationMs { get; private set; }
+
+        /// <summary>
+        /// The save wait: the floor, or three times the last measured save when that is longer,
+        /// and never more than the cap. Three times, because a save on a busy server can run a
+        /// good deal slower than the quiet one that was timed.
+        /// </summary>
+        public static TimeSpan ComputeStopSaveBound(decimal? lastSaveMs, TimeSpan floor)
+        {
+            var bound = floor;
+            if (lastSaveMs is decimal ms && ms > 0)
+            {
+                var three = TimeSpan.FromMilliseconds((double)(ms * 3));
+                if (three > bound) bound = three;
+            }
+
+            return bound > StopSaveCap ? StopSaveCap : bound;
+        }
+
+        /// <summary>The save wait this server would use if it were stopped now.</summary>
+        public TimeSpan StopSaveBound => ComputeStopSaveBound(LastSaveDurationMs, StopSaveFloor);
+
+        /// <summary>
+        /// How long the app close waits for every server to be down: the longest save wait of
+        /// the servers being stopped, plus the grace the close always gave. The servers stop
+        /// side by side, so it is the longest one and not the sum.
+        /// </summary>
+        public static TimeSpan CloseDeadlineFor(IEnumerable<TimeSpan> saveBounds)
+        {
+            var longest = TimeSpan.Zero;
+            foreach (var bound in saveBounds ?? Array.Empty<TimeSpan>())
+                if (bound > longest) longest = bound;
+            return longest + CloseGrace;
+        }
+
+        /// <summary>
+        /// A stop that ended without the server reporting a save. Kept until the host waves it
+        /// away or the next start of this server saves, so the page can say so on any frame.
+        /// </summary>
+        public UnsavedStopRecord UnsavedStop { get; private set; }
+
+        /// <summary>The host has read the unsaved-stop row and closed it.</summary>
+        public void AcknowledgeUnsavedStop() => UnsavedStop = null;
+
+        /// <summary>
+        /// Armed when a stop of a running server begins, completed by the first world save line
+        /// after that moment. Null when no stop is being watched. A save line from BEFORE the
+        /// stop request cannot complete it, because it did not exist yet.
+        /// </summary>
+        private volatile TaskCompletionSource<bool> StopSaveWatch;
+
+        /// <summary>Bumped by every stop request, so a save wait that outlived its stop does nothing.</summary>
+        private int ShutdownGeneration;
+
+        #endregion
 
         /// <summary>
         /// Fires when the game reports that a world save FAILED, with the elapsed
@@ -1804,6 +1895,10 @@ namespace ValheimBakaLoader.Game
         {
             var crashed = exitCode != 0 && Status != ServerStatus.Stopping;
 
+            // A stop that was being watched for its save: decide now, before the status lands
+            // on Stopped, so the state the page is sent with Stopped already carries the row.
+            NoteWhetherTheStopSaved(deliberate: Status == ServerStatus.Stopping);
+
             ProcessKey = null;
             IsAdopted = false;
 
@@ -1846,25 +1941,203 @@ namespace ValheimBakaLoader.Game
         {
             if (!CanRestart) return;
 
+            // The save is asked of the server that is up, over the RCON port and password it
+            // was started with. The swap below is for the relaunch, and a host who changed the
+            // RCON settings since the start would otherwise have the save sent somewhere the
+            // running server is not listening.
+            var live = Options;
+
             RelaunchOptionsPinned = options != null;
             if (options != null) Options = options;
             else RefreshOptionsForRelaunch();
             PendingLaunchReason = reason ?? LaunchReasons.Manual;
-            BeginShutdown(restartAfter: true);
+            BeginShutdown(restartAfter: true, live);
         }
 
         /// <summary>
-        /// Common teardown for Stop and Restart: signals the process to exit cleanly
-        /// and flags whether the Stopped handler should relaunch afterwards.
+        /// Common teardown for Stop and Restart: asks for a save first when it can, then
+        /// signals the process to exit cleanly, and flags whether the Stopped handler should
+        /// relaunch afterwards.
+        /// <para>
+        /// The close request was always a graceful one, and Valheim saves on the way down. What
+        /// was missing is any proof of it. So when RCON is on, a running server is asked to
+        /// <c>save</c> first and given a bounded wait (<see cref="StopSaveBound"/>) for the save
+        /// line; the close request goes out when the line arrives or when the wait runs out,
+        /// whichever is first, and a wait that ran out is logged with its reason. With RCON off
+        /// the close request goes out at once, exactly as before. Either way the stop is watched:
+        /// if the process exits and no save line was printed after the stop began, the Saga and
+        /// the condition bar say so (<see cref="NoteWhetherTheStopSaved"/>).
+        /// </para>
+        /// <para>
+        /// The status goes to Stopping FIRST and stays there through the whole wait, so the
+        /// page shows a server on its way down, the Stop and Restart buttons cannot be pressed
+        /// twice, and every timer that would act on a running server is cancelled before the
+        /// save is even asked for.
+        /// </para>
         /// </summary>
-        private void BeginShutdown(bool restartAfter)
+        private void BeginShutdown(bool restartAfter, IValheimServerOptions live = null)
         {
+            live ??= Options;
             ApplicationLogger.Information(
                 restartAfter ? "Restarting server: {name}" : "Stopping server: {name}",
-                Options.Name);
-            ProcessProvider.SafelyKillProcess(ProcessKey);
+                live.Name);
+
+            // Captured once: the Exited handler nulls ProcessKey on another thread.
+            var key = ProcessKey;
+
+            // Only a running server has a world loaded to save and a log to read the save line
+            // from. A start that is stopped half way has neither, and an adopted process was
+            // started by something else, so its output never reaches this app.
+            var watch = Status == ServerStatus.Running && !IsAdopted;
+            var generation = Interlocked.Increment(ref ShutdownGeneration);
+            var saved = watch ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously) : null;
+            StopSaveWatch = saved;
+            StopOptions = live;
+
             IsRestarting = restartAfter;
             Status = ServerStatus.Stopping;
+
+            if (watch && live.RconEnabled)
+            {
+                _ = SaveThenCloseAsync(key, generation, saved, live);
+                return;
+            }
+
+            if (watch)
+            {
+                ApplicationLogger.Information(
+                    "RCON is off for {name}, so no save was asked for before the close request. Valheim saves on its own way down.",
+                    live.Name);
+            }
+
+            ProcessProvider.SafelyKillProcess(key);
+        }
+
+        /// <summary>The options of the server the current stop is taking down: its realm, world and RCON port.</summary>
+        private IValheimServerOptions StopOptions;
+
+        /// <summary>
+        /// The save half of a stop: <c>save</c> over RCON, then the wait for the save line, all
+        /// of it inside one bound, then the close request. Every way out of the wait ends in the
+        /// close request, so a server that never answers is still stopped.
+        /// </summary>
+        private async Task SaveThenCloseAsync(string key, int generation, TaskCompletionSource<bool> saved, IValheimServerOptions live)
+        {
+            var bound = StopSaveBound;
+            string missed = null;
+
+            try
+            {
+                var clock = Task.Delay(bound);
+                var asking = SendRconCoreAsync("save", quiet: true, allowStopping: true, live);
+                var first = await Task.WhenAny(asking, saved.Task, clock);
+
+                if (first == asking && asking.Result == null)
+                {
+                    // Nothing listening, a refused password, or the server already going: there
+                    // is no save to wait for. A save line already printed still counts.
+                    if (!saved.Task.IsCompleted)
+                        missed = "the save command could not be sent over RCON";
+                }
+                else if (first == asking && SaveWasRefused(asking.Result))
+                {
+                    // Commander answered, but with a failure: there was no console to forward
+                    // the save to, or the console threw. No save line can follow that, so the
+                    // close request goes out now and the log carries the real reason rather
+                    // than a wait that ran out. A save line already printed still counts.
+                    if (!saved.Task.IsCompleted)
+                        missed = "the server refused the save command: " + asking.Result.Trim();
+                }
+                else if (first == asking)
+                {
+                    if (await Task.WhenAny(saved.Task, clock) != saved.Task)
+                        missed = "no world save line arrived within " + (int)bound.TotalSeconds + " seconds";
+                }
+                else if (first == clock && !saved.Task.IsCompleted)
+                {
+                    missed = "the RCON connection did not answer within " + (int)bound.TotalSeconds + " seconds";
+                }
+            }
+            catch (Exception e)
+            {
+                missed = "asking for the save failed: " + e.Message;
+            }
+
+            if (missed == null)
+            {
+                ApplicationLogger.Information("World saved for {name} before the close request.", live.Name);
+            }
+            else
+            {
+                ApplicationLogger.Warning(
+                    "Sending the close request to {name} without a confirmed save first: {reason}.",
+                    live.Name, missed);
+            }
+
+            // A wait that outlived its stop does nothing: the process already exited, or a later
+            // stop owns it now.
+            if (Volatile.Read(ref ShutdownGeneration) != generation) return;
+            if (key == null || !string.Equals(ProcessKey, key, StringComparison.Ordinal)) return;
+
+            try { ProcessProvider.SafelyKillProcess(key); }
+            catch (Exception e) { ApplicationLogger.Error(e, "Could not send the close request to {name}", live.Name); }
+        }
+
+        /// <summary>
+        /// Whether an RCON reply to <c>save</c> says the save never reached the console.
+        /// Commander answers an empty or "Forwarded to console" reply when it handed the command
+        /// on, and one of two failure lines when it could not: "Unknown command" when there was
+        /// no console to hand it to, "Error forwarding" when the console threw. A reply is not a
+        /// success just because it is not null.
+        /// </summary>
+        internal static bool SaveWasRefused(string reply)
+        {
+            if (string.IsNullOrWhiteSpace(reply)) return false;
+            var text = reply.TrimStart();
+            return text.StartsWith("Unknown command", StringComparison.OrdinalIgnoreCase)
+                || text.StartsWith("Error forwarding", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// The exit half of a watched stop. When the stop began on a running server and no world
+        /// save line was printed between that moment and the exit, the world on disk may be up
+        /// to one save interval behind what the players last saw, and the host is told twice:
+        /// a warning line in the Saga naming the realm and the world, and a standing condition
+        /// row that stays until it is waved away or the next start of this server saves.
+        /// </summary>
+        private void NoteWhetherTheStopSaved(bool deliberate)
+        {
+            var watch = StopSaveWatch;
+            StopSaveWatch = null;
+            if (watch == null || !deliberate) return;
+
+            // The exit can be reported a moment before the last lines are read off the pipe.
+            if (!watch.Task.IsCompleted)
+            {
+                try { watch.Task.Wait(ExitLineDrain); } catch { /* the answer is the same */ }
+            }
+
+            if (watch.Task.IsCompleted) return;
+
+            var live = StopOptions ?? Options;
+            var realm = !string.IsNullOrWhiteSpace(ServerKey) ? ServerKey : live?.Name;
+            var world = live?.WorldName;
+            UnsavedStop = new UnsavedStopRecord(realm, world, DateTime.UtcNow);
+
+            ApplicationLogger.Warning(
+                "{realm} stopped without reporting a world save. The world {world} may be up to one save interval behind.",
+                realm, world);
+
+            // The words go in as an argument, never as the template: a world name can carry braces.
+            try
+            {
+                ServerLogger?.Warning("{message}",
+                    HostCatalog.T("host.saga.unsaved_stop", ("server", realm ?? ""), ("world", world ?? "")));
+            }
+            catch (Exception e)
+            {
+                ApplicationLogger.Error(e, "Could not write the unsaved stop line to the server log");
+            }
         }
 
         /// <summary>
@@ -2197,17 +2470,26 @@ namespace ValheimBakaLoader.Game
         /// Factored exactly like <see cref="BroadcastNow"/>: opens and closes the connection per call.
         /// All player-targeting actions below route through this single method.
         /// </summary>
-        public async Task<string> SendRconCommandAsync(string command, bool quiet = false)
+        public Task<string> SendRconCommandAsync(string command, bool quiet = false)
+            => SendRconCoreAsync(command, quiet, allowStopping: false, Options);
+
+        /// <summary>
+        /// The one RCON send. <paramref name="allowStopping"/> is for the save a stop asks for,
+        /// which is the only command that goes out after the status has left Running: the status
+        /// turns to Stopping first so nothing else acts on a server that is going down.
+        /// </summary>
+        private async Task<string> SendRconCoreAsync(string command, bool quiet, bool allowStopping, IValheimServerOptions options)
         {
             if (string.IsNullOrWhiteSpace(command)) return null;
+            options ??= Options;
 
-            if (!Options.RconEnabled)
+            if (!options.RconEnabled)
             {
                 if (!quiet) ApplicationLogger.Warning("Cannot send RCON command: RCON is not enabled for this server.");
                 return null;
             }
 
-            if (Status != ServerStatus.Running)
+            if (Status != ServerStatus.Running && !(allowStopping && Status == ServerStatus.Stopping))
             {
                 if (!quiet) ApplicationLogger.Warning("Cannot send RCON command: the server is not running.");
                 return null;
@@ -2220,7 +2502,7 @@ namespace ValheimBakaLoader.Game
             await RconGate.WaitAsync();
             try
             {
-                var connected = await RconClient.ConnectAsync("127.0.0.1", Options.RconPort, Options.RconPassword);
+                var connected = await RconClient.ConnectAsync("127.0.0.1", options.RconPort, options.RconPassword);
                 if (!connected)
                 {
                     if (!quiet) ApplicationLogger.Warning("Cannot send RCON command: RCON connection failed.");
@@ -3094,7 +3376,17 @@ namespace ValheimBakaLoader.Game
 
         private void HandleWorldSaved(Match match)
         {
-            WorldSaved?.Invoke(this, ParseDurationMs(match.Groups[1].Value));
+            var durationMs = ParseDurationMs(match.Groups[1].Value);
+            if (durationMs > 0) LastSaveDurationMs = durationMs;
+
+            // A stop being watched: this is the save it was waiting for. Anything else is an
+            // ordinary save on a server that is up, and the first one after a stop that ended
+            // unsaved answers that stop's row.
+            var watch = StopSaveWatch;
+            if (Status == ServerStatus.Stopping && watch != null) watch.TrySetResult(true);
+            else if (Status != ServerStatus.Stopping) UnsavedStop = null;
+
+            WorldSaved?.Invoke(this, durationMs);
         }
 
         private void HandleWorldSaveFailed(Match match)
