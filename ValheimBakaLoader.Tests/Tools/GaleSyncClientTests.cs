@@ -214,7 +214,9 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal(GaleCheckOutcome.Timeout, result.Outcome);
             Assert.Equal("mods.gale.check.timeout", result.SentenceId);
             Assert.Null(result.StatusCode);
-            Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), "took " + clock.Elapsed);
+            // The bound is 300 ms. A loaded CI runner has taken 21 s to fire a 300 ms cancellation timer
+            // under the parallel suite, so the clock here only guards against a wait that never ends.
+            Assert.True(clock.Elapsed < TimeSpan.FromSeconds(60), "took " + clock.Elapsed);
         }
 
         [Fact]
@@ -233,7 +235,9 @@ namespace ValheimBakaLoader.Tests.Tools
 
             Assert.Equal(GaleCheckOutcome.Timeout, result.Outcome);
             Assert.Equal(200, result.StatusCode);
-            Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), "took " + clock.Elapsed);
+            // The bound is 300 ms. A loaded CI runner has taken 21 s to fire a 300 ms cancellation timer
+            // under the parallel suite, so the clock here only guards against a wait that never ends.
+            Assert.True(clock.Elapsed < TimeSpan.FromSeconds(60), "took " + clock.Elapsed);
         }
 
         [Fact]
