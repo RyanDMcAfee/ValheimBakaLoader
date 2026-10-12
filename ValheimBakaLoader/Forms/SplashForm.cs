@@ -38,7 +38,7 @@ namespace ValheimBakaLoader.Forms
         private bool QuitWhenExceptionDismissed;
 
         // Set when the launch-time self-update check staged a newer version; the app
-        // closes instead of opening any windows so the watchdog can swap files safely
+        // closes instead of opening any windows so the updater can swap files safely
         // (no server has been auto-started/adopted yet, so nothing gets killed).
         private volatile bool AppUpdateStaged;
 
@@ -51,7 +51,7 @@ namespace ValheimBakaLoader.Forms
         private volatile bool WindowsOpened;
 
         // Set when a self-update staged while the app was already open has asked every window
-        // to close. The watchdog starts writing over the install whether this process has gone
+        // to close. The updater starts writing over the install whether this process has gone
         // or not, so from that point the exit cannot rest on this form happening to be the one
         // that ends the message loop.
         private volatile bool SelfUpdateExitRequested;
@@ -209,7 +209,7 @@ namespace ValheimBakaLoader.Forms
             Close();
 
             // Closing this form ends the message loop, because it is the form the application
-            // was run on. A staged update gets the explicit end as well: the watchdog is already
+            // was run on. A staged update gets the explicit end as well: the updater is already
             // counting down to writing over the install, so "the loop probably ends here" is not
             // a good enough answer for the one case where the process staying up corrupts it.
             if (SelfUpdateExitRequested)
@@ -278,7 +278,7 @@ namespace ValheimBakaLoader.Forms
         {
             StepCompleted += this.BuildEventHandler<Task>(OnStepCompleted);
 
-            // What the last update attempt left behind, if it left anything. A watchdog that
+            // What the last update attempt left behind, if it left anything. An updater that
             // could not write the new files puts the old ones back and writes down why, and
             // this is the launch that reads it.
             ReportLastUpdateAttempt();
@@ -293,19 +293,44 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
-        /// Reads and clears the note the update watchdog leaves when it could not write the
-        /// new files. Never throws: a report that cannot be read is not a reason to fail a
-        /// launch.
+        /// Reads and clears what the last update wrote down, and says it in the Saga. Never
+        /// throws: a report that cannot be read is not a reason to fail a launch.
         /// <para>
-        /// From 1.2.8 one note is left on the way through an update that WORKED: the launcher
-        /// is frozen, so the watchdog finds the same bytes already installed and does not write
-        /// the exe at all, and it says so. That is an ordinary line rather than a warning, and
-        /// a host reading the log should not have to work out which of the two they are looking
-        /// at.
+        /// From 1.2.13 that is RESULT.txt, which the updater writes in the work folder before it
+        /// starts the app: whether the update went in, was put back, or was never written, what
+        /// became of the launcher, and how the app was started. Each line comes from the host
+        /// catalog. The files the update set aside go at the same time, as far as they will.
+        /// </para>
+        /// <para>
+        /// The update INTO 1.2.13 is still swapped by the PowerShell watchdog of the version it
+        /// came from, which leaves its note in update-report.txt instead, so that note is read
+        /// too. One kind of note there is an account of an update that WORKED: the launcher is
+        /// frozen, so the watchdog found the same bytes already installed and did not write the
+        /// exe at all. That is an ordinary line rather than a warning.
         /// </para>
         /// </summary>
         private void ReportLastUpdateAttempt()
         {
+            try
+            {
+                var result = ManagedUpdater.ReadAndClearResult(ManagedUpdater.WorkFolder());
+                if (result != null)
+                {
+                    foreach (var (warning, line) in ManagedUpdater.SagaLines(result, AssemblyHelper.GetApplicationVersion()))
+                    {
+                        // The words go in as an argument, never as the template.
+                        if (warning) Logger.Warning("{note}", line);
+                        else Logger.Information("{note}", line);
+                    }
+                }
+
+                ManagedUpdater.CleanLeftovers(LauncherRoute.InstallFolder());
+            }
+            catch (Exception e)
+            {
+                Logger.Debug("Could not read the last update result: {0}", e.Message);
+            }
+
             try
             {
                 var note = Tools.AppUpdateService.ReadAndClearUpdateReport();
@@ -383,13 +408,13 @@ namespace ValheimBakaLoader.Forms
         /// Launch-time self-update: when the AutoUpdateBakaLoader pref is on, check GitHub
         /// for a newer release and stage it. Meant to finish during the splash phase, BEFORE any
         /// main window is shown, so that no server has been auto-started or adopted yet and
-        /// closing the app to let the watchdog swap files cannot kill a live server via the Job
+        /// closing the app to let the updater swap files cannot kill a live server via the Job
         /// Object.
         /// <para>
         /// Meant to, and not able to promise it on its own: this step carries a clock like every
         /// other, and a step that is given up on keeps running. So the promise is kept by the
         /// answer handed down to the service instead. It is asked before the download and again
-        /// before the watchdog is armed, and it says no the moment the windows are up: staging
+        /// before the updater is armed, and it says no the moment the windows are up: staging
         /// then refuses itself and the update installs at the next launch.
         /// </para>
         /// </summary>
@@ -416,7 +441,7 @@ namespace ValheimBakaLoader.Forms
             if (AppUpdateStaged)
             {
                 // A newer BakaLoader was staged during the splash phase; close now (before
-                // any main window opens or any server auto-starts) so the headless watchdog
+                // any main window opens or any server auto-starts) so the updater
                 // can replace the files and relaunch the updated app.
                 Logger.Information("Self-update staged at launch; closing to install the new version.");
                 Close();

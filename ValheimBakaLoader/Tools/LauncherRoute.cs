@@ -37,9 +37,9 @@ namespace ValheimBakaLoader.Tools
     /// the host Microsoft signs, with no launcher involved at all.
     /// </para>
     /// <para>
-    /// The same rule is written twice: here, for the app, and as Get-LaunchRoute in the
-    /// update watchdog, which runs after the app has closed and cannot call into it. The suite
-    /// runs the script's copy against real folders and holds the two to the same answers.
+    /// The updater (ManagedUpdater) is this same library, so it reads this rule rather than a
+    /// copy of it. It adds one condition of its own before it starts the launcher: the bytes have
+    /// to be the frozen launcher's, see <see cref="IsFrozenLauncher"/>.
     /// </para>
     /// </summary>
     public static class LauncherRoute
@@ -55,6 +55,49 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>The file name of the dotnet host.</summary>
         public const string DotnetHostName = "dotnet.exe";
+
+        /// <summary>
+        /// The SHA256 of the frozen launcher every release has shipped since 1.2.8, the 1.2.6
+        /// apphost in Resources\host. Staging leaves a launcher with these bytes out of the update
+        /// altogether, and the updater starts the launcher only when it has these bytes. The suite
+        /// holds this to FrozenAppHostTests.FrozenSha256 and to the file in Resources\host, so a
+        /// launcher re-frozen on purpose cannot leave this behind.
+        /// </summary>
+        public const string FrozenLauncherSha256 =
+            "365a8dec30b302a0b37851250d2089e646449c6017f7a2e2e59f2fd5a10ffcc4";
+
+        /// <summary>Whether these bytes are the frozen launcher.</summary>
+        public static bool IsFrozenLauncher(byte[] bytes)
+        {
+            if (bytes == null) return false;
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            return string.Equals(Convert.ToHexString(sha.ComputeHash(bytes)), FrozenLauncherSha256,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Whether the file at this path is there and is the frozen launcher.</summary>
+        public static bool IsFrozenLauncher(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return false;
+                using var stream = File.OpenRead(path);
+                return IsFrozenLauncher(stream);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>Whether a stream holds the frozen launcher. The stream is read to its end.</summary>
+        public static bool IsFrozenLauncher(Stream stream)
+        {
+            if (stream == null) return false;
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            return string.Equals(Convert.ToHexString(sha.ComputeHash(stream)), FrozenLauncherSha256,
+                StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>
         /// The rule, on the two facts it turns on. The launcher wins whenever it is there,

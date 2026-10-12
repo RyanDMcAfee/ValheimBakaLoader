@@ -31,54 +31,46 @@ namespace ValheimBakaLoader.Tests.Tools
         // --------------------------------------------------- the launcher the update writes
 
         /// <summary>
-        /// The one write that ended the 1.2.7 incident. The watchdog hashes the launcher that
-        /// arrived against the one already installed and leaves the file alone when they are the
-        /// same, which with a frozen launcher is every update from 1.2.8 on: no new bytes, no
-        /// new write time, nothing for a local model to judge.
+        /// The one write that ended the 1.2.7 incident. Staging leaves the frozen launcher out of
+        /// the update altogether (ManagedUpdaterTests holds that), and the updater itself, handed a
+        /// launcher with the same bytes as the one installed, leaves the file alone: no new bytes,
+        /// no new write time, nothing for a local model to judge. Run in process here, starting
+        /// nothing afterwards.
         /// </summary>
         [Fact]
-        public void The_watchdog_does_not_write_a_launcher_that_is_already_these_bytes()
+        public void The_updater_does_not_write_a_launcher_that_is_already_these_bytes()
         {
             var root = LauncherMissingTests.TempRoot();
             try
             {
-                var paths = LauncherMissingTests.Paths(root);
-                Directory.CreateDirectory(paths.Install);
-                File.WriteAllText(paths.Exe, "frozen launcher");
+                var plan = Plan(root, out var install, out var pending);
+                var exe = Path.Combine(install, LauncherRoute.LauncherName);
+                File.WriteAllText(exe, "frozen launcher");
                 var written = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
-                File.SetLastWriteTimeUtc(paths.Exe, written);
-                File.WriteAllText(Path.Combine(paths.Install, LauncherRoute.LibraryName), "old library");
+                File.SetLastWriteTimeUtc(exe, written);
+                File.WriteAllText(Path.Combine(install, LauncherRoute.LibraryName), "old library");
+                File.WriteAllText(Path.Combine(pending, LauncherRoute.LauncherName), "frozen launcher");
+                File.WriteAllText(Path.Combine(pending, LauncherRoute.LibraryName), "new library");
 
-                LauncherMissingTests.MakeZip(paths.Zip,
-                    (LauncherRoute.LauncherName, "frozen launcher"),
-                    (LauncherRoute.LibraryName, "new library"));
+                var result = ManagedUpdater.Apply(plan, null);
 
-                LauncherMissingTests.RunWatchdog(paths);
-
-                Assert.Equal("new library", File.ReadAllText(Path.Combine(paths.Install, LauncherRoute.LibraryName)));
-                Assert.Equal("frozen launcher", File.ReadAllText(paths.Exe));
-                Assert.Equal(written, File.GetLastWriteTimeUtc(paths.Exe));
+                Assert.Equal(UpdateResult.Updated, result.Outcome);
+                Assert.Equal(UpdateResult.LauncherKept, result.LauncherDownload);
+                Assert.Equal("new library", File.ReadAllText(Path.Combine(install, LauncherRoute.LibraryName)));
+                Assert.Equal("frozen launcher", File.ReadAllText(exe));
+                Assert.Equal(written, File.GetLastWriteTimeUtc(exe));
             }
             finally
             {
                 LauncherMissingTests.TryDelete(root);
             }
-
-            // The write is the last arm, so a matching hash reaches no write at all.
-            var script = WatchdogScript();
-            var compared = script.IndexOf("(Get-BytesHash $oldLauncher) -eq (Get-BytesHash $newLauncher)", StringComparison.Ordinal);
-            var wrote = script.IndexOf("[System.IO.File]::WriteAllBytes($exePath, $newLauncher)", StringComparison.Ordinal);
-            Assert.True(compared >= 0 && wrote > compared, "the launcher is written before the hashes are looked at");
-            Assert.Contains("} else {", script.Substring(compared, wrote - compared));
         }
 
         /// <summary>
-        /// A launcher that genuinely changed is still written. Leaving a launcher alone is only
-        /// for the same bytes, or for one the update cannot read; a guard that turned every
-        /// difference into "nothing to do" would hold a host on an old launcher forever the day
-        /// a new one is genuinely needed. And an installed launcher whose own hash cannot be
-        /// read is compared as different, so it is written over too, as long as it was taken
-        /// aside first and can be put back.
+        /// A launcher that genuinely changed is still written. Leaving a launcher alone is only for
+        /// the same bytes, or for one the update cannot read; a guard that turned every difference
+        /// into "nothing to do" would hold a host on an old launcher forever the day a new one is
+        /// genuinely needed.
         /// </summary>
         [Fact]
         public void A_launcher_that_genuinely_changed_is_written()
@@ -86,92 +78,111 @@ namespace ValheimBakaLoader.Tests.Tools
             var root = LauncherMissingTests.TempRoot();
             try
             {
-                var paths = LauncherMissingTests.Paths(root);
-                Directory.CreateDirectory(paths.Install);
-                File.WriteAllText(paths.Exe, "old launcher");
-                File.WriteAllText(Path.Combine(paths.Install, LauncherRoute.LibraryName), "old library");
+                var plan = Plan(root, out var install, out var pending);
+                var exe = Path.Combine(install, LauncherRoute.LauncherName);
+                File.WriteAllText(exe, "old launcher");
+                File.WriteAllText(Path.Combine(install, LauncherRoute.LibraryName), "old library");
+                File.WriteAllText(Path.Combine(pending, LauncherRoute.LauncherName), "new launcher");
+                File.WriteAllText(Path.Combine(pending, LauncherRoute.LibraryName), "new library");
 
-                LauncherMissingTests.MakeZip(paths.Zip,
-                    (LauncherRoute.LauncherName, "new launcher"),
-                    (LauncherRoute.LibraryName, "new library"));
+                var result = ManagedUpdater.Apply(plan, null);
 
-                var note = LauncherMissingTests.RunWatchdog(paths);
-
-                Assert.Equal("new launcher", File.ReadAllText(paths.Exe));
-                Assert.Equal("new library", File.ReadAllText(Path.Combine(paths.Install, LauncherRoute.LibraryName)));
-                Assert.DoesNotContain("put back", note ?? "");
+                Assert.Equal(UpdateResult.Updated, result.Outcome);
+                Assert.Equal(UpdateResult.LauncherWritten, result.LauncherDownload);
+                Assert.Equal("new launcher", File.ReadAllText(exe));
+                Assert.Equal("new library", File.ReadAllText(Path.Combine(install, LauncherRoute.LibraryName)));
             }
             finally
             {
                 LauncherMissingTests.TryDelete(root);
             }
-
-            var script = WatchdogScript();
-            Assert.Contains("catch { $oldLauncher = $null }", script);
-            Assert.Contains("$null -ne $oldLauncher -and (Get-BytesHash $oldLauncher)", script);
-            Assert.Contains("elseif ($installedThere -and -not $launcherAside)", script);
         }
 
         /// <summary>
-        /// And it says so where the host can read it. Every note the watchdog left used to be a
-        /// failure, so the launch logged all of them as warnings; this one is an account of an
-        /// update that worked, and it is marked as such and logged as an ordinary line.
+        /// A launcher that cannot be written into the install, with one already there, is not a
+        /// reason to undo the update: the one that was there goes back where it was and the rest
+        /// stays in, because the app is the library beside it. The write is made to fail by holding
+        /// the installed launcher open without delete sharing, so it can be copied aside and not
+        /// replaced.
         /// </summary>
         [Fact]
-        public void The_skipped_launcher_is_said_out_loud_and_is_not_a_warning()
+        public void A_launcher_that_cannot_be_written_keeps_the_old_one_and_the_update()
         {
-            var script = WatchdogScript();
+            var root = LauncherMissingTests.TempRoot();
+            try
+            {
+                var plan = Plan(root, out var install, out var pending);
+                var exe = Path.Combine(install, LauncherRoute.LauncherName);
+                File.WriteAllText(exe, "old launcher");
+                File.WriteAllText(Path.Combine(install, LauncherRoute.LibraryName), "old library");
+                File.WriteAllText(Path.Combine(pending, LauncherRoute.LauncherName), "new launcher");
+                File.WriteAllText(Path.Combine(pending, LauncherRoute.LibraryName), "new library");
 
-            Assert.Contains("Write-Note '" + AppUpdateService.RoutineNoteMark, script);
-            Assert.Contains("The launcher was already these exact bytes", script);
+                UpdateResult result;
+                using (new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    result = ManagedUpdater.Apply(plan, null);
+                }
+
+                Assert.Equal(UpdateResult.Updated, result.Outcome);
+                Assert.Equal(UpdateResult.LauncherUnwritable, result.LauncherDownload);
+                Assert.Equal("old launcher", File.ReadAllText(exe));
+                Assert.Equal("new library", File.ReadAllText(Path.Combine(install, LauncherRoute.LibraryName)));
+
+                var lines = ManagedUpdater.SagaLines(result, "1.2.13");
+                Assert.Contains(lines, l => l.Warning && l.Line.Contains("could not be written"));
+            }
+            finally
+            {
+                LauncherMissingTests.TryDelete(root);
+            }
+        }
+
+        /// <summary>
+        /// And it says so where the host can read it. A good update is an ordinary line in the
+        /// Saga, not a warning. The note the 1.2.12 watchdog leaves is still read for the one start
+        /// after the update into 1.2.13, which that watchdog swaps: its routine note is marked and
+        /// logged as an ordinary line, and a failure note is untouched and still a warning.
+        /// </summary>
+        [Fact]
+        public void A_good_update_is_said_out_loud_and_is_not_a_warning()
+        {
+            var good = ManagedUpdater.SagaLines(
+                new UpdateResult { Outcome = UpdateResult.Updated, Launcher = UpdateResult.LauncherFrozen, Start = UpdateResult.StartLauncher },
+                "1.2.13");
+            Assert.Single(good);
+            Assert.False(good[0].Warning);
 
             var note = AppUpdateService.RoutineNoteMark + "The launcher was already these exact bytes.";
             Assert.True(AppUpdateService.IsRoutineNote(note));
             Assert.Equal("The launcher was already these exact bytes.", AppUpdateService.NoteText(note));
 
-            // A failure note is untouched and still a warning.
             const string bad = "The update could not be written: robocopy answered 8.";
             Assert.False(AppUpdateService.IsRoutineNote(bad));
             Assert.Equal(bad, AppUpdateService.NoteText(bad));
 
-            // And the launch road tells the two apart rather than shouting at every host who
-            // took an update that went perfectly.
+            // And the launch road reads both, telling the good from the bad.
             var splash = AppSourceTree.Read("ValheimBakaLoader", "Forms", "SplashForm.cs");
+            Assert.Contains("ManagedUpdater.ReadAndClearResult(ManagedUpdater.WorkFolder())", splash);
+            Assert.Contains("ManagedUpdater.SagaLines(result,", splash);
             Assert.Contains("IsRoutineNote(note)", splash);
             Assert.Contains("Logger.Information(\"{note}\", said)", splash);
         }
 
-        /// <summary>
-        /// And the script PowerShell is handed actually parses. Nothing in the suite has ever
-        /// run the watchdog, because what it does is replace the app's own files, so every test
-        /// about it reads the text instead. That leaves one hole the size of the whole feature: a
-        /// brace or a quote out of place in the generated script is a self-update that cannot
-        /// work for anybody, and no gate above would notice. So the real artefact goes through
-        /// the real consumer, PowerShell's own parser, with nothing executed.
-        /// </summary>
-        [Fact]
-        public void The_script_the_watchdog_runs_parses_as_PowerShell()
+        private static ManagedUpdater.Plan Plan(string root, out string install, out string pending)
         {
-            var path = Path.Combine(
-                Path.GetTempPath(), "bakaloader-watchdog-" + Guid.NewGuid().ToString("N") + ".ps1");
-
-            File.WriteAllText(path, WatchdogScript());
-            try
+            install = Path.Combine(root, "install folder");
+            pending = ManagedUpdater.PendingFolder(install);
+            Directory.CreateDirectory(pending);
+            return new ManagedUpdater.Plan
             {
-                var said = RepoScript.Run(
-                    "powershell", "-NoProfile", "-NonInteractive", "-Command",
-                    "$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile("
-                    + "'" + path + "', [ref]$null, [ref]$e); "
-                    + "if ($e -and $e.Count) { $e | ForEach-Object { $_.Message }; exit 1 }; "
-                    + "Write-Output 'parsed'");
-
-                Assert.True(said.Ok, "the watchdog script does not parse: " + said);
-                Assert.Contains("parsed", said.Output);
-            }
-            finally
-            {
-                try { File.Delete(path); } catch { /* best effort */ }
-            }
+                Pid = 0,
+                Pending = pending,
+                Install = install,
+                Work = Path.Combine(root, "work"),
+                Wait = TimeSpan.Zero,
+                Start = false,
+            };
         }
 
         // ------------------------------------------------------- which release counts as out
@@ -369,25 +380,6 @@ namespace ValheimBakaLoader.Tests.Tools
             + "\"prerelease\":" + (prerelease ? "true" : "false") + ","
             + "\"assets\":[{\"name\":\"" + asset + "\","
             + "\"browser_download_url\":\"https://example.invalid/" + asset + "\",\"size\":1}]}";
-
-        /// <summary>The script the watchdog runs, built the way the service builds it.</summary>
-        private static string WatchdogScript()
-        {
-            var build = typeof(AppUpdateService).GetMethod(
-                "BuildWatchdogScript", BindingFlags.NonPublic | BindingFlags.Static);
-
-            Assert.NotNull(build);
-
-            return (string)build.Invoke(null, new object[]
-            {
-                4242,
-                @"C:\Temp\BakaLoaderUpdate\update.zip",
-                @"C:\Temp\BakaLoaderUpdate\extracted",
-                @"C:\Program Files\BakaLoader",
-                @"C:\Program Files\BakaLoader\ValheimBakaLoader.exe",
-                @"C:\Temp\BakaLoaderUpdate",
-            });
-        }
 
         /// <summary>One release, whatever is asked for.</summary>
         private sealed class OneRelease : IGitHubClient

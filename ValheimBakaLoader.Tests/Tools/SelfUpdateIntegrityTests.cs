@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Security.Cryptography;
 using ValheimBakaLoader.Forms;
 using ValheimBakaLoader.Tools;
@@ -163,51 +162,29 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Contains("appupd.refusal.damaged", AppSourceTree.Web("i18n/en.json"));
         }
 
-        // ------------------------------------------------------------------ the watchdog
+        // ------------------------------------------------------------------ the record
 
         /// <summary>
-        /// robocopy says what it did with its exit code, and anything from 8 up means files it
-        /// could not write. PowerShell's own error handling never sees a native exit code, so
-        /// the script sailed past a failed copy: half one version and half the other was left on
-        /// disk and the app was relaunched on it, with exit 0 and nothing logged anywhere.
+        /// What the updater wrote down is read at the next launch. RESULT.txt sits in the work
+        /// folder, outside the install, so nothing an update copies can carry it in or out, and the
+        /// launch reads it and, for the update into 1.2.13 that the 1.2.12 watchdog still swaps,
+        /// the note that watchdog leaves as well. A failed copy putting the old files back is driven
+        /// end to end in ManagedUpdaterTests.
         /// </summary>
         [Fact]
-        public void The_watchdog_reads_robocopys_exit_code_and_puts_the_old_files_back()
+        public void The_updater_writes_a_record_the_app_reads_at_the_next_launch()
         {
-            var script = BuildScript();
+            ManagedUpdater.WorkFolderOverride = null;
+            var work = ManagedUpdater.WorkFolder();
+            Assert.EndsWith("BakaLoaderUpdate", work);
+            Assert.False(work.StartsWith(LauncherRoute.InstallFolder(), StringComparison.OrdinalIgnoreCase),
+                "the work folder is inside the install, where an update would copy over it");
 
-            Assert.Contains("$copyCode = $LASTEXITCODE", script);
-            Assert.Contains("if ($copyCode -ge 8)", script);
-
-            // The rollback copy is taken BEFORE the new files land, because the only way to undo
-            // a half-finished copy is to still have the old files.
-            var rollbackTaken = script.IndexOf("robocopy $installDir $rollbackDir", StringComparison.Ordinal);
-            var newFilesWritten = script.IndexOf("robocopy $srcDir $installDir", StringComparison.Ordinal);
-            Assert.True(rollbackTaken >= 0 && newFilesWritten > rollbackTaken,
-                "the rollback copy is taken after the new files were written, which undoes nothing");
-
-            // And the exe is not copied and nothing is relaunched on a mixed install: the guard
-            // sits above both.
-            var guard = script.IndexOf("if ($copyCode -ge 8)", StringComparison.Ordinal);
-            var exeCopied = script.IndexOf("[System.IO.File]::WriteAllBytes($exePath, $newLauncher)", StringComparison.Ordinal);
-            Assert.True(exeCopied > 0 && guard < exeCopied, "the exe is copied before the exit code is read");
-        }
-
-        [Fact]
-        public void The_watchdog_writes_a_note_the_app_reads_at_the_next_launch()
-        {
-            var script = BuildScript();
-
-            Assert.Contains("$reportPath", script);
-            Assert.Contains("Set-Content -LiteralPath $reportPath", script);
-
-            // Outside the work folder, because step six deletes the work folder.
             AppUpdateService.ReportPathOverride = null;
-            var report = AppUpdateService.UpdateReportPath();
-            Assert.DoesNotContain("BakaLoaderUpdate", report);
+            Assert.DoesNotContain("BakaLoaderUpdate", AppUpdateService.UpdateReportPath());
 
-            // And the launch road reads it.
             var splash = AppSourceTree.Read("ValheimBakaLoader", "Forms", "SplashForm.cs");
+            Assert.Contains("ManagedUpdater.ReadAndClearResult(", splash);
             Assert.Contains("ReadAndClearUpdateReport", splash);
         }
 
@@ -235,19 +212,6 @@ namespace ValheimBakaLoader.Tests.Tools
             {
                 AppUpdateService.ReportPathOverride = null;
             }
-        }
-
-        private static string BuildScript()
-        {
-            var method = typeof(AppUpdateService).GetMethod(
-                "BuildWatchdogScript", BindingFlags.NonPublic | BindingFlags.Static);
-            Assert.NotNull(method);
-
-            return (string)method.Invoke(null, new object[]
-            {
-                1234, @"C:\work\update.zip", @"C:\work\extracted", @"C:\install",
-                @"C:\install\ValheimBakaLoader.exe", @"C:\work",
-            });
         }
     }
 }

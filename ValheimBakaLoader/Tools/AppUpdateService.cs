@@ -22,7 +22,10 @@ namespace ValheimBakaLoader.Tools
     /// </summary>
     public enum StageOutcome
     {
-        /// <summary>Downloaded, checked, and the watchdog is armed: the app must now close.</summary>
+        /// <summary>
+        /// Downloaded, checked, unpacked beside the install, and the updater started: the app must
+        /// now close.
+        /// </summary>
         Staged,
 
         /// <summary>The check got through and this build is the newest one there is.</summary>
@@ -61,17 +64,24 @@ namespace ValheimBakaLoader.Tools
         /// Nothing was armed and nothing was written; the update is staged again next launch.
         /// </summary>
         Held,
+
+        /// <summary>
+        /// The release arrived whole and could not be made ready: it would not unpack beside the
+        /// install, or the updater would not start. Nothing in the install was written over and
+        /// the running version stands.
+        /// </summary>
+        StagingFailed,
     }
 
     public interface IAppUpdateService
     {
         /// <summary>
-        /// Checks GitHub for a newer BakaLoader release and, if one is found, downloads it
-        /// and stages a headless watchdog process that will wait for this app to exit,
-        /// replace the installed files with the new version, relaunch BakaLoader, and then
-        /// clean up after itself. Returns <c>true</c> when an update was staged (the caller
-        /// should then close the app to let the watchdog take over), or <c>false</c> when the
-        /// app is already current or the update could not be staged.
+        /// Checks GitHub for a newer BakaLoader release and, if one is found, downloads it,
+        /// unpacks it into update-pending beside the install and starts the updater
+        /// (<see cref="ManagedUpdater"/>), which waits for this app to exit, copies the new files
+        /// in and starts BakaLoader again. Returns <c>true</c> when an update was staged (the
+        /// caller should then close the app so the updater can take over), or <c>false</c> when
+        /// the app is already current or the update could not be staged.
         /// <para>
         /// <paramref name="userInitiated"/> is set by the one path where the host asked for this
         /// by name (the update dialog's own button). An unattended check still needs both Upkeep
@@ -81,7 +91,7 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         /// <para>
         /// <paramref name="stillWanted"/> is asked, when it is given, before the download starts
-        /// and again in the moment before the watchdog is armed. A caller whose own deadline may
+        /// and again in the moment before the updater is started. A caller whose own deadline may
         /// run out while this is running hands one in and answers false once staging would no
         /// longer be safe; see <see cref="StageBudget"/>.
         /// </para>
@@ -106,37 +116,42 @@ namespace ValheimBakaLoader.Tools
     }
 
     /// <summary>
-    /// Self-update installer for BakaLoader. The download-and-swap has to happen while the
-    /// app is NOT running (its own files are locked and the child Valheim server is tied to
-    /// this process via a Job Object), so the actual file replacement is delegated to a
-    /// detached, windowless PowerShell "watchdog" that outlives the app:
+    /// Self-update for BakaLoader, the half that runs while the app is still up. The swap itself
+    /// has to happen while the app is NOT running (its own files are in use and the child Valheim
+    /// server is tied to this process through a Job Object), so it is handed to the updater:
     ///
-    ///   1. BakaLoader downloads the new release zip and verifies it contains the exe.
-    ///   2. BakaLoader writes + launches the hidden watchdog, then closes.
-    ///   3. The watchdog waits for BakaLoader's PID to exit, extracts the zip, robocopies
-    ///      the new files over the install directory, relaunches BakaLoader, and deletes
-    ///      its own temp working folder.
+    ///   1. BakaLoader downloads the release zip into the work folder and checks it: the size and
+    ///      digest GitHub publishes, and SHA256SUMS.txt when the release carries one.
+    ///   2. It unpacks the zip into update-pending in the install, refusing any entry that would
+    ///      land outside that folder and leaving out a launcher that is the frozen one.
+    ///   3. It starts the updater, the same library through dotnet with --apply-update, and closes.
+    ///   4. The updater (<see cref="ManagedUpdater"/>) waits for this process to end, copies the
+    ///      new files over the install with the old ones set aside, writes RESULT.txt and starts
+    ///      BakaLoader again.
     ///
-    /// On relaunch, the normal startup path auto-starts any profile whose AutoStart pref is
-    /// on, so the Valheim server comes back up without any special relaunch arguments.
+    /// Nothing in any of it is a script, and nothing in it writes a Run key. On relaunch the
+    /// normal startup path auto-starts any profile whose AutoStart pref is on, so the Valheim
+    /// server comes back up without any special relaunch arguments.
     /// </summary>
     public class AppUpdateService : IAppUpdateService
     {
         private const string ExeName = LauncherRoute.LauncherName;
 
         /// <summary>
-        /// How long the watchdog watches a launcher it has just started. A security tool that
-        /// takes the file out from under the process does it inside this window: on 2026-10-04
-        /// the kill came eighteen seconds after the start.
+        /// The checksum list a release may carry beside its zips. The publish script writes it from
+        /// 1.2.13 on; a release without it is still held to the size and the digest GitHub
+        /// publishes, as it always was.
         /// </summary>
-        internal const int LauncherWatchSeconds = 30;
+        public const string SumsAssetName = "SHA256SUMS.txt";
 
-        /// <summary>
-        /// How long the watchdog watches a start through dotnet. A host with no .NET 6 Desktop
-        /// Runtime ends inside the first second and says why only on a console nobody can see,
-        /// so an early ending is turned into a note the app reads on its next launch.
-        /// </summary>
-        internal const int DotnetWatchMilliseconds = 8000;
+        /// <summary>The clocks the checksum list is held to. It is a few lines of text.</summary>
+        internal static DownloadBudget SumsBudget => new()
+        {
+            HeaderTimeout = TimeSpan.FromSeconds(30),
+            TotalTimeout = TimeSpan.FromMinutes(1),
+            IdleTimeout = TimeSpan.FromSeconds(30),
+            MaxBytes = 64 * 1024,
+        };
 
         /// <summary>
         /// The clocks the release asset is held to. HttpClient.Timeout used to be the only
@@ -177,6 +192,41 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         internal string InstalledVersion { get; set; }
 
+        /// <summary>
+        /// Where staging works and where it unpacks, and what starts the updater, for the suite.
+        /// Null in every shipped path, which means %LOCALAPPDATA%\BakaLoaderUpdate, the app's own
+        /// folder and the real updater. A test that drives staging end to end points the first two
+        /// at a temp tree and hands in a starter that records the call, so nothing a test does ever
+        /// starts an updater, opens a window or writes into a folder the app runs from.
+        /// </summary>
+        internal string WorkDirectory { get; set; }
+
+        /// <inheritdoc cref="WorkDirectory"/>
+        internal string InstallDirectory { get; set; }
+
+        /// <inheritdoc cref="WorkDirectory"/>
+        internal Action<string, string> UpdaterStarter { get; set; }
+
+        /// <summary>
+        /// The environment variable that points an update check at a release zip on this machine
+        /// instead of at GitHub, so the owner can run the whole update on a throwaway copy before
+        /// there is a release to update to. When it names a .zip that exists, that zip stands in
+        /// for the newest release: GitHub is not asked, no checksum list is fetched, the version
+        /// check is skipped (the zip is usually the very build the copy already runs), and the zip
+        /// is copied into the work folder as the download and taken through the same staging and
+        /// the same updater as a real update. Unset, or naming nothing usable, and the check is the
+        /// GitHub one exactly as it always was; the variable is never read for anything else, so
+        /// it cannot make a real host skip an update.
+        /// </summary>
+        public const string UpdateFromZipVariable = "BAKALOADER_UPDATE_FROM_ZIP";
+
+        /// <summary>
+        /// How <see cref="UpdateFromZipVariable"/> is read, for the suite, so a test never sets a
+        /// variable every other test in the process would see. Null in every shipped path, which
+        /// reads the process environment.
+        /// </summary>
+        internal Func<string, string> EnvironmentReader { get; set; }
+
         private string Installed() => string.IsNullOrWhiteSpace(InstalledVersion)
             ? AssemblyHelper.GetApplicationVersion()
             : InstalledVersion.Trim();
@@ -192,9 +242,15 @@ namespace ValheimBakaLoader.Tools
         /// about 90 KB a second the step was given up on every single time, and the work carried
         /// on behind the opened window and armed the watchdog anyway.
         /// </para>
+        /// <para>
+        /// From 1.2.13 a release may carry SHA256SUMS.txt as well, fetched after the zip under
+        /// clocks of its own, so those are added on.
+        /// </para>
         /// </summary>
         public TimeSpan StageBudget =>
-            Budget.HeaderTimeout + Budget.TotalTimeout + TimeSpan.FromMinutes(1);
+            Budget.HeaderTimeout + Budget.TotalTimeout
+            + SumsBudget.HeaderTimeout + SumsBudget.TotalTimeout
+            + TimeSpan.FromMinutes(1);
 
         private readonly IGitHubClient GitHub;
         private readonly IHttpClientProvider HttpClientProvider;
@@ -264,7 +320,10 @@ namespace ValheimBakaLoader.Tools
                     return StageOutcome.SwitchedOff;
                 }
 
-                var release = await GitHub.GetLatestReleaseAsync();
+                // The owner's test seam: a zip named in the environment stands in for GitHub. Null,
+                // and everything below is the GitHub path it has always been.
+                var localZip = LocalReleaseZip();
+                var release = localZip != null ? LocalRelease(localZip) : await GitHub.GetLatestReleaseAsync();
                 if (release == null)
                 {
                     Logger.Information("Self-update: no GitHub release available.");
@@ -273,7 +332,7 @@ namespace ValheimBakaLoader.Tools
 
                 // CompareVersion returns 1 when the release is newer than the running app. The
                 // installed side is the DLL's version, never the exe's: see InstalledVersion.
-                if (AssemblyHelper.CompareVersion(release.TagName, Installed()) != 1)
+                if (localZip == null && AssemblyHelper.CompareVersion(release.TagName, Installed()) != 1)
                 {
                     Logger.Information(
                         "Self-update: already current (installed {0} vs release {1}).",
@@ -281,7 +340,7 @@ namespace ValheimBakaLoader.Tools
                     return StageOutcome.AlreadyCurrent;
                 }
 
-                var asset = ChooseAppAsset(release);
+                var asset = localZip != null ? release.Assets[0] : ChooseAppAsset(release);
 
                 if (asset == null)
                 {
@@ -295,7 +354,7 @@ namespace ValheimBakaLoader.Tools
                     return StageOutcome.NoRelease;
                 }
 
-                var workDir = Path.Combine(Path.GetTempPath(), "BakaLoaderUpdate");
+                var workDir = WorkDirectory ?? ManagedUpdater.WorkFolder();
                 Directory.CreateDirectory(workDir);
                 var zipPath = Path.Combine(workDir, "update.zip");
                 TryDelete(zipPath);
@@ -312,11 +371,19 @@ namespace ValheimBakaLoader.Tools
                     return StageOutcome.Held;
                 }
 
-                Logger.Information("Self-update: downloading {0} -> {1}", asset.BrowserDownloadUrl, zipPath);
                 long written;
                 try
                 {
-                    written = await DownloadFileAsync(asset.BrowserDownloadUrl, zipPath);
+                    if (localZip != null)
+                    {
+                        File.Copy(localZip, zipPath, overwrite: true);
+                        written = new FileInfo(zipPath).Length;
+                    }
+                    else
+                    {
+                        Logger.Information("Self-update: downloading {0} -> {1}", asset.BrowserDownloadUrl, zipPath);
+                        written = await DownloadFileAsync(asset.BrowserDownloadUrl, zipPath);
+                    }
                 }
                 catch (TimeoutException e)
                 {
@@ -340,6 +407,34 @@ namespace ValheimBakaLoader.Tools
                     return StageOutcome.DownloadDamaged;
                 }
 
+                // And the checksum list the release carries from 1.2.13 on, when it carries one.
+                // A release without it is held to the two checks above, as every release before
+                // it was, and nothing is said about the list being absent.
+                var summed = localZip != null
+                    ? SumCheck.NotPublished
+                    : await CheckPublishedSumAsync(release, asset, zipPath, workDir);
+                if (summed == SumCheck.Mismatch)
+                {
+                    Logger.Error(
+                        "Self-update: the download did not match the SHA256 that {0} on release {1} gives it. "
+                        + "The installed version was left alone.", SumsAssetName, release.TagName);
+                    TryDelete(zipPath);
+                    return StageOutcome.DownloadDamaged;
+                }
+
+                if (summed == SumCheck.Unreachable)
+                {
+                    TryDelete(zipPath);
+                    return StageOutcome.NetworkError;
+                }
+
+                if (summed == SumCheck.NotListed)
+                {
+                    Logger.Information(
+                        "Self-update: {0} on release {1} does not list {2}, so the download was held to the "
+                        + "size and digest GitHub publishes.", SumsAssetName, release.TagName, asset.Name);
+                }
+
                 if (!ZipContainsExe(zipPath))
                 {
                     Logger.Error("Self-update: downloaded zip holds neither {0} nor {1}; aborting.", ExeName, LauncherRoute.LibraryName);
@@ -350,7 +445,7 @@ namespace ValheimBakaLoader.Tools
                 // The app's own folder, not the folder of the process image. Through the
                 // launcher those are the same folder; through dotnet the process image is
                 // dotnet.exe, and the update would have been written over the .NET install.
-                var installDir = LauncherRoute.InstallFolder();
+                var installDir = InstallDirectory ?? LauncherRoute.InstallFolder();
                 if (string.IsNullOrWhiteSpace(installDir))
                 {
                     Logger.Error("Self-update: could not resolve the install directory; aborting.");
@@ -368,8 +463,81 @@ namespace ValheimBakaLoader.Tools
                     return StageOutcome.Held;
                 }
 
-                LaunchWatchdog(workDir, zipPath, installDir);
-                Logger.Information("Self-update: watchdog launched for release {0}; app will now close to update.", release.TagName);
+                // Unpacked beside the install, where the updater copies from. Whatever an earlier
+                // update left there, a half unpacked release from a crash or the files the last
+                // one set aside, goes first.
+                var pending = ManagedUpdater.PendingFolder(installDir);
+                ManagedUpdater.CleanLeftovers(installDir);
+                Extraction unpacked;
+                try
+                {
+                    unpacked = ExtractToPending(zipPath, pending);
+                }
+                catch (Exception e)
+                {
+                    Logger.Error(e,
+                        "Self-update: release {0} could not be unpacked into {1}. Nothing in the install was written over.",
+                        release.TagName, pending);
+                    ManagedUpdater.TryDeleteFolder(pending);
+                    return StageOutcome.StagingFailed;
+                }
+                finally
+                {
+                    // Unpacked or refused, the zip has done its job.
+                    TryDelete(zipPath);
+                }
+
+                if (unpacked.Refused != null)
+                {
+                    Logger.Error(
+                        "Self-update: release {0} was refused, because the zip names {1}, which would land outside "
+                        + "the folder it is unpacked into. Nothing was written.", release.TagName, unpacked.Refused);
+                    ManagedUpdater.TryDeleteFolder(pending);
+                    return StageOutcome.DownloadDamaged;
+                }
+
+                if (unpacked.LauncherSkipped)
+                {
+                    Logger.Information(
+                        "Self-update: the launcher in release {0} is the frozen {1} every release ships, so the "
+                        + "update leaves it out and nothing writes it.", release.TagName, ExeName);
+                }
+
+                if (unpacked.LauncherRefused != null)
+                {
+                    Logger.Warning(
+                        "Self-update: the launcher in release {0} could not be unpacked ({1}), which is what a "
+                        + "security tool taking it looks like. The update goes on without it.",
+                        release.TagName, unpacked.LauncherRefused);
+                }
+
+                // Once more, for the unpacking. The updater is the step that cannot be taken back,
+                // because it is counting down to writing over the install from the moment it starts.
+                if (!Wanted())
+                {
+                    Logger.Information(
+                        "Self-update: release {0} was unpacked after the launch had gone on, so the updater "
+                        + "was not started. It installs the next time BakaLoader starts.", release.TagName);
+                    ManagedUpdater.TryDeleteFolder(pending);
+                    return StageOutcome.Held;
+                }
+
+                try
+                {
+                    if (UpdaterStarter != null) UpdaterStarter(installDir, pending);
+                    else if (localZip != null) StartUpdater(installDir, pending, dropZipVariable: true);
+                    else StartUpdater(installDir, pending);
+                }
+                catch (Exception e)
+                {
+                    Logger.Error(e,
+                        "Self-update: the updater for release {0} would not start. Nothing in the install was written over.",
+                        release.TagName);
+                    ManagedUpdater.TryDeleteFolder(pending);
+                    return StageOutcome.StagingFailed;
+                }
+
+                Logger.Information("Self-update: updater started for release {0}; app will now close to update.", release.TagName);
                 return StageOutcome.Staged;
             }
             catch (Exception e)
@@ -380,6 +548,103 @@ namespace ValheimBakaLoader.Tools
                 // problem rather than being told there is nothing newer.
                 Logger.Error(e, "Self-update: failed to check or stage an update.");
                 return StageOutcome.NetworkError;
+            }
+        }
+
+        /// <summary>
+        /// The zip <see cref="UpdateFromZipVariable"/> names, as a full path, or null. Null when it
+        /// is unset, which is every host; null with a warning when it names something that is not
+        /// a .zip that exists, and the check then goes to GitHub as it always does.
+        /// </summary>
+        private string LocalReleaseZip()
+        {
+            string named;
+            try
+            {
+                named = (EnvironmentReader ?? Environment.GetEnvironmentVariable)(UpdateFromZipVariable);
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(named)) return null;
+
+            var path = named.Trim().Trim('"');
+            try
+            {
+                if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+                    return Path.GetFullPath(path);
+            }
+            catch
+            {
+                // A path Windows will not take is the same as one that is not there.
+            }
+
+            Logger.Warning(
+                "Self-update: {0} names {1}, which is not a .zip that exists, so GitHub was asked as usual.",
+                UpdateFromZipVariable, path);
+            return null;
+        }
+
+        /// <summary>
+        /// A release made from the local zip: one asset, the zip itself, and the version of the
+        /// library inside it. Logs the one line that says the seam is in use.
+        /// </summary>
+        private GitHubRelease LocalRelease(string zipPath)
+        {
+            var workDir = WorkDirectory ?? ManagedUpdater.WorkFolder();
+            Directory.CreateDirectory(workDir);
+            var version = LocalZipVersion(zipPath, workDir);
+
+            Logger.Information(
+                "Self-update: {0} names {1}, so that zip stands in for the newest release (version {2}). "
+                + "GitHub was not asked, no checksum list was fetched and the version check was skipped.",
+                UpdateFromZipVariable, zipPath, version);
+
+            return new GitHubRelease
+            {
+                TagName = version,
+                Assets = new[]
+                {
+                    new GitHubReleaseAsset
+                    {
+                        Name = Path.GetFileName(zipPath),
+                        BrowserDownloadUrl = zipPath,
+                        Size = new FileInfo(zipPath).Length,
+                    },
+                },
+            };
+        }
+
+        /// <summary>
+        /// The product version of the ValheimBakaLoader.dll inside a release zip, or "local" when
+        /// there is none or it cannot be read. The library is unpacked into a folder of its own in
+        /// the work folder to be read, and the folder is gone again before this returns.
+        /// </summary>
+        internal static string LocalZipVersion(string zipPath, string workDir)
+        {
+            var probeDir = Path.Combine(workDir, "version-probe-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                using (var archive = ZipFile.OpenRead(zipPath))
+                {
+                    var entry = Shallowest(archive, LauncherRoute.LibraryName);
+                    if (entry == null) return "local";
+                    Directory.CreateDirectory(probeDir);
+                    entry.ExtractToFile(Path.Combine(probeDir, LauncherRoute.LibraryName), overwrite: true);
+                }
+
+                var product = FileVersionInfo.GetVersionInfo(Path.Combine(probeDir, "ValheimBakaLoader.dll")).ProductVersion;
+                return string.IsNullOrWhiteSpace(product) ? "local" : product.Trim();
+            }
+            catch
+            {
+                return "local";
+            }
+            finally
+            {
+                ManagedUpdater.TryDeleteFolder(probeDir);
             }
         }
 
@@ -501,8 +766,8 @@ namespace ValheimBakaLoader.Tools
         /// <summary>
         /// Whether the zip holds BakaLoader: the launcher, or the library that IS the app. The
         /// launcher alone used to be the test, so a release zip a security tool had taken the
-        /// launcher out of read as a zip with no BakaLoader in it, and the watchdog finds the
-        /// app by the library as well now.
+        /// launcher out of read as a zip with no BakaLoader in it, and unpacking finds the app
+        /// by the library first now (see ExtractToPending).
         /// </summary>
         private static bool ZipContainsExe(string zipPath)
         {
@@ -519,458 +784,298 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        /// <summary>
-        /// Writes the watchdog PowerShell script to the work directory and launches it as a
-        /// detached, hidden process. The script waits for this app's PID to exit before it
-        /// touches any files, so the app is safe to close immediately after this returns.
-        /// </summary>
-        private void LaunchWatchdog(string workDir, string zipPath, string installDir)
+        /// <summary>What came of holding the download to the release's checksum list.</summary>
+        internal enum SumCheck
         {
-            var appPid = Process.GetCurrentProcess().Id;
-            var exePath = Path.Combine(installDir, ExeName);
-            var extractDir = Path.Combine(workDir, "extracted");
-            var scriptPath = Path.Combine(workDir, "update-watchdog.ps1");
+            /// <summary>The release carries no SHA256SUMS.txt.</summary>
+            NotPublished,
 
-            var script = BuildWatchdogScript(appPid, zipPath, extractDir, installDir, exePath, workDir);
-            WriteWatchdogScript(scriptPath, script);
+            /// <summary>The list names the zip and the SHA256 matches.</summary>
+            Matched,
 
+            /// <summary>The list is there and does not name the zip.</summary>
+            NotListed,
+
+            /// <summary>The list names the zip with a different SHA256.</summary>
+            Mismatch,
+
+            /// <summary>The list is on the release and could not be fetched.</summary>
+            Unreachable,
+        }
+
+        /// <summary>
+        /// The download, held to SHA256SUMS.txt when the release carries one. The list comes from
+        /// the same release as the zip, so it catches a zip damaged on the way rather than one
+        /// somebody swapped; a signature is what will catch that.
+        /// </summary>
+        private async Task<SumCheck> CheckPublishedSumAsync(
+            GitHubRelease release, GitHubReleaseAsset asset, string zipPath, string workDir)
+        {
+            var sums = release?.Asset(SumsAssetName);
+            if (string.IsNullOrWhiteSpace(sums?.BrowserDownloadUrl)) return SumCheck.NotPublished;
+
+            var path = Path.Combine(workDir, SumsAssetName);
+            TryDelete(path);
+            try
+            {
+                using var client = HttpClientProvider.CreateClient();
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("ValheimBakaLoader");
+                await BoundedDownload.ToFileAsync(
+                    client, sums.BrowserDownloadUrl, path, SumsBudget, CancellationToken.None,
+                    tracer: Logger, what: "self-update checksum list");
+
+                return CompareSum(File.ReadAllText(path), asset?.Name, zipPath);
+            }
+            catch (Exception e)
+            {
+                Logger.Error("Self-update: {0} on release {1} could not be fetched: {2}", SumsAssetName, release.TagName, e.Message);
+                return SumCheck.Unreachable;
+            }
+            finally
+            {
+                TryDelete(path);
+            }
+        }
+
+        /// <summary>
+        /// The SHA256 the list gives a file, or null. Lines are the usual
+        /// <c>&lt;hex&gt;  &lt;name&gt;</c>, with or without the star that marks binary mode.
+        /// </summary>
+        internal static string ReadPublishedSum(string sumsText, string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(sumsText) || string.IsNullOrWhiteSpace(fileName)) return null;
+
+            foreach (var raw in sumsText.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
+
+                var space = line.IndexOfAny(new[] { ' ', '\t' });
+                if (space <= 0) continue;
+
+                var hex = line.Substring(0, space);
+                var name = line.Substring(space).Trim().TrimStart('*').Trim();
+                if (hex.Length != 64 || !hex.All(Uri.IsHexDigit)) continue;
+
+                if (string.Equals(name, fileName.Trim(), StringComparison.OrdinalIgnoreCase)) return hex;
+            }
+
+            return null;
+        }
+
+        /// <summary>The list held against the zip on disk.</summary>
+        internal static SumCheck CompareSum(string sumsText, string fileName, string zipPath)
+        {
+            var expected = ReadPublishedSum(sumsText, fileName);
+            if (expected == null) return SumCheck.NotListed;
+
+            var actual = Sha256Of(zipPath);
+            return actual != null && string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)
+                ? SumCheck.Matched
+                : SumCheck.Mismatch;
+        }
+
+        /// <summary>What unpacking a release into update-pending came to.</summary>
+        internal sealed class Extraction
+        {
+            /// <summary>The first entry that would land outside the folder. Nothing is used when one does.</summary>
+            public string Refused { get; init; }
+
+            /// <summary>The launcher was the frozen one, so it was left out.</summary>
+            public bool LauncherSkipped { get; init; }
+
+            /// <summary>Why the launcher could not be unpacked, when it could not. The rest went in.</summary>
+            public string LauncherRefused { get; init; }
+
+            /// <summary>How many files were unpacked.</summary>
+            public int Files { get; init; }
+        }
+
+        /// <summary>
+        /// The release, unpacked into update-pending in the install, laid out the way the install
+        /// is laid out: when the zip nests the app a folder deep, that folder is the root.
+        /// <para>
+        /// Every name in the zip is checked before a byte is written, and one that would land
+        /// outside the folder (a path climbing out with "..", a rooted path, a drive letter, a
+        /// stream name) refuses the whole release. So does a name that would land in the updater's
+        /// own folders. A launcher that is the frozen one is left out, so no update writes that
+        /// file at all, and a launcher that will not unpack is let go with the reason, because the
+        /// app is the library and the release is whole without it. Anything else that will not
+        /// unpack throws, and staging stops with nothing in the install written over.
+        /// </para>
+        /// </summary>
+        internal static Extraction ExtractToPending(string zipPath, string pendingDir)
+        {
+            // Whatever a crash left here goes first, and when it will not go the real reason is
+            // what stops the update, rather than a release mixed into the leftovers.
+            ManagedUpdater.TryDeleteFolder(pendingDir);
+            if (Directory.Exists(pendingDir)) Directory.Delete(pendingDir, recursive: true);
+
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pendingDir)) + Path.DirectorySeparatorChar;
+
+            using var archive = ZipFile.OpenRead(zipPath);
+
+            foreach (var entry in archive.Entries)
+            {
+                if (Landing(root, entry.FullName) == null) return new Extraction { Refused = entry.FullName };
+            }
+
+            var app = Shallowest(archive, LauncherRoute.LibraryName) ?? Shallowest(archive, ExeName);
+            if (app == null) return new Extraction();
+
+            var appName = Normalize(app.FullName);
+            var prefix = appName.Substring(0, appName.Length - app.Name.Length);
+
+            Directory.CreateDirectory(root);
+            var skipped = false;
+            string launcherRefused = null;
+            var files = 0;
+
+            foreach (var entry in archive.Entries)
+            {
+                var name = Normalize(entry.FullName);
+                if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var relative = name.Substring(prefix.Length);
+                if (relative.Length == 0) continue;
+
+                var first = relative.Split('/')[0];
+                if (string.Equals(first, ManagedUpdater.PendingFolderName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(first, ManagedUpdater.RollbackFolderName, StringComparison.OrdinalIgnoreCase))
+                {
+                    ManagedUpdater.TryDeleteFolder(root);
+                    return new Extraction { Refused = entry.FullName };
+                }
+
+                var target = Landing(root, relative);
+                if (target == null)
+                {
+                    ManagedUpdater.TryDeleteFolder(root);
+                    return new Extraction { Refused = entry.FullName };
+                }
+
+                if (name.EndsWith("/", StringComparison.Ordinal))
+                {
+                    Directory.CreateDirectory(target);
+                    continue;
+                }
+
+                if (string.Equals(relative, ExeName, StringComparison.OrdinalIgnoreCase))
+                {
+                    bool frozen;
+                    using (var stream = entry.Open()) frozen = LauncherRoute.IsFrozenLauncher(stream);
+                    if (frozen)
+                    {
+                        skipped = true;
+                        continue;
+                    }
+
+                    try
+                    {
+                        entry.ExtractToFile(target, overwrite: true);
+                        files++;
+                    }
+                    catch (Exception e)
+                    {
+                        // Never left half written, where it would read as a launcher that arrived.
+                        try { if (File.Exists(target)) File.Delete(target); } catch { /* the updater reads it whole or not at all */ }
+                        launcherRefused = e.Message;
+                    }
+
+                    continue;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                entry.ExtractToFile(target, overwrite: true);
+                files++;
+            }
+
+            return new Extraction { LauncherSkipped = skipped, LauncherRefused = launcherRefused, Files = files };
+        }
+
+        private static ZipArchiveEntry Shallowest(ZipArchive archive, string fileName) =>
+            archive.Entries
+                .Where(e => string.Equals(e.Name, fileName, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(e => Normalize(e.FullName).Count(c => c == '/'))
+                .FirstOrDefault();
+
+        private static string Normalize(string name) => (name ?? string.Empty).Replace('\\', '/');
+
+        /// <summary>
+        /// Where a zip entry would land under the root, or null when that is anywhere else.
+        /// </summary>
+        internal static string Landing(string root, string entryName)
+        {
+            var name = Normalize(entryName);
+            if (name.Length == 0 || name.StartsWith("/", StringComparison.Ordinal) || name.Contains(':')) return null;
+
+            string full;
+            try
+            {
+                full = Path.GetFullPath(Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar)));
+            }
+            catch
+            {
+                return null;
+            }
+
+            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full : null;
+        }
+
+        /// <summary>
+        /// How the updater is started: the dotnet host, the app's own library from the install,
+        /// and <c>--apply-update &lt;pid&gt; &lt;pending&gt; &lt;install&gt;</c>. No shell, no
+        /// script and nothing hidden: the window the updater opens is the one the host sees.
+        /// </summary>
+        internal static ProcessStartInfo UpdaterStartInfo(
+            string dotnet, string installDir, string pendingDir, int pid, bool dropZipVariable = false)
+        {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"",
+                FileName = dotnet,
+                WorkingDirectory = installDir,
                 UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-                WorkingDirectory = workDir,
             };
 
-            Process.Start(psi);
+            psi.ArgumentList.Add(Path.Combine(installDir, LauncherRoute.LibraryName));
+            foreach (var argument in ManagedUpdater.Arguments(pid, pendingDir, installDir))
+            {
+                psi.ArgumentList.Add(argument);
+            }
+
+            // An update the owner pointed at a local zip must not hand that variable on: the
+            // updater starts the app again, and an app that still saw it would stage the same zip
+            // at its next check, because that path skips the version comparison. Only touched when
+            // the seam was used, so a real update starts the updater exactly as it always did.
+            if (dropZipVariable) psi.Environment.Remove(UpdateFromZipVariable);
+
+            return psi;
         }
 
-        /// <summary>
-        /// How long the watchdog waits for this app to exit before it gives up on the update.
-        /// The app close can take as long as the longest save wait plus the grace the close
-        /// gives a server to go (<see cref="ValheimServer.CloseDeadlineFor"/>), so the watchdog
-        /// waits that long and a minute more. A shorter wait drops the update of a host whose
-        /// server saves slowly, because the app is still busy stopping it when the wait runs out.
-        /// </summary>
-        public static readonly TimeSpan WatchdogCloseWait =
-            ValheimServer.CloseDeadlineFor(new[] { ValheimServer.StopSaveCap }) + TimeSpan.FromMinutes(1);
-
-        private static string BuildWatchdogScript(
-            int appPid, string zipPath, string extractDir, string installDir, string exePath, string workDir)
+        private void StartUpdater(string installDir, string pendingDir, bool dropZipVariable = false)
         {
-            // A self-deleting, windowless updater. Every path is passed as a literal so the
-            // script has no external dependencies beyond stock PowerShell + robocopy.
-            return $@"
-$ErrorActionPreference = 'Stop'
-$appPid     = {appPid}
-$zipPath    = '{Escape(zipPath)}'
-$extractDir = '{Escape(extractDir)}'
-$installDir = '{Escape(installDir)}'
-$exePath    = '{Escape(exePath)}'
-$dllPath    = Join-Path $installDir '{LauncherRoute.LibraryName}'
-$workDir    = '{Escape(workDir)}'
-$reportPath = '{Escape(UpdateReportPath())}'
-$rollbackDir = Join-Path $workDir 'rollback'
-$rollbackTaken = $false
-$script:note = $null
+            var dotnet = ManagedUpdater.FindDotnet()
+                ?? throw new FileNotFoundException("The dotnet host was not found to start the updater with.", LauncherRoute.DotnetHostName);
 
-# The note the app reads on its next launch. Every way out of this script that is not a
-# finished update goes through here, because a host whose BakaLoader did not come back has
-# no other way of finding out why: the script deletes itself and its own folder, and the
-# app that would have written a log line is not running.
-function Write-Note($note) {{
-  $script:note = $note
-  try {{
-    $reportDir = Split-Path -Parent $reportPath
-    if ($reportDir -and -not (Test-Path $reportDir)) {{ New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }}
-    Set-Content -LiteralPath $reportPath -Value $note -Encoding UTF8
-  }} catch {{}}
-}}
+            using var self = Process.GetCurrentProcess();
+            var psi = UpdaterStartInfo(dotnet, installDir, pendingDir, self.Id, dropZipVariable);
+            using var started = Process.Start(psi)
+                ?? throw new InvalidOperationException("The updater did not start.");
 
-# A second sentence for the note this run already wrote. A routine note gives way to anything
-# that is not routine, because ""the launcher was already these bytes"" says nothing once the
-# launcher has gone.
-function Add-Note($note) {{
-  if ($script:note -and -not $script:note.StartsWith('{RoutineNoteMark}')) {{ Write-Note ($script:note + ' ' + $note) }}
-  else {{ Write-Note $note }}
-}}
-
-# The words of a failure, without the wrapper PowerShell puts round a .NET call that threw.
-function Get-Reason($failure) {{
-  $e = $failure.Exception
-  if ($e -is [System.Management.Automation.MethodInvocationException] -and $e.InnerException) {{ $e = $e.InnerException }}
-  return $e.Message
-}}
-
-# How long the zip says the launcher that landed at $path is, or -1 when that cannot be told.
-function Get-LauncherEntryLength([string]$path) {{
-  try {{
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $root = [System.IO.Path]::GetFullPath($extractDir).TrimEnd('\') + '\'
-    $relative = [System.IO.Path]::GetFullPath($path).Substring($root.Length).Replace('\', '/')
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-    try {{
-      foreach ($entry in $zip.Entries) {{
-        if ($entry.FullName.Replace('\', '/') -ieq $relative) {{ return $entry.Length }}
-      }}
-    }} finally {{
-      $zip.Dispose()
-    }}
-  }} catch {{}}
-  return -1
-}}
-
-# A SHA-256 of bytes already in memory, so the launcher is compared on what was read and not on
-# a second read of a file that may have changed hands in between.
-function Get-BytesHash([byte[]]$bytes) {{
-  $sha = [System.Security.Cryptography.SHA256]::Create()
-  try {{ return [System.BitConverter]::ToString($sha.ComputeHash($bytes)) }} finally {{ $sha.Dispose() }}
-}}
-
-# BEGIN launch route
-# Which way BakaLoader can be started from a folder. The same rule as LauncherRoute.For in the
-# app: the launcher whenever it is there, dotnet when the launcher is gone and the library is
-# still there, and nothing when both are gone. A missing launcher beside the library is a
-# launcher a security tool took, never a failed update, and never a reason to roll back.
-function Get-LaunchRoute([string]$dir) {{
-  if (Test-Path -LiteralPath (Join-Path $dir '{LauncherRoute.LauncherName}') -PathType Leaf) {{ return 'Launcher' }}
-  if (Test-Path -LiteralPath (Join-Path $dir '{LauncherRoute.LibraryName}') -PathType Leaf) {{ return 'Dotnet' }}
-  return 'None'
-}}
-# END launch route
-
-# The dotnet host. The 64 bit one the runtime installer puts in Program Files comes first,
-# because the release is the x64 build and a 32 bit dotnet earlier on the path would run it as
-# a 32 bit process; the path is the fall back for an install somewhere else.
-function Find-Dotnet {{
-  foreach ($root in @($env:ProgramW6432, $env:ProgramFiles)) {{
-    if ($root) {{
-      $candidate = Join-Path $root 'dotnet\{LauncherRoute.DotnetHostName}'
-      if (Test-Path -LiteralPath $candidate -PathType Leaf) {{ return $candidate }}
-    }}
-  }}
-  $found = Get-Command '{LauncherRoute.DotnetHostName}' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($found) {{ return $found.Path }}
-  return $null
-}}
-
-# The launcher, watched long enough to see a security tool take the file out from under the
-# process it just started. True when BakaLoader is up, or ended on its own with the launcher
-# still on disk, which is not this script's to second guess.
-function Start-ThroughLauncher {{
-  try {{
-    $started = Start-Process -FilePath $exePath -WorkingDirectory $installDir -PassThru -ErrorAction Stop
-  }} catch {{
-    return $false
-  }}
-  for ($i = 0; $i -lt {LauncherWatchSeconds}; $i++) {{
-    Start-Sleep -Seconds 1
-    if (-not (Test-Path -LiteralPath $exePath)) {{ break }}
-    if ($started.HasExited) {{
-      Start-Sleep -Seconds 3
-      return (Test-Path -LiteralPath $exePath)
-    }}
-  }}
-  if (Test-Path -LiteralPath $exePath) {{ return $true }}
-  try {{ $started.WaitForExit(5000) | Out-Null }} catch {{}}
-  return (-not $started.HasExited)
-}}
-
-# The app through the dotnet host, with no console window: CreateNoWindow gives the host no
-# console at all, and the app opens its own window as it always does. Watched for a few
-# seconds, because a machine with no .NET 6 Desktop Runtime ends straight away and says why
-# only on a console nobody can see. $why opens every sentence it leaves.
-function Start-ThroughDotnet([string]$why) {{
-  $dotnet = Find-Dotnet
-  if (-not $dotnet) {{
-    Add-Note ($why + ', and dotnet was not found to start BakaLoader without it. Install the .NET 6 Desktop Runtime from https://dotnet.microsoft.com/download/dotnet/6.0, then start {LauncherRoute.ScriptName} in ' + $installDir + '.')
-    return $false
-  }}
-  try {{
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $dotnet
-    $psi.Arguments = [string][char]34 + $dllPath + [string][char]34
-    $psi.WorkingDirectory = $installDir
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $started = [System.Diagnostics.Process]::Start($psi)
-  }} catch {{
-    Add-Note ($why + ', and starting BakaLoader through dotnet failed: ' + $_.Exception.Message + ' Start {LauncherRoute.ScriptName} in ' + $installDir + ' to try again.')
-    return $false
-  }}
-  if ($started.WaitForExit({DotnetWatchMilliseconds}) -and $started.ExitCode -ne 0) {{
-    Add-Note ($why + ', and starting BakaLoader through dotnet ended straight away with code ' + $started.ExitCode + '. That usually means the .NET 6 Desktop Runtime is missing: https://dotnet.microsoft.com/download/dotnet/6.0. Then start {LauncherRoute.ScriptName} in ' + $installDir + '.')
-    return $false
-  }}
-  Add-Note ($why + ', which is what a security tool taking it looks like, so BakaLoader was started through dotnet instead. Start {LauncherRoute.ScriptName} in ' + $installDir + ' to open it the same way.')
-  return $true
-}}
-
-# Starts BakaLoader by whichever route the folder allows, and goes through dotnet when the
-# launcher is there and will not start or does not stay. Every relaunch in this script comes
-# through here, the one after a good update and the one after a rollback alike.
-function Start-BakaLoader {{
-  $route = Get-LaunchRoute $installDir
-  if ($route -eq 'Launcher') {{
-    if (Start-ThroughLauncher) {{ return }}
-    if (Test-Path -LiteralPath $dllPath -PathType Leaf) {{
-      if (Test-Path -LiteralPath $exePath) {{ $why = 'The launcher {LauncherRoute.LauncherName} would not start' }}
-      else {{ $why = 'The launcher {LauncherRoute.LauncherName} was taken as soon as it started' }}
-      Start-ThroughDotnet $why | Out-Null
-    }}
-    return
-  }}
-  if ($route -eq 'Dotnet') {{
-    Start-ThroughDotnet 'The launcher {LauncherRoute.LauncherName} was not there' | Out-Null
-    return
-  }}
-  Add-Note ('Neither {LauncherRoute.LauncherName} nor {LauncherRoute.LibraryName} is in ' + $installDir + ', so there was nothing to start. Download the release zip again and unzip it there.')
-}}
-
-# The release, entry by entry, letting go of the launcher and nothing else. The plain extraction
-# stops at the first file that will not land, and the launcher is the one file in the release a
-# security tool may refuse to let land. The app is the library, so a release without its
-# launcher still installs and still starts; anything else that will not land stops the update
-# exactly as before. Answers whether the launcher was let go.
-function Expand-AllButLauncher {{
-  Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $root = [System.IO.Path]::GetFullPath($extractDir).TrimEnd('\') + '\'
-  $refused = $false
-  $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-  try {{
-    foreach ($entry in $zip.Entries) {{
-      $target = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($root, $entry.FullName))
-      if (-not $target.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {{
-        throw ('The download names a file outside its own folder: ' + $entry.FullName)
-      }}
-      if ($entry.Name -eq '') {{
-        New-Item -ItemType Directory -Path $target -Force | Out-Null
-        continue
-      }}
-      $parent = Split-Path -Parent $target
-      if (-not (Test-Path -LiteralPath $parent)) {{ New-Item -ItemType Directory -Path $parent -Force | Out-Null }}
-      try {{
-        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
-      }} catch {{
-        if ($entry.Name -ine '{LauncherRoute.LauncherName}') {{ throw }}
-        # A launcher refused part way through is not left behind half written, where it would
-        # read as a launcher that arrived and be copied over the good one in the install.
-        if (Test-Path -LiteralPath $target -PathType Leaf) {{ Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue }}
-        $refused = $true
-      }}
-    }}
-  }} finally {{
-    $zip.Dispose()
-  }}
-  return $refused
-}}
-
-# 1. Wait for BakaLoader to fully exit so its files unlock.
-try {{ Wait-Process -Id $appPid -Timeout {(int)WatchdogCloseWait.TotalSeconds} -ErrorAction SilentlyContinue }} catch {{}}
-Start-Sleep -Seconds 1
-
-# 1b. Still running after all that? Then leave the install alone and do nothing at all.
-#     The wait above gives up after four minutes, and writing the new files over an app that
-#     is still holding them is the worst of both: the unlocked files are replaced, the locked
-#     exe is not, and what is left on disk is half one version and half the other. Skipping
-#     costs the host nothing; the update is staged again the next time BakaLoader looks.
-#     Nothing is relaunched here, because the copy that would not close is still running.
-if (Get-Process -Id $appPid -ErrorAction SilentlyContinue) {{
-  Write-Note 'BakaLoader was still running four minutes after it was asked to close, so the update was not written and nothing on disk was touched. Close BakaLoader, then check for updates again.'
-  exit 1
-}}
-
-# The one way out for every failure from here on. Whatever this script had already written
-# over goes back first, then the reason, then the copy of BakaLoader that was on disk before
-# any of this started. Before this existed, three paths (no exe in the download, an
-# Expand-Archive that threw, a Copy-Item of the exe that threw) left the host with no
-# running BakaLoader, an install that might be half replaced, and not one word about it.
-function Stop-Update($note) {{
-  if ($rollbackTaken) {{ robocopy $rollbackDir $installDir /E /R:1 /W:1 | Out-Null }}
-  Write-Note $note
-  Start-BakaLoader
-  Start-Sleep -Seconds 1
-  try {{ Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }} catch {{}}
-  exit 1
-}}
-
-try {{
-  # 2. Fresh extraction of the downloaded release.
-  if (Test-Path $extractDir) {{ Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue }}
-  New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-  #    When the plain extraction stops on anything, the zip is read again entry by entry,
-  #    and only a launcher that would not land is let go (see Expand-AllButLauncher).
-  #    A launcher let go there never counts as arrived, whatever was left of it on disk.
-  $launcherRefused = $false
-  try {{
-    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
-  }} catch {{
-    $launcherRefused = [bool](Expand-AllButLauncher)
-  }}
-
-  # 3. Find the folder that holds the app (zips may nest it one level deep). The launcher used
-  #    to be the only thing looked for, so a download whose launcher had been taken read as a
-  #    download with no BakaLoader in it. The library IS the app, so it is looked for too.
-  $exeFile = Get-ChildItem -Path $extractDir -Filter '{ExeName}' -Recurse -File | Select-Object -First 1
-  $dllFile = Get-ChildItem -Path $extractDir -Filter '{LauncherRoute.LibraryName}' -Recurse -File | Select-Object -First 1
-  if (-not $exeFile -and -not $dllFile) {{
-    Stop-Update 'The downloaded release did not contain BakaLoader, so nothing was replaced and the copy you had is still in place. Trying again later is safe.'
-  }}
-  if ($exeFile) {{ $srcDir = $exeFile.DirectoryName }} else {{ $srcDir = $dllFile.DirectoryName }}
-
-  # 4. Copy the new files over the install directory. /R + /W keep retries short if a
-  #    handle lingers; the exe itself is excluded on this pass then copied last.
-  #    Everything about to be written over is kept aside first, because the only way to
-  #    undo a half-finished copy is to have the old files still on disk.
-  if (Test-Path $rollbackDir) {{ Remove-Item $rollbackDir -Recurse -Force -ErrorAction SilentlyContinue }}
-  New-Item -ItemType Directory -Path $rollbackDir -Force | Out-Null
-  #    The launcher is left out of this pass and taken aside on its own just below, because it
-  #    is the one file a security tool may refuse to let anything read, and that refusal alone
-  #    must not stop an update whose undo only needs the library and the data files.
-  robocopy $installDir $rollbackDir /E /R:1 /W:1 /XF '{ExeName}' | Out-Null
-  $keepCode = $LASTEXITCODE
-
-  # 4a. The copy that makes the undo possible. When it could not be taken there is nothing to
-  #     put back, so the update is not started at all rather than started without a net.
-  if ($keepCode -ge 8) {{
-    Stop-Update ('The files that were there before could not be copied aside (robocopy answered ' + $keepCode + '), so the update was not started and nothing was replaced. Trying again later is safe.')
-  }}
-  $rollbackTaken = $true
-
-  # 4a2. The installed launcher, aside on its own. When it cannot be read it is not written over
-  #      further down either, so the undo never needs a copy of it that it does not have.
-  $launcherAside = $true
-  if (Test-Path -LiteralPath $exePath -PathType Leaf) {{
-    try {{
-      Copy-Item -LiteralPath $exePath -Destination (Join-Path $rollbackDir '{ExeName}') -Force
-    }} catch {{
-      $launcherAside = $false
-      Remove-Item -LiteralPath (Join-Path $rollbackDir '{ExeName}') -Force -ErrorAction SilentlyContinue
-    }}
-  }}
-
-  robocopy $srcDir $installDir /E /R:3 /W:2 /XF '{ExeName}' | Out-Null
-  $copyCode = $LASTEXITCODE
-
-  # 4b. Robocopy says what it did with its exit code, and anything from 8 up means files
-  #     it could not write. PowerShell's own error handling never sees a native exit code,
-  #     so this used to sail past: a file that could not be replaced left half one version
-  #     and half the other on disk, and the app was relaunched on it with nothing said.
-  #     Eight or more puts the old files back and writes the reason where the app can read
-  #     it on the next launch.
-  if ($copyCode -ge 8) {{
-    Stop-Update ('The update could not be written: robocopy answered ' + $copyCode + '. The files that were there before were put back, and BakaLoader is still on the version it was. Trying again later is safe.')
-  }}
-
-  # 4c. The launcher, and only when it is genuinely a different file.
-  #     From 1.2.8 the exe is frozen: the same bytes in every release, because it is the SDK's
-  #     generic apphost and the only thing in it that ever changed was the version resource. On
-  #     2026-10-04 that was enough to end an update badly: Defender's local model looked at the
-  #     brand new 1.2.7 hash on a host's PC, called it a trojan, quarantined the file and took
-  #     the app and the live Valheim server down with it. So when the download carries the same
-  #     launcher that is already installed, the file is not written at all. No new bytes, no new
-  #     write time, nothing for a local model to form an opinion about. A future deliberate
-  #     launcher change hashes differently and is written exactly as before.
-  #
-  #     The downloaded launcher is read into memory once, here, and everything after works from
-  #     those bytes. That keeps the two ways this can fail apart. A downloaded launcher that
-  #     cannot be read, because a scanner is holding it or has taken it since it landed, is a
-  #     launcher that never arrived: the one installed is kept, the app is the library, and the
-  #     update goes on. On 2026-10-11 the old code copied straight from that unreadable file,
-  #     read the failure as a launcher that could not be written while the old one was still
-  #     there, and rolled the whole update back. Only a write INTO the install that fails, with
-  #     an old launcher still there to put back, rolls back now. A short wait between tries lets
-  #     an ordinary on-access scan finish first.
-  $launcherArrived = [bool]($exeFile -and -not $launcherRefused -and (Test-Path -LiteralPath $exeFile.FullName -PathType Leaf))
-  $newLauncher = $null
-  $readProblem = $null
-  if ($launcherArrived) {{
-    for ($try = 0; $try -lt 3 -and $null -eq $newLauncher; $try++) {{
-      if ($try -gt 0) {{ Start-Sleep -Seconds 1 }}
-      try {{ $newLauncher = [System.IO.File]::ReadAllBytes($exeFile.FullName) }}
-      catch {{ $readProblem = Get-Reason $_ }}
-    }}
-    # A launcher cut short on its way out of the zip reads perfectly well and is still not the
-    # launcher. Written over a good one, every start through it would fail until the next
-    # update. So what was read has to be the size the download says it is.
-    if ($null -ne $newLauncher) {{
-      $expected = Get-LauncherEntryLength $exeFile.FullName
-      if ($expected -ge 0 -and $expected -ne $newLauncher.Length) {{
-        $readProblem = 'it was ' + $newLauncher.Length + ' bytes where the download says ' + $expected
-        $newLauncher = $null
-      }}
-    }}
-  }}
-  $installedThere = Test-Path -LiteralPath $exePath -PathType Leaf
-  $oldLauncher = $null
-  if ($installedThere) {{
-    try {{ $oldLauncher = [System.IO.File]::ReadAllBytes($exePath) }} catch {{ $oldLauncher = $null }}
-  }}
-
-  # 4d. A launcher that never arrived, or one that arrived and could not be read. Either way the
-  #     rest of the update is in place and the app is the library, so this is said and the
-  #     update goes on: nothing is rolled back over it, whatever is in the install.
-  if ($null -eq $newLauncher) {{
-    if ($launcherArrived) {{ $how = 'The launcher {ExeName} in the download could not be read (' + $readProblem + ')' }}
-    else {{ $how = 'The launcher {ExeName} was taken out of the download before it could be written' }}
-    if ($installedThere) {{
-      Add-Note ($how + ', which is what a security tool doing it looks like. The launcher already installed was kept, and BakaLoader itself, the library beside it, was installed whole. Nothing was rolled back.')
-    }} else {{
-      Add-Note ($how + ', which is what a security tool doing it looks like. The rest of the update is in place, and BakaLoader itself, the library beside the launcher, was installed whole.')
-    }}
-  }} elseif ($null -ne $oldLauncher -and (Get-BytesHash $oldLauncher) -eq (Get-BytesHash $newLauncher)) {{
-    Write-Note '{RoutineNoteMark}The update is in place. The launcher was already these exact bytes, so it was left alone: BakaLoader ships the same launcher in every release and reads its own version from the library beside it.'
-  }} elseif ($installedThere -and -not $launcherAside) {{
-    Add-Note 'The launcher {ExeName} already installed could not be read, so it was left as it was rather than written over with no copy of it to put back. The rest of the update is in place, and BakaLoader itself, the library beside the launcher, was installed whole.'
-  }} else {{
-    try {{
-      # Copy-Item -Force wrote over a read-only launcher, and this must too.
-      if ($installedThere) {{ try {{ [System.IO.File]::SetAttributes($exePath, [System.IO.FileAttributes]::Normal) }} catch {{}} }}
-      [System.IO.File]::WriteAllBytes($exePath, $newLauncher)
-    }} catch {{
-      # 4e. The launcher would not be written. With the old launcher still in place this is the
-      #     failure it always was, and everything goes back. With no launcher left and the new
-      #     library in place, it is the launcher taken and the app intact: rolling back would
-      #     put back an install with no launcher either, and take the update away for nothing.
-      $writeProblem = Get-Reason $_
-      if ((Get-LaunchRoute $installDir) -ne 'Dotnet') {{ throw ('The launcher {ExeName} could not be written: ' + $writeProblem) }}
-      Add-Note ('The update is in place, but the launcher {ExeName} could not be written (' + $writeProblem + '), which is what a security tool taking it looks like. BakaLoader itself, the library beside the launcher, was installed whole and nothing was rolled back.')
-    }}
-  }}
-}} catch {{
-  # Anything that threw: a zip that would not open, a folder that could not be made, the exe
-  # itself that could not be replaced. The last of those happens after the rest of the install
-  # was already written, which is exactly when putting the old files back matters.
-  Stop-Update ('The update could not be written: ' + $_.Exception.Message + ' The files that were there before were put back, and BakaLoader is still on the version it was. Trying again later is safe.')
-}}
-
-# 5. Relaunch the updated app: the launcher when it is there and stays, dotnet when it is not.
-Start-BakaLoader
-
-# 6. Clean up our own temp working folder.
-Start-Sleep -Seconds 1
-try {{ Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }} catch {{}}
-";
+            Logger.Information("Self-update: started the updater: {0} {1}",
+                dotnet, string.Join(" ", psi.ArgumentList.Select(a => "\"" + a + "\"")));
         }
-
-        private static string Escape(string path) => path?.Replace("'", "''");
-
-        /// <summary>
-        /// Writes the watchdog where Windows PowerShell will read it, WITH a UTF-8 byte order
-        /// mark. Without one, Windows PowerShell reads a script in the machine's ANSI code page,
-        /// so every path in it that holds a letter outside that page arrived as different
-        /// letters: a host whose BakaLoader folder, or whose own user folder under %TEMP%, was
-        /// named with one had an update that copied into a folder that does not exist. The mark
-        /// is for this temporary script only; nothing in the repository carries one.
-        /// </summary>
-        internal static void WriteWatchdogScript(string path, string script) =>
-            File.WriteAllText(path, script, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
 
         /// <summary>
         /// What a note starts with when it is an account of an update that WORKED rather than a
         /// problem to be put in front of the host.
+        /// <para>
+        /// The notes are the PowerShell watchdog's, which 1.2.12 and every release before it
+        /// started. The update INTO 1.2.13 is still swapped by that watchdog, because the part of
+        /// an update that swaps the files belongs to the version being left, so this reader stays
+        /// for the one start that follows it. From 1.2.13 on the updater writes RESULT.txt instead
+        /// (<see cref="ManagedUpdater.ReadAndClearResult"/>).
+        /// </para>
         /// <para>
         /// Every note the watchdog left used to be a failure, so the launch logged all of them
         /// as warnings. From 1.2.8 one note is written on the way through a good update, the one
@@ -990,8 +1095,8 @@ try {{ Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }} cat
             IsRoutineNote(note) ? note.Substring(RoutineNoteMark.Length).Trim() : note;
 
         /// <summary>
-        /// Where the watchdog leaves a note about an update it could not write. It sits
-        /// outside the work folder on purpose, because step six deletes the work folder.
+        /// Where the 1.2.12 watchdog left a note about an update. It sits outside the watchdog's
+        /// work folder on purpose, because the watchdog deleted that folder when it was done.
         /// </summary>
         internal static string UpdateReportPath() => ReportPathOverride ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

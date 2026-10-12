@@ -1,8 +1,8 @@
 {
   "_meta": {
     "language": "en",
-    "appVersion": "1.2.12",
-    "catalog": 11
+    "appVersion": "1.2.13",
+    "catalog": 12
   },
   "keys": {
     "pal.cmd.restart_server": { "lore": "Restart server" },
@@ -2023,6 +2023,24 @@
     "host.time.seconds": { "lore": { "one": "{count} second", "other": "{count} seconds" }, "plural": "count" },
     "host.saga.unsaved_stop": { "lore": "{server} stopped without reporting a world save. The world {world} may be up to one save interval behind what the players last saw.", "params": { "server": "text", "world": "text" } },
     "host.saga.launcher_missing": { "lore": "The launcher ValheimBakaLoader.exe is missing from the BakaLoader folder, which usually means an antivirus took it, so BakaLoader is running through dotnet instead. Everything works the same. Start {script} in that folder to open BakaLoader this way until the launcher is back.", "params": { "script": "text" } },
+    "host.updater.title": { "lore": "Updating BakaLoader" },
+    "host.updater.waiting": { "lore": "Waiting for BakaLoader to close" },
+    "host.updater.copying": { "lore": "Putting the new files in place" },
+    "host.updater.restoring": { "lore": "Putting the old files back" },
+    "host.updater.starting": { "lore": "Starting BakaLoader" },
+    "host.saga.update.updated": { "lore": "BakaLoader updated itself and is now on {version}.", "params": { "version": "text" } },
+    "host.saga.update.rolled_back": { "lore": "The update could not write {file} ({detail}), so the files that were there before were put back and BakaLoader is still on {version}. Trying again later is safe.", "params": { "file": "text", "detail": "text", "version": "text" } },
+    "host.saga.update.rolled_back_partly": { "lore": "The update could not write {file} ({detail}), and putting back the files that were there before only partly worked, so the BakaLoader folder may hold some of {version} and some of the update.", "params": { "file": "text", "detail": "text", "version": "text" } },
+    "host.saga.update.restore_incomplete": { "lore": "{count} of the files that were there before could not be put back. The only copy of them is in {folder}, and BakaLoader leaves that folder alone. With BakaLoader closed, copy them back into the BakaLoader folder, or download the release zip again and unzip it over the BakaLoader folder.", "params": { "count": "number", "folder": "text" } },
+    "host.saga.update.still_running": { "lore": "BakaLoader was still running {minutes} minutes after it was asked to close, so the update was not written and nothing on disk was touched. Close BakaLoader, then check for updates again.", "params": { "minutes": "number" } },
+    "host.saga.update.nothing_staged": { "lore": "The updater found no new files waiting beside the install, so nothing was written and BakaLoader is still on {version}. Checking for updates again is safe.", "params": { "version": "text" } },
+    "host.saga.update.launcher_held": { "lore": "The launcher {launcher} in the download could not be read ({detail}), which is what a security tool holding it looks like. The launcher already installed was kept, and the rest of the update is in place.", "params": { "launcher": "text", "detail": "text" } },
+    "host.saga.update.launcher_unwritable": { "lore": "The launcher {launcher} could not be written ({detail}), which is what a security tool taking it looks like. The launcher that was there before was kept, and the rest of the update is in place.", "params": { "launcher": "text", "detail": "text" } },
+    "host.saga.update.launcher_missing": { "lore": "When the update finished, the launcher {launcher} was not in the BakaLoader folder, so the updater started BakaLoader through dotnet instead. Start {script} in that folder to open it the same way.", "params": { "launcher": "text", "script": "text" } },
+    "host.saga.update.start_no_dotnet": { "lore": "The update is in place, but dotnet was not found to start BakaLoader afterwards. Install the .NET 6 Desktop Runtime from https://dotnet.microsoft.com/download/dotnet/6.0, then start {script} in the BakaLoader folder.", "params": { "script": "text" } },
+    "host.saga.update.start_ended": { "lore": "The update is in place, but BakaLoader ended straight away with code {code} when the updater started it. That usually means the .NET 6 Desktop Runtime is missing: https://dotnet.microsoft.com/download/dotnet/6.0. Then start {script} in the BakaLoader folder.", "params": { "code": "number", "script": "text" } },
+    "host.saga.update.start_failed": { "lore": "The update is in place, but the updater could not start BakaLoader afterwards ({detail}). Start {script} in the BakaLoader folder to open it.", "params": { "detail": "text", "script": "text" } },
+    "host.saga.update.start_nothing": { "lore": "The update finished, but neither {launcher} nor {library} is in the BakaLoader folder, so there was nothing to start. Download the release zip again and unzip it there.", "params": { "launcher": "text", "library": "text" } },
 
     "host.discord.started.title": { "lore": "Server Started" },
     "host.discord.started.body": { "lore": "**{server}** is now online.", "params": { "server": "text" } },

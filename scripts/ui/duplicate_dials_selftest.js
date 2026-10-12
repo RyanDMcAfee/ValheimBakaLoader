@@ -49,7 +49,9 @@ const vm = require("vm");
 
 const ROOT = path.join(__dirname, "..", "..");
 const WEB = path.join(ROOT, "ValheimBakaLoader", "WebUI");
-const APP = fs.readFileSync(path.join(WEB, "app.js"), "utf8");
+// Read as LF whatever the checkout wrote: a Windows checkout with core.autocrlf hands app.js over
+// with CRLF, and every slice below ends on a bare line feed.
+const APP = fs.readFileSync(path.join(WEB, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const KEYS = JSON.parse(fs.readFileSync(path.join(WEB, "i18n", "en.json"), "utf8")).keys || {};
 const BRIDGE = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Forms", "BlendWindow.Bridge.cs"), "utf8");
 const WORLDGEN_CS = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Game", "WorldGen.cs"), "utf8");

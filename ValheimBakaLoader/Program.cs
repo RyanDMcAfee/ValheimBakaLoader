@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using System;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -31,6 +32,26 @@ namespace ValheimBakaLoader
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            // The second half of a self update: this library started again through dotnet, after
+            // the app has closed, to copy the new files in and start it back up. It returns before
+            // anything below runs, so it opens no log, reads no preferences and touches no Run key.
+            if (ManagedUpdater.IsApplyUpdate(args))
+            {
+                Environment.ExitCode = ManagedUpdater.Run(args);
+                return;
+            }
+
+            RunApp(args);
+        }
+
+        /// <summary>
+        /// The app itself. A method of its own so the updater above never loads what the app needs:
+        /// the runtime resolves every type a method names when the method is first run, and the
+        /// container, the logger and the forms are all named here.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void RunApp(string[] args)
+        {
             var services = new ServiceCollection();
             ConfigureServices(services, args);
             using var container = services.BuildServiceProvider();
@@ -153,7 +174,7 @@ namespace ValheimBakaLoader
         /// On 2026-10-11 Defender quarantined ValheimBakaLoader.exe out of a live install and
         /// took it again every time it was put back. The app does not need it: the launcher is
         /// the SDK's generic apphost and the app is the library beside it, so BakaLoader.cmd
-        /// and the update watchdog start it through dotnet when the launcher is gone. That works
+        /// and the updater start it through dotnet when the launcher is gone. That works
         /// quietly, which is the trouble with it, because a host whose launcher keeps vanishing
         /// should be told why the app is still running and what to start next time. Once per
         /// run, at the top of the log, and only when the launcher is really not there.

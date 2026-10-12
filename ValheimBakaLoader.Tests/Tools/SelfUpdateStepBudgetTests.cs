@@ -160,23 +160,27 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         /// <summary>
-        /// The download is the part that takes minutes, so the answer is read again after it and
-        /// before the watchdog is armed. Read off the source, because arming the watchdog for
-        /// real would start a detached process that writes over an install directory.
+        /// The download is the part that takes minutes, so the answer is read again after it, and
+        /// once more after the release is unpacked, in the moment before the updater is started.
+        /// Read off the source, because starting the updater for real would start a process that
+        /// writes over an install directory.
         /// </summary>
         [Fact]
-        public void The_answer_is_read_again_in_the_moment_before_the_watchdog_is_armed()
+        public void The_answer_is_read_again_in_the_moment_before_the_updater_is_started()
         {
             var source = AppSourceTree.Read("ValheimBakaLoader", "Tools", "AppUpdateService.cs");
 
-            var armed = source.IndexOf("LaunchWatchdog(workDir, zipPath, installDir);", StringComparison.Ordinal);
-            Assert.True(armed > 0, "the watchdog is no longer armed here");
+            var started = source.IndexOf("StartUpdater(installDir, pending);", StringComparison.Ordinal);
+            Assert.True(started > 0, "the updater is no longer started here");
 
-            var asked = source.LastIndexOf("if (!Wanted())", armed, StringComparison.Ordinal);
-            Assert.True(asked > 0, "nothing is asked before the watchdog is armed");
+            var asked = source.LastIndexOf("if (!Wanted())", started, StringComparison.Ordinal);
+            Assert.True(asked > 0, "nothing is asked before the updater is started");
 
-            // And it really is the last thing before it, not something left further up.
-            Assert.DoesNotContain("LaunchWatchdog(", source.Substring(0, asked));
+            // And it really is the last thing before it, not something left further up: the
+            // unpacking sits between the two askings, so the second one is after it.
+            var unpacked = source.IndexOf("unpacked = ExtractToPending(zipPath, pending);", StringComparison.Ordinal);
+            Assert.True(unpacked > 0 && asked > unpacked, "the answer is not read again after the unpacking");
+            Assert.DoesNotContain("StartUpdater(", source.Substring(0, asked));
         }
 
         /// <summary>The launch is the caller that hands the answer in.</summary>

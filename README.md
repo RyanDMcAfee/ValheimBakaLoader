@@ -69,11 +69,10 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.12
+## What is new in 1.2.13
 
-- **BakaLoader keeps running when an antivirus takes the launcher.** BakaLoader.cmd beside the exe starts the app through the Microsoft-signed dotnet host, the self update no longer rolls back when the launcher is taken, and Start with Windows survives it. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting)
-- **A Defender scan gate** runs before every release. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
-- **Everything 1.2.11 brought** is in here too: the Discord mod profile code, Duplicate opening on the source world, the delete that says what it left behind, and the Mods and Configs refresh. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **The self update is the app's own work.** No script writes files beside the launcher any more: the app unpacks the release, checks it, and a second copy of itself under the Microsoft-signed dotnet host swaps the files and starts it again, with a small window showing the steps and the Saga saying what happened. [Updating BakaLoader](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-BakaLoader)
+- **Everything 1.2.12 brought** is in here too: BakaLoader.cmd, the launcher-less self update and Start with Windows, and the Defender scan gate. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 

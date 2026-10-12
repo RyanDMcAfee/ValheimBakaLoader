@@ -605,10 +605,10 @@ namespace ValheimBakaLoader.Game
 
         /// <summary>
         /// Optional hook (set by the UI) that checks GitHub for a newer BakaLoader release and,
-        /// when auto-update is enabled and an update is found, stages a headless watchdog and
+        /// when auto-update is enabled and an update is found, starts the updater and
         /// begins closing the app. Returns <c>true</c> when an app update is taking over (the
         /// server restart should then be abandoned, because the app - and its child server -
-        /// is going down and the watchdog will relaunch everything). Invoked at the very start
+        /// is going down and the updater will relaunch everything). Invoked at the very start
         /// of a restart, before any countdown or server teardown.
         /// </summary>
         public Func<Task<bool>> CheckForAppUpdateOnRestart { get; set; }
@@ -2143,7 +2143,7 @@ namespace ValheimBakaLoader.Game
         /// <summary>
         /// Runs the "auto-update BakaLoader on restart" hook, if wired. Returns true when an app
         /// update has been staged - in which case the caller must abandon its restart, because the
-        /// watchdog is now closing BakaLoader (and its child server) and will relaunch the updated
+        /// updater is now closing BakaLoader (and its child server) and will relaunch the updated
         /// app, which auto-starts the server again. Returns false (and lets the caller proceed with
         /// a normal restart) when auto-update is off, nothing newer is available, or the check fails.
         /// This must run on EVERY restart path - manual, scheduled, and both empty-server paths.
@@ -2168,7 +2168,7 @@ namespace ValheimBakaLoader.Game
             if (IsCountdownActive) return;
 
             // Before doing anything else, give the app a chance to update itself. If an app
-            // update is staged, the watchdog is now closing BakaLoader (and, with it, the child
+            // update is staged, the updater is now closing BakaLoader (and, with it, the child
             // server) and will relaunch the updated app - which auto-starts the server again -
             // so abandon this restart entirely rather than fighting the shutdown.
             if (await TryStageAppUpdateAsync()) return;

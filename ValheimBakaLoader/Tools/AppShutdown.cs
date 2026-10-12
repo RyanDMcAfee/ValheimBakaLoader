@@ -25,12 +25,13 @@ namespace ValheimBakaLoader.Tools
     /// <summary>
     /// Closing the WHOLE application once a newer BakaLoader has been staged.
     /// <para>
-    /// The watchdog that swaps the files is launched the moment staging succeeds, and it waits
-    /// two minutes for this process to exit before it starts writing. Closing one window is not
-    /// the same as exiting: BakaLoader opens one window per auto-start profile, and the app
-    /// stays up while any of them remain. The window the host clicked in closed, the process
-    /// carried on running, and two minutes later the watchdog wrote the new release over a
-    /// running install and then failed on the locked exe. Half old, half new, no relaunch.
+    /// The updater that swaps the files is launched the moment staging succeeds, and it waits
+    /// ManagedUpdater.CloseWait (four minutes) for this process to exit before it starts writing.
+    /// Closing one window is not the same as exiting: BakaLoader opens one window per auto-start
+    /// profile, and the app stays up while any of them remain. The window the host clicked in
+    /// closed, the process carried on running, and when the wait ran out the updater wrote the
+    /// new release over a running install and then failed on the locked exe. Half old, half new,
+    /// no relaunch.
     /// </para>
     /// <para>
     /// So the staged update asks EVERY window to close, and says out loud that the process is
@@ -99,7 +100,7 @@ namespace ValheimBakaLoader.Tools
         /// <summary>
         /// Runs one step of the shutdown, reporting rather than throwing. One window that will
         /// not take the message must not stop the others being asked, and must not leave the
-        /// process running under a watchdog that is already counting down.
+        /// process running under an updater that is already counting down.
         /// </summary>
         private static bool Run(Action step, Action<Exception, string> onError, string what)
         {

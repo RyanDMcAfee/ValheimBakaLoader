@@ -1237,8 +1237,8 @@ namespace ValheimBakaLoader.Forms
         /// A newer BakaLoader has been staged, so the whole application closes: every window,
         /// not just this one.
         /// <para>
-        /// The watchdog that swaps the files is launched the moment staging succeeds and waits
-        /// two minutes for this process to exit before it starts writing. BakaLoader opens one
+        /// The updater that swaps the files is launched the moment staging succeeds and waits
+        /// ManagedUpdater.CloseWait (four minutes) for this process to exit before it starts writing. BakaLoader opens one
         /// window per auto-start profile and stays up while any of them remain, so closing the
         /// window the host clicked in left the process running, and the swap went over a live
         /// install and then failed on the locked exe: half old, half new, and no relaunch.
@@ -1294,7 +1294,7 @@ namespace ValheimBakaLoader.Forms
         /// <summary>
         /// Wires the server's restart flow to a BakaLoader self-update check. On every restart,
         /// if the user has enabled auto-update, the app checks GitHub for a newer release; when
-        /// one is staged, the app closes so the headless watchdog can swap the files and relaunch
+        /// one is staged, the app closes so the updater can swap the files and relaunch
         /// the updated app (which re-auto-starts the server from the profile's AutoStart pref).
         /// </summary>
         private void WireAppSelfUpdate(ServerSession session)
@@ -1320,8 +1320,8 @@ namespace ValheimBakaLoader.Forms
                 var staged = await AppUpdateService.CheckAndStageUpdateAsync();
                 if (!staged) return false;
 
-                // An update is staged; close the app so the watchdog can take over. Every window
-                // goes, not just this one: the watchdog is already counting down to writing over
+                // An update is staged; close the app so the updater can take over. Every window
+                // goes, not just this one: the updater is already counting down to writing over
                 // the install, and a second window left open keeps the process alive right
                 // through that. The ask is deferred so this hook returns first and the restart
                 // is cleanly abandoned, and each window goes through its own graceful shutdown
@@ -3694,6 +3694,11 @@ namespace ValheimBakaLoader.Forms
                 // written over.
                 case StageOutcome.DownloadDamaged: return "damaged";
 
+                // The release arrived and could not be made ready beside the install, or the
+                // updater would not start. Neither is "nothing newer" nor the connection, so it is
+                // the page's general sentence: it could not be fetched right now, try again later.
+                case StageOutcome.StagingFailed: return "other";
+
                 // AlreadyCurrent and NoRelease both mean the same thing to the host: GitHub was
                 // reached and there is nothing there to install.
                 default: return "notAvailable";
@@ -4249,7 +4254,7 @@ namespace ValheimBakaLoader.Forms
             RegisterRpc("app.updateStatus", p => Task.FromResult<object>(BuildAppUpdateStatus()));
 
             // The host asked for the update by name. This stages it and closes the app so the
-            // watchdog can swap the files; it never stops a server to get there. A server that is
+            // updater can swap the files; it never stops a server to get there. A server that is
             // up, or an install that steamcmd is still writing, is a refusal with a reason the
             // page can put into a sentence.
             RegisterRpc("app.selfUpdateNow", async p =>
@@ -4288,7 +4293,7 @@ namespace ValheimBakaLoader.Forms
                     return new { ok = false, reason = why };
                 }
 
-                // Staged, and the watchdog is already counting down to writing over the install,
+                // Staged, and the updater is already counting down to writing over the install,
                 // so the whole application closes rather than this one window: each window goes
                 // through its own graceful path, which saves and stops whatever it is holding,
                 // and the process ends when the last of them has gone.

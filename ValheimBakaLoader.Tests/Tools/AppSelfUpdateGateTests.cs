@@ -148,72 +148,35 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal(0, github.Calls);
         }
 
-        // ------------------------------------------------------------------ the watchdog itself
+        // ------------------------------------------------------------------ the updater itself
 
         /// <summary>
         /// The last line of defence, and the one that does not depend on the app behaving. The
-        /// watchdog waits two minutes for BakaLoader to exit and then carries on regardless, so
-        /// anything that keeps the process alive used to end with the new files written over a
-        /// running install and the locked exe left behind: half one version, half the other, and
-        /// no relaunch. It now looks once more before it writes, and does nothing if the app is
-        /// still there.
+        /// swap waits for BakaLoader to exit and used to carry on regardless, so anything that kept
+        /// the process alive ended with the new files written over a running install. The updater
+        /// waits a bounded time, looks once more, and writes nothing while the app is still there;
+        /// ManagedUpdaterTests drives that against a process that never exits. This holds the
+        /// order in the code: the wait, then the look, then the copy.
         /// </summary>
         [Fact]
-        public void The_watchdog_refuses_to_write_while_the_app_is_still_running()
+        public void The_updater_refuses_to_write_while_the_app_is_still_running()
         {
-            var script = WatchdogScript();
+            var code = AppSourceTree.Lf(AppSourceTree.Files()["ManagedUpdater.cs"]);
+            var apply = code.Substring(code.IndexOf("internal static UpdateResult Apply(", StringComparison.Ordinal));
 
-            Assert.Contains("if (Get-Process -Id $appPid -ErrorAction SilentlyContinue) {", script);
+            var waitAt = apply.IndexOf("if (!WaitForExit(plan.Pid, plan.Wait))", StringComparison.Ordinal);
+            var stillAt = apply.IndexOf("result.Outcome = UpdateResult.StillRunning;", StringComparison.Ordinal);
+            var copyAt = apply.IndexOf("CopyInto(plan, result, say);", StringComparison.Ordinal);
+            var returnAt = apply.IndexOf("return result;", stillAt, StringComparison.Ordinal);
 
-            // And it says so. 1.2.6 gave every way out of this script a note the app reads on
-            // its next launch, because a host whose BakaLoader did not come back has nowhere
-            // else to look: this one is the only one that does not relaunch anything, since the
-            // copy that would not close is still running.
-            Assert.Contains("BakaLoader was still running four minutes after it was asked to close", script);
+            Assert.True(waitAt > 0 && stillAt > waitAt && returnAt > stillAt && copyAt > returnAt,
+                "the updater can reach the copy without the app having gone");
 
             // The wait has to outlast the longest app close, or a host whose server saves slowly
-            // loses the update while the app is still stopping the server. The longest close is
-            // the save cap plus the close grace; the note above names the wait in minutes.
+            // loses the update while the app is still stopping the server.
             var longestClose = ValheimServer.CloseDeadlineFor(new[] { ValheimServer.StopSaveCap });
-            Assert.True(AppUpdateService.WatchdogCloseWait > longestClose,
-                "the watchdog waits " + AppUpdateService.WatchdogCloseWait + " but an app close can take " + longestClose);
-            Assert.Equal(TimeSpan.FromMinutes(4), AppUpdateService.WatchdogCloseWait);
-            Assert.Contains("Wait-Process -Id $appPid -Timeout 240 ", script);
-
-            // And it looks after the wait and before anything is written, which is the only
-            // place the look is worth anything.
-            var waitAt = script.IndexOf("Wait-Process", StringComparison.Ordinal);
-            var lookAt = script.IndexOf("if (Get-Process -Id $appPid", StringComparison.Ordinal);
-            var extractAt = script.IndexOf("Expand-Archive", StringComparison.Ordinal);
-            var copyAt = script.IndexOf("robocopy", StringComparison.Ordinal);
-
-            Assert.True(lookAt > waitAt, "the watchdog looks before it has finished waiting");
-            Assert.True(extractAt > lookAt, "the watchdog unpacks the release before it looks");
-            Assert.True(copyAt > lookAt, "the watchdog writes over the install before it looks");
-        }
-
-        /// <summary>
-        /// The script the watchdog runs, built the way the service builds it. Private because
-        /// nothing else has any business writing one, so the test reaches it rather than the
-        /// service growing a seam for a test's sake.
-        /// </summary>
-        private static string WatchdogScript()
-        {
-            var build = typeof(AppUpdateService).GetMethod(
-                "BuildWatchdogScript",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
-            Assert.NotNull(build);
-
-            return (string)build.Invoke(null, new object[]
-            {
-                4242,
-                @"C:\Temp\BakaLoaderUpdate\update.zip",
-                @"C:\Temp\BakaLoaderUpdate\extracted",
-                @"C:\Program Files\BakaLoader",
-                @"C:\Program Files\BakaLoader\ValheimBakaLoader.exe",
-                @"C:\Temp\BakaLoaderUpdate",
-            });
+            Assert.True(ManagedUpdater.CloseWait > longestClose,
+                "the updater waits " + ManagedUpdater.CloseWait + " but an app close can take " + longestClose);
         }
 
         [Fact]
