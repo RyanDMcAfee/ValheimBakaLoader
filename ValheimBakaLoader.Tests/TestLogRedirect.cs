@@ -35,6 +35,12 @@ namespace ValheimBakaLoader.Tests
             {
                 Directory.CreateDirectory(HomeFolder);
                 Environment.SetEnvironmentVariable("USERPROFILE", HomeFolder);
+
+                // A shell that runs an isolated copy of the app may still carry these. The
+                // suite proves the shipped paths, so it starts with none of them set.
+                Environment.SetEnvironmentVariable("BAKALOADER_DATA_DIR", null);
+                Environment.SetEnvironmentVariable("BAKALOADER_VALHEIM_SAVE_DIR", null);
+                Environment.SetEnvironmentVariable("BAKALOADER_UPDATE_DIR", null);
             }
             catch
             {

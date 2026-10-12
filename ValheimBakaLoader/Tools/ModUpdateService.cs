@@ -72,6 +72,19 @@ namespace ValheimBakaLoader.Tools
         /// page can say what else this mod expects to find. Never null.
         /// </summary>
         public string[] Dependencies { get; init; } = Array.Empty<string>();
+
+        /// <summary>
+        /// Why a failed install failed, when it is a reason the page words on its own rather
+        /// than a sentence it shows as it came. Null for every other failure and for a success.
+        /// </summary>
+        public string Reason { get; init; }
+
+        /// <summary>
+        /// The pinned build is gone from Thunderstore: the package is deprecated, or that version
+        /// is no longer among the ones it serves. Told apart from a download that did not get
+        /// through, because trying again later fixes the second and never the first.
+        /// </summary>
+        public const string NotAvailableReason = "notAvailable";
     }
 
     /// <summary>
@@ -562,12 +575,91 @@ namespace ValheimBakaLoader.Tools
                     TryDeleteDirectory(targetDir);
                 }
 
+                // A pinned download that answered 404 is either a build the site took away or a
+                // bad minute, and the package's own page tells the two apart. It is asked once,
+                // here, and only for this case: nothing on disk was touched at the download stage.
+                if (stage == "download" && IsNotFound(e) && !string.IsNullOrWhiteSpace(reference.Version)
+                    && await PinnedBuildGoneAsync(reference.Owner, reference.Name, reference.Version))
+                {
+                    Logger.Information("{0} {1} is no longer on Thunderstore.", reference.FolderName, reference.Version);
+                    return new ModInstallResult
+                    {
+                        Owner = reference.Owner,
+                        Name = reference.Name,
+                        Version = reference.Version,
+                        Installed = false,
+                        Reason = ModInstallResult.NotAvailableReason,
+                        Error = NotAvailableSentence($"{reference.Owner}-{reference.Name}", reference.Version),
+                    };
+                }
+
                 return Fail(InstallFailureSentence(stage, e, reference.Version));
             }
             finally
             {
                 TryDelete(tempZip);
                 TryDeleteDirectory(tempExtract);
+            }
+        }
+
+        /// <summary>The English sentence for a pinned build Thunderstore no longer has. The page words it from the catalog.</summary>
+        internal static string NotAvailableSentence(string mod, string version) =>
+            $"{mod} {version} is no longer on Thunderstore (the package is deprecated or that version was removed); "
+            + "Gale on the players' machines may still carry it";
+
+        /// <summary>The package page the pinned 404 is checked against: Thunderstore's experimental package endpoint.</summary>
+        internal const string PackagePageFormat = "https://thunderstore.io/api/experimental/package/{0}/{1}/";
+
+        /// <summary>How long the one look at the package page may take before the plain failure stands.</summary>
+        internal TimeSpan PackagePageTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+        private static bool IsNotFound(Exception e) =>
+            e is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound };
+
+        /// <summary>
+        /// Whether a pinned build that answered 404 is really gone. Asks the package page once,
+        /// through the same HTTP seam as the download. True when the page answers 404 itself
+        /// (the package is gone), when it says the package is deprecated, or when the version is
+        /// not among the ones it lists. The page lists versions only in some answers; where it
+        /// names just the latest, a pinned version that is not the latest and whose download
+        /// answered 404 is not there. False for anything the page did not say plainly (no
+        /// answer, an error, a body it could not read), and the plain failure sentence stands.
+        /// Never throws.
+        /// </summary>
+        private async Task<bool> PinnedBuildGoneAsync(string owner, string name, string version)
+        {
+            try
+            {
+                using var client = HttpClientProvider.CreateClient();
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("ValheimBakaLoader");
+                using var deadline = new CancellationTokenSource(PackagePageTimeout);
+                var url = string.Format(PackagePageFormat,
+                    Uri.EscapeDataString(owner.Trim()), Uri.EscapeDataString(name.Trim()));
+                using var response = await client.GetAsync(url, deadline.Token);
+
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return true;
+                if (!response.IsSuccessStatusCode) return false;
+
+                var body = Newtonsoft.Json.Linq.JObject.Parse(await response.Content.ReadAsStringAsync());
+                if (body.Value<bool?>("is_deprecated") == true) return true;
+
+                bool Same(string v) => string.Equals(v?.Trim(), version.Trim(), StringComparison.OrdinalIgnoreCase);
+
+                if (body["versions"] is Newtonsoft.Json.Linq.JArray versions)
+                {
+                    foreach (var v in versions)
+                        if (v is Newtonsoft.Json.Linq.JObject o && Same(o.Value<string>("version_number"))) return false;
+                    return true;
+                }
+
+                var latest = (body["latest"] as Newtonsoft.Json.Linq.JObject)?.Value<string>("version_number");
+                if (string.IsNullOrWhiteSpace(latest)) return false;
+                return !Same(latest);
+            }
+            catch (Exception e)
+            {
+                Logger.Debug("The package page did not answer about {0}-{1}: {2}", owner, name, e.Message);
+                return false;
             }
         }
 

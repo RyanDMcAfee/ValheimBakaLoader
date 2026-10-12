@@ -36,6 +36,12 @@
  *      are the only callers of the check, a realm switch takes the row down, and the host side
  *      has the seven RPCs and holds the add to the realm and a stopped server.
  *   9. Every id the block asks for is in the catalog, with no long dash and no "AI".
+ *  10. No BepInEx on the server: with the pack in the profile the dialog says it goes in first
+ *      and Install puts it in through the host side before the first mod; without the pack
+ *      Install is off with the sentence to put BepInEx in first.
+ *  11. A pinned build Thunderstore no longer has: the add's sentence names the mod and the
+ *      version, the walk goes on, the summary counts the ones that landed and the ones that
+ *      were not available, and the next review marks the row instead of offering a plain add.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -155,6 +161,8 @@ function page(opts) {
     renderMods: () => {},
     scanMods: () => Promise.resolve(),
     hostSentence: () => null,
+    BEP_ADD_IN_FLIGHT: false,
+    bepInExProgressDone: () => {},
   };
   context.isActiveProfile = p => p == null || !context.S.profileName
     || String(p).toLowerCase() === String(context.S.profileName).toLowerCase();
@@ -450,7 +458,7 @@ function fnBody(source, head) {
     assert.ok(/"galeChanged"\]\.forEach\(clearCondition\)/.test(sw), "a realm switch leaves the Gale row up");
     assert.ok(/GALE=null;/.test(sw) && /galeRefresh\(\);/.test(sw), "a realm switch keeps the old realm's follow in the box");
 
-    for (const rpc of ["gale.get", "gale.set", "gale.forget", "gale.check", "gale.dismiss", "gale.untick", "gale.rescan"])
+    for (const rpc of ["gale.get", "gale.set", "gale.forget", "gale.check", "gale.dismiss", "gale.untick", "gale.rescan", "gale.bepinex"])
       assert.ok(GALE_CS.includes('RegisterRpc("' + rpc + '"'), "the host side has no " + rpc);
     assert.ok(/RegisterGaleRpcs\(\);/.test(BRIDGE), "the Gale RPCs are never registered");
     assert.ok(/Task\.Run\(\(\) => RunGaleCheckAsync/.test(GALE_CS), "the check does not run on a worker");
@@ -483,6 +491,126 @@ function fnBody(source, head) {
     for (const id of (GALE_CS + fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Tools", "GaleSyncClient.cs"), "utf8")
       + fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Tools", "GaleProfileId.cs"), "utf8")).match(/"mods\.gale\.[a-z_.]+"/g) || [])
       assert.ok(src.includes('{textId:' + id + '}'), "the status line cannot say " + id);
+  });
+
+  await test("10. no BepInEx: the note and BepInEx first, or Install off with the sentence", async () => {
+    const carried = state({ check: { bepinex: { missing: true, inProfile: true } } });
+    const p = page();
+    p.context.galeApply(carried);
+    p.context.galeDialog();
+    const m = p.modals[0];
+    const first = p.context.esc(T("mods.gale.dialog.bepinex_first"));
+    assert.strictEqual(m.html.split(first).length - 1, 1, "not exactly one BepInEx-first note");
+    assert.ok(!m.html.includes(p.context.esc(T("mods.gale.dialog.bepinex_missing"))), "the pack is in the profile and Install is refused");
+    assert.strictEqual(m.buttons["#galeInstall"].disabled, false, "Install is off although the profile carries BepInEx");
+
+    /* BepInEx is present: no note at all. */
+    const here = page();
+    here.context.galeApply(state({ check: { bepinex: { missing: false, inProfile: true } } }));
+    here.context.galeDialog();
+    assert.ok(!here.modals[0].html.includes(first), "a server with BepInEx got the BepInEx note");
+
+    /* No pack in the profile: Install off, and the sentence says to put BepInEx in first. */
+    const bare = page();
+    bare.context.galeApply(state({ check: { bepinex: { missing: true, inProfile: false } } }));
+    bare.context.galeDialog();
+    assert.ok(bare.modals[0].html.includes(bare.context.esc(T("mods.gale.dialog.bepinex_missing"))), "no sentence to put BepInEx in first");
+    assert.strictEqual(bare.modals[0].buttons["#galeInstall"].disabled, true, "Install is offered with no BepInEx and no pack in the profile");
+
+    /* Install: the host side's BepInEx write goes before the first mod, and its answer is
+       taken as the loader's new state. */
+    const order = page({ replies: {
+      "gale.untick": { ok: true, state: carried },
+      "gale.bepinex": { ok: true, wrote: true, bepinex: { installed: true, consent: true } },
+      "mods.addFromUrl": params => ({ Installed: true, Version: params.url.split("/v/")[1].replace("/", "") }),
+      "gale.dismiss": { ok: true, state: state({ check: { due: false } }) },
+    } });
+    order.context.galeApply(carried);
+    order.context.galeDialog();
+    order.modals[0].handlers.galeInstall();
+    for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+    assert.deepStrictEqual(order.methods(), ["gale.untick", "gale.bepinex", "mods.addFromUrl", "mods.addFromUrl", "gale.dismiss"], order.methods().join(","));
+    assert.strictEqual(order.sent[1].params.profile, "Final Sunset", "BepInEx was not asked for the realm the dialog was opened on");
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(order.context.S.bepinex)), { installed: true, consent: true }, "the loader's new state was not taken");
+
+    /* A BepInEx write that did not land stops the walk before any mod. */
+    const stop = page({ replies: {
+      "gale.untick": { ok: true, state: carried },
+      "gale.bepinex": { ok: false, Reason: "serverRunning", ErrorParams: { name: "Final Sunset" } },
+      "gale.rescan": { ok: true, state: carried },
+    } });
+    stop.context.galeApply(carried);
+    stop.context.galeDialog();
+    stop.modals[0].handlers.galeInstall();
+    for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+    assert.deepStrictEqual(stop.methods(), ["gale.untick", "gale.bepinex", "gale.rescan"], "a mod went in without BepInEx: " + stop.methods());
+    assert.ok(stop.toasts.some(t => t.includes(T("mods.gale.install.server_running.toast", { name: "Final Sunset" }))), stop.toasts.join(" | "));
+
+    /* A server with BepInEx never asks for it. */
+    const plain = page({ replies: {
+      "gale.untick": { ok: true, state: state() },
+      "mods.addFromUrl": () => ({ Installed: true, Version: "1" }),
+      "gale.dismiss": { ok: true, state: state({ check: { due: false } }) },
+    } });
+    plain.context.galeApply(state());
+    plain.context.galeDialog();
+    plain.modals[0].handlers.galeInstall();
+    for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+    assert.ok(!plain.methods().includes("gale.bepinex"), "BepInEx was asked for on a server that has it");
+  });
+
+  await test("11. a build no longer on Thunderstore: its sentence, the summary, the mark on the next review", async () => {
+    const gone = { Installed: false, Reason: "notAvailable", Error: "raw", ErrorParams: { mod: "Azumatt-AzuCraftyBoxes", version: "1.8.4" } };
+    const marked = state({ check: { due: false, addCount: 0, updateCount: 0,
+      rows: state().check.rows.map(r => (r.name === "Azumatt-AzuCraftyBoxes" ? Object.assign({}, r, { notAvailable: true }) : r))
+        .map(r => (r.name === "ValheimModding-Jotunn" ? Object.assign({}, r, { kind: "same", serverVersion: "2.21.0" }) : r)) } });
+    const p = page({ replies: {
+      "gale.untick": { ok: true, state: state() },
+      "mods.addFromUrl": params => (params.url.includes("AzuCraftyBoxes") ? gone : { Installed: true, Version: "2.21.0" }),
+      "gale.dismiss": { ok: true, state: marked },
+    } });
+    p.context.galeApply(state());
+    p.context.galeDialog();
+    p.modals[0].handlers.galeInstall();
+    for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+    const sentence = T("mods.add.not_available.toast", { mod: "Azumatt-AzuCraftyBoxes", version: "1.8.4" });
+    assert.ok(sentence.startsWith("Azumatt-AzuCraftyBoxes 1.8.4 is no longer on Thunderstore"), sentence);
+    assert.ok(p.toasts.some(t => t === "ᚦ " + sentence), "the not available sentence was not said: " + p.toasts.join(" | "));
+    assert.ok(!p.toasts.some(t => t.includes("raw")), "the raw sentence was shown");
+    assert.deepStrictEqual(p.methods(), ["gale.untick", "mods.addFromUrl", "mods.addFromUrl", "gale.dismiss"], "the walk did not go on past a gone build: " + p.methods());
+    assert.ok(p.toasts.some(t => t === "ᚨ " + T("mods.gale.install.summary.toast", { done: 1, missing: 1 })), "the summary does not count both: " + p.toasts.join(" | "));
+
+    /* The next review: the row carries its mark, starts unticked, and an untouched gone row
+       is not written to the unticks. */
+    const rows = p.context.galeDialogRows(marked).rows;
+    const azu = rows.find(r => r.name === "Azumatt-AzuCraftyBoxes");
+    assert.ok(azu && azu.notAvailable && !azu.ticked, "the gone row is offered as a plain add: " + JSON.stringify(azu));
+    const q = page({ replies: { "gale.untick": { ok: true, state: marked }, "gale.dismiss": { ok: true, state: marked } } });
+    q.context.galeApply(marked);
+    q.context.galeDialog();
+    const m = q.modals[0];
+    assert.ok(m.html.includes(">" + T("mods.gale.dialog.not_available") + "<"), "the row has no not available mark");
+    assert.ok(m.html.includes(q.context.esc(T("mods.gale.dialog.not_available.title"))), "the mark does not say why");
+    m.handlers.galeInstall();
+    for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+    const untick = q.sent.find(x => x.method === "gale.untick");
+    assert.ok(!Array.from(untick.params.unticked).includes("Azumatt-AzuCraftyBoxes"), "leaving a gone row was written as a no");
+
+    /* A gone build among real failures: the partial toast counts all three. */
+    const mix = page({ replies: {
+      "gale.untick": { ok: true, state: state() },
+      "mods.addFromUrl": params => (params.url.includes("AzuCraftyBoxes") ? gone : { Installed: false, Error: "zip was short" }),
+      "gale.rescan": { ok: true, state: state() },
+    } });
+    mix.context.galeApply(state());
+    mix.context.galeDialog();
+    mix.modals[0].handlers.galeInstall();
+    for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+    assert.ok(mix.toasts.some(t => t === "ᚦ " + T("mods.gale.install.partial.missing.toast", { done: 0, missing: 1, left: 1 })), mix.toasts.join(" | "));
+
+    /* The plain add says the same sentence. */
+    assert.ok(/const own=modNotAvailableText\(r\)\|\|hostSentence\(r\.Reason,r\.ErrorParams\);/.test(fnBody(APP, "async function doAddMod(")),
+      "a pasted link does not get the not available sentence");
   });
 
   console.log("");

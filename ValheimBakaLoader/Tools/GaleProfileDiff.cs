@@ -119,6 +119,41 @@ namespace ValheimBakaLoader.Tools
         // joins them with the one dash.
         private static readonly Regex FullName = new(@"^[A-Za-z0-9_]+-[A-Za-z0-9_]+\z", RegexOptions.CultureInvariant);
 
+        /// <summary>The status line when the profile is for another game.</summary>
+        public const string OtherGameSentence = "mods.gale.check.other_game";
+
+        /// <summary>The longest game name put in the status line; a longer one is cut.</summary>
+        internal const int MaxGameLength = 64;
+
+        /// <summary>
+        /// True when a profile's community is Valheim, in any case. A blank or missing one
+        /// counts as Valheim, because a profile made before Gale wrote the field has none.
+        /// </summary>
+        public static bool IsValheim(string community) =>
+            string.IsNullOrWhiteSpace(community)
+            || string.Equals(community.Trim(), "valheim", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The check's answer as the page gets it. A readable profile for another game is turned
+        /// into a refusal with <see cref="OtherGameSentence"/>, so it is never compared and never
+        /// raises the row: its mods are not Valheim mods and installing them would break the
+        /// server. Every other result is handed back as it came.
+        /// </summary>
+        public static GaleCheckResult RefuseOtherGame(GaleCheckResult result)
+        {
+            if (result?.Ok != true || IsValheim(result.Meta?.Community)) return result;
+
+            var game = result.Meta.Community.Trim();
+            if (game.Length > MaxGameLength) game = game.Substring(0, MaxGameLength);
+            return new GaleCheckResult
+            {
+                Outcome = GaleCheckOutcome.OtherGame,
+                SentenceId = OtherGameSentence,
+                StatusCode = result.StatusCode,
+                Game = game,
+            };
+        }
+
         /// <summary>True when a name is "Namespace-Name" as Thunderstore spells one.</summary>
         public static bool IsFullName(string name) => name != null && FullName.IsMatch(name);
 

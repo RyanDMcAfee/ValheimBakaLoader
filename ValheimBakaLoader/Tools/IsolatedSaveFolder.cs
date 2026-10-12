@@ -35,9 +35,7 @@ namespace ValheimBakaLoader.Tools
         /// Valheim's own default save folder for this user, with no variable left in it. The
         /// fallback for an install whose app wide save folder has somehow been blanked.
         /// </summary>
-        public static string ValheimDefault() => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "AppData", "LocalLow", "IronGate", "Valheim");
+        public static string ValheimDefault() => AppDataRoot.ValheimSaveRootFull;
 
         /// <summary>
         /// The path a new realm's folder WOULD get, without touching the disk to make it: the

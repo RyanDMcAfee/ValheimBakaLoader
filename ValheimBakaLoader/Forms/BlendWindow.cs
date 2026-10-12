@@ -171,11 +171,18 @@ namespace ValheimBakaLoader.Forms
 
         #endregion
 
+        /// <summary>
+        /// The WebView2 profile folder. Kept out of the install folder (which may be read-only)
+        /// and under <see cref="AppDataRoot.LocalRoot"/>, so an isolated run has its own.
+        /// </summary>
+        internal static string WebViewUserDataFolder() => Path.Combine(
+            AppDataRoot.LocalRoot, "ValheimBakaLoader", "WebView2");
+
         /// <summary>Writable cache folder for rendered Atlas map PNGs, served via the atlas.baka virtual host.</summary>
         internal static string GetAtlasCacheDir()
         {
             var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                AppDataRoot.LocalRoot,
                 "ValheimBakaLoader", "AtlasCache");
             Directory.CreateDirectory(dir);
             return dir;
@@ -551,10 +558,7 @@ namespace ValheimBakaLoader.Forms
 
         private async Task InitializeWebViewAsync()
         {
-            // Keep browser profile data out of the install folder (which may be read-only).
-            var userDataFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ValheimBakaLoader", "WebView2");
+            var userDataFolder = WebViewUserDataFolder();
 
             var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
             await WebView.EnsureCoreWebView2Async(environment);

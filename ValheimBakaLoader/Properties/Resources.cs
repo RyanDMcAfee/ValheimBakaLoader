@@ -26,17 +26,20 @@ namespace ValheimBakaLoader.Properties
         internal const string DefaultServerPath = @"%ProgramFiles(x86)%\Steam\steamapps\common\Valheim dedicated server\valheim_server.exe";
         internal const string DefaultServerPort = "2456";
         internal const string DefaultServerProfileName = "Default";
-        internal const string DefaultValheimSaveFolder = @"%USERPROFILE%\AppData\LocalLow\IronGate\Valheim";
+        // Valheim's default save folder in its stored form; see Tools.AppDataRoot.
+        internal static string DefaultValheimSaveFolder => Tools.AppDataRoot.ValheimSaveRoot;
         internal const string ValheimSteamAppId = "892970";
 
         // Where BakaLoader keeps its own data on disk.
         // Installed language packs, one folder per language and app version. They live here
         // rather than in the install folder because the install folder may be read-only and a
         // manual re-extract carries nothing across.
-        internal const string LanguagesFolderPath = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\languages";
-        internal const string LogsFolderPath = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\logs";
-        internal const string PlayerListFilePath = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\players-cache.json";
-        internal const string UserPrefsFilePathV2 = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\userprefs.json";
+        // All of them sit under Tools.AppDataRoot.BakaLoaderRoot: the shipped %USERPROFILE%
+        // folder, unless BAKALOADER_DATA_DIR moves it for an isolated test run.
+        internal static string LanguagesFolderPath => Tools.AppDataRoot.BakaLoaderRoot + @"\languages";
+        internal static string LogsFolderPath => Tools.AppDataRoot.BakaLoaderRoot + @"\logs";
+        internal static string PlayerListFilePath => Tools.AppDataRoot.BakaLoaderRoot + @"\players-cache.json";
+        internal static string UserPrefsFilePathV2 => Tools.AppDataRoot.BakaLoaderRoot + @"\userprefs.json";
 
         // Remote endpoints and update cadence.
         // How long an automatic check waits before it asks GitHub again. The app now keeps

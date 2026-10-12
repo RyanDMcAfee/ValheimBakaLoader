@@ -5989,7 +5989,7 @@ async function doAddMod(url){
        carries the id in Reason and the sentence's named values in ErrorParams, so a
        BepInEx refusal that came back through the add reads exactly as the same refusal
        does on the direct call rather than as the raw English the host side wrote. */
-    const own=hostSentence(r.Reason,r.ErrorParams);
+    const own=modNotAvailableText(r)||hostSentence(r.Reason,r.ErrorParams);
     toast("ᚦ "+(own||T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")})));
     logLine("warn","[Thunderstore] install failed: "+(r.Error||"unknown"));
     renderMods();
@@ -6030,14 +6030,15 @@ const GALE_STATUS=[
   {textId:"mods.gale.check.malformed"},
   {textId:"mods.gale.check.cancelled"},
   {textId:"mods.gale.check.unreadable"},
+  {textId:"mods.gale.check.other_game"},
 ];
 let GALE=null;            // this realm's follow, as the host side last answered it
 let GALE_BUSY=false;      // a check is out
 let GALE_REFUSED=null;    // the sentence id a refused paste gets, until the box is used again
 let GALE_INSTALLING=false;
-function galeSentence(id){
+function galeSentence(id,params){
   const row=GALE_STATUS.find(r=>r.textId===id);
-  return T(row?row.textId:"mods.gale.check.network");
+  return T(row?row.textId:"mods.gale.check.network",params);
 }
 /* A server is up on this realm when the host side says something holds its plugins folder,
    or when the state on screen says this realm is not stopped. Either is enough to refuse. */
@@ -6064,7 +6065,7 @@ function galeStatusLine(st,busy,refused){
   const c=st.check;
   let first;
   if(!c) first=T("mods.gale.status.never");
-  else if(!c.ok) first=T("mods.gale.status.failed",{reason:galeSentence(c.statusId),at:agoAt(c.at)});
+  else if(!c.ok) first=T("mods.gale.status.failed",{reason:galeSentence(c.statusId,{game:String(c.statusGame||"")}),at:agoAt(c.at)});
   else if(c.addCount+c.updateCount===0) first=T("mods.gale.status.current",{at:agoAt(c.at)});
   else if(c.due) first=T("mods.gale.status.due",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
   else first=T("mods.gale.status.waved",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
@@ -6164,10 +6165,20 @@ function galeDialogRows(st){
     const kind=r.kind==="unticked"?r.untickedFrom:r.kind;
     if(r.kind==="disabled"){disabled.push(String(r.name));continue;}
     if(kind!=="add"&&kind!=="update") continue;
+    /* A pinned build Thunderstore no longer has keeps its mark and starts unticked, so it is
+       not offered as a plain add again; ticking it tries it once more. */
+    const gone=!!r.notAvailable;
     rows.push({name:String(r.name),profileVersion:r.profileVersion,serverVersion:r.serverVersion,
-      ticked:r.kind!=="unticked",downgrade:!!r.downgrade});
+      ticked:r.kind!=="unticked"&&!gone,downgrade:!!r.downgrade,notAvailable:gone});
   }
   return {rows,disabled};
+}
+/* BepInEx on the realm, as the last check read it: missing (the install was looked at and
+   has none) and whether the profile carries the pack, which is what lets Install put it in
+   first. A host side that sends nothing reads as present, so nothing is refused on a guess. */
+function galeBepInEx(st){
+  const b=st&&st.check&&st.check.bepinex;
+  return {missing:!!(b&&b.missing),inProfile:!!(b&&b.inProfile)};
 }
 function galeDialogHtml(st){
   const {rows,disabled}=galeDialogRows(st);
@@ -6183,16 +6194,25 @@ function galeDialogHtml(st){
           ` aria-label="${esc(T("mods.gale.dialog.tick.aria",{name:r.name}))}"></td>`+
         `<td class="mono">${esc(r.name)}</td>`+
         `<td class="mono">${esc(r.profileVersion||"")}`+
-          (r.downgrade?` <span class="galeold" title="${esc(T("mods.gale.dialog.older.title"))}">${esc(T("mods.gale.dialog.older"))}</span>`:"")+`</td>`+
+          (r.downgrade?` <span class="galeold" title="${esc(T("mods.gale.dialog.older.title"))}">${esc(T("mods.gale.dialog.older"))}</span>`:"")+
+          (r.notAvailable?` <span class="galeold" title="${esc(T("mods.gale.dialog.not_available.title"))}">${esc(T("mods.gale.dialog.not_available"))}</span>`:"")+`</td>`+
         `<td class="mono">${esc(r.serverVersion||T("mods.gale.dialog.not_installed"))}</td></tr>`).join("")+
       `</tbody></table>`
     :`<div class="mbody-note">${esc(T("mods.gale.dialog.empty"))}</div>`;
   const note=disabled.length
     ?`<div class="mbody-note" style="margin-top:8px">${esc(T("mods.gale.dialog.disabled",{names:disabled.join(", ")}))}</div>`:"";
   const warn=held?`<div class="mwarn">⚠ ${esc(T("mods.gale.dialog.running",{name:held}))}</div>`:"";
-  const off=held||!rows.length?" disabled":"";
+  /* No BepInEx on this server: one note when the profile carries the pack and Install puts it
+     in first, and with no pack in the profile Install is off and the sentence says why. */
+  const bep=galeBepInEx(st);
+  const bepBlocked=bep.missing&&!bep.inProfile;
+  const bepNote=!rows.length||!bep.missing?""
+    :bep.inProfile
+      ?`<div class="mbody-note" style="margin-top:8px">${esc(T("mods.gale.dialog.bepinex_first"))}</div>`
+      :`<div class="mwarn">⚠ ${esc(T("mods.gale.dialog.bepinex_missing"))}</div>`;
+  const off=held||!rows.length||bepBlocked?" disabled":"";
   return `<div class="mtitle">${esc(T("mods.gale.dialog.title"))}</div>`+
-    `<div class="mbody">${body}${note}${warn}</div>`+
+    `<div class="mbody">${body}${note}${bepNote}${warn}</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="galeNotNow">${esc(T("guard.btn.not_now"))}</button>`+
     `<button class="btn btn-ember btn-sm" id="galeInstall"${off}>${esc(T("common.button.install"))}</button></div>`;
 }
@@ -6208,7 +6228,10 @@ function galeDialog(){
       const ticked=[], unticked=[];
       for(const box of ticks){
         const r=rows[Number(box.getAttribute("data-gale-row"))]; if(!r) continue;
-        (box.checked?ticked:unticked).push(r);
+        /* A not available row left unticked is the host leaving it, not saying no to it: it is
+           not written to the unticks, so it is offered again when the profile pins another. */
+        if(box.checked) ticked.push(r);
+        else if(!r.notAvailable) unticked.push(r);
       }
       modalClose();
       galeInstall(st,ticked,unticked);
@@ -6225,17 +6248,30 @@ function galeModUrl(name,version){
 /* The Mods hall's own sentence for a failed add, and two of its own for the reasons that
    stop the walk: a server that came up, and the realm on screen changing. */
 function galeFailSentence(r){
+  const gone=modNotAvailableText(r);
+  if(gone) return gone;
+  if(r.Reason==="bepinexNotInProfile") return T("mods.gale.dialog.bepinex_missing");
   if(r.Reason==="serverRunning")
     return T("mods.gale.install.server_running.toast",{name:(r.ErrorParams&&r.ErrorParams.name)||S.profileName||""});
   if(r.Reason==="realmChanged") return T("mods.gale.install.realm_changed.toast");
   const own=hostSentence(r.Reason,r.ErrorParams);
   return own||T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")});
 }
-const GALE_STOPS=["serverRunning","realmChanged","noBepInEx","noServerPath","busy","alreadyMaintained"];
+const GALE_STOPS=["serverRunning","realmChanged","noBepInEx","noServerPath","busy","alreadyMaintained","bepinexNotInProfile"];
+/* The sentence for a pinned build Thunderstore no longer has, or null for any other answer.
+   Read by the Mods hall's own add as well, so a pasted link says the same thing. */
+function modNotAvailableText(r){
+  if(!r||r.Reason!=="notAvailable") return null;
+  const p=r.ErrorParams||{};
+  const mod=p.mod||(r.Owner&&r.Name?r.Owner+"-"+r.Name:"");
+  return T("mods.add.not_available.toast",{mod,version:p.version||r.Version||""});
+}
 async function galeInstall(st,ticked,unticked){
   if(!Native.available||GALE_INSTALLING||S.modsUpdating||S.modsScanning) return;
   const profile=st.profile, seq=st.check.seq;
   if(galeHeldBy(st)){toast("ᚦ "+T("mods.gale.dialog.running",{name:galeHeldBy(st)}));return;}
+  const bep=galeBepInEx(st);
+  if(bep.missing&&!bep.inProfile&&ticked.length){toast("ᚦ "+T("mods.gale.dialog.bepinex_missing"));return;}
   /* The ticks are the host's answer whatever happens next, so they are written first. */
   const u=await Native.call("gale.untick",{profile,
     unticked:unticked.map(r=>r.name),ticked:ticked.map(r=>r.name)}).catch(()=>null);
@@ -6248,8 +6284,25 @@ async function galeInstall(st,ticked,unticked){
   }
   GALE_INSTALLING=true; renderGaleBox();
   S.modsUpdating=true; S.modRowStatus=S.modRowStatus||{};
-  let done=0, failed=0, stopped=false;
-  for(let i=0;i<ticked.length;i++){
+  let done=0, failed=0, missing=0, stopped=false;
+  /* BepInEx first, through the Mods hall's own write, with this Install as the host's answer.
+     The write's own progress opens the way it does inside the hall's add. Nothing else goes
+     in when it does not land. */
+  if(bep.missing){
+    BEP_ADD_IN_FLIGHT=true;
+    const b=await rpc("gale.bepinex",{profile});
+    BEP_ADD_IN_FLIGHT=false;
+    bepInExProgressDone();
+    if(b===FAIL||!b||!b.ok){
+      stopped=true;
+      const why=b===FAIL||!b?null:galeFailSentence(b);
+      if(why) toast("ᚦ "+why);
+    }else if(b.bepinex){
+      S.bepinex=b.bepinex;
+      renderMods();
+    }
+  }
+  for(let i=0;i<ticked.length&&!stopped;i++){
     if(!isActiveProfile(profile)){stopped=true;break;}
     const r=ticked[i];
     MOD_UPD={phase:"updating",total:ticked.length,done,current:r.name,index:i+1,labelId:"mods.gale.progress.one"};
@@ -6260,8 +6313,10 @@ async function galeInstall(st,ticked,unticked){
       done++;
       S.modRowStatus[r.name]={phase:"done",from:r.serverVersion||"",to:a.Version||r.profileVersion};
     }else{
-      failed++;
       const why=a===FAIL||!a?null:galeFailSentence(a);
+      /* Gone from Thunderstore is said and counted on its own: the host side has marked the
+         row for the next review, and the rest of the walk goes on. */
+      if(a&&a!==FAIL&&a.Reason==="notAvailable") missing++; else failed++;
       S.modRowStatus[r.name]={phase:"failed",error:why};
       if(why) toast("ᚦ "+why);
       if(a&&a!==FAIL&&GALE_STOPS.includes(a.Reason)){stopped=true;break;}
@@ -6271,12 +6326,18 @@ async function galeInstall(st,ticked,unticked){
   S.modsUpdating=false; GALE_INSTALLING=false;
   /* Only a walk that put every ticked mod in stores the stamp, so a mod that failed is still
      offered on the row until it goes in or the host unticks it. */
+  /* A walk where every ticked mod either went in or is gone from Thunderstore is as done as
+     it can be: the approval is stored, and the gone ones keep their mark on the list. */
   if(!failed&&!stopped){
     const d=await Native.call("gale.dismiss",{profile,seq}).catch(()=>null);
     if(d&&d.state) galeApply(d.state);
-    toast("ᚨ "+T("mods.gale.install.done.toast",{count:done}));
+    toast(missing
+      ?"ᚨ "+T("mods.gale.install.summary.toast",{done,missing})
+      :"ᚨ "+T("mods.gale.install.done.toast",{count:done}));
   }else{
-    if(!stopped||done) toast("ᚦ "+T("mods.gale.install.partial.toast",{done,left:ticked.length-done}));
+    if(!stopped||done) toast("ᚦ "+(missing
+      ?T("mods.gale.install.partial.missing.toast",{done,missing,left:ticked.length-done-missing})
+      :T("mods.gale.install.partial.toast",{done,left:ticked.length-done})));
     /* No stamp, so the row stays for what is left. The mods that did go in are on the disk
        now, and the counts and the list are made again against it, so Review never offers
        them a second time. Gale is not asked. */

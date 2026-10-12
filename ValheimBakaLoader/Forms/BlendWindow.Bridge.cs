@@ -7735,6 +7735,14 @@ namespace ValheimBakaLoader.Forms
                         });
                     }
 
+                    // A Gale walk names its realm. A pinned build Thunderstore no longer has is
+                    // marked on that realm's follow, so the next review shows it as not
+                    // available rather than as a plain add; one that went in is unmarked.
+                    var notAvailable = result.Reason == ModInstallResult.NotAvailableReason;
+                    if (!string.IsNullOrWhiteSpace(forProfile) && !string.IsNullOrWhiteSpace(reference.Version)
+                        && (notAvailable || result.Installed))
+                        MarkGaleNotAvailable(forProfile.Trim(), $"{reference.Owner}-{reference.Name}", reference.Version, notAvailable);
+
                     return new
                     {
                         result.Installed,
@@ -7744,8 +7752,16 @@ namespace ValheimBakaLoader.Forms
                         result.Version,
                         result.Error,
                         // One shape for the answer whether it worked or not, so a page reading
-                        // Reason never has to check whether the key is there.
-                        Reason = (string)null,
+                        // Reason never has to check whether the key is there. Null except for
+                        // the one reason the page words itself: a pinned build that is gone.
+                        Reason = result.Reason,
+                        ErrorParams = notAvailable
+                            ? new Dictionary<string, object>
+                            {
+                                ["mod"] = $"{reference.Owner}-{reference.Name}",
+                                ["version"] = reference.Version,
+                            }
+                            : null,
                         // Which site the files came from, carried through so the page never
                         // has to guess what it just installed. Additive: a page that does not
                         // read it is unaffected, and a Thunderstore install says so plainly.
@@ -8963,9 +8979,7 @@ namespace ValheimBakaLoader.Forms
             }
 
             Consider(ResolveSaveDataFolder(null));
-            Consider(Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "AppData", "LocalLow", "IronGate", "Valheim"));
+            Consider(AppDataRoot.ValheimSaveRootFull);
             foreach (var pr in ServerPrefsProvider.LoadPreferences())
                 Consider(pr.SaveDataFolderPath);
 
@@ -10577,6 +10591,7 @@ namespace ValheimBakaLoader.Forms
             created.GaleProfileId = null;
             created.GaleLastUpdatedAt = null;
             created.GaleUnticked = new List<string>();
+            created.GaleNotAvailable = new List<string>();
             return created;
         }
 

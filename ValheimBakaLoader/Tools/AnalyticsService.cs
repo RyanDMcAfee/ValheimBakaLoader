@@ -82,7 +82,7 @@ namespace ValheimBakaLoader.Tools
     /// </summary>
     public class AnalyticsService : IAnalyticsService
     {
-        private const string FilePath = @"%USERPROFILE%\AppData\LocalLow\BakaLoader\ValheimBakaLoader\analytics.json";
+        private static string FilePath => AppDataRoot.BakaLoaderRoot + @"\analytics.json";
         private const int MaxEvents = 20000;
         private static readonly TimeSpan MaxAge = TimeSpan.FromDays(180);
         private static readonly TimeSpan SaveDebounce = TimeSpan.FromSeconds(2);

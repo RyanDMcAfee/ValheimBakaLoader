@@ -348,7 +348,11 @@ namespace ValheimBakaLoader.Tests.Forms
             // of the page's wait on a started sweep (still walking, still walking at ten
             // minutes, nothing running because the server restarted, and the server no longer
             // answering).
-            Assert.Equal(239, marked.Count);
+            // 241 with the two summaries a Gale walk ends on when a pinned build is no longer on
+            // Thunderstore: they count the ones that landed and the ones that were not available.
+            // The sentence for the build itself carries no mark: it is also the failed row's
+            // words, and the toast that prints it leads with its own rune.
+            Assert.Equal(241, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

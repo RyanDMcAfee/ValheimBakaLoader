@@ -96,12 +96,12 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// Where the release zip is downloaded and where the updater leaves RESULT.txt:
-        /// %LOCALAPPDATA%\BakaLoaderUpdate. Outside the install, so nothing in it is ever copied
-        /// over the app, and the same folder for the app and the updater because both work it out
-        /// the same way.
+        /// %LOCALAPPDATA%\BakaLoaderUpdate unless BAKALOADER_UPDATE_DIR moves it (see
+        /// <see cref="AppDataRoot.UpdateWorkRoot"/>). Outside the install, so nothing in it is ever
+        /// copied over the app, and the same folder for the app and the updater because both work
+        /// it out the same way: the updater is this program started again and inherits the variable.
         /// </summary>
-        public static string WorkFolder() => WorkFolderOverride ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BakaLoaderUpdate");
+        public static string WorkFolder() => WorkFolderOverride ?? AppDataRoot.UpdateWorkRoot;
 
         /// <summary>
         /// Somewhere else to work, for a test, so nothing a test does is ever read by a running copy

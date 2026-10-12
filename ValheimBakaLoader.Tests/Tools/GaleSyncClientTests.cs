@@ -295,6 +295,50 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.False(GaleProfileDiff.IsDue(due, on.Meta.UpdatedAt));
         }
 
+        [Theory]
+        [InlineData("\"community\":\"atlyss\",", "atlyss")]
+        [InlineData("\"community\":\" Valheim \",", "Valheim")]
+        [InlineData("\"community\":7,", null)]
+        [InlineData("", null)]
+        public void The_Ok_meta_keeps_the_community_as_written(string field, string expected)
+        {
+            var json = "{\"updatedAt\":\"2026-10-01T00:00:00Z\",\"manifest\":{" + field + "\"mods\":[]}}";
+            Assert.Equal(expected, GaleSyncClient.Parse(json).Community);
+        }
+
+        [Theory]
+        [InlineData("valheim", true)]
+        [InlineData("VALHEIM", true)]
+        [InlineData("", true)]
+        [InlineData(null, true)]
+        [InlineData("atlyss", false)]
+        [InlineData("bonelab", false)]
+        public void Only_Valheim_or_no_game_is_compared(string community, bool valheim)
+        {
+            var ok = new GaleCheckResult
+            {
+                Outcome = GaleCheckOutcome.Ok,
+                StatusCode = 200,
+                Meta = new GaleProfileMeta { UpdatedAt = "x", Community = community },
+            };
+
+            var answer = GaleProfileDiff.RefuseOtherGame(ok);
+
+            Assert.Equal(valheim, GaleProfileDiff.IsValheim(community));
+            if (valheim)
+            {
+                Assert.Same(ok, answer);
+            }
+            else
+            {
+                Assert.Equal(GaleCheckOutcome.OtherGame, answer.Outcome);
+                Assert.Equal("mods.gale.check.other_game", answer.SentenceId);
+                Assert.Equal(community, answer.Game);
+                Assert.Null(answer.Meta);
+                Assert.False(answer.Ok);
+            }
+        }
+
         /// <summary>Never answers; gives up only when the token says so.</summary>
         private sealed class SilentHandler : HttpMessageHandler
         {

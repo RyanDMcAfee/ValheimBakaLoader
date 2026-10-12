@@ -1099,7 +1099,7 @@ namespace ValheimBakaLoader.Tools
         /// work folder on purpose, because the watchdog deleted that folder when it was done.
         /// </summary>
         internal static string UpdateReportPath() => ReportPathOverride ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            AppDataRoot.LocalRoot,
             "ValheimBakaLoader", "update-report.txt");
 
         /// <summary>

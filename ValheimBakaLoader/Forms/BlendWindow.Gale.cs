@@ -13,7 +13,7 @@ using ValheimBakaLoader.Tools.Models;
 namespace ValheimBakaLoader.Forms
 {
     /// <summary>
-    /// Following a Gale synced profile: the seven RPCs the Mods hall's box, the condition bar row
+    /// Following a Gale synced profile: the eight RPCs the Mods hall's box, the condition bar row
     /// and the approval dialog talk to.
     /// <para>
     /// The page never sees the service. It asks gale.check, this side reads the profile's meta
@@ -99,6 +99,7 @@ namespace ValheimBakaLoader.Forms
                     prefs.GaleProfileId = check.Id;
                     prefs.GaleLastUpdatedAt = null;
                     prefs.GaleUnticked = new List<string>();
+                    prefs.GaleNotAvailable = new List<string>();
                     ServerPrefsProvider.SavePreferences(prefs);
                     GaleMemos.TryRemove(profile, out _);
                 }
@@ -185,7 +186,90 @@ namespace ValheimBakaLoader.Forms
 
                 return Task.FromResult<object>(new { ok = true, state = GaleState(profile) });
             });
+
+            // BepInEx first, when the server has none and the profile carries the pack. The
+            // approval dialog calls this before its first mod. The write is the Mods hall's own
+            // (the one bepinex.install makes), and the Install press is the host's answer: a
+            // question nobody has answered yet is answered yes, the way the condition bar's Yes
+            // answers it, while a No the host gave earlier stands and this one write still goes
+            // ahead because they approved it here. Held to the realm on screen, to a stopped
+            // server, and to a last check that really lists the pack.
+            RegisterRpc("gale.bepinex", async p => await GaleBepInExAsync(GaleProfileOf(p)));
         }
+
+        /// <summary>The pack the dialog puts in first: the one BakaLoader installs everywhere else.</summary>
+        internal static readonly string GaleBepInExPack =
+            $"{BepInExService.DefaultPackageOwner}-{BepInExService.DefaultPackageName}";
+
+        internal async Task<object> GaleBepInExAsync(string profile)
+        {
+            object Refused(string reason, string error, Dictionary<string, object> errorParams = null) =>
+                new { ok = false, wrote = false, Reason = reason, Error = error, ErrorParams = errorParams, state = GaleState(profile) };
+
+            if (!string.Equals(profile, ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                return Refused("realmChanged", "The server on screen changed, so nothing was installed.");
+
+            var pluginsDir = GetPluginsDirectoryFor(profile);
+            var baseExe = GetCanonicalBaseServerExe(profile);
+            if (string.IsNullOrWhiteSpace(pluginsDir) || string.IsNullOrWhiteSpace(baseExe))
+                return Refused("noServerPath", "BepInEx plugins folder not found. Set a valid server .exe path first.");
+
+            var holding = RunningSessionName(new[] { pluginsDir });
+            if (holding != null)
+                return Refused("serverRunning", $"Stop the server '{holding}' first. Nothing was installed.",
+                    new Dictionary<string, object> { ["name"] = holding });
+
+            if (BepInEx.Status(baseExe, pluginsDir, KnownInstalls()).Installed)
+                return new { ok = true, wrote = false, Reason = (string)null, Error = (string)null, ErrorParams = (object)null, state = GaleState(profile) };
+
+            if (!GaleCarriesBepInEx(profile))
+                return Refused("bepinexNotInProfile", "The Gale profile does not carry BepInEx. Put BepInEx in first.");
+
+            UserPrefsProvider.Mutate(prefs =>
+            {
+                if (!BepInExConsent.Unanswered(prefs.BepInExMaintenanceAsked)) return false;
+                prefs.BepInExMaintained = true;
+                prefs.BepInExMaintenanceAsked = true;
+                return true;
+            });
+
+            var written = await WriteBepInExAsync(null, update: false);
+            return new { ok = true, wrote = true, Reason = (string)null, Error = (string)null, ErrorParams = (object)null, bepinex = written, state = GaleState(profile) };
+        }
+
+        /// <summary>True when the last check of this realm's follow lists the BepInEx pack.</summary>
+        private bool GaleCarriesBepInEx(string profile)
+        {
+            var prefs = LoadGalePrefs(profile);
+            if (!GaleMemos.TryGetValue(profile ?? "", out var memo) || memo?.Result?.Ok != true) return false;
+            if (!string.Equals(memo.ProfileId, prefs?.GaleProfileId, StringComparison.Ordinal)) return false;
+            return GaleListsBepInEx(memo.Result.Meta);
+        }
+
+        private static bool GaleListsBepInEx(GaleProfileMeta meta) =>
+            meta?.Mods?.Any(m => string.Equals(m?.Name?.Trim(), GaleBepInExPack, StringComparison.OrdinalIgnoreCase)) == true;
+
+        /// <summary>
+        /// Marks a pinned build of a mod as gone from Thunderstore on a realm's follow, or takes
+        /// the mark off once that build went in. Keyed by version, so a profile that moves to a
+        /// new version offers the mod again. Quiet on a realm that would not read.
+        /// </summary>
+        private void MarkGaleNotAvailable(string profile, string mod, string version, bool gone)
+        {
+            var prefs = LoadGalePrefs(profile);
+            if (prefs == null || string.IsNullOrWhiteSpace(prefs.GaleProfileId)) return;
+            var key = GaleNotAvailableKey(mod, version);
+            var marks = ServerPreferences.NormalizeUnticked(prefs.GaleNotAvailable);
+            var had = marks.Contains(key, StringComparer.OrdinalIgnoreCase);
+            if (gone == had) return;
+            prefs.GaleNotAvailable = gone
+                ? marks.Append(key).ToList()
+                : marks.Where(k => !string.Equals(k, key, StringComparison.OrdinalIgnoreCase)).ToList();
+            try { ServerPrefsProvider.SavePreferences(prefs); }
+            catch (Exception e) { AppLogger?.Debug("Could not note {0} on the Gale follow of {1}: {2}", key, profile, e.Message); }
+        }
+
+        internal static string GaleNotAvailableKey(string mod, string version) => $"{mod?.Trim()}@{version?.Trim()}";
 
         /// <summary>The sentence a box gets when the realm it names is not a saved profile.</summary>
         internal const string GaleNoRealmSentence = "mods.gale.no_realm";
@@ -211,6 +295,7 @@ namespace ValheimBakaLoader.Forms
             prefs.GaleProfileId = null;
             prefs.GaleLastUpdatedAt = null;
             prefs.GaleUnticked = new List<string>();
+            prefs.GaleNotAvailable = new List<string>();
             ServerPrefsProvider.SavePreferences(prefs);
             GaleMemos.TryRemove(prefs.ProfileName ?? "", out _);
         }
@@ -297,6 +382,9 @@ namespace ValheimBakaLoader.Forms
                 result = new GaleCheckResult { Outcome = GaleCheckOutcome.NetworkError, SentenceId = GaleSyncClient.NetworkErrorSentence };
             }
 
+            // A profile for another game is a status line, never a comparison and never a row.
+            result = GaleProfileDiff.RefuseOtherGame(result);
+
             IReadOnlyList<(string, string)> installed = null;
             if (result?.Ok == true)
             {
@@ -377,18 +465,31 @@ namespace ValheimBakaLoader.Forms
                 GaleProfileDiffResult diff = ok
                     ? GaleProfileDiff.Compare(memo.Result.Meta, memo.Installed, prefs?.GaleUnticked)
                     : null;
+                // A pinned build Thunderstore no longer has is not work: it is listed with its
+                // mark, and neither counts nor raises the row until the profile pins another.
+                var gone = new HashSet<string>(prefs?.GaleNotAvailable ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+                bool Gone(GaleDiffRow r) => gone.Contains(GaleNotAvailableKey(r.Name, r.ProfileVersion));
+                var addCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Add && !Gone(r)) ?? 0;
+                var updateCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Update && !Gone(r)) ?? 0;
                 check = new
                 {
                     seq = memo.Seq,
                     at = memo.CheckedUtc.ToString("o"),
                     ok,
                     statusId = ok ? null : memo.Result?.SentenceId ?? GaleSyncClient.NetworkErrorSentence,
+                    statusGame = ok ? null : memo.Result?.Game,
                     updatedAt = ok ? memo.Result.Meta.UpdatedAt : null,
-                    due = ok && GaleProfileDiff.IsDue(diff, prefs?.GaleLastUpdatedAt),
-                    addCount = diff?.AddCount ?? 0,
-                    updateCount = diff?.UpdateCount ?? 0,
+                    due = ok && addCount + updateCount > 0 && GaleProfileDiff.IsDue(diff, prefs?.GaleLastUpdatedAt),
+                    addCount,
+                    updateCount,
                     skipped = diff?.Skipped ?? 0,
-                    rows = diff == null ? new List<object>() : diff.Rows.Select(GaleRowDto).ToList(),
+                    rows = diff == null ? new List<object>() : diff.Rows.Select(r => GaleRowDto(r, Gone(r))).ToList(),
+                    // BepInEx on this realm, for the dialog: missing is only said when the
+                    // install could be looked at, and inProfile is whether the profile lists the
+                    // pack, which is what lets Install put it in first.
+                    bepinex = ok
+                        ? new { missing = GaleBepInExMissing(profile), inProfile = GaleListsBepInEx(memo.Result.Meta) }
+                        : null,
                 };
             }
 
@@ -414,9 +515,26 @@ namespace ValheimBakaLoader.Forms
             };
         }
 
-        private static object GaleRowDto(GaleDiffRow r) => new
+        /// <summary>True only when this realm's install was looked at and has no BepInEx. Unknown is not missing.</summary>
+        private bool GaleBepInExMissing(string profile)
+        {
+            try
+            {
+                var baseExe = GetCanonicalBaseServerExe(profile);
+                if (string.IsNullOrWhiteSpace(baseExe) || BepInEx == null) return false;
+                return !BepInEx.Status(baseExe, GetPluginsDirectoryFor(profile), KnownInstalls()).Installed;
+            }
+            catch (Exception e)
+            {
+                AppLogger?.Debug("Could not read BepInEx on {0} for the Gale dialog: {1}", profile, e.Message);
+                return false;
+            }
+        }
+
+        private static object GaleRowDto(GaleDiffRow r, bool notAvailable) => new
         {
             name = r.Name,
+            notAvailable,
             kind = GaleKindWord(r.Kind),
             untickedFrom = r.UntickedFrom == null ? null : GaleKindWord(r.UntickedFrom.Value),
             profileVersion = r.ProfileVersion,

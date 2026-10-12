@@ -43,6 +43,14 @@ namespace ValheimBakaLoader.Tools
         /// kept as the service's own text and never turned into a date and back.
         /// </summary>
         public string UpdatedAt { get; init; }
+
+        /// <summary>
+        /// The game the profile is for, manifest.community as the service wrote it ("valheim",
+        /// "atlyss", "bonelab", ...), or null when the manifest carried none, as an old profile
+        /// may not. Kept here so the check can refuse a profile for another game; the client
+        /// itself reads it and nothing more.
+        /// </summary>
+        public string Community { get; init; }
     }
 
     /// <summary>The ways a check of a Gale profile can come out. Every one of them is an answer, none is a throw.</summary>
@@ -74,6 +82,12 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>The caller called it off before it finished.</summary>
         Cancelled,
+
+        /// <summary>
+        /// The service answered with a readable profile for a game other than Valheim. The
+        /// client never answers this; the check does, from the community the meta carries.
+        /// </summary>
+        OtherGame,
     }
 
     /// <summary>What a check came to: the outcome, the meta when there is one, and the sentence for the status line.</summary>
@@ -93,6 +107,12 @@ namespace ValheimBakaLoader.Tools
         /// than about the trip.
         /// </summary>
         public string SentenceId { get; init; }
+
+        /// <summary>
+        /// The game a profile for another game is for, filled into the status sentence. Set
+        /// only when <see cref="Outcome"/> is <see cref="GaleCheckOutcome.OtherGame"/>.
+        /// </summary>
+        public string Game { get; init; }
 
         public bool Ok => Outcome == GaleCheckOutcome.Ok;
     }
@@ -119,7 +139,7 @@ namespace ValheimBakaLoader.Tools
     /// <see cref="MaxBodyBytes"/> is read as malformed rather than read to the end.
     /// </para>
     /// <para>
-    /// Only the manifest's mods and the profile's updatedAt are read. The rest of the meta
+    /// Only the manifest's mods and community and the profile's updatedAt are read. The rest of the meta
     /// (and the config zip behind /profile/{id}) is step two and is not touched here.
     /// </para>
     /// </summary>
@@ -308,7 +328,9 @@ namespace ValheimBakaLoader.Tools
                 lines.Add(ReadMod(line));
             }
 
-            return new GaleProfileMeta { Mods = lines, UpdatedAt = updatedAt };
+            var community = manifest["community"] is JValue { Type: JTokenType.String } game ? ((string)game)?.Trim() : null;
+
+            return new GaleProfileMeta { Mods = lines, UpdatedAt = updatedAt, Community = community };
         }
 
         private static GaleProfileMod ReadMod(JToken line)

@@ -2,7 +2,7 @@
   "_meta": {
     "language": "en",
     "appVersion": "1.2.14",
-    "catalog": 13
+    "catalog": 14
   },
   "keys": {
     "pal.cmd.restart_server": { "lore": "Restart server" },
@@ -594,6 +594,7 @@
     "mods.gale.check.malformed": {"lore": "Gale answered with something that is not a profile. Nothing was changed."},
     "mods.gale.check.cancelled": {"lore": "The check was called off before Gale answered."},
     "mods.gale.check.unreadable": {"lore": "This server's mod folder could not be read, so nothing was compared."},
+    "mods.gale.check.other_game": {"lore": "That profile is for {game}, not Valheim.", "params": {"game": "text"}},
     "mods.gale.status.off": {"lore": "Paste a Gale profile code to keep this server's mods in step with it. Gale is only asked when BakaLoader starts, when you open this screen, and when you press Check now."},
     "mods.gale.status.checking": {"lore": "Asking Gale…"},
     "mods.gale.status.never": {"lore": "Not checked yet."},
@@ -623,6 +624,13 @@
     "mods.gale.install.none.toast": {"lore": "Nothing was ticked, so nothing was installed. Your choices are saved.", "mark": "ᚨ"},
     "mods.gale.install.server_running.toast": {"lore": "Stopped: the server '{name}' is running on this install. Stop it, then press Review again.", "params": {"name": "text"}},
     "mods.gale.install.realm_changed.toast": {"lore": "Stopped: the server on screen changed, so the rest were not installed."},
+    "mods.gale.dialog.bepinex_first": {"lore": "BepInEx goes in first, the way the Mods screen puts it in."},
+    "mods.gale.dialog.bepinex_missing": {"lore": "This server has no BepInEx and the profile does not carry it. Put BepInEx in first with Install on the BepInEx row of the Mods screen, then press Review again."},
+    "mods.gale.dialog.not_available": {"lore": "not available"},
+    "mods.gale.dialog.not_available.title": {"lore": "Thunderstore no longer has this version: the package is deprecated or the version was removed. Tick it to try again."},
+    "mods.gale.install.summary.toast": {"lore": "Gale profile applied: {done} installed, {missing} no longer on Thunderstore and marked on the list. The installed ones load the next time the server starts.", "params": {"done": "number", "missing": "number"}, "mark": "ᚨ"},
+    "mods.gale.install.partial.missing.toast": {"lore": "{done} installed, {missing} no longer on Thunderstore, and {left} not installed. The notice stays so you can try the rest again.", "params": {"done": "number", "missing": "number", "left": "number"}, "mark": "ᚦ"},
+    "mods.add.not_available.toast": {"lore": "{mod} {version} is no longer on Thunderstore (the package is deprecated or that version was removed); Gale on the players' machines may still carry it.", "params": {"mod": "text", "version": "text"}},
     "mods.up_to_date": { "lore": "up to date" },
     "mods.index.line.checked": { "lore": "{count} loaded · Thunderstore index checked {at}" },
     "mods.index.line.checked.both": { "lore": "{count} loaded · Thunderstore and Hexium checked {at}" },

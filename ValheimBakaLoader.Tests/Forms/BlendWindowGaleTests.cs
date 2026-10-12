@@ -389,6 +389,68 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Empty(check["rows"]!);
         }
 
+        // ------------------------------------------------------------------ another game
+
+        /// <summary>The work profile with manifest.community set, or left out when null.</summary>
+        private static string WorkMetaFor(string community, string stamp)
+        {
+            var meta = JObject.Parse(WorkMeta(stamp));
+            if (community != null) ((JObject)meta["manifest"]!)["community"] = community;
+            return meta.ToString(Formatting.None);
+        }
+
+        [Theory]
+        [InlineData("valheim")]
+        [InlineData("VALHEIM")]
+        [InlineData("")]
+        [InlineData("   ")]
+        [InlineData(null)]
+        public async Task A_Valheim_profile_or_an_old_one_with_no_game_is_compared(string community)
+        {
+            Handler.Body = WorkMetaFor(community, Stamp1);
+            await Follow();
+
+            var check = (JObject)(await Check())["check"];
+
+            Assert.True(check.Value<bool>("ok"));
+            Assert.True(check.Value<bool>("due"));
+            Assert.Null(check.Value<string>("statusId"));
+            Assert.Contains(check["rows"]!, r => r.Value<string>("name") == "Azumatt-AzuCraftyBoxes");
+        }
+
+        [Theory]
+        [InlineData("atlyss")]
+        [InlineData("bonelab")]
+        public async Task A_profile_for_another_game_is_a_status_line_and_never_a_row(string community)
+        {
+            Handler.Body = WorkMetaFor(community, Stamp1);
+            await Follow();
+
+            var state = await Check();
+            var check = (JObject)state["check"];
+
+            Assert.False(check.Value<bool>("ok"));
+            Assert.False(check.Value<bool>("due"));
+            Assert.Equal("mods.gale.check.other_game", check.Value<string>("statusId"));
+            Assert.Equal(community, check.Value<string>("statusGame"));
+            Assert.Equal(0, check.Value<int>("addCount"));
+            Assert.Equal(0, check.Value<int>("updateCount"));
+            Assert.Empty(check["rows"]!);
+
+            // Waving away a refusal stores nothing: the row it never raised cannot be dismissed.
+            var dismiss = await Call("gale.dismiss", new { profile = Profile, seq = check.Value<long>("seq") });
+            Assert.False(dismiss.Value<bool>("ok"));
+            Assert.Null(Stored().GaleLastUpdatedAt);
+        }
+
+        [Fact]
+        public void The_other_game_sentence_is_in_the_catalog_with_its_slot()
+        {
+            var en = JObject.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "WebUI", "i18n", "en.json")));
+            var entry = en.Descendants().OfType<JProperty>().First(p => p.Name == "mods.gale.check.other_game").Value;
+            Assert.Equal("That profile is for {game}, not Valheim.", entry.Value<string>("lore"));
+        }
+
         [Fact]
         public async Task A_timeout_is_a_status_line_and_never_a_row()
         {
@@ -482,6 +544,210 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Null(stored.GaleLastUpdatedAt);
             Assert.Empty(stored.GaleUnticked);
             Assert.Equal(JTokenType.Null, set["state"]!["check"]!.Type);
+        }
+
+        // ------------------------------------------------------------------ BepInEx first (SPEC L)
+
+        /// <summary>The profile as the isolated run had it: the pack first, then one mod to add.</summary>
+        private static string PackMeta(string stamp) => Meta(stamp,
+            ("denikson-BepInExPack_Valheim", true, 5, 4, 2333),
+            ("Azumatt-AzuCraftyBoxes", true, 1, 8, 4),
+            ("ValheimModding-Jotunn", true, 2, 20, 1));
+
+        /// <summary>
+        /// A server with no BepInEx until the BepInEx write runs, and a record of the order the
+        /// two writes happened in. The write is a mock: nothing is downloaded or unpacked.
+        /// </summary>
+        private List<string> NoBepInExUntilWritten()
+        {
+            // The one write slot every BepInEx write takes, which the window's own constructor
+            // makes and an uninitialized window does not have.
+            typeof(BlendWindow).GetField("_bepInExWriteSlot", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(Window, new SemaphoreSlim(1, 1));
+            var order = new List<string>();
+            var there = false;
+            BepInEx.Setup(b => b.Status(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<BepInExProfileInstall>>()))
+                .Returns(() => new BepInExStatus { Installed = there });
+            BepInEx.Setup(b => b.InstallAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<BepInExProfileInstall>>(),
+                    It.IsAny<IProgress<BepInExProgress>>(), It.IsAny<CancellationToken>(), It.IsAny<BepInExWriteOptions>()))
+                .ReturnsAsync(() =>
+                {
+                    order.Add("bepinex");
+                    there = true;
+                    return new BepInExInstallResult { Installed = true, Version = "5.4.2333", Package = "denikson-BepInExPack_Valheim" };
+                });
+            ModUpdates.Setup(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()))
+                .ReturnsAsync((ThunderstoreModReference r, string _) =>
+                {
+                    order.Add(r.Owner + "-" + r.Name);
+                    return new ModInstallResult { Installed = true, Owner = r.Owner, Name = r.Name, Version = r.Version };
+                });
+            return order;
+        }
+
+        [Fact]
+        public async Task With_no_BepInEx_and_the_pack_in_the_profile_BepInEx_goes_in_before_the_first_mod()
+        {
+            var order = NoBepInExUntilWritten();
+            Handler.Body = PackMeta(Stamp1);
+            await Follow();
+
+            // What the dialog reads: BepInEx is missing and the profile carries the pack.
+            var check = (JObject)(await Check())["check"];
+            Assert.True(check["bepinex"]!.Value<bool>("missing"));
+            Assert.True(check["bepinex"]!.Value<bool>("inProfile"));
+            Assert.Equal("framework", check["rows"]!.First(r => r.Value<string>("name") == "denikson-BepInExPack_Valheim").Value<string>("kind"));
+
+            // The bug as the isolated run met it: the Mods hall's add alone stops on noBepInEx.
+            var bare = await Call("mods.addFromUrl", new { url = PinnedUrl, profile = Profile, requireStopped = true });
+            Assert.Equal("noBepInEx", bare.Value<string>("Reason"));
+            Assert.Empty(order);
+
+            // The dialog's walk: BepInEx first, then the mod.
+            var bep = await Call("gale.bepinex", new { profile = Profile });
+            Assert.True(bep.Value<bool>("ok"));
+            Assert.True(bep.Value<bool>("wrote"));
+            var a = await Call("mods.addFromUrl", new { url = PinnedUrl, profile = Profile, requireStopped = true });
+            Assert.True(a.Value<bool>("Installed"));
+            Assert.Equal(new[] { "bepinex", "Azumatt-AzuCraftyBoxes" }, order);
+            BepInEx.Verify(b => b.InstallAsync(It.IsAny<string>(), null, It.IsAny<IEnumerable<BepInExProfileInstall>>(),
+                It.IsAny<IProgress<BepInExProgress>>(), It.IsAny<CancellationToken>(), It.IsAny<BepInExWriteOptions>()), Times.Once);
+
+            // The approval answered the open question yes, the way the condition bar's Yes does.
+            var prefs = UserPrefs.LoadPreferences();
+            Assert.True(prefs.BepInExMaintenanceAsked);
+            Assert.True(prefs.BepInExMaintained);
+
+            // Once it is in, a second ask writes nothing.
+            var again = await Call("gale.bepinex", new { profile = Profile });
+            Assert.True(again.Value<bool>("ok"));
+            Assert.False(again.Value<bool>("wrote"));
+            Assert.Equal(new[] { "bepinex", "Azumatt-AzuCraftyBoxes" }, order);
+        }
+
+        [Fact]
+        public async Task A_No_the_host_gave_earlier_stands_and_the_approved_write_still_goes_in()
+        {
+            var order = NoBepInExUntilWritten();
+            ((IUserPreferencesProvider)UserPrefs).Mutate(prefs =>
+            {
+                prefs.BepInExMaintained = false;
+                prefs.BepInExMaintenanceAsked = true;
+                return true;
+            });
+            Handler.Body = PackMeta(Stamp1);
+            await Follow();
+            await Check();
+
+            var bep = await Call("gale.bepinex", new { profile = Profile });
+
+            Assert.True(bep.Value<bool>("wrote"));
+            Assert.Equal(new[] { "bepinex" }, order);
+            var prefs = UserPrefs.LoadPreferences();
+            Assert.True(prefs.BepInExMaintenanceAsked);
+            Assert.False(prefs.BepInExMaintained);
+        }
+
+        [Fact]
+        public async Task With_no_BepInEx_and_no_pack_in_the_profile_nothing_is_written()
+        {
+            var order = NoBepInExUntilWritten();
+            Handler.Body = WorkMeta(Stamp1);
+            await Follow();
+
+            var check = (JObject)(await Check())["check"];
+            Assert.True(check["bepinex"]!.Value<bool>("missing"));
+            Assert.False(check["bepinex"]!.Value<bool>("inProfile"));
+
+            var bep = await Call("gale.bepinex", new { profile = Profile });
+            Assert.False(bep.Value<bool>("ok"));
+            Assert.Equal("bepinexNotInProfile", bep.Value<string>("Reason"));
+            Assert.Empty(order);
+            Assert.False(UserPrefs.LoadPreferences().BepInExMaintenanceAsked);
+        }
+
+        [Fact]
+        public async Task The_BepInEx_write_refuses_a_running_server_and_another_realm()
+        {
+            var order = NoBepInExUntilWritten();
+            Handler.Body = PackMeta(Stamp1);
+            await Follow();
+            await Check();
+
+            Assert.Equal("realmChanged", (await Call("gale.bepinex", new { profile = "Some Other Realm" })).Value<string>("Reason"));
+            PlantRunning(Profile);
+            Assert.Equal("serverRunning", (await Call("gale.bepinex", new { profile = Profile })).Value<string>("Reason"));
+            Assert.Empty(order);
+        }
+
+        [Fact]
+        public async Task A_server_with_BepInEx_is_not_said_to_be_missing_it()
+        {
+            Handler.Body = PackMeta(Stamp1);
+            await Follow();
+
+            var check = (JObject)(await Check())["check"];
+            Assert.False(check["bepinex"]!.Value<bool>("missing"));
+            Assert.True(check["bepinex"]!.Value<bool>("inProfile"));
+        }
+
+        // ------------------------------------------------------------------ not available (SPEC M)
+
+        [Fact]
+        public async Task A_pinned_build_Thunderstore_no_longer_has_is_marked_and_stops_counting()
+        {
+            ModUpdates.Setup(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()))
+                .ReturnsAsync((ThunderstoreModReference r, string _) => new ModInstallResult
+                {
+                    Installed = false, Owner = r.Owner, Name = r.Name, Version = r.Version,
+                    Reason = ModInstallResult.NotAvailableReason, Error = "gone",
+                });
+            Handler.Body = WorkMeta(Stamp1);
+            await Follow();
+            var before = (JObject)(await Check())["check"];
+            Assert.Equal(1, before.Value<int>("addCount"));
+            Assert.True(before.Value<bool>("due"));
+
+            var a = await Call("mods.addFromUrl", new { url = PinnedUrl, profile = Profile, requireStopped = true });
+            Assert.False(a.Value<bool>("Installed"));
+            Assert.Equal("notAvailable", a.Value<string>("Reason"));
+            Assert.Equal("Azumatt-AzuCraftyBoxes", a["ErrorParams"]!.Value<string>("mod"));
+            Assert.Equal("1.8.4", a["ErrorParams"]!.Value<string>("version"));
+            Assert.Equal(new[] { "Azumatt-AzuCraftyBoxes@1.8.4" }, Stored().GaleNotAvailable);
+
+            // The next review: the row carries the mark, and it is no longer work.
+            var after = (JObject)(await Call("gale.get", new { profile = Profile }))["check"];
+            var row = after["rows"]!.First(r => r.Value<string>("name") == "Azumatt-AzuCraftyBoxes");
+            Assert.True(row.Value<bool>("notAvailable"));
+            Assert.Equal("add", row.Value<string>("kind"));
+            Assert.Equal(0, after.Value<int>("addCount"));
+            Assert.False(after.Value<bool>("due"));
+
+            // A plain paste of the same build says the same reason and marks nothing.
+            var pasted = await Call("mods.addFromUrl", new { url = PinnedUrl });
+            Assert.Equal("notAvailable", pasted.Value<string>("Reason"));
+
+            // A build that does go in later takes its mark off.
+            ModUpdates.Setup(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()))
+                .ReturnsAsync((ThunderstoreModReference r, string _) => new ModInstallResult { Installed = true, Owner = r.Owner, Name = r.Name, Version = r.Version });
+            await Call("mods.addFromUrl", new { url = PinnedUrl, profile = Profile, requireStopped = true });
+            Assert.Empty(Stored().GaleNotAvailable);
+        }
+
+        [Fact]
+        public async Task A_new_id_drops_the_not_available_marks()
+        {
+            Handler.Body = WorkMeta(Stamp1);
+            await Follow();
+            ((IUserPreferencesProvider)UserPrefs).Mutate(prefs =>
+            {
+                prefs.Servers.First(s => s.ProfileName == Profile).GaleNotAvailable = new List<string> { "Azumatt-AzuCraftyBoxes@1.8.4" };
+                return true;
+            });
+            Assert.Single(Stored().GaleNotAvailable);
+
+            await Call("gale.set", new { profile = Profile, id = "ZZ99yy" });
+            Assert.Empty(Stored().GaleNotAvailable);
         }
 
         // ------------------------------------------------------------------ plumbing

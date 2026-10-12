@@ -194,7 +194,7 @@ namespace ValheimBakaLoader.Tools
         /// server install, which is steamcmd's job alone.
         /// </summary>
         public string SteamCmdPath => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            AppDataRoot.LocalRoot,
             "ValheimBakaLoader", "steamcmd", ExeName);
 
         public async Task<string> EnsureInstalledAsync(CancellationToken ct)

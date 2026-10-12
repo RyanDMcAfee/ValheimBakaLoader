@@ -118,7 +118,7 @@ namespace ValheimBakaLoader.Tools
         /// drifting apart is exactly how an install escapes a refusal that names it.
         /// </summary>
         public static string FallbackInstancesRoot => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            AppDataRoot.LocalRoot,
             "BakaLoader", InstancesRootName);
 
         /// <summary>

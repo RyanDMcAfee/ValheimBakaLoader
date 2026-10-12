@@ -847,12 +847,37 @@ namespace ValheimBakaLoader.Tools
         /// not the switch moving, and an ordinary save must write nothing to the registry.
         /// </summary>
         public static StartupOutcome ApplyStartupSetting(bool userPreference, ILogger logger) =>
-            Entry.Apply(userPreference, Application.ProductName, LaunchCommand(), logger);
+            UnlessIsolated(AppDataRoot.DataOverrideActive, logger,
+                () => Entry.Apply(userPreference, Application.ProductName, LaunchCommand(), logger));
 
         /// <inheritdoc cref="StartupEntry.RepointIfMoved"/>
         public static StartupOutcome RepointMovedEntry(bool userPreference, ILogger logger) =>
-            Entry.RepointIfMoved(
-                userPreference, Application.ProductName, LaunchCommand(), logger);
+            UnlessIsolated(AppDataRoot.DataOverrideActive, logger,
+                () => Entry.RepointIfMoved(
+                    userPreference, Application.ProductName, LaunchCommand(), logger));
+
+        private static int IsolationLogged;
+
+        /// <summary>
+        /// A run whose data folder was moved with BAKALOADER_DATA_DIR is an isolated test
+        /// instance, and it must never register itself to start with Windows. Turning the
+        /// preference OFF is not enough: the off road deletes this account's Run entry, which
+        /// is the real install's entry, so an isolated run does not touch the Run keys at all.
+        /// The preference reads as off for it, and the log says so once per process.
+        /// </summary>
+        internal static StartupOutcome UnlessIsolated(
+            bool isolated, ILogger logger, Func<StartupOutcome> road)
+        {
+            if (!isolated) return road();
+            if (System.Threading.Interlocked.Exchange(ref IsolationLogged, 1) == 0)
+                logger?.Information(
+                    "Start with Windows is treated as off because {Variable} points this run at its own data folder",
+                    AppDataRoot.DataVariable);
+            return new StartupOutcome();
+        }
+
+        /// <summary>For a test: lets the once-per-process log line be asked for again.</summary>
+        internal static void ResetIsolationLog() => IsolationLogged = 0;
 
         /// <inheritdoc cref="StartupEntry.NotesFor"/>
         public static StartupNotes NotesFor(bool userPreference)

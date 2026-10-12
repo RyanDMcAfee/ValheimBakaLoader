@@ -164,6 +164,14 @@ namespace ValheimBakaLoader.Game
         public List<string> GaleUnticked { get; set; } = new();
 
         /// <summary>
+        /// Each pinned build the approval dialog tried and Thunderstore no longer has, as
+        /// "Namespace-Name@version". The dialog marks those rows "not available" on the next
+        /// review instead of offering them as plain adds; a new version in the profile is a new
+        /// entry, so it is offered again. Never null on a loaded profile.
+        /// </summary>
+        public List<string> GaleNotAvailable { get; set; } = new();
+
+        /// <summary>
         /// Puts the three Gale fields of <paramref name="stored"/> onto this profile. The
         /// settings form has no Gale fields: it fetches the profile, changes what it has boxes
         /// for, and sends the whole object back, so whatever Gale state it carries is a copy of
@@ -177,6 +185,7 @@ namespace ValheimBakaLoader.Game
             GaleProfileId = stored.GaleProfileId;
             GaleLastUpdatedAt = stored.GaleLastUpdatedAt;
             GaleUnticked = NormalizeUnticked(stored.GaleUnticked);
+            GaleNotAvailable = NormalizeUnticked(stored.GaleNotAvailable);
             return this;
         }
 
@@ -192,6 +201,7 @@ namespace ValheimBakaLoader.Game
         {
             GaleLastUpdatedAt = null;
             GaleUnticked = NormalizeUnticked(GaleUnticked);
+            GaleNotAvailable = NormalizeUnticked(GaleNotAvailable);
             return this;
         }
 
@@ -260,6 +270,7 @@ namespace ValheimBakaLoader.Game
                 GaleProfileId = StoredGaleProfileId(file.GaleProfileId),
                 GaleLastUpdatedAt = string.IsNullOrWhiteSpace(file.GaleLastUpdatedAt) ? defaults.GaleLastUpdatedAt : file.GaleLastUpdatedAt,
                 GaleUnticked = NormalizeUnticked(file.GaleUnticked),
+                GaleNotAvailable = NormalizeUnticked(file.GaleNotAvailable),
             };
         }
 
@@ -305,6 +316,7 @@ namespace ValheimBakaLoader.Game
             // An empty list is written as null, the same as the other two fields of a realm
             // that has never followed a profile, and null reads back as an empty list.
             GaleUnticked = NormalizeUnticked(GaleUnticked) is { Count: > 0 } kept ? kept : null,
+            GaleNotAvailable = NormalizeUnticked(GaleNotAvailable) is { Count: > 0 } gone ? gone : null,
         };
     }
 }

@@ -79,5 +79,6 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("galeProfileId")] public string GaleProfileId { get; set; }
         [JsonProperty("galeLastUpdatedAt")] public string GaleLastUpdatedAt { get; set; }
         [JsonProperty("galeUnticked")] public List<string> GaleUnticked { get; set; }
+        [JsonProperty("galeNotAvailable")] public List<string> GaleNotAvailable { get; set; }
     }
 }
