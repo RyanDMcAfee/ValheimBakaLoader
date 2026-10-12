@@ -1,4 +1,5 @@
-﻿using System;
+﻿using BakaLoaderSave;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -1961,7 +1962,7 @@ namespace ValheimBakaLoader.Game
         /// <para>
         /// The close request was always a graceful one, and Valheim saves on the way down. What
         /// was missing is any proof of it. So when RCON is on, a running server is asked to
-        /// <c>save</c> first and given a bounded wait (<see cref="StopSaveBound"/>) for the save
+        /// save first (Commander's <c>baka_save</c>, 1.9.1 or newer) and given a bounded wait (<see cref="StopSaveBound"/>) for the save
         /// line; the close request goes out when the line arrives or when the wait runs out,
         /// whichever is first, and a wait that ran out is logged with its reason. With RCON off
         /// the close request goes out at once, exactly as before. Either way the stop is watched:
@@ -2017,9 +2018,16 @@ namespace ValheimBakaLoader.Game
         private IValheimServerOptions StopOptions;
 
         /// <summary>
-        /// The save half of a stop: <c>save</c> over RCON, then the wait for the save line, all
-        /// of it inside one bound, then the close request. Every way out of the wait ends in the
-        /// close request, so a server that never answers is still stopped.
+        /// The save half of a stop: <c>baka_save</c> over RCON, then the wait for the save line,
+        /// all of it inside one bound, then the close request. Every way out of the wait ends in
+        /// the close request, so a server that never answers is still stopped.
+        /// <para>
+        /// Up to 1.2.12 this sent the game's own <c>save</c> console command, which Commander
+        /// could only forward to Console.TryRunCommand, and that throws a NullReferenceException
+        /// on a dedicated server: the save was never asked for. <c>baka_save</c> is Commander's
+        /// own verb (1.9.1) and makes the call the server's save timer makes, so it answers
+        /// "save: started" and the game's "World save (5/5) done" line follows.
+        /// </para>
         /// </summary>
         private async Task SaveThenCloseAsync(string key, int generation, TaskCompletionSource<bool> saved, IValheimServerOptions live)
         {
@@ -2029,7 +2037,7 @@ namespace ValheimBakaLoader.Game
             try
             {
                 var clock = Task.Delay(bound);
-                var asking = SendRconCoreAsync("save", quiet: true, allowStopping: true, live);
+                var asking = SendRconCoreAsync(SavePlan.Verb, quiet: true, allowStopping: true, live);
                 var first = await Task.WhenAny(asking, saved.Task, clock);
 
                 if (first == asking && asking.Result == null)
@@ -2041,15 +2049,18 @@ namespace ValheimBakaLoader.Game
                 }
                 else if (first == asking && SaveWasRefused(asking.Result))
                 {
-                    // Commander answered, but with a failure: there was no console to forward
-                    // the save to, or the console threw. No save line can follow that, so the
-                    // close request goes out now and the log carries the real reason rather
-                    // than a wait that ran out. A save line already printed still counts.
+                    // Commander answered, but with a refusal: it named why the world cannot be
+                    // saved right now, or the plugin is too old to know baka_save at all. No
+                    // save line can follow that, so the close request goes out now and the log
+                    // carries the real reason rather than a wait that ran out. A save line
+                    // already printed still counts.
                     if (!saved.Task.IsCompleted)
-                        missed = "the server refused the save command: " + asking.Result.Trim();
+                        missed = "the server refused the save command: " + SaveRefusalReason(asking.Result);
                 }
                 else if (first == asking)
                 {
+                    // "save: started" from Commander 1.9.1, or any other answer: wait for the
+                    // save line inside the same bound.
                     if (await Task.WhenAny(saved.Task, clock) != saved.Task)
                         missed = "no world save line arrived within " + (int)bound.TotalSeconds + " seconds";
                 }
@@ -2084,18 +2095,37 @@ namespace ValheimBakaLoader.Game
         }
 
         /// <summary>
-        /// Whether an RCON reply to <c>save</c> says the save never reached the console.
-        /// Commander answers an empty or "Forwarded to console" reply when it handed the command
-        /// on, and one of two failure lines when it could not: "Unknown command" when there was
-        /// no console to hand it to, "Error forwarding" when the console threw. A reply is not a
+        /// Whether an RCON reply to <c>baka_save</c> says no save was asked for. Commander 1.9.1
+        /// answers "save: started" when it started the save and "save: refused &lt;reason&gt;"
+        /// when it would not (BakaSavePlan.cs holds both words). A plugin older than 1.9.1 does
+        /// not know the verb and answers with one of its two fallback failure lines: "Unknown
+        /// command" when there was no console to hand it to, "Error forwarding" when the console
+        /// threw, which is what a dedicated server's console always does. A reply is not a
         /// success just because it is not null.
         /// </summary>
         internal static bool SaveWasRefused(string reply)
         {
             if (string.IsNullOrWhiteSpace(reply)) return false;
             var text = reply.TrimStart();
-            return text.StartsWith("Unknown command", StringComparison.OrdinalIgnoreCase)
+            return text.StartsWith(SavePlan.RefusedPrefix, StringComparison.OrdinalIgnoreCase)
+                || text.StartsWith("Unknown command", StringComparison.OrdinalIgnoreCase)
                 || text.StartsWith("Error forwarding", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// The reason a refused save goes into the warning with: Commander's own reason for a
+        /// "save: refused" reply, and for the older plugin's fallback lines the reply itself
+        /// plus what it means, because "Error forwarding" alone does not tell a host to update.
+        /// </summary>
+        internal static string SaveRefusalReason(string reply)
+        {
+            var text = (reply ?? "").Trim();
+            if (text.StartsWith(SavePlan.RefusedPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var reason = text.Substring(SavePlan.RefusedPrefix.Length).Trim();
+                return reason.Length == 0 ? "no reason given" : reason;
+            }
+            return text + " (the RCON plugin on the server does not know baka_save; BakaLoader Commander 1.9.1 or newer does)";
         }
 
         /// <summary>

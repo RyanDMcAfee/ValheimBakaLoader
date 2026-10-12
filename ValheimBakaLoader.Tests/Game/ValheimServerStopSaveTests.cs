@@ -1,3 +1,4 @@
+using BakaLoaderSave;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using System;
@@ -92,7 +93,7 @@ namespace ValheimBakaLoader.Tests.Game
             Server.Stop();
             Assert.Equal(ServerStatus.Stopping, Server.Status);
 
-            await WaitUntil(() => Rcon.Sent.Contains("save"));
+            await WaitUntil(() => Rcon.Sent.Contains(SavePlan.Verb));
 
             // Asked, and not yet answered: the close request has not gone out.
             await Task.Delay(200);
@@ -122,7 +123,7 @@ namespace ValheimBakaLoader.Tests.Game
             var clock = Stopwatch.StartNew();
             Server.Stop();
 
-            await WaitUntil(() => Rcon.Sent.Contains("save"));
+            await WaitUntil(() => Rcon.Sent.Contains(SavePlan.Verb));
             await WaitUntil(() => Processes.KillRequests.Count == 1);
             clock.Stop();
 
@@ -245,8 +246,13 @@ namespace ValheimBakaLoader.Tests.Game
         // ------------------------------------------------- a refused save is not a sent one
 
         [Theory(Timeout = 60000)]
+        [InlineData("save: refused the world did not load cleanly, so the game will not save it")]
+        [InlineData("save: refused starting the save failed: Object reference not set to an instance of an object")]
+        // A Commander older than 1.9.1 does not know baka_save and falls back to the console.
+        [InlineData("Error forwarding 'baka_save' to console: Object reference not set to an instance of an object")]
+        [InlineData("Unknown command: 'baka_save' (Commander natively supports: broadcast, playerlist)")]
+        // The 1.2.12 reply to the old "save" command, word for word from the live log.
         [InlineData("Error forwarding 'save' to console: Object reference not set to an instance of an object")]
-        [InlineData("Unknown command: 'save' (Commander natively supports: broadcast, playerlist)")]
         public async Task A_save_that_rcon_refused_sends_the_close_request_at_once(string reply)
         {
             // A long floor: a close request that waited for it would fail the timing below.
@@ -260,7 +266,8 @@ namespace ValheimBakaLoader.Tests.Game
             await WaitUntil(() => Processes.KillRequests.Count == 1, timeoutMs: 10000);
             clock.Stop();
 
-            Assert.Contains("save", Rcon.Sent);
+            Assert.Contains(SavePlan.Verb, Rcon.Sent);
+            Assert.DoesNotContain("save", Rcon.Sent);
             Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5),
                 "the close request waited " + clock.ElapsedMilliseconds + "ms for a save the server had refused");
             Assert.Equal(ServerStatus.Stopping, Server.Status);
@@ -278,6 +285,139 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.False(ValheimServer.SaveWasRefused("Forwarded to console: save"));
             Assert.True(ValheimServer.SaveWasRefused("Unknown command: 'save'"));
             Assert.True(ValheimServer.SaveWasRefused("  Error forwarding 'save' to console: boom"));
+
+            // Commander 1.9.1's own two answers, in the words BakaSavePlan.cs writes them.
+            Assert.False(ValheimServer.SaveWasRefused(SavePlan.StartedReply));
+            Assert.False(ValheimServer.SaveWasRefused("save: started"));
+            Assert.True(ValheimServer.SaveWasRefused(SavePlan.Refused("no world is loaded")));
+            Assert.True(ValheimServer.SaveWasRefused("save: refused the server is not ready (world still loading)"));
+            Assert.True(ValheimServer.SaveWasRefused(SavePlan.Failed("boom")));
+            Assert.True(ValheimServer.SaveWasRefused("Unknown command: 'baka_save'"));
+            Assert.True(ValheimServer.SaveWasRefused("Error forwarding 'baka_save' to console: boom"));
+            // Every refusal the plan can produce reads as refused on this side of the wire.
+            foreach (var state in AllSaveStates())
+            {
+                var refusal = SavePlan.Refusal(state);
+                if (refusal != null) Assert.True(ValheimServer.SaveWasRefused(refusal), refusal);
+            }
+        }
+
+        [Fact]
+        public void The_refusal_reason_names_why_and_an_old_plugin_is_named_as_one()
+        {
+            Assert.Equal("no world is loaded", ValheimServer.SaveRefusalReason("save: refused no world is loaded"));
+            Assert.Equal("no world is loaded", ValheimServer.SaveRefusalReason("  save: refused no world is loaded \r\n"));
+            Assert.Equal("no reason given", ValheimServer.SaveRefusalReason("save: refused"));
+
+            var old = ValheimServer.SaveRefusalReason("Error forwarding 'baka_save' to console: Object reference not set to an instance of an object");
+            Assert.StartsWith("Error forwarding 'baka_save' to console: Object reference", old);
+            Assert.Contains("Commander 1.9.1 or newer", old);
+        }
+
+        [Fact(Timeout = 60000)]
+        public async Task A_started_save_waits_for_the_save_line_before_the_close_request()
+        {
+            Rcon.Reply = "save: started";
+            var process = await RunningServer(rcon: true);
+
+            Server.Stop();
+            await WaitUntil(() => Rcon.Sent.Contains(SavePlan.Verb));
+
+            // Commander said the save started: the close request waits for the line.
+            await Task.Delay(300);
+            Assert.Empty(Processes.KillRequests);
+
+            Feed(SaveLine);
+            await WaitUntil(() => Processes.KillRequests.Count == 1);
+
+            RaiseExited(process);
+            Assert.Null(Server.UnsavedStop);
+        }
+
+        // ------------------------------------------------------- the Commander side (plan)
+
+        private static System.Collections.Generic.IEnumerable<SaveState> AllSaveStates()
+        {
+            for (var bits = 0; bits < 64; bits++)
+            {
+                yield return new SaveState
+                {
+                    ServerReady = (bits & 1) != 0,
+                    IsServer = (bits & 2) != 0,
+                    WorldLoaded = (bits & 4) != 0,
+                    WorldSaveBlocked = (bits & 8) != 0,
+                    SkipsSaving = (bits & 16) != 0,
+                    EnoughDiskSpace = (bits & 32) != 0,
+                };
+            }
+        }
+
+        [Fact]
+        public void The_plan_starts_a_save_only_when_every_condition_the_game_checks_holds()
+        {
+            var started = 0;
+            foreach (var state in AllSaveStates())
+            {
+                var refusal = SavePlan.Refusal(state);
+                var ok = state.ServerReady && state.IsServer && state.WorldLoaded
+                    && !state.WorldSaveBlocked && !state.SkipsSaving && state.EnoughDiskSpace;
+                if (ok) { Assert.Null(refusal); started++; }
+                else
+                {
+                    Assert.NotNull(refusal);
+                    Assert.StartsWith(SavePlan.RefusedPrefix + " ", refusal);
+                    Assert.True(refusal.Length > SavePlan.RefusedPrefix.Length + 1, "a refusal must carry a reason");
+                }
+            }
+            Assert.Equal(1, started);
+        }
+
+        [Theory]
+        [InlineData(false, true, true, false, false, true, "save: refused the server is not ready (world still loading)")]
+        [InlineData(true, false, true, false, false, true, "save: refused this game instance is not the server")]
+        [InlineData(true, true, false, false, false, true, "save: refused no world is loaded")]
+        [InlineData(true, true, true, true, false, true, "save: refused the game has blocked world saves for this session")]
+        [InlineData(true, true, true, false, true, true, "save: refused the world did not load cleanly, so the game will not save it")]
+        [InlineData(true, true, true, false, false, false, "save: refused there is not enough free disk space to save the world")]
+        public void Each_refusal_names_its_own_reason(bool ready, bool server, bool world, bool blocked, bool skips, bool disk, string expected)
+        {
+            var state = new SaveState
+            {
+                ServerReady = ready, IsServer = server, WorldLoaded = world,
+                WorldSaveBlocked = blocked, SkipsSaving = skips, EnoughDiskSpace = disk,
+            };
+            Assert.Equal(expected, SavePlan.Refusal(state));
+        }
+
+        [Fact]
+        public void The_verb_and_the_replies_are_the_words_the_plugin_and_the_app_share()
+        {
+            Assert.Equal("baka_save", SavePlan.Verb);
+            Assert.Equal("save: started", SavePlan.StartedReply);
+            Assert.Equal("save: refused", SavePlan.RefusedPrefix);
+            Assert.Equal("save: refused starting the save failed: boom", SavePlan.Failed(" boom "));
+            Assert.Equal("save: refused starting the save failed: no reason given", SavePlan.Failed(null));
+        }
+
+        [Fact]
+        public void Commander_serves_baka_save_natively_and_offers_it_in_the_fallback_line()
+        {
+            var root = AppContext.BaseDirectory;
+            while (root != null && !File.Exists(Path.Combine(root, "ValheimBakaLoader", "Resources", "Commander", "BakaLoaderCommander.cs")))
+                root = Path.GetDirectoryName(root);
+            Assert.NotNull(root);
+            var source = File.ReadAllText(Path.Combine(root, "ValheimBakaLoader", "Resources", "Commander", "BakaLoaderCommander.cs"));
+
+            Assert.Contains("case BakaLoaderSave.SavePlan.Verb: return CmdSave();", source);
+            Assert.Contains("net.Save(false, true, true);", source);
+            Assert.Contains("private const string PluginVersion = \"1.9.1\";", source);
+            // Offered by the fallback line. It sits before baka_cleanse because
+            // scripts/ui/cleanse_reply_selftest.js needs "baka_cleanse, baka_cleanse_status)" to
+            // close the list.
+            Assert.Contains("baka_cleardrops, baka_save, baka_cleanse, baka_cleanse_status)\";", source);
+
+            var build = File.ReadAllText(Path.Combine(root, "ValheimBakaLoader", "Resources", "build-plugins.ps1"));
+            Assert.Contains("\"BakaSavePlan.cs\"", build);
         }
 
         [Fact]
@@ -351,13 +491,13 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.True(condition(), "The condition never came true.");
         }
 
-        /// <summary>Answers every command at once, the way Commander answers <c>save</c>, and writes it down.</summary>
+        /// <summary>Answers every command at once, the way Commander answers <c>baka_save</c>, and writes it down.</summary>
         private sealed class SaveRconClient : IRconClient
         {
             public readonly ConcurrentQueue<string> Sent = new();
 
-            /// <summary>What every command is answered with. Commander's "handed it on" reply by default.</summary>
-            public string Reply = "";
+            /// <summary>What every command is answered with. Commander 1.9.1's answer to baka_save by default.</summary>
+            public string Reply = SavePlan.StartedReply;
 
             public bool IsConnected { get; private set; }
 

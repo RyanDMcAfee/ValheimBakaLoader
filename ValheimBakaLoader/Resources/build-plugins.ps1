@@ -68,6 +68,7 @@ $plugins = @(
     @{ Dir = "Commander";   Source = @("BakaLoaderCommander.cs",
                                        "BakaClearDropsPlan.cs",
                                        "BakaClearDropsSweep.cs",
+                                       "BakaSavePlan.cs",
                                        "..\KillAll\BakaKillAllPlan.cs",
                                        "..\KillAll\BakaKillAllSweep.cs",
                                        "..\KillAll\BakaCleansePlan.cs",

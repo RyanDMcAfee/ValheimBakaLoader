@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.9.0 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.9.1 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -49,6 +49,10 @@
 //                                      The rule is in BakaClearDropsPlan.cs and the walk in
 //                                      BakaClearDropsSweep.cs, both beside this file and
 //                                      served by this plugin alone.
+//   baka_save                        - save the world now, the call the server's own save
+//                                      timer makes. Answers "save: started" or "save:
+//                                      refused <reason>" (BakaSavePlan.cs); the game then
+//                                      prints its own "World save (5/5) done" line.
 //   anything else                    - forwarded to the in-game console if present
 //
 // CHEATED MARK (v1.6.0):
@@ -110,7 +114,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.9.0";
+        private const string PluginVersion = "1.9.1";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -489,6 +493,7 @@ namespace BakaLoaderCommander
                 case "baka_cleanse": return CmdCleanse();
                 case "baka_cleanse_status": return CleanseSweep.Status();
                 case "baka_cleardrops": return CmdClearDrops(tokens);
+                case BakaLoaderSave.SavePlan.Verb: return CmdSave();
                 default: return CmdFallback(text);
             }
         }
@@ -1173,6 +1178,57 @@ namespace BakaLoaderCommander
                 delegate(string line) { Log.LogInfo(line); });
         }
 
+        // ---- baka_save ---------------------------------------------------------
+        //
+        // The world save BakaLoader asks for before it closes a server. The game's own "save"
+        // console command cannot be used: forwarding it to Console.TryRunCommand throws a
+        // NullReferenceException on a dedicated server. So this makes the call the dedicated
+        // server's own save timer makes (Game.UpdateSaving), on the main thread like every other
+        // command here. waitForNextFrame puts the save itself on the next frame, so this answers
+        // at once even when a save is already under way, and the save prints the game's own
+        // "World save (5/5) done" line when it lands. ZNet.Save skips the save with only a log
+        // warning in some states, so those are checked first (BakaSavePlan.cs) and named in the
+        // reply instead of an answer of "started" for a save that would never run.
+
+        private static string CmdSave()
+        {
+            try
+            {
+                var net = ZNet.instance;
+                var state = new BakaLoaderSave.SaveState
+                {
+                    ServerReady = net != null && ZRoutedRpc.instance != null,
+                };
+                if (state.ServerReady)
+                {
+                    state.IsServer = net.IsServer();
+                    state.WorldLoaded = ZNet.World != null;
+                    state.WorldSaveBlocked = SaveSystem.HasSessionFlag(SaveSystemSessionFlags.DontSaveWorld);
+                    state.SkipsSaving = ZNet.m_loadError
+                        || (ZoneSystem.instance != null && ZoneSystem.instance.SkipSaving())
+                        || (DungeonDB.instance != null && DungeonDB.instance.SkipSaving());
+                    bool popupShown;
+                    state.EnoughDiskSpace = net.EnoughDiskSpaceAvailable(out popupShown);
+                }
+
+                var refusal = BakaLoaderSave.SavePlan.Refusal(state);
+                if (refusal != null)
+                {
+                    Log.LogWarning("baka_save: " + refusal);
+                    return refusal;
+                }
+
+                net.Save(false, true, true);
+                Log.LogInfo("baka_save: world save started");
+                return BakaLoaderSave.SavePlan.StartedReply;
+            }
+            catch (Exception ex)
+            {
+                Log.LogError("baka_save failed: " + ex);
+                return BakaLoaderSave.SavePlan.Failed(ex.Message);
+            }
+        }
+
         // ---- fallback: forward unknown commands to the in-game console --------
 
         private static string CmdFallback(string text)
@@ -1192,7 +1248,7 @@ namespace BakaLoaderCommander
                 return "Error forwarding '" + text + "' to console: " + ex.Message;
             }
 
-            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_cleardrops, baka_cleanse, baka_cleanse_status)";
+            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_cleardrops, baka_save, baka_cleanse, baka_cleanse_status)";
         }
     }
 }
