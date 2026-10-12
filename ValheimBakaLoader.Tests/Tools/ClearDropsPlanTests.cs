@@ -335,7 +335,7 @@ namespace ValheimBakaLoader.Tests.Tools
         public void StartedBusyAndStoppedAllOpenWithTheVerb()
         {
             Assert.Equal(
-                "cleardrops: started on 5120 ground items out of 184220 objects. The result line follows in the server log when the sweep finishes.",
+                "cleardrops: started on 5120 ground items out of 184220 objects. The result line follows in the server log when the sweep finishes, and baka_cleardrops_status says how far it has got.",
                 ClearDropsPlan.Started(5120, 184220));
             Assert.Equal(
                 "cleardrops: already running, 1 ground item still to go. Wait for its result line before starting another.",

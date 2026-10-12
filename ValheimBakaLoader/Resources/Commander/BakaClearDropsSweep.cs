@@ -95,6 +95,21 @@ namespace BakaLoaderCommander
         private static bool _indexProbed;
         private static FieldInfo _indexField;
 
+        /// <summary>
+        /// The last result line, kept until the next start so baka_cleardrops_status can answer
+        /// with it. The window asks the status verb after a "started" line, and "it finished,
+        /// here are the counts" has to still be there when it does.
+        /// </summary>
+        private static string _lastResult;
+
+        /// <summary>
+        /// Handed the result line of every sweep that ends, however it ended and whether it
+        /// finished inside its own answer or a frame later. Commander points it at Unity's log,
+        /// which a dedicated server prints on stdout, so the line reaches BakaLoader's Saga even
+        /// with BepInEx's console logging off. Null leaves the line where it always went.
+        /// </summary>
+        internal static Action<string> Ended = null;
+
         /// <summary>One sweep, from the moment its snapshot is taken to its result line.</summary>
         private sealed class Run
         {
@@ -103,6 +118,9 @@ namespace BakaLoaderCommander
 
             public int Index;
             public int Scanned;
+
+            /// <summary>How many ground items the snapshot held when it was taken.</summary>
+            public int Total;
 
             public int Removed;
             public int KeptGear;
@@ -180,12 +198,17 @@ namespace BakaLoaderCommander
                     if (!collected) Snapshot.Clear();
                 }
 
+                run.Total = Snapshot.Count;
                 _running = run;
+                _lastResult = null;
 
                 // The first slice runs here, so a world small enough to finish inside it answers
                 // with its whole result line rather than a promise.
                 var finished = Advance(run);
-                return finished ?? ClearDropsPlan.Started(Snapshot.Count, run.Scanned);
+                if (finished == null) return ClearDropsPlan.Started(run.Total, run.Scanned);
+
+                Finish(finished);
+                return finished;
             }
             catch (Exception ex)
             {
@@ -206,7 +229,10 @@ namespace BakaLoaderCommander
             var report = run.Report;
 
             var reply = Advance(run);
-            if (reply == null || report == null) return;
+            if (reply == null) return;
+
+            Finish(reply);
+            if (report == null) return;
 
             try
             {
@@ -217,6 +243,33 @@ namespace BakaLoaderCommander
                 // The sweep already happened. Losing the line that says so must not also throw
                 // out of Update(), where Unity would log it on every frame afterwards.
             }
+        }
+
+        /// <summary>
+        /// What baka_cleardrops_status answers: how far a running sweep has got, the result of
+        /// the last one (kept until the next start), or that nothing has run. Commander answers
+        /// it on the main thread like every other command; it reads fields and touches nothing.
+        /// </summary>
+        internal static string Status()
+        {
+            var run = _running;
+            if (run != null) return ClearDropsPlan.StatusRunning(run.Index, run.Total, run.Removed);
+
+            var last = _lastResult;
+            return string.IsNullOrEmpty(last) ? ClearDropsPlan.StatusIdle() : last;
+        }
+
+        /// <summary>
+        /// Keeps a result line for the status verb and hands it to <see cref="Ended"/>. Never
+        /// throws: it runs inside Update(), where a throw is logged on every frame afterwards.
+        /// </summary>
+        private static void Finish(string line)
+        {
+            _lastResult = line;
+            var ended = Ended;
+            if (ended == null || string.IsNullOrEmpty(line)) return;
+            try { ended(line); }
+            catch { }
         }
 
         /// <summary>

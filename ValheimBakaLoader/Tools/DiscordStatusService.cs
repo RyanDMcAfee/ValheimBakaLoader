@@ -157,12 +157,36 @@ namespace ValheimBakaLoader.Tools
                 using var client = HttpClientProvider.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(15);
 
-                // Edit the existing post in place when we have one...
+                // Discord fixes a webhook post's name and picture when the post is made, and an
+                // edit carries neither, so a post signed differently from the look the host has
+                // chosen now could only ever keep the old one. That post is taken down and made
+                // again, signed as it should be; one that cannot be taken down is left alone and
+                // edited as before, because a second post beside it is the one thing this
+                // service must never do.
                 var messageId = prefs.DiscordStatusMessageId;
+                var signature = DiscordHeraldLook.SignatureFor(prefs);
+                if (!string.IsNullOrWhiteSpace(messageId)
+                    && !string.Equals(prefs.DiscordStatusMessageSignature, signature, StringComparison.Ordinal))
+                {
+                    var deleteUrl = $"{webhookUrl}/messages/{messageId}{threadQs}";
+                    using var deleteResponse = await client.DeleteAsync(deleteUrl);
+                    if (deleteResponse.IsSuccessStatusCode || deleteResponse.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        Logger.Information("Discord status post signed with an older name or picture; making it again.");
+                        SaveMessageId(null, null);
+                        messageId = null;
+                    }
+                    else
+                    {
+                        Logger.Warning("Discord status post could not be taken down to change its name or picture: {status}", deleteResponse.StatusCode);
+                    }
+                }
+
+                // Edit the existing post in place when we have one...
                 if (!string.IsNullOrWhiteSpace(messageId))
                 {
                     var editUrl = $"{webhookUrl}/messages/{messageId}{threadQs}";
-                    using var editContent = new StringContent(payload, Encoding.UTF8, "application/json");
+                    using var editContent = new StringContent(ForEdit(payload), Encoding.UTF8, "application/json");
                     using var editResponse = await client.PatchAsync(editUrl, editContent);
 
                     if (editResponse.IsSuccessStatusCode)
@@ -176,7 +200,7 @@ namespace ValheimBakaLoader.Tools
                     if (editResponse.StatusCode == HttpStatusCode.NotFound)
                     {
                         Logger.Information("Discord status post no longer exists; creating a new one.");
-                        SaveMessageId(null);
+                        SaveMessageId(null, null);
                     }
                     else
                     {
@@ -204,7 +228,7 @@ namespace ValheimBakaLoader.Tools
                 if (string.IsNullOrWhiteSpace(newId))
                     return new DiscordStatusResult { Error = "Discord did not return the new post's id." };
 
-                SaveMessageId(newId);
+                SaveMessageId(newId, signature);
                 LastEditUtc = DateTime.UtcNow;
                 return new DiscordStatusResult { Ok = true, Detail = "created" };
             }
@@ -275,7 +299,7 @@ namespace ValheimBakaLoader.Tools
                     }
                 }
 
-                SaveMessageId(null);
+                SaveMessageId(null, null);
                 return new DiscordStatusResult { Ok = true, Detail = "removed" };
             }
             finally
@@ -284,20 +308,37 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        private void SaveMessageId(string id)
+        private void SaveMessageId(string id, string signature)
         {
             // This runs on the publish timer's thread while the server's own thread can be
             // recording a launched build into the same document. Both write the WHOLE of
             // userprefs.json, so the load and the write belong under the one gate: without it the
             // later of the two put the other's change back the way it was, and a profile that lost
             // its launch history got asked about a build change that had already happened.
-            UserPrefsProvider.Mutate(prefs => prefs.DiscordStatusMessageId = id);
+            UserPrefsProvider.Mutate(prefs =>
+            {
+                prefs.DiscordStatusMessageId = id;
+                prefs.DiscordStatusMessageSignature = signature;
+            });
         }
 
         private static string BuildThreadQuery(UserPreferences prefs)
         {
             var threadId = prefs?.DiscordWebhookThreadId;
             return string.IsNullOrWhiteSpace(threadId) ? "" : $"?thread_id={Uri.EscapeDataString(threadId.Trim())}";
+        }
+
+        /// <summary>
+        /// The same post for an edit. Discord's edit takes neither a name nor a picture (both are
+        /// fixed when the post is made, which is why a change to either makes the post again),
+        /// so they are left out of the edit rather than sent to be ignored.
+        /// </summary>
+        internal static string ForEdit(string payload)
+        {
+            var o = JObject.Parse(payload);
+            o.Remove("username");
+            o.Remove("avatar_url");
+            return o.ToString(Formatting.None);
         }
 
         private static long ToUnix(DateTime utc) => new DateTimeOffset(utc, TimeSpan.Zero).ToUnixTimeSeconds();
@@ -395,29 +436,36 @@ namespace ValheimBakaLoader.Tools
                 });
             }
 
-            var payload = new
+            // The embed and the post around it, built as objects rather than as one anonymous
+            // shape, because what the host chose for the look decides which keys are there at
+            // all: a blank status line is no description, a blank name is no username, and the
+            // switch off is no author line. A key sent empty is not the same as a key not sent.
+            var serverTitle = string.IsNullOrWhiteSpace(s.ServerName)
+                ? HostCatalog.T("host.status.title")
+                : s.ServerName;
+            var embed = new JObject
             {
-                embeds = new[]
-                {
-                    new
-                    {
-                        title = string.IsNullOrWhiteSpace(s.ServerName)
-                            ? HostCatalog.T("host.status.title")
-                            : s.ServerName,
-                        color,
-                        fields = fields.ToArray(),
-                        timestamp = DateTime.UtcNow.ToString("o"),
-                        footer = new
-                        {
-                            text = HostCatalog.T("host.status.footer", ("version", s.AppVersion)),
-                        },
-                    }
-                },
-                // An empty mention allowlist so nothing in a server name can ever ping anyone.
-                allowed_mentions = new { parse = Array.Empty<string>() },
+                ["title"] = DiscordHeraldLook.TitleFor(prefs, serverTitle),
+            };
+            var statusLine = DiscordHeraldLook.StatusLineFor(prefs);
+            if (statusLine != null) embed["description"] = statusLine;
+            embed["color"] = color;
+            embed["fields"] = JArray.FromObject(fields);
+            embed["timestamp"] = DateTime.UtcNow.ToString("o");
+            embed["footer"] = new JObject
+            {
+                ["text"] = HostCatalog.T("host.status.footer", ("version", s.AppVersion)),
             };
 
-            return JsonConvert.SerializeObject(payload);
+            var payload = new JObject
+            {
+                ["embeds"] = new JArray(embed),
+                // An empty mention allowlist so nothing in a server name can ever ping anyone.
+                ["allowed_mentions"] = new JObject { ["parse"] = new JArray() },
+            };
+            DiscordHeraldLook.Sign(payload, embed, prefs);
+
+            return payload.ToString(Formatting.None);
         }
 
         private static async Task<string> SafeReadAsync(HttpResponseMessage response)

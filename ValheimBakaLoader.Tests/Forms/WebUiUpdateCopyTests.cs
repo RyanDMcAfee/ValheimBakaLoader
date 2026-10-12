@@ -134,7 +134,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // disk with nothing left to say and a disk that has not changed. The row never goes
             // away on its own, so it owes the host a press that asks now, and a press that
             // redraws the identical row owes them a word for what it found.
-            new object[] { "cond.", 48 },
+            // 51 with the three for a followed Gale profile that moved: the row's title, its
+            // counts, and Review.
+            new object[] { "cond.", 51 },
         };
 
         [Theory]
@@ -337,7 +339,16 @@ namespace ValheimBakaLoader.Tests.Forms
             // no Explorer to open.
             // 230 with the one the Refresh press in the Mods head says in the browser preview,
             // where there is no plugins folder to read.
-            Assert.Equal(230, marked.Count);
+            // 234 with the four a followed Gale profile says: Check now in the browser preview,
+            // a walk that put every ticked mod in, one that put some in, and nothing ticked.
+            // The two reasons a walk stops part way carry no mark of their own: they are also
+            // the failed row's words, and the toast that prints them leads with its own rune.
+            // 239 with the five 1.2.14's sweep results added: the ground sweep's toast that
+            // leads with the kept-near count when that is the larger one, and the four endings
+            // of the page's wait on a started sweep (still walking, still walking at ten
+            // minutes, nothing running because the server restarted, and the server no longer
+            // answering).
+            Assert.Equal(239, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the
@@ -382,7 +393,7 @@ namespace ValheimBakaLoader.Tests.Forms
             var source = AppJs();
             foreach (var (id, times) in new[]
             {
-                ("guard.btn.not_now", 3),          // both guard button sets, and the bar
+                ("guard.btn.not_now", 4),          // both guard button sets, the bar, and the Gale dialog
                 ("guard.btn.open_steam", 2),       // the modal's link and the bar's button
                 ("guard.btn.backup_and_start", 2),
                 ("guard.btn.start_anyway", 2),

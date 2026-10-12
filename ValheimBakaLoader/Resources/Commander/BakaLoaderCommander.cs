@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.9.1 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.9.2 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -49,6 +49,12 @@
 //                                      The rule is in BakaClearDropsPlan.cs and the walk in
 //                                      BakaClearDropsSweep.cs, both beside this file and
 //                                      served by this plugin alone.
+//   baka_killall_status, baka_cleardrops_status, baka_cleanse_status
+//                                    - how far the sliced sweep of that name has got, in one
+//                                      shape for all three: "<verb>: running: scanned X of Z,
+//                                      removed N so far", or the last result line once it is
+//                                      done (kept until the next start). The window asks it
+//                                      every two seconds after a "started" answer (1.9.2).
 //   baka_save                        - save the world now, the call the server's own save
 //                                      timer makes. Answers "save: started" or "save:
 //                                      refused <reason>" (BakaSavePlan.cs); the game then
@@ -84,6 +90,13 @@
 // RCON plugin that forwards to it, so in the COEXISTENCE case below, where AviiNL-RCON won
 // the port and this plugin is dormant, the Spawn Helper's entry is the one in force.
 //
+// SWEEP RESULTS ON STDOUT (v1.9.2):
+// The result line of every sliced sweep is also written through UnityEngine.Debug.Log, tagged
+// "[BakaLoader Commander] <verb>:" (BakaSweepEcho.cs). The BepInEx log was the only place it
+// went before, and BepInEx ships with console logging off, so on a world big enough to answer
+// "started" the host never heard how it ended. A dedicated server prints Unity's log on its
+// stdout, which BakaLoader reads, and its log reader turns the tagged line into an event.
+//
 // All game work is dispatched to the Unity main thread via a queue drained in
 // Update() - Object.Instantiate()/game API calls from the socket thread crash
 // headless servers ("Graphics device is null").
@@ -102,6 +115,7 @@ using System.Text;
 using System.Threading;
 using BakaLoaderKillAll;
 using BakaLoaderSpawn;
+using BakaLoaderSweepEcho;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -114,7 +128,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.9.1";
+        private const string PluginVersion = "1.9.2";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -188,6 +202,13 @@ namespace BakaLoaderCommander
                 SpawnMark.ConfigDefault,
                 SpawnMark.ConfigDescription);
 
+            // Every sweep's result line goes to stdout as well as to the BepInEx log. Set before
+            // the disabled-listener return: the hooks cost nothing, and a sweep only ever starts
+            // from a command this plugin answered.
+            KillAllSweep.Ended = line => EchoResult("killall", line);
+            CleanseSweep.Ended = line => EchoResult("cleanse", line);
+            ClearDropsSweep.Ended = line => EchoResult("cleardrops", line);
+
             if (!CfgEnabled.Value)
             {
                 Log.LogInfo("BakaLoader Commander loaded but disabled by config.");
@@ -200,6 +221,18 @@ namespace BakaLoaderCommander
         private void OnDestroy()
         {
             StopListener();
+        }
+
+        /// <summary>
+        /// A sweep's result line, written through Unity's own log so the server's stdout carries
+        /// it. BakaLoader reads stdout and not the BepInEx log, and BepInEx's console logging is
+        /// off by default, so without this the result of a long sweep reached nobody. Never
+        /// throws: it is called from inside Update().
+        /// </summary>
+        private static void EchoResult(string verb, string line)
+        {
+            try { UnityEngine.Debug.Log(SweepEcho.Line(verb, line)); }
+            catch { }
         }
 
         private void StartListener()
@@ -490,9 +523,11 @@ namespace BakaLoaderCommander
                 case "kick": return CmdKick(text);
                 case "baka_spawn": return CmdSpawn(tokens);
                 case "baka_killall": return CmdKillAll(tokens);
+                case KillAllPlan.StatusVerb: return KillAllSweep.Status();
                 case "baka_cleanse": return CmdCleanse();
                 case "baka_cleanse_status": return CleanseSweep.Status();
                 case "baka_cleardrops": return CmdClearDrops(tokens);
+                case BakaLoaderClearDrops.ClearDropsPlan.StatusVerb: return ClearDropsSweep.Status();
                 case BakaLoaderSave.SavePlan.Verb: return CmdSave();
                 default: return CmdFallback(text);
             }
@@ -1248,7 +1283,7 @@ namespace BakaLoaderCommander
                 return "Error forwarding '" + text + "' to console: " + ex.Message;
             }
 
-            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_cleardrops, baka_save, baka_cleanse, baka_cleanse_status)";
+            return "Unknown command: '" + text + "' (Commander natively supports: broadcast, playerlist, dmg, tp, kick, baka_spawn, baka_killall, baka_killall_status, baka_cleardrops, baka_cleardrops_status, baka_save, baka_cleanse, baka_cleanse_status)";
         }
     }
 }

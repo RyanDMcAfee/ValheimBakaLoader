@@ -139,6 +139,82 @@ namespace ValheimBakaLoader.Game
         /// <summary>The mods this server was last seen running, for restore/export.</summary>
         public List<ModManifestEntry> ModManifest { get; set; }
 
+        // -- Following a Gale profile --
+
+        /// <summary>
+        /// The Gale sync profile this realm follows, as the host pasted it: a base64 UUID or a
+        /// six character code. Blank means off, and off means Gale is never contacted for this
+        /// realm. A stored value that fails the shape check reads as blank, so a hand edit
+        /// cannot send something odd to the service.
+        /// </summary>
+        public string GaleProfileId { get; set; }
+
+        /// <summary>
+        /// The profile's updatedAt the host last approved or dismissed, exactly as the service
+        /// wrote it. The condition bar's row comes back only when the profile's updatedAt is
+        /// different from this. Null until the first approval or dismissal.
+        /// </summary>
+        public string GaleLastUpdatedAt { get; set; }
+
+        /// <summary>
+        /// The "Namespace-Name" of every mod the host unticked in the approval dialog. They
+        /// stay unticked through later changes to the profile until the host ticks them again.
+        /// Never null on a loaded profile.
+        /// </summary>
+        public List<string> GaleUnticked { get; set; } = new();
+
+        /// <summary>
+        /// Puts the three Gale fields of <paramref name="stored"/> onto this profile. The
+        /// settings form has no Gale fields: it fetches the profile, changes what it has boxes
+        /// for, and sends the whole object back, so whatever Gale state it carries is a copy of
+        /// an older read. An approval that landed between that read and the save would be
+        /// undone by it, and the updatedAt the page hands back has been through a JSON date
+        /// parse on the way, which does not give the service's text back. What is on disk wins.
+        /// </summary>
+        public ServerPreferences KeepGaleFollowFrom(ServerPreferences stored)
+        {
+            if (stored == null) return this;
+            GaleProfileId = stored.GaleProfileId;
+            GaleLastUpdatedAt = stored.GaleLastUpdatedAt;
+            GaleUnticked = NormalizeUnticked(stored.GaleUnticked);
+            return this;
+        }
+
+        /// <summary>
+        /// The same guard for a profile with nothing on disk to take the Gale fields from (a
+        /// first save under a new name, or a stored file that would not read). The id and the
+        /// unticks are kept as sent, but the stamp is dropped: it has been through the page's
+        /// date parse and is no longer the service's text, so keeping it would match nothing
+        /// and could bring back a row the host had dismissed. Dropped, the worst it does is let
+        /// the row show once.
+        /// </summary>
+        public ServerPreferences KeepGaleFollowWithoutStore()
+        {
+            GaleLastUpdatedAt = null;
+            GaleUnticked = NormalizeUnticked(GaleUnticked);
+            return this;
+        }
+
+        /// <summary>The unticked list as it is kept: trimmed, no blanks, each name once whatever its case.</summary>
+        public static List<string> NormalizeUnticked(IEnumerable<string> names)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var kept = new List<string>();
+            foreach (var name in names ?? Array.Empty<string>())
+            {
+                var n = name?.Trim();
+                if (string.IsNullOrEmpty(n) || !seen.Add(n)) continue;
+                kept.Add(n);
+            }
+            return kept;
+        }
+
+        private static string StoredGaleProfileId(string stored)
+        {
+            var check = Tools.GaleProfileId.Check(stored);
+            return check.Ok ? check.Id : null;
+        }
+
         public static ServerPreferences FromFile(ServerPreferencesFile file)
         {
             var defaults = new ServerPreferences();
@@ -181,6 +257,9 @@ namespace ValheimBakaLoader.Game
                 Archived = file.Archived ?? defaults.Archived,
                 IsolatedInstall = file.IsolatedInstall ?? defaults.IsolatedInstall,
                 ModManifest = file.ModManifest ?? defaults.ModManifest,
+                GaleProfileId = StoredGaleProfileId(file.GaleProfileId),
+                GaleLastUpdatedAt = string.IsNullOrWhiteSpace(file.GaleLastUpdatedAt) ? defaults.GaleLastUpdatedAt : file.GaleLastUpdatedAt,
+                GaleUnticked = NormalizeUnticked(file.GaleUnticked),
             };
         }
 
@@ -221,6 +300,11 @@ namespace ValheimBakaLoader.Game
             Archived = Archived,
             IsolatedInstall = IsolatedInstall,
             ModManifest = ModManifest,
+            GaleProfileId = StoredGaleProfileId(GaleProfileId),
+            GaleLastUpdatedAt = string.IsNullOrWhiteSpace(GaleLastUpdatedAt) ? null : GaleLastUpdatedAt,
+            // An empty list is written as null, the same as the other two fields of a realm
+            // that has never followed a profile, and null reads back as an empty list.
+            GaleUnticked = NormalizeUnticked(GaleUnticked) is { Count: > 0 } kept ? kept : null,
         };
     }
 }

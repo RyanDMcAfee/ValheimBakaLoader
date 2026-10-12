@@ -73,5 +73,11 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("archived")] public bool? Archived { get; set; }
         [JsonProperty("isolatedInstall")] public bool? IsolatedInstall { get; set; }
         [JsonProperty("modManifest")] public List<ModManifestEntry> ModManifest { get; set; }
+
+        // -- Following a Gale profile --
+
+        [JsonProperty("galeProfileId")] public string GaleProfileId { get; set; }
+        [JsonProperty("galeLastUpdatedAt")] public string GaleLastUpdatedAt { get; set; }
+        [JsonProperty("galeUnticked")] public List<string> GaleUnticked { get; set; }
     }
 }

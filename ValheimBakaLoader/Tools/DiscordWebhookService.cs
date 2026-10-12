@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Net.Http;
 using System.Text;
@@ -159,6 +160,27 @@ namespace ValheimBakaLoader.Tools
                 0x8C6D3F); // Bronze
         }
 
+        /// <summary>
+        /// One event post, signed with the Herald's look: the host's name and picture, and the
+        /// BakaLoader line when the switch is on. The title and the status line belong to the
+        /// status post; an event post keeps the title that says what happened, because a channel
+        /// of posts all headed with the same custom title would say nothing.
+        /// </summary>
+        internal static string BuildEventPayload(string title, string description, int color, UserPreferences prefs)
+        {
+            var embed = new JObject
+            {
+                ["title"] = title,
+                ["description"] = description,
+                ["color"] = color,
+                ["timestamp"] = DateTime.UtcNow.ToString("o"),
+                ["footer"] = new JObject { ["text"] = "ValheimBakaLoader" },
+            };
+            var payload = new JObject { ["embeds"] = new JArray(embed) };
+            DiscordHeraldLook.Sign(payload, embed, prefs);
+            return payload.ToString(Formatting.None);
+        }
+
         private void SendEmbed(string title, string description, int color)
         {
             var prefs = UserPrefsProvider.LoadPreferences();
@@ -172,20 +194,7 @@ namespace ValheimBakaLoader.Tools
                 webhookUrl = $"{webhookUrl}{separator}thread_id={threadId}";
             }
 
-            var payload = new
-            {
-                embeds = new[]
-                {
-                    new
-                    {
-                        title,
-                        description,
-                        color,
-                        timestamp = DateTime.UtcNow.ToString("o"),
-                        footer = new { text = "ValheimBakaLoader" }
-                    }
-                }
-            };
+            var json = BuildEventPayload(title, description, color, prefs);
 
             Task.Run(async () =>
             {
@@ -197,7 +206,6 @@ namespace ValheimBakaLoader.Tools
                     var budget = PostBudget.Copy();
                     BoundedDownload.Unbounded(client);
                     using var deadline = BoundedDownload.Deadline(budget.TotalTimeout, CancellationToken.None);
-                    var json = JsonConvert.SerializeObject(payload);
                     var content = new StringContent(json, Encoding.UTF8, "application/json");
                     var response = await client.PostAsync(webhookUrl, content, deadline.Token);
 

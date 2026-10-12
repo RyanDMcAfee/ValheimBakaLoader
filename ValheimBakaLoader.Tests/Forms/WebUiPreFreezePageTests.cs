@@ -474,9 +474,11 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // The rule, in the suite as well as in the gate: the second argument to
             // sendConsole is what to say about the reply, and it is a function.
-            Assert.Contains("async function sendConsole(cmd,read){", js);
+            // The third argument (1.2.14) is the status verb to follow when the sweep answers
+            // "started"; the reply still goes through the reader first.
+            Assert.Contains("async function sendConsole(cmd,read,follow){", js);
             Assert.Contains("if(typeof read===\"function\"){", js);
-            Assert.Contains("sendConsole(built.cmd,reply=>killAllToast(killAllReply(reply)));", js);
+            Assert.Contains("sendConsole(built.cmd,reply=>killAllToast(killAllReply(reply)),SWEEP_FOLLOW.killall);", js);
             // The world save reads its reply for the same reason: a modded server answers
             // an unknown verb on the same channel it answers a real one.
             Assert.Contains("sendConsole(\"save\",reply=>consoleRefused(reply)", js);

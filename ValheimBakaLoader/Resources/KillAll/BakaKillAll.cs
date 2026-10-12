@@ -1,4 +1,4 @@
-// BakaLoader KillAll v1.8.1 - compiled against SERVER assembly_valheim
+// BakaLoader KillAll v1.8.2 - compiled against SERVER assembly_valheim
 //
 // Registers "baka_killall" as an in-game console command, so a host standing at the
 // server's own console window can clear hostiles without going anywhere near RCON.
@@ -26,6 +26,10 @@
 // long as it takes, so the server stops ticking; baka_cleanse now answers "Cleanse started: N
 // objects to check", Update() walks the rest a few milliseconds a frame, and
 // baka_cleanse_status says how far it has got.
+//
+// From 1.8.2 that status line has the shape all three sliced sweeps share with Commander
+// 1.9.2: "cleanse: running: scanned X of Z, removed N so far". The sweeps are the same two
+// files Commander compiles, so the shape changed in both plugins at once.
 using System;
 using System.Collections.Concurrent;
 using BepInEx;
@@ -36,7 +40,7 @@ namespace BakaLoaderKillAll
     [BepInPlugin("com.baka.killall", "BakaLoader KillAll", PluginVersion)]
     public class KillAllPlugin : BaseUnityPlugin
     {
-        private const string PluginVersion = "1.8.1";
+        private const string PluginVersion = "1.8.2";
 
         private static ManualLogSource Log;
 

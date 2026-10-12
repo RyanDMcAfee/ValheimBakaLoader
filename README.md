@@ -69,10 +69,13 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.13
+## What is new in 1.2.14
 
-- **The self update is the app's own work.** No script writes files beside the launcher any more: the app unpacks the release, checks it, and a second copy of itself under the Microsoft-signed dotnet host swaps the files and starts it again, with a small window showing the steps and the Saga saying what happened. [Updating BakaLoader](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Updating-BakaLoader)
-- **Everything 1.2.12 brought** is in here too: BakaLoader.cmd, the launcher-less self update and Start with Windows, and the Defender scan gate. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **A server can follow a Gale profile.** Paste a synced profile's id once in the Mods screen; when the profile changes, a row names what is new, you review the list, untick what you do not want, and the server installs the rest at the profile's versions. Nothing is ever removed. [Gale profiles](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Gale-profiles)
+- **The Herald post has a face.** A display name, an avatar, a title, a status line, and a link to the BakaLoader page. [Discord (Herald)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-(Herald))
+- **Long sweeps tell you how they ended**, and the ground-items radius says what it keeps. [Dashboard (Hearth)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-(Hearth))
+- **The spawner finds the exact name first.** [Players (Vikings)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-(Vikings))
+- **Everything 1.2.13 brought** is in here too: the app's own updater and the save before every stop. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 

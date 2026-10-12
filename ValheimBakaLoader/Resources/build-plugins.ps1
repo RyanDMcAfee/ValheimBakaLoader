@@ -69,6 +69,7 @@ $plugins = @(
                                        "BakaClearDropsPlan.cs",
                                        "BakaClearDropsSweep.cs",
                                        "BakaSavePlan.cs",
+                                       "BakaSweepEcho.cs",
                                        "..\KillAll\BakaKillAllPlan.cs",
                                        "..\KillAll\BakaKillAllSweep.cs",
                                        "..\KillAll\BakaCleansePlan.cs",

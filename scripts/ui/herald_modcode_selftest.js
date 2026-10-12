@@ -49,6 +49,7 @@ const APP = fs.readFileSync(path.join(WEB, "app.js"), "utf8");
 const HTML = fs.readFileSync(path.join(WEB, "index.html"), "utf8");
 const KEYS = JSON.parse(fs.readFileSync(path.join(WEB, "i18n", "en.json"), "utf8")).keys || {};
 const CODES = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Game", "ModProfileCodes.cs"), "utf8");
+const GALE_ID = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Tools", "GaleProfileId.cs"), "utf8");
 const SERVICE = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Tools", "DiscordStatusService.cs"), "utf8");
 
 let passed = 0;
@@ -308,7 +309,17 @@ function choose(h, kind) {
     const ctx = vm.createContext({ $: () => null, S: {}, T, Native: {}, FAIL, window: {}, heraldSave: () => null });
     vm.runInContext(block() + "\nthis.RE=HERALD_MODCODE_RE;", ctx);
     assert.strictEqual(ctx.RE.thunderstore.source, cs("ThunderstorePattern"));
-    assert.strictEqual(ctx.RE.gale.source, cs("GalePattern"));
+    /* A Gale code is the id the Mods hall follows a Gale profile by, so the host side checks it
+       with GaleProfileId and the page's copy is that file's PagePattern. */
+    assert.ok(/public const string GalePattern = Tools\.GaleProfileId\.PagePattern;/.test(CODES),
+      "ModProfileCodes.cs keeps a Gale pattern of its own again");
+    const page = /public const string PagePattern = "([^"]+)";/.exec(GALE_ID);
+    assert.ok(page, "GaleProfileId.cs has no PagePattern");
+    assert.strictEqual(ctx.RE.gale.source, page[1]);
+    for (const id of ["Ab_9-xY_z0Qr7_Lm-NoPqA", "_AAAAAAAAAAAAAAAAAAAAA", "-b12cd34_ef56gh78ij90g", "AB12CD"])
+      assert.ok(ctx.RE.gale.test(id), "the page refuses the Gale id " + id);
+    for (const id of ["AAAAAAAAAAAAAAAAAAAAAB", "ab_12C", "a1b2c3d4-e5f6", "AAAAAAAAAAAAAAAAAAAAA"])
+      assert.ok(!ctx.RE.gale.test(id), "the page takes the Gale id " + id);
 
     /* And the post names the field from the host catalog, after Mods. */
     const mods = SERVICE.indexOf('HostCatalog.T("host.status.field.mods")');

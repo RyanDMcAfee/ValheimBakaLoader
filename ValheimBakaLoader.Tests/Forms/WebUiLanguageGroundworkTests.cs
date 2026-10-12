@@ -63,13 +63,14 @@ namespace ValheimBakaLoader.Tests.Forms
         /// last two came with the Settings hall's Directories work: the word Currently
         /// above each path, and the title on the unsaved notice. The fourteenth is 1.2.6's
         /// Settings tab strip, which is two chips in the same voice as a hall's Norse caption.
+        /// The fifteenth is the Gale box's name, beside the BepInEx row's and in the same voice.
         /// </summary>
         [Fact]
         public void The_small_serif_rules_and_the_display_ones_are_separate_tokens()
         {
             var css = Css();
 
-            Assert.Equal(14, Regex.Matches(css, Regex.Escape("font-family:var(--serif-small)")).Count);
+            Assert.Equal(15, Regex.Matches(css, Regex.Escape("font-family:var(--serif-small)")).Count);
 
             var display = Regex.Matches(css, @"font-family:var\(--serif\)[^}]*")
                 .Cast<Match>().Select(m => m.Value).ToList();

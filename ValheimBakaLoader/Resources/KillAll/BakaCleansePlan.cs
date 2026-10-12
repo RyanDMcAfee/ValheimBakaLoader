@@ -305,8 +305,31 @@ namespace BakaLoaderKillAll
         /// <summary>The opening of the line a cleanse answers with the moment it starts.</summary>
         internal const string StartedPrefix = "Cleanse started:";
 
-        /// <summary>The opening of the status line while a sweep is still walking.</summary>
-        internal const string RunningPrefix = "Cleanse running:";
+        /// <summary>
+        /// The opening of the status line while a sweep is still walking, in the shape all three
+        /// sliced sweeps share from Commander 1.9.2: "&lt;verb&gt;: running: scanned X of Z,
+        /// removed N so far". One shape is what lets the window read all three with one
+        /// expression.
+        /// </summary>
+        internal const string RunningPrefix = "cleanse: running:";
+
+        /// <summary>
+        /// The opening a plugin older than Commander 1.9.2 and KillAll 1.8.2 answers with while a
+        /// sweep is walking. A server that has not been restarted since BakaLoader updated is
+        /// still running one of those, and its wait must not read "still walking" as the result.
+        /// </summary>
+        internal const string LegacyRunningPrefix = "Cleanse running:";
+
+        /// <summary>
+        /// Whether a status line says the sweep is still walking, in either the shape this
+        /// plugin answers with or the one the plugin before it did.
+        /// </summary>
+        internal static bool IsRunningStatus(string line)
+        {
+            var said = (line ?? "").TrimStart();
+            return said.StartsWith(RunningPrefix, StringComparison.OrdinalIgnoreCase)
+                   || said.StartsWith(LegacyRunningPrefix, StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>The opening of the line a sweep that gave up part way answers with.</summary>
         internal const string StoppedPrefix = "Cleanse stopped:";
@@ -347,15 +370,17 @@ namespace BakaLoaderKillAll
         /// <summary>Nothing has been run since the server came up.</summary>
         internal static string StatusIdle()
         {
-            return "Cleanse status: nothing is running. Run baka_cleanse on an empty server" +
+            return "cleanse: nothing is running. Run baka_cleanse on an empty server" +
                    " to clear the cheat marks a 1.0.9 to 1.1.2 spawn left behind.";
         }
 
-        /// <summary>How far along the walk is, which is the whole of what a waiting host wants.</summary>
-        internal static string StatusRunning(int checkedSoFar, int total)
+        /// <summary>
+        /// How far along the walk is, which is the whole of what a waiting host wants: how many
+        /// records it has checked, out of how many, and how many marks it has taken off so far.
+        /// </summary>
+        internal static string StatusRunning(int checkedSoFar, int total, int removed = 0)
         {
-            return RunningPrefix + " " + checkedSoFar + " of " + total +
-                   (total == 1 ? " object" : " objects") + " checked.";
+            return RunningPrefix + " scanned " + checkedSoFar + " of " + total + ", removed " + removed + " so far";
         }
 
         /// <summary>

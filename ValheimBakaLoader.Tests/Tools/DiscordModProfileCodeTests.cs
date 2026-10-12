@@ -47,7 +47,7 @@ namespace ValheimBakaLoader.Tests.Tools
         [Theory]
         [InlineData("thunderstore", "host.status.field.mod_code.thunderstore", "018f5c2a-7d1e-4b3a-9f00-1c2d3e4f5a6b")]
         [InlineData("gale", "host.status.field.mod_code.gale", "AB12CD")]
-        [InlineData("gale", "host.status.field.mod_code.gale", "0f1e2d3c-sync-4b5a")]
+        [InlineData("gale", "host.status.field.mod_code.gale", "Ab_9-xY_z0Qr7_Lm-NoPqA")]
         [InlineData("Gale", "host.status.field.mod_code.gale", "AB12CD")]
         public void A_code_is_one_field_after_mods_named_for_its_manager(string kind, string nameId, string code)
         {
@@ -165,7 +165,16 @@ namespace ValheimBakaLoader.Tests.Tools
         [InlineData("thunderstore", "abc d", false)]
         [InlineData("gale", "AB12CD", true)]
         [InlineData("gale", "AB12C", false)]
-        [InlineData("gale", "a1b2c3d4-e5f6", true)]
+        [InlineData("gale", "a1b2c3d4-e5f6", false)]
+        // A Gale code is the same id the Mods hall follows, checked by GaleProfileId: the long
+        // sync id is URL safe base64, so an underscore or a dash can stand anywhere in it.
+        [InlineData("gale", "Ab_9-xY_z0Qr7_Lm-NoPqA", true)]
+        [InlineData("gale", "_AAAAAAAAAAAAAAAAAAAAA", true)]
+        [InlineData("gale", "-b12cd34_ef56gh78ij90g", true)]
+        [InlineData("gale", "  Ab_9-xY_z0Qr7_Lm-NoPqA  ", true)]
+        [InlineData("gale", "AAAAAAAAAAAAAAAAAAAAAB", false)]
+        [InlineData("gale", "ab_12C", false)]
+        [InlineData("thunderstore", "Ab_9-xY_z0Qr7_Lm-NoPqA", false)]
         [InlineData("none", "AB12CD", false)]
         [InlineData("none", "", true)]
         public void The_check_is_light(string kind, string code, bool acceptable)
@@ -310,7 +319,7 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal(1, store.Saves);
 
             // The kind moving changes the field's name in the post.
-            Save(Dto("gale", "a1b2c3d4-e5f6"), "Final Sunset", store, discord);
+            Save(Dto("gale", "Ab_9-xY_z0Qr7_Lm-NoPqA"), "Final Sunset", store, discord);
             Assert.Equal(2, discord.Requests);
 
             // Cleared: the field leaves the post, so the post is edited.

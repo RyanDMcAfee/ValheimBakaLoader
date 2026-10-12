@@ -17,7 +17,7 @@
 -->
 <script>
 (function(){
-  var v = window.BAKA_VERSION || "1.2.13";
+  var v = window.BAKA_VERSION || "1.2.14";
   window.BAKA_ASSET_VERSION = v;
   window.BAKA_ASSET = function(name){ return name + "?v=" + encodeURIComponent(v); };
   window.BAKA_ASSET_PLAIN = function(el){
@@ -125,7 +125,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.13</span><!--
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.14</span><!--
              The partial-translation mark. A standing fact about the words on screen, so it
              stands here rather than arriving as a toast; app.js lights it and writes the
              same sentence the globe menu carries onto its tooltip. -->
@@ -180,7 +180,7 @@
             <div class="worldupkeep" id="worldUpkeep" role="group" aria-labelledby="worldUpkeepLbl">
               <span class="sub" id="worldUpkeepLbl" data-i18n="hearth.world_upkeep.label">World upkeep</span>
               <button class="btn btn-ghost btn-sm" id="clearDropsBtn" data-i18n="hearth.cleardrops.label">Clear ground items</button>
-              <!-- Clear cheat marks and its armed switch lived in the Players head until 1.2.13. They
+              <!-- Clear cheat marks and its armed switch lived in the Players head until 1.2.14. They
                    are about the world rather than about a person, which is what this group is for,
                    so they stand here now with their ids and handlers as they were. The button opens
                    the same question the command palette opens, from the same dialog, so there is no
@@ -406,6 +406,16 @@
           </div>
           <div class="modprog" id="modUpdProg" role="status" aria-live="polite"></div>
           <div id="bepinexRow" class="beprow-wrap" style="display:none"></div>
+          <!-- Follow a Gale profile: one id per realm. Gale is asked only after the first frame,
+               when this hall opens and on Check now, and nothing installs until the host approves. -->
+          <div class="galebox" id="galeBox">
+            <span class="galename" data-i18n="mods.gale.box.label">Follow a Gale profile</span>
+            <input id="galeId" class="galeid mono" type="text" spellcheck="false" autocomplete="off" placeholder="Gale profile code" aria-label="Gale profile code" data-i18n-placeholder="mods.gale.box.placeholder" data-i18n-aria="mods.gale.box.aria">
+            <button class="btn btn-ghost btn-sm" id="galeCheckBtn" title="Asks Gale for this profile's mod list and compares it with this server. Nothing is installed until you approve it." data-i18n="mods.gale.box.check" data-i18n-title="mods.gale.box.check.title">Check now</button>
+            <button class="btn btn-ghost btn-sm" id="galeForgetBtn" title="Stops following the profile. The mods it installed stay where they are." data-i18n="mods.gale.box.forget" data-i18n-title="mods.gale.box.forget.title" disabled>Forget</button>
+            <button class="btn btn-ember btn-sm" id="galeReviewBtn" style="display:none" data-i18n="mods.gale.box.review">Review</button>
+            <div class="galestatus" id="galeStatus" role="status" aria-live="polite"></div>
+          </div>
           <div class="subval" id="modsPluginNote" style="display:none;margin:0 0 12px;font-family:inherit;font-size:11.5px;line-height:1.55;letter-spacing:.3px;color:var(--warn,#e0a35c)"></div>
           <div class="card" style="padding:0"><div style="height:6px"></div>
             <table id="modsTable">
@@ -918,6 +928,24 @@
               <div class="wiz-stat dim" id="heraldUrlStat" style="margin-top:4px">paste a webhook URL, or run the setup wizard</div>
               <div class="field" style="margin-top:8px"><label data-i18n="herald.field.thread">Thread ID <span class="r" title="Optional. Only for posting inside a thread or forum post: right-click the thread → Copy Thread ID (needs Discord developer mode, under App Settings → Advanced). Blank = post directly in the channel." data-i18n-title="herald.field.thread.title">ᛟ</span></label>
                 <input type="text" id="heraldThread" spellcheck="false" autocomplete="off" placeholder="optional · blank = post in the channel itself" data-i18n-placeholder="herald.thread.placeholder"></div>
+              <!-- THE HERALD'S LOOK: the name and picture each post is signed with, the status
+                   post's title and a line of the host's own at its top, and the BakaLoader line.
+                   Every box is blank by default and blank is a real choice (the webhook's name,
+                   the logo, the server name, no line). Saved through heraldSave like everything
+                   else here; heraldLookCommit refuses a picture link or a name Discord would not
+                   take, says so in the line below, and sends nothing. -->
+              <div class="microlabel" style="margin-top:14px" data-i18n="herald.look.label">How the post looks</div>
+              <div class="field" style="margin-top:6px"><label for="heraldName" data-i18n="herald.look.name.label">Display name</label>
+                <input type="text" id="heraldName" spellcheck="false" autocomplete="off" maxlength="80" placeholder="blank = the webhook's own name" data-i18n-placeholder="herald.look.name.placeholder"></div>
+              <div class="field" style="margin-top:8px"><label for="heraldAvatar" data-i18n="herald.look.avatar.label">Avatar image URL</label>
+                <input type="text" id="heraldAvatar" spellcheck="false" autocomplete="off" maxlength="2048" placeholder="blank = the BakaLoader logo" data-i18n-placeholder="herald.look.avatar.placeholder"></div>
+              <div class="subval" style="margin:4px 0 0" data-i18n="herald.look.avatar.note">It has to be a public image link that starts with https, so Discord can fetch it.</div>
+              <div class="field" style="margin-top:8px"><label for="heraldTitle" data-i18n="herald.look.title.label">Title</label>
+                <input type="text" id="heraldTitle" spellcheck="false" autocomplete="off" maxlength="256" placeholder="blank = the server name" data-i18n-placeholder="herald.look.title.placeholder"></div>
+              <div class="field" style="margin-top:8px"><label for="heraldStatusLine" data-i18n="herald.look.status.label">Status line</label>
+                <input type="text" id="heraldStatusLine" autocomplete="off" maxlength="300" placeholder="a line at the top of the post · blank = none" data-i18n-placeholder="herald.look.status.placeholder"></div>
+              <div class="togglerow" style="margin-top:8px"><span class="tl" data-i18n="herald.look.link">Link to the BakaLoader page</span><span class="toggle on" id="tHeraldLink" data-t title="Puts a small BakaLoader line at the top of each post that opens the project page." data-i18n-title="herald.look.link.title"></span></div>
+              <div class="wiz-stat dim" id="heraldLookStat" style="margin:4px 0 0"></div>
             </div>
             <!-- WHAT THE POST CARRIES -->
             <div class="card b-heraldshare">
@@ -1039,7 +1067,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.13</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.14</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg"><span data-i18n="status.rcon.label">RCON</span> <span class="em" id="sbRcon">bound</span></span>

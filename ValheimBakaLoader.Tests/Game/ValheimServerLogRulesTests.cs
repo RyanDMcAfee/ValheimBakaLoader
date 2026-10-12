@@ -95,6 +95,54 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.False(savedFired);
         }
 
+        #region Sweep results on stdout
+
+        /// <summary>
+        /// Commander 1.9.2 prints the result line of every sliced sweep through Unity's log
+        /// behind its own tag. Until then the only copy went to the BepInEx log, which BakaLoader
+        /// does not read: the host who reported this cleared 5245 items and saw nothing.
+        /// </summary>
+        [Theory]
+        [InlineData("[BakaLoader Commander] cleardrops: removed 5245 · kept 2 gear · kept 823 near players · scanned 1107305 objects",
+            "cleardrops", "cleardrops: removed 5245 · kept 2 gear · kept 823 near players · scanned 1107305 objects")]
+        [InlineData("[BakaLoader Commander] killall: KillAll complete: 37 hostiles slain, 4 out of reach, 162 spared (players, pets & allies)",
+            "killall", "KillAll complete: 37 hostiles slain, 4 out of reach, 162 spared (players, pets & allies)")]
+        [InlineData("[BakaLoader Commander] cleanse: Cleanse complete: 4 world objects cleared, 1 container rewritten, 9 items cleared.",
+            "cleanse", "Cleanse complete: 4 world objects cleared, 1 container rewritten, 9 items cleared.")]
+        // with whatever the server puts in front of a Unity log line
+        [InlineData("10/12/2026 15:07:31: [BakaLoader Commander] cleanse: Cleanse stopped: 1 player connected while it was running (Bjorn).",
+            "cleanse", "Cleanse stopped: 1 player connected while it was running (Bjorn).")]
+        public void A_sweep_result_on_stdout_raises_SweepResultReported(string line, string verb, string result)
+        {
+            ValheimServer.SweepResultLine seen = null;
+            var fired = 0;
+            Server.SweepResultReported += (_, r) => { seen = r; fired++; };
+
+            Feed(line);
+
+            Assert.Equal(1, fired);
+            Assert.Equal(verb, seen.Verb);
+            Assert.Equal(result, seen.Line);
+        }
+
+        [Theory]
+        // the BepInEx log's own spelling, which is not the tag
+        [InlineData("[Info   :BakaLoader Commander] cleardrops: removed 1 · kept 0 gear · kept 0 near players · scanned 2 objects")]
+        [InlineData("[BakaLoader Commander] save: started")]
+        [InlineData("cleardrops: removed 1 · kept 0 gear · kept 0 near players · scanned 2 objects")]
+        [InlineData("World save (5/5) done. Total time [50ms]")]
+        public void Other_lines_raise_no_sweep_result(string line)
+        {
+            var fired = 0;
+            Server.SweepResultReported += (_, _) => fired++;
+
+            Feed(line);
+
+            Assert.Equal(0, fired);
+        }
+
+        #endregion
+
         [Fact]
         public void LoadingAPre10WorldRaisesLegacyWorldLoaded()
         {

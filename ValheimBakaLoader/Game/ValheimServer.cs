@@ -362,6 +362,18 @@ namespace ValheimBakaLoader.Game
         public event EventHandler LegacyWorldLoaded;
 
         /// <summary>
+        /// Fires when the server's own output carries the result line of a sliced sweep
+        /// (cleardrops, killall or cleanse), which Commander 1.9.2 writes through Unity's log
+        /// behind the "[BakaLoader Commander]" tag. Before that the result of a sweep too big to
+        /// finish inside its RCON answer went to the BepInEx log alone, which BakaLoader does
+        /// not read, so a host who did not keep the page open never heard how it ended.
+        /// </summary>
+        public event EventHandler<SweepResultLine> SweepResultReported;
+
+        /// <summary>One sweep's result, as the server printed it: which sweep, and its own line.</summary>
+        public sealed record SweepResultLine(string Verb, string Line);
+
+        /// <summary>
         /// Fires when the server prints its version banner. The string is the game
         /// version; <see cref="NetworkVersion"/> carries the matching network one.
         /// </summary>
@@ -876,6 +888,13 @@ namespace ValheimBakaLoader.Game
                 // the save is on disk. Durations past 999 ms are grouped ("1,234ms").
                 new(Rx(@"World save \(5/5\) done\. Total time \[([\d.,]+)ms\]"), HandleWorldSaved),
                 new(Rx(@"World save \(5/5\) FAILED\. Total time \[([\d.,]+)ms\]"), HandleWorldSaveFailed),
+
+                // The result line of a sliced sweep, which Commander 1.9.2 writes to stdout behind
+                // its own tag (Resources/Commander/BakaSweepEcho.cs writes it and reads it back,
+                // so the two sides cannot spell the tag differently). Recognised the way the save
+                // lines above are, so a host reading the Saga sees how a long sweep ended even
+                // with the page closed while it ran.
+                new(Rx(@"(\[BakaLoader Commander\]\s*(?:cleardrops|killall|cleanse):.*)$"), HandleSweepResult),
 
                 // The world on disk is still in the pre-1.0 format and is about to
                 // be converted by the next save.
@@ -3428,6 +3447,12 @@ namespace ValheimBakaLoader.Game
                 durationMs);
 
             WorldSaveFailed?.Invoke(this, durationMs);
+        }
+
+        private void HandleSweepResult(Match match)
+        {
+            if (!BakaLoaderSweepEcho.SweepEcho.TryRead(match.Groups[1].Value, out var verb, out var line)) return;
+            SweepResultReported?.Invoke(this, new SweepResultLine(verb, line));
         }
 
         private void HandleLegacyWorldLoaded(Match match)

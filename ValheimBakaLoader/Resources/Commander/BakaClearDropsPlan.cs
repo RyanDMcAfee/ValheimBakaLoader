@@ -125,6 +125,22 @@ namespace BakaLoaderClearDrops
         internal const string ReplyPrefix = "cleardrops:";
 
         /// <summary>
+        /// The verb that asks how far a sweep has got. A world big enough to outlast the RCON
+        /// answer used to put its result in the BepInEx log and nowhere else, and on a server
+        /// with BepInEx's console logging off (the default BakaLoader ships) nobody ever read it:
+        /// a host cleared five thousand items and was told nothing at all. The window now asks
+        /// this every two seconds after a "started" line until it answers with the result.
+        /// </summary>
+        internal const string StatusVerb = "baka_cleardrops_status";
+
+        /// <summary>
+        /// The opening of the status line while a sweep is still walking. The three sliced
+        /// sweeps all answer their status verb in the one shape, "&lt;verb&gt;: running: scanned
+        /// X of Z, removed N so far", so the window reads all three with one expression.
+        /// </summary>
+        internal const string RunningPrefix = ReplyPrefix + " running:";
+
+        /// <summary>
         /// Thirty two metres is about the distance a player can see a dropped stack on the ground
         /// from, and comfortably wider than a workbench's reach. A stack somebody put down on
         /// purpose is almost always that close to them.
@@ -374,7 +390,27 @@ namespace BakaLoaderClearDrops
         {
             return ReplyPrefix + " started on " + items + (items == 1 ? " ground item" : " ground items") +
                    " out of " + scanned + (scanned == 1 ? " object" : " objects") +
-                   ". The result line follows in the server log when the sweep finishes.";
+                   ". The result line follows in the server log when the sweep finishes, and " +
+                   StatusVerb + " says how far it has got.";
+        }
+
+        /// <summary>
+        /// What the status verb answers while a sweep is walking: how many of the ground items
+        /// it has looked at, out of how many, and how many of those it has cleared.
+        /// </summary>
+        internal static string StatusRunning(int scanned, int total, int removed)
+        {
+            return RunningPrefix + " scanned " + scanned + " of " + total + ", removed " + removed + " so far";
+        }
+
+        /// <summary>
+        /// What the status verb answers when nothing has run since the server came up. The
+        /// window meets it when the server restarted under a sweep it was waiting on.
+        /// </summary>
+        internal static string StatusIdle()
+        {
+            return ReplyPrefix + " nothing is running. Run " + Verb +
+                   " to clear the items lying on the ground.";
         }
 
         /// <summary>The answer to a second baka_cleardrops while the first is still walking.</summary>

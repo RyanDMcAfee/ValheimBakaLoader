@@ -347,6 +347,9 @@ namespace ValheimBakaLoader.Forms
             // connection at all until the host turns their own switch on.
             HexiumClient = serviceProvider.GetRequiredService<IHexiumClient>();
             HexiumScan = new Tools.HexiumScanStep(HexiumClient, appLogger);
+            // The Gale sync reader, the same way: nothing else has to know it is there, and it
+            // is never asked anything for a realm that does not follow a Gale profile.
+            GaleClient = serviceProvider.GetService<IGaleSyncClient>();
             InstallIsolation = serviceProvider.GetRequiredService<IInstallIsolationService>();
             BepInEx = serviceProvider.GetRequiredService<IBepInExService>();
             MaxPlayersInstaller = serviceProvider.GetRequiredService<IMaxPlayersInstaller>();
@@ -539,6 +542,12 @@ namespace ValheimBakaLoader.Forms
                 }
             };
             server.WorldSaved += (s, seconds) => PostEvent("server.worldSaved", new { seconds, profile });
+
+            // A sweep's result, read off the server's own output. The page shows it when it was
+            // not already waiting on that sweep itself, which covers a sweep typed at the
+            // console and one that outlasted the page's ten minute wait.
+            server.SweepResultReported += (s, result) =>
+                PostEvent("server.sweepResult", new { verb = result.Verb, line = result.Line, profile });
             server.InviteCodeReady += (s, code) => PostEvent("server.inviteCode", new { code, profile });
 
             // A FAILED save means everything played since the last good one is only in memory.
@@ -1931,6 +1940,27 @@ namespace ValheimBakaLoader.Forms
                 prefs.LastLaunchedGameVersion = stored.LastLaunchedGameVersion;
 
             return prefs;
+        }
+
+        /// <summary>
+        /// Puts the Gale follow stored on disk back onto a profile the page sent. See
+        /// <see cref="ServerPreferences.KeepGaleFollowFrom"/> for why disk wins. A profile
+        /// that is not on disk yet keeps the id and unticks it was sent with, but not the stamp
+        /// (see <see cref="ServerPreferences.KeepGaleFollowWithoutStore"/>).
+        /// </summary>
+        private ServerPreferences KeepGaleFollow(ServerPreferences prefs)
+        {
+            if (prefs == null) return null;
+
+            ServerPreferences stored = null;
+            try
+            {
+                stored = ServerPrefsProvider.LoadPreferences(
+                    string.IsNullOrWhiteSpace(prefs.ProfileName) ? ActiveProfileName : prefs.ProfileName);
+            }
+            catch { /* an unreadable profile leaves the payload as it came */ }
+
+            return stored != null ? prefs.KeepGaleFollowFrom(stored) : prefs.KeepGaleFollowWithoutStore();
         }
 
         /// <summary>
@@ -4233,6 +4263,9 @@ namespace ValheimBakaLoader.Forms
 
         private void RegisterRpcHandlers()
         {
+            // --- Following a Gale profile (BlendWindow.Gale.cs) ---
+            RegisterGaleRpcs();
+
             // --- App ---
             RegisterRpc("app.info", p =>
             {
@@ -4326,6 +4359,9 @@ namespace ValheimBakaLoader.Forms
                 // The form has no fields for the launch history, so carry it over rather than
                 // letting a plain save wipe it and make the next start look like the first.
                 prefs = MergeLaunchHistory(prefs);
+                // The same for the Gale follow: the form has no boxes for it, and only the
+                // Gale box and its dialog ever write it.
+                prefs = KeepGaleFollow(prefs);
                 ServerPrefsProvider.SavePreferences(prefs);
                 CurrentProfile = prefs.ProfileName;
                 PostEvent("servers.changed", BuildServersList());
@@ -5129,6 +5165,11 @@ namespace ValheimBakaLoader.Forms
                 // rather than landing half of it. Nothing is ever asked of Thunderstore or Gale.
                 var modCode = ReadModProfileCode(dto, ActiveProfileName, ServerPrefsProvider);
 
+                // The Herald's look, checked the same way and for the same reason: a picture link
+                // that is not a picture, or a name Discord refuses, is refused here with one
+                // sentence before anything is written, and so is never sent.
+                CheckHeraldLook(dto);
+
                 UserPrefsProvider.Mutate(current =>
                 {
                     prefs = current;
@@ -5204,6 +5245,13 @@ namespace ValheimBakaLoader.Forms
                     Apply("DiscordShareAddress", v => prefs.DiscordShareAddress = v.Value<bool>());
                     Apply("DiscordSharePassword", v => prefs.DiscordSharePassword = v.Value<bool>());
                     Apply("DiscordEventPosts", v => prefs.DiscordEventPosts = v.Value<bool>());
+                    // The Herald's look. Blank is stored as nothing, because blank is the default
+                    // each of them falls back to (see DiscordHeraldLook).
+                    Apply("DiscordBotName", v => prefs.DiscordBotName = Blank(v.Value<string>()));
+                    Apply("DiscordAvatarUrl", v => prefs.DiscordAvatarUrl = Blank(v.Value<string>()));
+                    Apply("DiscordStatusLine", v => prefs.DiscordStatusLine = Blank(v.Value<string>()));
+                    Apply("DiscordTitle", v => prefs.DiscordTitle = Blank(v.Value<string>()));
+                    Apply("DiscordLinkToBakaLoader", v => prefs.DiscordLinkToBakaLoader = v.Value<bool>());
                     Apply("CustomJoinDomain", v => prefs.CustomJoinDomain = v.Value<string>()?.Trim());
 
                     // Both of these are spellings from a closed list, so a spelling nothing
@@ -6917,8 +6965,20 @@ namespace ValheimBakaLoader.Forms
                 // SendRconCommandAsync: RCON enabled + server running, else null.
                 var command = p.Value<string>("command");
                 if (string.IsNullOrWhiteSpace(command)) throw new ArgumentException("command is required");
-                var response = await Server.SendRconCommandAsync(command);
-                return new { ok = response != null, response };
+                // quiet is additive and optional: the page sets it on the status polls it sends
+                // every two seconds after a sweep answers "started", so three hundred "RCON
+                // command sent" lines do not bury the one line the host is waiting for.
+                var quiet = p.Value<bool?>("quiet") ?? false;
+                // profile is additive and optional too: the sweep wait names the realm it is
+                // waiting on, and a poll for a realm that is no longer on screen is refused
+                // here, because Server below is the ON-SCREEN realm's server and would answer
+                // with its own sweep. Nothing is sent and nothing is logged; the page ends its
+                // wait on realmChanged.
+                if (SweepReplies.IsForAnotherRealm(p.Value<string>("profile"), ActiveProfileName))
+                    return new { ok = false, response = (string)null, logged = false, errorId = "realmChanged" };
+                var response = await Server.SendRconCommandAsync(command, quiet);
+                var logged = LogSweepResult(command, response);
+                return new { ok = response != null, response, logged, errorId = (string)null };
             });
 
             // --- Players ---
@@ -6958,6 +7018,8 @@ namespace ValheimBakaLoader.Forms
                     // for minutes is a page a host presses again.
                     line => AppLogger.Information("{Line:l}", "[RCON] " + line));
 
+                var logged = outcome.Ok && LogSweepResult("baka_cleanse", outcome.Response);
+
                 if (outcome.StillRunning)
                 {
                     AppLogger.Information(
@@ -6978,6 +7040,7 @@ namespace ValheimBakaLoader.Forms
                     response = outcome.Response,
                     stillRunning = outcome.StillRunning,
                     notAnswering = outcome.NotAnswering,
+                    logged,
                 };
             });
 
@@ -7069,10 +7132,11 @@ namespace ValheimBakaLoader.Forms
 
                 EnsureItemCatalogLoaded();
 
-                var results = ItemCatalog.Entries
-                    .Where(e => string.IsNullOrWhiteSpace(query)
-                        || e.Label.Contains(query, StringComparison.OrdinalIgnoreCase)
-                        || e.PrefabName.Contains(query, StringComparison.OrdinalIgnoreCase))
+                // Ranked before the cut: exact label or prefab first, then starts-with, then
+                // contains, each by label. Filtering in file order and taking the first rows
+                // let "Iron" fill the list with iron-somethings and drop the plain Iron off the
+                // end. A blank query keeps the alphabetical order Search gives it.
+                var results = ItemCatalog.Search(query)
                     .Take(limit)
                     .Select(e => new
                     {
@@ -7558,6 +7622,24 @@ namespace ValheimBakaLoader.Forms
                 if (string.IsNullOrWhiteSpace(pluginsDir))
                     return FailDto("BepInEx plugins folder not found. Set a valid server .exe path first.",
                         "noServerPath");
+
+                // The Gale approval dialog runs this same add once per mod, and says two more
+                // things than a pasted link does: which realm it was opened for, and that it
+                // must not write into a plugins folder a running server has open. Both are held
+                // here rather than trusted to the page, because a realm switch or a Start can
+                // land between one mod and the next. A plain paste sends neither and is
+                // exactly as it was.
+                var forProfile = p.Value<string>("profile");
+                if (!string.IsNullOrWhiteSpace(forProfile)
+                    && !string.Equals(forProfile.Trim(), ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                    return FailDto("The server on screen changed, so nothing was installed.", "realmChanged");
+                if (p.Value<bool?>("requireStopped") == true)
+                {
+                    var holding = RunningSessionName(new[] { pluginsDir });
+                    if (holding != null)
+                        return FailDto($"Stop the server '{holding}' first. Nothing was installed.", "serverRunning",
+                            new Dictionary<string, object> { ["name"] = holding });
+                }
 
                 var bepPrefs = UserPrefsProvider.LoadPreferences();
                 var bepBaseExe = GetCanonicalBaseServerExe();
@@ -10216,8 +10298,9 @@ namespace ValheimBakaLoader.Forms
                     return new CleanseOutcome { Ok = true, Response = last, NotAnswering = true };
 
                 last = status;
-                if (!status.TrimStart().StartsWith(
-                        BakaLoaderKillAll.CleansePlan.RunningPrefix, StringComparison.OrdinalIgnoreCase))
+                // Either shape: a server that has not been restarted since BakaLoader updated
+                // is still running the plugin before 1.9.2, which opens "Cleanse running:".
+                if (!BakaLoaderKillAll.CleansePlan.IsRunningStatus(status))
                     return new CleanseOutcome { Ok = true, Response = status };
 
                 // One line per CHANGED count. A status that says exactly what the last one
@@ -10231,6 +10314,26 @@ namespace ValheimBakaLoader.Forms
             }
 
             return new CleanseOutcome { Ok = true, Response = last, StillRunning = true };
+        }
+
+        /// <summary>
+        /// Writes a sweep's result line into the application log, which is what the Saga draws
+        /// and what it still holds after the window closes. True when it did, so the page does
+        /// not print the same line a second time.
+        /// <para>
+        /// Only the result line: the counts of a sweep that finished or stopped part way. The
+        /// "started" answer, the status polls and every refusal stay where they were. Before
+        /// this the result of a big sweep reached the page as a toast and a line that vanished
+        /// with the window, and the server's own copy went to the BepInEx log alone.
+        /// </para>
+        /// </summary>
+        internal bool LogSweepResult(string command, string response)
+        {
+            var verb = SweepReplies.VerbOf(command);
+            if (verb == null || !SweepReplies.IsResult(verb, response)) return false;
+
+            AppLogger.Information("{Line:l}", "[RCON] " + response.Trim());
+            return true;
         }
 
         /// <summary>
@@ -10340,6 +10443,11 @@ namespace ValheimBakaLoader.Forms
                 prefs.DiscordShareAddress,
                 prefs.DiscordSharePassword,
                 prefs.DiscordEventPosts,
+                prefs.DiscordBotName,
+                prefs.DiscordAvatarUrl,
+                prefs.DiscordStatusLine,
+                prefs.DiscordTitle,
+                prefs.DiscordLinkToBakaLoader,
                 prefs.CustomJoinDomain,
                 prefs.Language,
                 prefs.PlayerMessageLanguage,
@@ -10387,6 +10495,31 @@ namespace ValheimBakaLoader.Forms
                     "That does not look like a mod profile code; paste it exactly as your mod manager shows it.");
 
             return (realm, kind, code);
+        }
+
+        /// <summary>
+        /// Refuses a userprefs.save whose Herald look could not be sent: a picture link that is
+        /// not an https image link, or a display name Discord would refuse the whole post over.
+        /// Blank is always fine. Thrown before anything is written, so a refusal saves nothing
+        /// and the page keeps the text so it can be fixed.
+        /// </summary>
+        public static void CheckHeraldLook(JObject dto)
+        {
+            if (dto.TryGetValue("DiscordAvatarUrl", StringComparison.OrdinalIgnoreCase, out var avatar)
+                && DiscordHeraldLook.AvatarProblem(avatar.Value<string>()) != null)
+                throw new HostFacingException("userprefs.save.badAvatarUrl",
+                    "That is not a picture link Discord can show; use a public https link to a png, jpg, gif or webp image.");
+
+            if (dto.TryGetValue("DiscordBotName", StringComparison.OrdinalIgnoreCase, out var name)
+                && DiscordHeraldLook.NameProblem(name.Value<string>()) != null)
+                throw new HostFacingException("userprefs.save.badBotName",
+                    "Discord refuses that name; keep it to 80 characters at most and leave out the words Discord and Clyde.");
+        }
+
+        private static string Blank(string value)
+        {
+            var v = value?.Trim();
+            return string.IsNullOrEmpty(v) ? null : v;
         }
 
         /// <summary>
@@ -10438,6 +10571,12 @@ namespace ValheimBakaLoader.Forms
             var created = ServerPreferences.FromFile((basePrefs ?? new ServerPreferences()).ToFile());
             created.ModProfileCodeKind = ModProfileCodes.None;
             created.ModProfileCode = null;
+            // Nor is the Gale profile it follows, for the same reason: following one installs
+            // mods, and a new realm made to run something else must not start pulling the
+            // other realm's set. Its approvals and unticks go with it.
+            created.GaleProfileId = null;
+            created.GaleLastUpdatedAt = null;
+            created.GaleUnticked = new List<string>();
             return created;
         }
 

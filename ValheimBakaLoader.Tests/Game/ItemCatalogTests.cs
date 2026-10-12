@@ -84,5 +84,44 @@ namespace ValheimBakaLoader.Tests.Game
 
             Assert.Equal(new[] { "Wood" }, catalog.Entries.Select(e => e.PrefabName));
         }
+
+        /// <summary>
+        /// The order the spawner list shows for a typed name: the exact match first, then the
+        /// names that start with it by label, then the names that only contain it. Written to
+        /// the file out of order so the result cannot be file order by accident.
+        /// </summary>
+        [Fact]
+        public void Search_PutsTheExactNameFirstThenStartsWithThenContains()
+        {
+            var catalog = NewCatalog();
+            WriteNamedCatalog(DateTime.UtcNow.AddMinutes(-5),
+                ("Wood", "Wood"),
+                ("ScrapMetal", "Scrap iron"),
+                ("IronOre", "IronOre"),
+                ("ArrowIron", "Ironhead arrow"),
+                ("ArmorIronChest", "Iron Armor"),
+                ("Iron", "Iron"));
+            catalog.EnsureLoaded(BepInExDir);
+
+            Assert.Equal(
+                new[] { "Iron", "Iron Armor", "Ironhead arrow", "IronOre", "Scrap iron" },
+                catalog.Search("Iron").Select(e => e.Label));
+
+            // The cut comes after the ranking, so a short list still leads with the exact name.
+            Assert.Equal(new[] { "Iron", "Iron Armor" }, catalog.Search("Iron").Take(2).Select(e => e.Label));
+
+            // A blank query is every entry, alphabetical by label.
+            Assert.Equal(
+                new[] { "Iron", "Iron Armor", "Ironhead arrow", "IronOre", "Scrap iron", "Wood" },
+                catalog.Search(" ").Select(e => e.Label));
+        }
+
+        private void WriteNamedCatalog(DateTime writtenUtc, params (string Prefab, string Name)[] items)
+        {
+            var body = string.Join(",", items.Select(i =>
+                "{\"prefab\":\"" + i.Prefab + "\",\"name\":\"" + i.Name + "\",\"category\":\"Item\"}"));
+            File.WriteAllText(CatalogPath, "[" + body + "]");
+            File.SetLastWriteTimeUtc(CatalogPath, writtenUtc);
+        }
     }
 }

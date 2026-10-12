@@ -104,6 +104,14 @@ namespace BakaLoaderKillAll
         private static Action<string> _report;
 
         /// <summary>
+        /// Handed the result line of every sweep that ends, however it ended and whether it
+        /// finished inside its own answer or a frame later. Commander points it at Unity's log,
+        /// which a dedicated server prints on stdout, so the line reaches BakaLoader's Saga even
+        /// with BepInEx's console logging off. BakaKillAll leaves it null.
+        /// </summary>
+        internal static Action<string> Ended = null;
+
+        /// <summary>
         /// The name of the process-wide mark that says a cleanse is walking, whichever plugin
         /// started it.
         /// <para>
@@ -228,12 +236,14 @@ namespace BakaLoaderKillAll
 
                 _lastResult = finished;
                 Tell(log, finished);
+                Tell(Ended, finished);
                 return finished;
             }
             catch (Exception ex)
             {
                 var said = "Error: the cleanse could not finish: " + ex.Message;
                 Tell(log, said);
+                Tell(Ended, said);
                 return said;
             }
         }
@@ -258,6 +268,7 @@ namespace BakaLoaderKillAll
             _lastResult = reply;
             Tell(log, reply);
             Tell(report, reply);
+            Tell(Ended, reply);
         }
 
         /// <summary>
@@ -273,7 +284,8 @@ namespace BakaLoaderKillAll
         internal static string Status()
         {
             var run = _running;
-            if (run != null) return CleansePlan.StatusRunning(run.Index, run.Total);
+            if (run != null)
+                return CleansePlan.StatusRunning(run.Index, run.Total, run.ZdosCleared + run.ItemsCleared);
 
             var last = _lastResult;
             return string.IsNullOrEmpty(last) ? CleansePlan.StatusIdle() : last;

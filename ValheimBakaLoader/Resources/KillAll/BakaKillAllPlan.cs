@@ -121,6 +121,20 @@ namespace BakaLoaderKillAll
         internal const string NearKeyword = "near";
 
         /// <summary>
+        /// The verb that asks how far a sweep has got. A sweep too big for its own answer used
+        /// to put its result in the BepInEx log and nowhere else, and with BepInEx's console
+        /// logging off nobody ever read it. The window asks this every two seconds after a
+        /// "started" line until it answers with the result.
+        /// </summary>
+        internal const string StatusVerb = "baka_killall_status";
+
+        /// <summary>
+        /// The opening of the status line while a sweep is still walking, in the shape all
+        /// three sliced sweeps share: "&lt;verb&gt;: running: scanned X of Z, removed N so far".
+        /// </summary>
+        internal const string RunningPrefix = "killall: running:";
+
+        /// <summary>
         /// Reads one console or RCON line, already split on spaces with the empty pieces
         /// dropped, and with the verb still sitting at index 0 the way both the game's
         /// Terminal and Commander hand it over.
@@ -265,7 +279,26 @@ namespace BakaLoaderKillAll
         internal static string Started(int candidates)
         {
             return "KillAll started: " + candidates + (candidates == 1 ? " candidate" : " candidates") +
-                   ". The result line follows in the server log when the sweep finishes.";
+                   ". The result line follows in the server log when the sweep finishes, and " +
+                   StatusVerb + " says how far it has got.";
+        }
+
+        /// <summary>
+        /// What the status verb answers while a sweep is walking: how many candidates it has
+        /// reached, out of how many, and how many of those it has slain.
+        /// </summary>
+        internal static string StatusRunning(int scanned, int total, int removed)
+        {
+            return RunningPrefix + " scanned " + scanned + " of " + total + ", removed " + removed + " so far";
+        }
+
+        /// <summary>
+        /// What the status verb answers when nothing has run since the server came up. The
+        /// window meets it when the server restarted under a sweep it was waiting on.
+        /// </summary>
+        internal static string StatusIdle()
+        {
+            return "killall: nothing is running. Run baka_killall to clear the hostiles out of the world.";
         }
 
         /// <summary>

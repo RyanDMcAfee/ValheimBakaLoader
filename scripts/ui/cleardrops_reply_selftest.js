@@ -102,6 +102,17 @@ const CASES = [
   ["cleardrops: started on 1 ground item out of 2 objects. The result line follows in the server log when the sweep finishes.",
     { kind: "started", items: 1 }],
 
+  // the 1.9.2 wording, which names the status verb
+  ["cleardrops: started on 5120 ground items out of 184220 objects. The result line follows in the server log when the sweep finishes, and baka_cleardrops_status says how far it has got.",
+    { kind: "started", items: 5120 }],
+
+  // --- the status verb's own two answers (ClearDropsPlan.StatusRunning, StatusIdle) ---
+  ["cleardrops: running: scanned 5000 of 184220, removed 412 so far", { kind: "running" }],
+  ["cleardrops: nothing is running. Run baka_cleardrops to clear the items lying on the ground.", { kind: "idle" }],
+  // the result the status verb answers once it is done, as the host's own report had it
+  ["cleardrops: removed 5245" + DOT + "kept 2 gear" + DOT + "kept 823 near players" + DOT + "scanned 1107305 objects",
+    { kind: "complete", removed: 5245, gear: 2, near: 823, scanned: 1107305, unreadable: 0 }],
+
   // --- a second sweep while the first is still walking ---
   ["cleardrops: already running, 300 ground items still to go. Wait for its result line before starting another.",
     { kind: "busy" }],
@@ -158,7 +169,7 @@ CASES.forEach(([reply, want]) => {
 
 test("only the finished-sweep rows read as a result", () => {
   const complete = CASES.filter(([r]) => C.clearDropsReply(r).kind === "complete").length;
-  assert.strictEqual(complete, 6, "the finished-sweep rows moved: " + complete);
+  assert.strictEqual(complete, 7, "the finished-sweep rows moved: " + complete);
 });
 
 /* ------------------------------------------- the table against the plugin's own words */
@@ -240,8 +251,64 @@ test("every line the builder writes is one the plugin's parser takes", () => {
 /* -------------------------------------------- the wiring, over the real file */
 
 test("the dialog sends through sendConsole and reads the reply rather than deciding before it", () => {
-  assert.ok(SOURCE.includes("sendConsole(built.cmd,reply=>clearDropsToast(clearDropsReply(reply)));"),
-    "the ground sweep no longer hands its reply to the reader");
+  assert.ok(SOURCE.includes("sendConsole(built.cmd,reply=>clearDropsToast(clearDropsReply(reply)),SWEEP_FOLLOW.cleardrops);"),
+    "the ground sweep no longer hands its reply to the reader, or no longer follows a started sweep");
+});
+
+/* ------------------------------------------- the toast, kept-near first when it is larger */
+
+/** clearDropsToast out of app.js, with a catalog stand-in that answers with the id. */
+function toastFn() {
+  const at = SOURCE.indexOf("function clearDropsToast(read){");
+  assert.ok(at >= 0, "clearDropsToast moved");
+  let depth = 0, end = -1;
+  for (let i = SOURCE.indexOf("{", at); i < SOURCE.length; i++) {
+    if (SOURCE[i] === "{") depth++;
+    if (SOURCE[i] === "}") { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  const context = { T: (id, p) => id + " " + JSON.stringify(p || {}) };
+  vm.createContext(context);
+  vm.runInContext(SOURCE.slice(at, end), context, { filename: "app.js#clearDropsToast" });
+  return context.clearDropsToast;
+}
+
+/* The kept-first toast picks its plural by {near}, so {removed} can be 1 or 5245 in the same
+   form: nothing after {removed} may be a noun that has to agree with it ("cleared 1 ground
+   items"). The plain done toast picks by {removed} and is free to. */
+test("the kept-first toast puts no counted noun after {removed}, which it does not plural by", () => {
+  const cat = JSON.parse(fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "WebUI", "i18n", "en.json"), "utf8").replace(/^\uFEFF/, ""));
+  const flat = cat.keys || cat;
+  const row = flat["pal.clear_drops.toast.done.near_first"];
+  assert.ok(row, "the kept-first toast is gone from en.json");
+  assert.strictEqual(row.plural, "near");
+  for (const form of Object.keys(row.lore)) {
+    const line = row.lore[form];
+    assert.ok(line.includes("{removed}"), form + ": " + line);
+    assert.ok(!/\{removed\}\s+(?:ground\s+)?items?\b/i.test(line), form + " counts a noun by {removed}: " + line);
+  }
+});
+
+test("more kept near players than cleared leads with the kept count", () => {
+  const toast = toastFn();
+  /* the 900 metre report: everything near the host kept, and the toast has to say so first */
+  const wide = toast({ kind: "complete", removed: 0, gear: 2, near: 823, scanned: 1107305, unreadable: 0 });
+  assert.ok(wide.includes("pal.clear_drops.toast.done.near_first"), wide);
+  const some = toast({ kind: "complete", removed: 12, gear: 0, near: 40, scanned: 900, unreadable: 0 });
+  assert.ok(some.includes("pal.clear_drops.toast.done.near_first"), some);
+  /* the host's own sweep: more cleared than kept, so cleared goes first as it always did */
+  const most = toast({ kind: "complete", removed: 5245, gear: 2, near: 823, scanned: 1107305, unreadable: 0 });
+  assert.ok(most.includes("pal.clear_drops.toast.done ") && !most.includes("near_first"), most);
+  const none = toast({ kind: "complete", removed: 0, gear: 3, near: 0, scanned: 50, unreadable: 0 });
+  assert.ok(none.includes("pal.clear_drops.toast.none"), none);
+  assert.ok(toast({ kind: "running" }).includes("pal.sweep.toast.running"));
+  assert.ok(toast({ kind: "idle" }).includes("pal.sweep.toast.idle"));
+});
+
+test("the radius box says what the number means and that 32 is enough", () => {
+  const en = JSON.parse(fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "WebUI", "i18n", "en.json"), "utf8")).keys;
+  assert.strictEqual(en["pal.clear_drops.field.radius"].lore, "Keep items within this many metres of each online player");
+  assert.ok(/^32 is enough/.test(en["pal.clear_drops.field.radius.note"].lore));
+  assert.ok(SOURCE.includes('T("pal.clear_drops.field.radius.note")'), "the note is not drawn under the box");
 });
 
 test("every way in opens the same dialog", () => {

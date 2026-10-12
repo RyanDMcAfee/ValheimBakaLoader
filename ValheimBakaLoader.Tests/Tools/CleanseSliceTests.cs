@@ -158,9 +158,9 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             Assert.Contains("nothing is running", CleansePlan.StatusIdle());
 
-            var running = CleansePlan.StatusRunning(4000, 12345);
+            var running = CleansePlan.StatusRunning(4000, 12345, 7);
             Assert.StartsWith(CleansePlan.RunningPrefix, running);
-            Assert.Contains("4000 of 12345 objects checked", running);
+            Assert.Equal("cleanse: running: scanned 4000 of 12345, removed 7 so far", running);
 
             // The third state is the last result line itself, which is one of these.
             Assert.StartsWith(CleansePlan.CompletePrefix, CleansePlan.Reply(1, 2, 3));

@@ -18,6 +18,12 @@ namespace ValheimBakaLoader.Game
     /// The page holds the same two patterns (HERALD_MODCODE_RE in app.js), so a code the
     /// window accepts is one this side accepts. A test reads both and holds them equal.
     /// </para>
+    /// <para>
+    /// A Gale code is the same id the Mods hall follows a Gale profile by, so it is checked by
+    /// <see cref="Tools.GaleProfileId"/> rather than by a pattern of its own. It used to have one,
+    /// letters, digits and dashes, which refused every sync id with an underscore in it: a
+    /// quarter of them or so, since the long id is URL safe base64.
+    /// </para>
     /// </summary>
     public static class ModProfileCodes
     {
@@ -32,12 +38,13 @@ namespace ValheimBakaLoader.Game
         public const string ThunderstorePattern = "^[A-Za-z0-9][A-Za-z0-9-]{3,63}$";
 
         /// <summary>
-        /// A Gale code: the six character code, or the longer sync id, letters, digits and dashes.
+        /// A Gale code as the page checks it: the six character code, or the twenty two character
+        /// sync id. Not matched on this side; <see cref="IsAcceptable"/> asks
+        /// <see cref="Tools.GaleProfileId.Check"/>.
         /// </summary>
-        public const string GalePattern = "^(?:[A-Za-z0-9]{6}|[A-Za-z0-9][A-Za-z0-9-]{7,63})$";
+        public const string GalePattern = Tools.GaleProfileId.PagePattern;
 
         private static readonly Regex ThunderstoreRe = new(ThunderstorePattern, RegexOptions.CultureInvariant);
-        private static readonly Regex GaleRe = new(GalePattern, RegexOptions.CultureInvariant);
 
         /// <summary>One of the three spellings, whatever was stored. Anything else reads as none.</summary>
         public static string NormalizeKind(string kind)
@@ -59,7 +66,7 @@ namespace ValheimBakaLoader.Game
             return NormalizeKind(kind) switch
             {
                 Thunderstore => ThunderstoreRe.IsMatch(c),
-                Gale => GaleRe.IsMatch(c),
+                Gale => Tools.GaleProfileId.Check(c).Ok,
                 _ => false,
             };
         }

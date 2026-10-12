@@ -415,8 +415,9 @@ first thing to check.
 - [ ] Over RCON, `baka_cleanse` on the big world answers
       `Cleanse started: N objects to check.` within a second or two, with N in the tens or
       hundreds of thousands. Write N down.
-- [ ] While it runs, `baka_cleanse_status` answers `Cleanse running: X of N objects checked.`
-      and X goes UP between two reads.
+- [ ] While it runs, `baka_cleanse_status` answers
+      `cleanse: running: scanned X of N, removed M so far` (Commander 1.9.2; older plugins
+      said `Cleanse running: X of N objects checked.`) and X goes UP between two reads.
 - [ ] While it runs, the server keeps ticking: a second RCON command (`playerlist`) answers
       normally, and the server window's own output does not stop.
 - [ ] Press **Clear cheat marks** in the Players hall on that same big world. The window
@@ -425,7 +426,7 @@ first thing to check.
 - [ ] After it lands, `baka_cleanse_status` still answers with the counts, and goes on doing
       so until another cleanse is started.
 - [ ] `baka_cleanse_status` on a server where nothing has been run answers
-      `Cleanse status: nothing is running.`
+      `cleanse: nothing is running.` (`Cleanse status: nothing is running.` before 1.9.2)
 - [ ] Start a second `baka_cleanse` while the first is still walking. It is refused with
       `Cleanse is already running: M objects still to check.` and the counts of the first one
       are unaffected.
@@ -459,6 +460,26 @@ first thing to check.
       the cleanse is still running and that its counts land in the server log. Nothing about
       that is a failure: check the server log afterwards and the counts are there. Note the
       world size and the time if this happens at all.
+
+## Sweep results reach the host (1.2.14, Commander 1.9.2, KillAll 1.8.2)
+
+On a big world, a sweep that answers "started" used to put its result in the BepInEx log
+alone, and BepInEx's console logging is off, so the host heard nothing.
+
+- [ ] Clear ground items on the big world with the radius at 32. The first toast says the
+      sweep is walking N items. Within about two seconds of it finishing, a second toast gives
+      the counts, worded exactly as on a small world.
+- [ ] The Saga log shows a line opening `[BakaLoader Commander] cleardrops:` (the server's own
+      output) and an `[RCON] cleardrops: removed ...` line. Close and reopen the window: both
+      are still there.
+- [ ] While it runs, `baka_cleardrops_status` over RCON answers
+      `cleardrops: running: scanned X of N, removed M so far`, and afterwards the result line.
+- [ ] Run it again with the radius at 900 while standing in a base. The toast leads with the
+      kept-near count and says a smaller radius clears more.
+- [ ] Kill all monsters on the big world: the same two toasts, `baka_killall_status`, and a
+      `[BakaLoader Commander] killall:` line in the Saga.
+- [ ] Type `baka_cleardrops` in the console box with the window open and wait for the result:
+      one toast with the counts, not two.
 
 ## Sign-off
 

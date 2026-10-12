@@ -160,6 +160,8 @@ const CASES = [
   ["Cleanse started: 240000 objects to check. The counts follow in the server log when it"
     + " finishes, and baka_cleanse_status says how far it has got.", { kind: "running" }],
   ["Cleanse running: 80000 of 240000 objects checked.", { kind: "running" }],
+  // the shape all three sweeps share from Commander 1.9.2 and KillAll 1.8.2
+  ["cleanse: running: scanned 80000 of 240000, removed 12 so far", { kind: "running" }],
 
   // --- a second press while the first sweep is still walking ---
   // The window polls for up to ten minutes now, so a host who saw nothing happen has
@@ -171,6 +173,9 @@ const CASES = [
 
   // --- the status verb with nothing to report, which the poll meets after a restart ---
   ["Cleanse status: nothing is running. Run baka_cleanse on an empty server to clear the"
+    + " cheat marks a 1.0.9 to 1.1.2 spawn left behind.", { kind: "idle" }],
+  // the same answer in the 1.9.2 shape, opening with the verb like the other two sweeps
+  ["cleanse: nothing is running. Run baka_cleanse on an empty server to clear the"
     + " cheat marks a 1.0.9 to 1.1.2 spawn left behind.", { kind: "idle" }],
 
   // --- somebody walked onto the server while it was walking ---
@@ -460,7 +465,7 @@ test("the plugin, the page and the shipped DLLs agree on the words a reply opens
   assert.ok(already, "BakaCleansePlan.cs no longer opens its refusal with a known phrase");
   openings.AlreadyRunning = already[1].trim();
 
-  const idle = /"(Cleanse status: nothing is running)/.exec(plan);
+  const idle = /"(cleanse: nothing is running)/.exec(plan);
   assert.ok(idle, "BakaCleansePlan.cs no longer opens its idle status with a known phrase");
   openings.StatusIdle = idle[1];
 
@@ -476,8 +481,12 @@ test("the plugin, the page and the shipped DLLs agree on the words a reply opens
     "the page matcher answers yes to a phrase nothing writes");
 
   // The window's wait reads them through the plan rather than spelling them again.
-  assert.ok(/CleansePlan\.StartedPrefix/.test(bridge) && /CleansePlan\.RunningPrefix/.test(bridge),
+  assert.ok(/CleansePlan\.StartedPrefix/.test(bridge) && /CleansePlan\.IsRunningStatus/.test(bridge),
     "the bridge spells the opening words itself instead of reading the plugin's own names");
+  // IsRunningStatus is the plan's own reading of both running openings, the 1.9.2 one and the
+  // one a server not yet restarted still answers with.
+  assert.ok(/RunningPrefix, StringComparison/.test(plan) && /LegacyRunningPrefix, StringComparison/.test(plan),
+    "the plan's running check no longer reads both openings");
 
   // And the DLLs that actually ship carry the same words. The plan is source; the two
   // assemblies beside it are what a host's server loads, and a rebuild that did not

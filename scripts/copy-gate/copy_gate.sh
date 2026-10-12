@@ -837,5 +837,33 @@ else
   echo "  the disk reread selftest is missing: $DISKREAD_SELFTEST"; fail=1
 fi
 
+echo "== 49. following a Gale profile: the box, the row, its rank and the approval dialog =="
+# A followed Gale profile installs mods because somebody else's list moved. The quiet ways it goes
+# wrong are a row that outranks a live failure, a row raised by a check that never reached Gale,
+# a remembered untick ticked again, Install offered while the server has the plugins loaded, a
+# refused code sent anyway, and a half failed walk stamped as approved. The selftest drives the
+# real block out of app.js against the real catalog, and holds the host side to its six RPCs.
+GALE_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/gale_profile_selftest.js"
+if [ -f "$GALE_SELFTEST" ]; then
+  if out=$(node "$GALE_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the gale profile selftest is missing: $GALE_SELFTEST"; fail=1
+fi
+
+echo "== 50. the Herald's look: the name, the picture, the title, the status line and the link =="
+# How every post is signed and headed. The quiet ways it goes wrong are a picture link that is not a
+# picture sent anyway or refused in silence, a refused value riding along on the next switch press,
+# the line under the boxes promising what the post will not carry, and the page and the host side
+# disagreeing about which links are pictures. The selftest drives the real block out of app.js
+# against the real catalog, and holds the host side to its rules and its save.
+LOOK_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/herald_look_selftest.js"
+if [ -f "$LOOK_SELFTEST" ]; then
+  if out=$(node "$LOOK_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the herald look selftest is missing: $LOOK_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

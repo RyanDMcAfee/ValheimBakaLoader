@@ -247,6 +247,8 @@ namespace ValheimBakaLoader
             services.AddSingleton<IGitHubClient, GitHubClient>();
             services.AddSingleton<IThunderstoreClient, ThunderstoreClient>();
             services.AddSingleton<IHexiumClient, HexiumClient>();
+            // Gale's sync service, read only for a realm that follows a Gale profile.
+            services.AddSingleton<IGaleSyncClient, GaleSyncClient>();
             services.AddSingleton<IModScanner, ModScanner>();
             services.AddSingleton<IModUpdateService, ModUpdateService>();
             services.AddSingleton<IModRemovalService, ModRemovalService>();

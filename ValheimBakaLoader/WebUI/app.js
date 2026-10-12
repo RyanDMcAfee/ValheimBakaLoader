@@ -192,6 +192,8 @@ const HOST_SENTENCES=[
      this page sent it; and a realm deleted between the keystroke and the write. */
   {named:"userprefs.save.badModCode",     textId:"herald.modcode.refused"},
   {named:"userprefs.save.modCodeNoRealm", textId:"herald.modcode.no_realm"},
+  {named:"userprefs.save.badAvatarUrl",   textId:"herald.look.avatar.refused"},
+  {named:"userprefs.save.badBotName",     textId:"herald.look.name.refused"},
 ];
 /* Every way a language pack download can end, as the pack service names it in the result,
    beside the catalog entry that words it. This is the same question HOST_SENTENCES answers
@@ -675,6 +677,7 @@ function repaintBootCopy(){
   try{renderWinState();}catch(_){}        /* the maximize button, in whichever state */
   try{renderAppUpdatePill();}catch(_){}   /* the BakaLoader-update pill */
   try{renderMods();}catch(_){}            /* the mod table's pills, tags and marks */
+  try{renderGaleBox();}catch(_){}         /* the Gale box's status line */
   try{renderPlayers();}catch(_){}         /* the roster's tooltips and its online cell */
   try{renderCaps();}catch(_){}            /* the missing-mods banner's button */
   try{renderCfgList();}catch(_){}         /* the config list's two empty lines */
@@ -690,6 +693,7 @@ function repaintBootCopy(){
   try{heraldRenderPost();}catch(_){}      /* whether a status post is placed */
   try{heraldRenderUrlStat();}catch(_){}   /* and the line under the webhook box */
   try{heraldRenderModCodeLine();}catch(_){} /* and the line under the mod profile code */
+  try{heraldRenderLookLine();}catch(_){}  /* and the line under the post's look */
   try{renderTermStream();}catch(_){}      /* the Saga console's live or paused chip */
   try{renderMead();}catch(_){}            /* the horn of mead, embers and all */
   try{renderTermEmpty();}catch(_){}       /* the Saga console's empty state */
@@ -753,6 +757,7 @@ function applyLanguage(code){
   try{heraldRenderPost();}catch(_){}        /* and its post status */
   try{heraldRenderUrlStat();}catch(_){}     /* and the line under its webhook box */
   try{heraldRenderModCodeLine();}catch(_){} /* and the one under its mod profile code */
+  try{heraldRenderLookLine();}catch(_){}    /* and the one under the post's look */
   try{renderTermStream();}catch(_){}        /* the Saga console's live/paused chip */
   try{renderAtlasSide();}catch(_){}         /* the Map hall's side panel */
   try{renderWeather();}catch(_){}           /* and the weather box inside it */
@@ -1870,6 +1875,8 @@ function goPage(name){
     /* The plugins folder can appear while the hall is off screen (BepInEx installed from
        the row above the table), so the Mod folder button asks the disk again on the way in. */
     if(name==="mods") refreshModCount();
+    /* Walking into the hall is one of the three moments a followed Gale profile is asked. */
+    if(name==="mods") galeCheck();
     if(name==="vikings"){refreshPlayers();refreshJournal(true);}
     if(name==="runes") refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
     if(name==="herald") refreshHerald();      // re-read prefs so the hall always shows the saved truth
@@ -2231,7 +2238,11 @@ async function switchServer(name,opts){
      stored save folder is a per-realm field, so the row is cleared here and asked again
      below for the realm the host has just switched to. */
   ["saveFailed","backupFailed","crashRelaunch","modUpdates","serverUpdate","restartPending",
-   "saveFolderStray","unsavedStop"].forEach(clearCondition);
+   "saveFolderStray","unsavedStop","galeChanged"].forEach(clearCondition);
+  /* The Gale follow is a field on the realm, so the box and the row go with the realm and the
+     new realm's follow is read off its own profile, with no trip to Gale. */
+  GALE=null; GALE_REFUSED=null; try{renderGaleBox();}catch(_){}
+  galeRefresh();
   /* and so does a dismissal: the settings the host waved away were that realm's. All
      three of these are memos about ONE realm's bar, and two of them used to stand: a
      mod-updates bar dismissed on a realm with three waiting suppressed the next realm's
@@ -4126,8 +4137,11 @@ function renderModUpdateProgress(){
   const pct=total>0?Math.max(0,Math.min(100,Math.round((u.done||0)/total*100))):0;
   /* One whole sentence per shape, with the mod and the two numbers in named slots: the
      bar used to be two words glued to three values, which no translator can reorder. */
+  /* A walk that is not an update (the Gale install) names its own sentence for the one
+     shape, with the same three slots. */
   const label=(u.phase==="updating"&&u.current)
-    ? T("mods.progress.updating.one",{mod:u.current,index:u.index,total:total})
+    ? (u.labelId?T(u.labelId,{mod:u.current,index:u.index,total:total})
+               :T("mods.progress.updating.one",{mod:u.current,index:u.index,total:total}))
     : T("mods.progress.updating.all",{done:u.done||0,total:total});
   wrap.innerHTML=
     `<span class="hbmsg">${esc(label)}</span>`+
@@ -5986,6 +6000,300 @@ $("#addModBtn").addEventListener("click",()=>{
   toast("ᚨ "+T("mods.add.native_only.toast"));
 });
 
+/* GALE-BEGIN: following a Gale synced profile (issue 19).
+ *
+ * One box in the Mods hall, one row on the condition bar and one dialog. The host pastes a
+ * profile code, BakaLoader compares the profile's mod list with this server's mods, and when
+ * the profile has moved and there is something to install the bar says so. Nothing goes in
+ * until the host has read the list and pressed Install, and nothing on the server is ever
+ * removed: the list only ever holds mods to add and mods to move to the profile's version.
+ *
+ * Gale is asked at three moments and no others: after the first frame, when this hall opens,
+ * and on Check now. All three go through galeCheck. A check that fails for any reason is one
+ * quiet sentence on the status line; it never raises the row and never toasts.
+ *
+ * The installs are the Mods hall's own add, one mod at a time, with the version pinned in the
+ * address, so the download, its checks and its failure sentences are the ones that road has.
+ * The selftest scripts/ui/gale_profile_selftest.js drives this block for real.
+ */
+/* Every sentence the host side can name for the status line. The host side names them by
+   their catalog id, so the one field is both. An id this table does not know is not
+   printed: an id is not copy. */
+const GALE_STATUS=[
+  {textId:"mods.gale.id.bad"},
+  {textId:"mods.gale.no_realm"},
+  {textId:"mods.gale.check.bad_request"},
+  {textId:"mods.gale.check.not_found"},
+  {textId:"mods.gale.check.timeout"},
+  {textId:"mods.gale.check.server_error"},
+  {textId:"mods.gale.check.network"},
+  {textId:"mods.gale.check.malformed"},
+  {textId:"mods.gale.check.cancelled"},
+  {textId:"mods.gale.check.unreadable"},
+];
+let GALE=null;            // this realm's follow, as the host side last answered it
+let GALE_BUSY=false;      // a check is out
+let GALE_REFUSED=null;    // the sentence id a refused paste gets, until the box is used again
+let GALE_INSTALLING=false;
+function galeSentence(id){
+  const row=GALE_STATUS.find(r=>r.textId===id);
+  return T(row?row.textId:"mods.gale.check.network");
+}
+/* A server is up on this realm when the host side says something holds its plugins folder,
+   or when the state on screen says this realm is not stopped. Either is enough to refuse. */
+function galeHeldBy(st){
+  if(st&&st.heldBy) return String(st.heldBy);
+  const s=S.state&&S.state.status;
+  return (s==="Starting"||s==="Running"||s==="Stopping")?String(S.profileName||""):null;
+}
+/* The approval stamp is the profile's own updatedAt, so it reads as a date when it is one. */
+function galeStampText(stamp){
+  const d=new Date(stamp);
+  if(isNaN(d)) return String(stamp);
+  try{return d.toLocaleString(LOC());}catch(_){return String(stamp);}
+}
+/* The status line: one sentence about the last check, one about the last approval. Each is
+   a whole entry, so no language has to glue fragments in English order. */
+function galeStatusLine(st,busy,refused){
+  if(refused) return galeSentence(refused);
+  if(busy) return T("mods.gale.status.checking");
+  if(!st||!st.following) return T("mods.gale.status.off");
+  const approved=st.lastApproved
+    ?T("mods.gale.status.approved",{when:galeStampText(st.lastApproved)})
+    :T("mods.gale.status.approved.never");
+  const c=st.check;
+  let first;
+  if(!c) first=T("mods.gale.status.never");
+  else if(!c.ok) first=T("mods.gale.status.failed",{reason:galeSentence(c.statusId),at:agoAt(c.at)});
+  else if(c.addCount+c.updateCount===0) first=T("mods.gale.status.current",{at:agoAt(c.at)});
+  else if(c.due) first=T("mods.gale.status.due",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
+  else first=T("mods.gale.status.waved",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
+  const skipped=c&&c.ok&&c.skipped>0?" "+T("mods.gale.status.skipped",{count:c.skipped}):"";
+  return first+skipped+" "+approved;
+}
+/* Takes an answer from the host side, unless it is about a realm the host has left. */
+function galeApply(st){
+  if(!st||!isActiveProfile(st.profile)) return false;
+  GALE=st;
+  renderGaleBox();
+  conditionGale();
+  return true;
+}
+function renderGaleBox(){
+  const input=$("#galeId"), status=$("#galeStatus");
+  const check=$("#galeCheckBtn"), forget=$("#galeForgetBtn"), review=$("#galeReviewBtn");
+  const st=GALE;
+  /* The field follows the stored id, except while the host is typing in it. */
+  if(input&&input!==(typeof document!=="undefined"?document.activeElement:null))
+    input.value=st&&st.id?st.id:"";
+  if(status) status.textContent=galeStatusLine(st,GALE_BUSY,GALE_REFUSED);
+  const busy=GALE_BUSY||GALE_INSTALLING;
+  if(check) check.disabled=busy;
+  if(forget) forget.disabled=busy||!(st&&st.following);
+  if(review){
+    const c=st&&st.check;
+    const work=!!(c&&c.ok&&c.addCount+c.updateCount>0);
+    review.style.display=work?"":"none";
+    review.disabled=busy;
+  }
+}
+/* The condition bar row. Raised only from a check that came back whole, had something to
+   install, and found the profile moved since the host last approved or waved it away. A
+   failed check never raises it, and takes down one an earlier check raised: the list behind
+   Review is gone with it, and the status line in the hall says why. */
+function conditionGale(){
+  const st=GALE, c=st&&st.check;
+  if(!c||!c.ok||!c.due){clearCondition("galeChanged");return;}
+  const seq=c.seq, profile=st.profile;
+  setCondition("galeChanged",{sev:"info",title:T("cond.gale.title"),
+    msg:T("cond.gale.msg",{add:c.addCount,update:c.updateCount}),
+    actionsHtml:`<button class="btn btn-ember btn-sm" id="cbGaleReview">${esc(T("cond.gale.review"))}</button>`,
+    again:()=>conditionGale(),
+    wire:bar=>bar.querySelector("#cbGaleReview").addEventListener("click",()=>galeDialog()),
+    onDismiss:()=>{
+      if(!Native.available) return;
+      Native.call("gale.dismiss",{profile,seq}).then(r=>{if(r&&r.state) galeApply(r.state);}).catch(()=>{});
+    },
+  });
+}
+/* Reads the stored follow with no trip to Gale. */
+async function galeRefresh(){
+  if(!Native.available) return;
+  const st=await Native.call("gale.get",{profile:S.profileName||null}).catch(()=>null);
+  if(st) galeApply(st);
+}
+/* One of the three moments. Quiet: a refused call or a dead service is a status line. */
+async function galeCheck(){
+  if(!Native.available||GALE_BUSY||GALE_INSTALLING) return;
+  const profile=S.profileName||null;
+  GALE_BUSY=true; renderGaleBox();
+  const st=await Native.call("gale.check",{profile}).catch(()=>null);
+  GALE_BUSY=false;
+  if(!st||!galeApply(st)) renderGaleBox();
+}
+/* Check now. A changed id is stored first, and a refused one says why and goes no further. */
+async function galeCheckNow(){
+  if(!Native.available){toast("ᛋ "+T("mods.gale.preview.toast"));return;}
+  if(GALE_BUSY||GALE_INSTALLING) return;
+  const typed=String(($("#galeId")||{}).value||"").trim();
+  const stored=GALE&&GALE.id?GALE.id:"";
+  GALE_REFUSED=null;
+  if(typed!==stored){
+    const r=await Native.call("gale.set",{profile:S.profileName||null,id:typed}).catch(()=>null);
+    if(!r){renderGaleBox();return;}
+    if(!r.ok){GALE_REFUSED=r.sentenceId||"mods.gale.id.bad";renderGaleBox();return;}
+    galeApply(r.state);
+    if(!typed) return;      // a cleared box is Forget, and Forget asks Gale nothing
+  }
+  await galeCheck();
+}
+async function galeForget(){
+  if(!Native.available||GALE_BUSY||GALE_INSTALLING) return;
+  GALE_REFUSED=null;
+  const st=await Native.call("gale.forget",{profile:S.profileName||null}).catch(()=>null);
+  const input=$("#galeId"); if(input) input.value="";
+  if(st) galeApply(st); else renderGaleBox();
+}
+/* What the dialog lists: every add and every update, the ones the host unticked earlier among
+   them with the tick off, and the names the profile has switched off for the one note line. */
+function galeDialogRows(st){
+  const c=st&&st.check;
+  const rows=[], disabled=[];
+  if(!c||!c.ok) return {rows,disabled};
+  for(const r of c.rows||[]){
+    const kind=r.kind==="unticked"?r.untickedFrom:r.kind;
+    if(r.kind==="disabled"){disabled.push(String(r.name));continue;}
+    if(kind!=="add"&&kind!=="update") continue;
+    rows.push({name:String(r.name),profileVersion:r.profileVersion,serverVersion:r.serverVersion,
+      ticked:r.kind!=="unticked",downgrade:!!r.downgrade});
+  }
+  return {rows,disabled};
+}
+function galeDialogHtml(st){
+  const {rows,disabled}=galeDialogRows(st);
+  const held=galeHeldBy(st);
+  const body=rows.length
+    ?`<div class="mbody-note">${esc(T("mods.gale.dialog.intro"))}</div>`+
+      `<table class="galetbl"><thead><tr><th></th>`+
+      `<th>${esc(T("mods.gale.dialog.col.mod"))}</th>`+
+      `<th>${esc(T("mods.gale.dialog.col.profile"))}</th>`+
+      `<th>${esc(T("mods.gale.dialog.col.server"))}</th></tr></thead><tbody>`+
+      rows.map((r,i)=>
+        `<tr><td><input type="checkbox" data-gale-row="${i}"${r.ticked?" checked":""}`+
+          ` aria-label="${esc(T("mods.gale.dialog.tick.aria",{name:r.name}))}"></td>`+
+        `<td class="mono">${esc(r.name)}</td>`+
+        `<td class="mono">${esc(r.profileVersion||"")}`+
+          (r.downgrade?` <span class="galeold" title="${esc(T("mods.gale.dialog.older.title"))}">${esc(T("mods.gale.dialog.older"))}</span>`:"")+`</td>`+
+        `<td class="mono">${esc(r.serverVersion||T("mods.gale.dialog.not_installed"))}</td></tr>`).join("")+
+      `</tbody></table>`
+    :`<div class="mbody-note">${esc(T("mods.gale.dialog.empty"))}</div>`;
+  const note=disabled.length
+    ?`<div class="mbody-note" style="margin-top:8px">${esc(T("mods.gale.dialog.disabled",{names:disabled.join(", ")}))}</div>`:"";
+  const warn=held?`<div class="mwarn">⚠ ${esc(T("mods.gale.dialog.running",{name:held}))}</div>`:"";
+  const off=held||!rows.length?" disabled":"";
+  return `<div class="mtitle">${esc(T("mods.gale.dialog.title"))}</div>`+
+    `<div class="mbody">${body}${note}${warn}</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="galeNotNow">${esc(T("guard.btn.not_now"))}</button>`+
+    `<button class="btn btn-ember btn-sm" id="galeInstall"${off}>${esc(T("common.button.install"))}</button></div>`;
+}
+function galeDialog(){
+  const st=GALE;
+  if(!st||!st.check||!st.check.ok) return;
+  const {rows}=galeDialogRows(st);
+  const again=()=>{
+    const m=modalOpen(galeDialogHtml(st),again);
+    m.querySelector("#galeNotNow").addEventListener("click",modalClose);
+    m.querySelector("#galeInstall").addEventListener("click",()=>{
+      const ticks=Array.from(m.querySelectorAll("[data-gale-row]"));
+      const ticked=[], unticked=[];
+      for(const box of ticks){
+        const r=rows[Number(box.getAttribute("data-gale-row"))]; if(!r) continue;
+        (box.checked?ticked:unticked).push(r);
+      }
+      modalClose();
+      galeInstall(st,ticked,unticked);
+    });
+    return m;
+  };
+  return again();
+}
+/* The pinned address the Mods hall's add already reads: a version page, never "latest". */
+function galeModUrl(name,version){
+  const dash=name.indexOf("-");
+  return "https://thunderstore.io/c/valheim/p/"+name.slice(0,dash)+"/"+name.slice(dash+1)+"/v/"+version+"/";
+}
+/* The Mods hall's own sentence for a failed add, and two of its own for the reasons that
+   stop the walk: a server that came up, and the realm on screen changing. */
+function galeFailSentence(r){
+  if(r.Reason==="serverRunning")
+    return T("mods.gale.install.server_running.toast",{name:(r.ErrorParams&&r.ErrorParams.name)||S.profileName||""});
+  if(r.Reason==="realmChanged") return T("mods.gale.install.realm_changed.toast");
+  const own=hostSentence(r.Reason,r.ErrorParams);
+  return own||T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")});
+}
+const GALE_STOPS=["serverRunning","realmChanged","noBepInEx","noServerPath","busy","alreadyMaintained"];
+async function galeInstall(st,ticked,unticked){
+  if(!Native.available||GALE_INSTALLING||S.modsUpdating||S.modsScanning) return;
+  const profile=st.profile, seq=st.check.seq;
+  if(galeHeldBy(st)){toast("ᚦ "+T("mods.gale.dialog.running",{name:galeHeldBy(st)}));return;}
+  /* The ticks are the host's answer whatever happens next, so they are written first. */
+  const u=await Native.call("gale.untick",{profile,
+    unticked:unticked.map(r=>r.name),ticked:ticked.map(r=>r.name)}).catch(()=>null);
+  if(u&&u.state) galeApply(u.state);
+  if(!ticked.length){
+    const d=await Native.call("gale.dismiss",{profile,seq}).catch(()=>null);
+    if(d&&d.state) galeApply(d.state);
+    toast("ᚨ "+T("mods.gale.install.none.toast"));
+    return;
+  }
+  GALE_INSTALLING=true; renderGaleBox();
+  S.modsUpdating=true; S.modRowStatus=S.modRowStatus||{};
+  let done=0, failed=0, stopped=false;
+  for(let i=0;i<ticked.length;i++){
+    if(!isActiveProfile(profile)){stopped=true;break;}
+    const r=ticked[i];
+    MOD_UPD={phase:"updating",total:ticked.length,done,current:r.name,index:i+1,labelId:"mods.gale.progress.one"};
+    S.modRowStatus[r.name]={phase:"updating"};
+    renderModUpdateProgress(); renderMods();
+    const a=await rpc("mods.addFromUrl",{url:galeModUrl(r.name,r.profileVersion),profile,requireStopped:true});
+    if(a!==FAIL&&a&&a.Installed){
+      done++;
+      S.modRowStatus[r.name]={phase:"done",from:r.serverVersion||"",to:a.Version||r.profileVersion};
+    }else{
+      failed++;
+      const why=a===FAIL||!a?null:galeFailSentence(a);
+      S.modRowStatus[r.name]={phase:"failed",error:why};
+      if(why) toast("ᚦ "+why);
+      if(a&&a!==FAIL&&GALE_STOPS.includes(a.Reason)){stopped=true;break;}
+    }
+  }
+  MOD_UPD=null; renderModUpdateProgress();
+  S.modsUpdating=false; GALE_INSTALLING=false;
+  /* Only a walk that put every ticked mod in stores the stamp, so a mod that failed is still
+     offered on the row until it goes in or the host unticks it. */
+  if(!failed&&!stopped){
+    const d=await Native.call("gale.dismiss",{profile,seq}).catch(()=>null);
+    if(d&&d.state) galeApply(d.state);
+    toast("ᚨ "+T("mods.gale.install.done.toast",{count:done}));
+  }else{
+    if(!stopped||done) toast("ᚦ "+T("mods.gale.install.partial.toast",{done,left:ticked.length-done}));
+    /* No stamp, so the row stays for what is left. The mods that did go in are on the disk
+       now, and the counts and the list are made again against it, so Review never offers
+       them a second time. Gale is not asked. */
+    const r=await Native.call("gale.rescan",{profile}).catch(()=>null);
+    if(!r||!r.state||!galeApply(r.state)) renderGaleBox();
+  }
+  if(isActiveProfile(profile)) await scanMods({force:false});
+}
+/* GALE-END */
+$("#galeCheckBtn")?.addEventListener("click",()=>galeCheckNow());
+$("#galeForgetBtn")?.addEventListener("click",()=>galeForget());
+$("#galeReviewBtn")?.addEventListener("click",()=>galeDialog());
+$("#galeId")?.addEventListener("keydown",e=>{if(e.key==="Enter")galeCheckNow();});
+/* A refused id stays said until the box is touched again. */
+$("#galeId")?.addEventListener("input",()=>{if(GALE_REFUSED){GALE_REFUSED=null;renderGaleBox();}});
+try{renderGaleBox();}catch(_){}
+
 /* ---------- COMMAND PALETTE ---------- */
 const palBg=$("#paletteBg"), palIn=$("#palInput");
 let palOpen=false;
@@ -6044,24 +6352,118 @@ function updatePalGating(){
      toasts success off delivery alone is claiming something nobody checked. Every
      caller whose command can come back refused hands one of these in; the ones that
      say nothing on success (the free-typed console, the command picker) hand in
-     nothing and the reply stands on its own in the log. */
-async function sendConsole(cmd,read){
+     nothing and the reply stands on its own in the log.
+   @param {object} [follow] for a sliced sweep, one of SWEEP_FOLLOW's rows: when the reply
+     says "started", the page asks the sweep's status verb until it has the result and toasts
+     that, worded by the same reader the reply went through. */
+async function sendConsole(cmd,read,follow){
   cmd=(cmd||"").trim(); if(!cmd) return;
   logLine("cmd","> "+cmd);
-  const r=await rpc("server.command",{command:cmd});
-  if(r===FAIL) return;
-  if(!r.ok){
-    toast("ᚦ "+T("pal.console.undelivered.toast"));
-    logLine("warn","[RCON] command failed. Is the server running with RCON enabled?");
-    return;
+  /* Held from the moment the line goes, because a small world answers with its result AND
+     prints it on the server's output in the same frame, and the copy read off the output can
+     reach the page before the answer does. One sweep, one toast. */
+  /* The realm the sweep went to, taken now: sessions are kept per realm, and the wait that
+     follows has to keep asking this one even if the host switches realm while it runs. */
+  const realm=follow?S.profileName:null;
+  const key=follow?sweepKey(realm,follow.verb):null;
+  if(follow) SWEEP_WAITING[key]=(SWEEP_WAITING[key]||0)+1;
+  let started=false;
+  try{
+    const r=await rpc("server.command",{command:cmd});
+    if(r===FAIL) return;
+    if(!r.ok){
+      toast("ᚦ "+T("pal.console.undelivered.toast"));
+      logLine("warn","[RCON] command failed. Is the server running with RCON enabled?");
+      return;
+    }
+    const resp=(r.response||"").trim();
+    if(typeof read==="function"){
+      const said=read(resp);
+      if(said) toast(said);
+    }
+    /* The host side already wrote a sweep's result into the application log, which the Saga
+       draws, so printing it here as well would be the same line twice. */
+    if(resp&&!r.logged) resp.split(/\r?\n/).forEach(l=>logLine("ok",l));
+    else if(!resp) logLine("ok","[RCON] "+cmd+" · dispatched. Replies land here in the Saga log");
+    if(follow){
+      started=follow.read(resp).kind==="started";
+      if(!started) SWEEP_TOLD_AT[key]=Date.now();
+    }
+  }finally{
+    if(follow) SWEEP_WAITING[key]--;
   }
-  const resp=(r.response||"").trim();
-  if(typeof read==="function"){
-    const said=read(resp);
-    if(said) toast(said);
+  if(started) await followSweep(follow,realm);
+}
+
+/* The two sweeps the page waits on. The cleanse is not here: the host side runs its wait
+   (players.cleanse) and the page words what that hands back.
+   SWEEP_WAITING counts what is holding each sweep (a line on its way, a wait in progress)
+   rather than being a flag, because a second press while a wait runs is answered "already
+   running" and its own release must not clear the wait's hold. SWEEP_POLLING is the wait
+   itself, so a second "started" never starts a second one. All three are keyed by realm and
+   verb (sweepKey), so a wait on one realm neither mutes nor blocks another realm's sweep. */
+const SWEEP_WAITING={};
+const SWEEP_POLLING={};
+const SWEEP_TOLD_AT={};
+const SWEEP_FOLLOW={
+  killall:{verb:"killall",status:"baka_killall_status",
+    read:reply=>killAllReply(reply),toast:read=>killAllToast(read)},
+  cleardrops:{verb:"cleardrops",status:"baka_cleardrops_status",
+    read:reply=>clearDropsReply(reply),toast:read=>clearDropsToast(read)},
+};
+
+/* A sweep that answered "started": its status verb is asked every two seconds, through the
+   same RPC the command went out on, until it answers with the result, for at most ten
+   minutes. The polls are sent quiet, so the Saga is not filled with three hundred "RCON
+   command sent" lines; the host side writes the result line into the Saga itself.
+   Every poll names the realm the sweep went to, and the host side refuses one when another
+   realm is on screen, because it would otherwise ask that realm's server instead, and an
+   old result kept there would come back as this sweep's. The wait ends on the switch. */
+async function followSweep(f,realm){
+  const key=sweepKey(realm,f.verb);
+  if(SWEEP_POLLING[key]) return;
+  SWEEP_POLLING[key]=true;
+  SWEEP_WAITING[key]=(SWEEP_WAITING[key]||0)+1;
+  let refused=false;
+  let out;
+  try{
+    out=await sweepPoll(async line=>{
+      const r=await rpc("server.command",{command:line,quiet:true,profile:realm});
+      if(r&&r!==FAIL&&r.errorId==="realmChanged"){refused=true;return null;}
+      return (r===FAIL||!r||!r.ok)?null:(r.response||"");
+    },f.status,{here:()=>!refused&&isActiveProfile(realm)});
+  }finally{
+    SWEEP_POLLING[key]=false;
+    SWEEP_WAITING[key]--;
   }
-  if(resp) resp.split(/\r?\n/).forEach(l=>logLine("ok",l));
-  else logLine("ok","[RCON] "+cmd+" · dispatched. Replies land here in the Saga log");
+  switch(out.kind){
+    case "moved":
+      /* No toast: the host is looking at another realm now, and the result is that realm's
+         news. Its server still prints the line, and the page toasts it from there when the
+         host is back on it. */
+      logLine("warn","[RCON] the server on screen changed, so BakaLoader stopped waiting for the "+f.verb+" sweep on "+realm+". That server still prints the result line when the sweep lands.");
+      return;
+    case "done":
+      SWEEP_TOLD_AT[key]=Date.now();
+      toast(f.toast(f.read(out.said)));
+      return;
+    case "timeout":
+      logLine("warn","[RCON] the sweep is still running after ten minutes. "+f.status+" answers with its result when it lands.");
+      toast("ᛉ "+T("pal.sweep.toast.still_running"));
+      return;
+    case "idle":
+      logLine("warn","[RCON] "+f.status+" says nothing is running, so the server most likely restarted under the sweep.");
+      toast("ᚦ "+T("pal.sweep.toast.idle"));
+      return;
+    case "unsupported":
+      /* The plugin predates the status verb. The started toast already said where the result
+         goes, and that is still true, so this adds a line and nothing louder. */
+      logLine("warn","[RCON] the plugin on this server does not know "+f.status+". Restart the server so BakaLoader can put the new Commander in place.");
+      return;
+    default:
+      logLine("warn","[RCON] the server stopped answering, so BakaLoader stopped waiting for the sweep.");
+      toast("ᚦ "+T("pal.sweep.toast.gone"));
+  }
 }
 
 /* KILLALL-BEGIN
@@ -6102,6 +6504,8 @@ function killAllCounts(said){
  *   busy      {}                         a sweep was already walking; nothing was struck
  *   stopped   {slain,unreachable,spared} it threw part way; the counts are real work
  *   refused   {}                         Error:, Unknown command, KillAll failed, Usage:
+ *   running   {}                         the status verb: still walking
+ *   idle      {}                         the status verb: nothing has run since the server came up
  *   silent    {}                         RCON carried it and the server said nothing
  *   unknown   {}                         a shape this version has not met
  */
@@ -6115,6 +6519,9 @@ function killAllReply(reply){
      of what happened: the command was refused, and that is what the host is told. */
   if(/^Usage:\s*baka_killall\b/i.test(said)) return {kind:"refused"};
   if(/^KillAll is already running:/i.test(said)) return {kind:"busy"};
+  /* The status verb's own two answers, which the wait reads and a host can type. */
+  if(/^killall:\s*running:/i.test(said)) return {kind:"running"};
+  if(/^killall:\s*nothing is running/i.test(said)) return {kind:"idle"};
   if(/^KillAll stopped early:/i.test(said)){
     const c=killAllCounts(said);
     /* No counts behind it means nobody counted: say it stopped and say nothing else. */
@@ -6165,6 +6572,89 @@ function killAllCommand(s){
   }
   return {cmd:"baka_killall"};
 }
+
+/* ---------- WAITING ON A SLICED SWEEP ----------
+   baka_killall and baka_cleardrops answer "started" when the world is too big to walk
+   inside their own answer, and the result used to go to the BepInEx log and nowhere else.
+   BepInEx ships with its console logging off, so a host cleared five thousand items and was
+   told nothing. From Commander 1.9.2 each sweep has a status verb answering, in one shape
+   for all three, "<verb>: running: scanned X of Z, removed N so far" while it walks and the
+   result line once it is done, so the page asks it every two seconds until it says
+   something else, and gives up asking after ten minutes. Pure, with the transport, the wait
+   and the clock handed in, so scripts/ui/killall_reply_selftest.js drives every ending with
+   no server and no real time. */
+
+/** True when a status line says the sweep is still walking, in the 1.9.2 shape or the one
+    an older plugin's cleanse answered with. */
+function sweepRunning(said){
+  const s=String(said==null?"":said).trim();
+  return /^(?:cleardrops|killall|cleanse):\s*running:/i.test(s)||/^Cleanse running:/i.test(s);
+}
+/** True when the status verb says nothing has run since the server came up, which is what
+    a restart under a waiting page looks like. */
+function sweepIdle(said){
+  const s=String(said==null?"":said).trim();
+  return /^(?:cleardrops|killall|cleanse):\s*nothing is running/i.test(s)||/^Cleanse status:\s*nothing is running/i.test(s);
+}
+
+/**
+ * Asks a sweep's status verb until it stops saying "running".
+ * @param {function} ask sends one console line and resolves to the reply, or null when it
+ *   did not get through
+ * @param {string} statusCmd the status verb, e.g. "baka_killall_status"
+ * @param {object} [o] everyMs (2000), ceilingMs (ten minutes), wait(ms), now(), and here(),
+ *   true while the realm the sweep went to is still the one on screen
+ * @returns {Promise<object>} kind, plus said where there is a line:
+ *   done         the status verb answered with the result line
+ *   timeout      still running at the ceiling; said is the last status line
+ *   gone         a poll did not get through, so the server is not there to walk anything
+ *   idle         the server has nothing running, so the sweep went down with it
+ *   unsupported  the plugin is older than the status verb and forwarded it to the console
+ *   moved        o.here() went false: the host switched realm, so the wait is not theirs now
+ */
+async function sweepPoll(ask,statusCmd,o){
+  o=o||{};
+  const every=o.everyMs==null?2000:o.everyMs;
+  const ceiling=o.ceilingMs==null?600000:o.ceilingMs;
+  const wait=o.wait||(ms=>new Promise(r=>setTimeout(r,ms)));
+  const now=o.now||(()=>Date.now());
+  const here=o.here||(()=>true);
+  /* Clocked rather than counted, for the reason the cleanse's own wait is: every poll is a
+     round trip on top of the wait, so three hundred of them run well past ten minutes. */
+  const start=now();
+  let last="";
+  while(now()-start<ceiling){
+    await wait(every);
+    /* Asked before the poll goes and again when it answers, so neither a switch during the
+       wait nor one during the round trip lets the other realm's answer be read as this one. */
+    if(!here()) return {kind:"moved",said:last};
+    const reply=await ask(statusCmd);
+    if(!here()) return {kind:"moved",said:last};
+    if(reply==null) return {kind:"gone",said:last};
+    const said=String(reply).trim();
+    if(/^Unknown command\b/i.test(said)||/^Forwarded to console:/i.test(said)) return {kind:"unsupported",said};
+    if(sweepIdle(said)) return {kind:"idle",said};
+    /* An empty answer says nothing either way, so it is asked again. */
+    if(!said||sweepRunning(said)){ if(said) last=said; continue; }
+    return {kind:"done",said};
+  }
+  return {kind:"timeout",said:last};
+}
+
+/** The key the page keeps a sweep's hold under: the realm and the verb, so a wait on one realm
+    says nothing about the same sweep on another. The realm is matched without case, the way
+    isActiveProfile matches it. */
+function sweepKey(profile,verb){
+  return String(profile==null?"":profile).trim().toLowerCase()+"|"+verb;
+}
+/** Whether a result read off the server's own output should be toasted: not while the page
+    is already waiting on that sweep (its own wait says it), and not when the page said it a
+    moment ago (a small world answers at once AND prints the line). */
+function sweepEventWanted(verb,waiting,toldAt,now){
+  if(waiting&&waiting[verb]) return false;
+  const at=toldAt&&toldAt[verb];
+  return !(at&&now-at<60000);
+}
 /* KILLALL-END */
 
 /* CLEARDROPS-BEGIN
@@ -6203,6 +6693,8 @@ function clearDropsCounts(said){
  *   stopped      {removed,gear,near,scanned,unreadable}, or {counted:false}
  *   unsupported  {}        the plugin on the server is older than this button
  *   refused      {}        Error:, Usage:
+ *   running      {}        the status verb: still walking
+ *   idle         {}        the status verb: nothing has run since the server came up
  *   silent       {}        RCON carried it and the server said nothing
  *   unknown      {}        a shape this version has not met
  */
@@ -6218,6 +6710,9 @@ function clearDropsReply(reply){
   if(consoleRefused(said)) return {kind:"refused"};
   if(/^Usage:\s*baka_cleardrops\b/i.test(said)) return {kind:"refused"};
   if(/^cleardrops:\s*already running\b/i.test(said)) return {kind:"busy"};
+  /* The status verb's own two answers, which the wait reads and a host can type. */
+  if(/^cleardrops:\s*running:/i.test(said)) return {kind:"running"};
+  if(/^cleardrops:\s*nothing is running/i.test(said)) return {kind:"idle"};
   if(/^cleardrops:\s*stopped early\b/i.test(said)){
     const c=clearDropsCounts(said);
     /* No counts behind it means nobody counted: say it stopped and say nothing else. */
@@ -6355,7 +6850,8 @@ function cleanseReply(reply){
 
   /* The status verb with nothing to report. The poll meets it when the server restarted
      while the window was waiting, which takes the sweep with it. */
-  if(/^Cleanse status:\s*nothing is running/i.test(said)) return {kind:"idle"};
+  if(/^Cleanse status:\s*nothing is running/i.test(said)||/^cleanse:\s*nothing is running/i.test(said))
+    return {kind:"idle"};
 
   if(/^Error:/i.test(said)||/^Cleanse failed:/i.test(said)) return {kind:"refused"};
 
@@ -6363,7 +6859,8 @@ function cleanseReply(reply){
      about to walk and the window polls from here. Reaching a toast with this line on it
      means the poll gave up, which the caller words for itself; saying "started" here is
      still better than "a shape this version has not met". */
-  if(/^Cleanse started:/i.test(said)||/^Cleanse running:/i.test(said)) return {kind:"running"};
+  if(/^Cleanse started:/i.test(said)||/^Cleanse running:/i.test(said)||/^cleanse:\s*running:/i.test(said))
+    return {kind:"running"};
 
   if(/^Cleanse complete:/i.test(said)){
     const counts=cleanseCounts(said);
@@ -6522,6 +7019,8 @@ function killAllToast(read){
         :"ᛉ "+T("pal.kill.toast.none",{unreachable:read.unreachable,spared:read.spared});
     case "started":  return "ᚦ "+T("pal.kill.toast.started",{count:read.candidates});
     case "busy":     return "ᛊ "+T("pal.kill.toast.busy");
+    case "running":  return "ᛉ "+T("pal.sweep.toast.running");
+    case "idle":     return "ᚦ "+T("pal.sweep.toast.idle");
     /* The counts on a stopped sweep are work that really happened, so they are said
        rather than dropped: a host who reads "it stopped part way" and nothing else has
        no idea whether one creature fell or four hundred did. */
@@ -6632,7 +7131,7 @@ function killAllModal(){
          character is one character to fix rather than the whole thing to type again. */
       if(built.problemId){problem={id:built.problemId,scope:KILL_SCOPE.scope};again();return;}
       modalClose();
-      sendConsole(built.cmd,reply=>killAllToast(killAllReply(reply)));
+      sendConsole(built.cmd,reply=>killAllToast(killAllReply(reply)),SWEEP_FOLLOW.killall);
     });
     setTimeout(()=>{(m.querySelector("#kaName")||m.querySelector("#kaRadius"))?.focus();},30);
     return m;
@@ -6647,12 +7146,21 @@ function clearDropsToast(read){
       const kept={gear:read.gear,near:read.near,scanned:read.scanned};
       /* Said only when there were any, the way the plugin itself only says it then. */
       const tail=read.unreadable>0?" "+T("pal.clear_drops.toast.unreadable",{count:read.unreadable}):"";
+      /* More kept beside the players than cleared is the radius talking, and leading with
+         the cleared count read as nothing having happened: a host with the radius at 900
+         metres kept 823 stacks round himself and saw a sweep that seemed to do nothing. So
+         the kept count goes first, with the one change that clears more. */
+      if(read.near>read.removed)
+        return "ᛉ "+T("pal.clear_drops.toast.done.near_first",
+          Object.assign({removed:read.removed},kept))+tail;
       return read.removed>0
         ?"ᛉ "+T("pal.clear_drops.toast.done",Object.assign({removed:read.removed},kept))+tail
         :"ᛉ "+T("pal.clear_drops.toast.none",kept)+tail;
     }
     case "started":     return "ᛉ "+T("pal.clear_drops.toast.started",{count:read.items});
     case "busy":        return "ᛊ "+T("pal.clear_drops.toast.busy");
+    case "running":     return "ᛉ "+T("pal.sweep.toast.running");
+    case "idle":        return "ᚦ "+T("pal.sweep.toast.idle");
     case "stopped":     if(read.counted===false) return "ᚦ "+T("pal.clear_drops.toast.stopped.nocounts");
                         return "ᚦ "+T("pal.clear_drops.toast.stopped",{removed:read.removed});
     case "unsupported": return "ᚦ "+T("pal.clear_drops.toast.unsupported");
@@ -6687,8 +7195,9 @@ function clearDropsModal(){
           row("cdGear",st.keepGear,T("pal.clear_drops.keep_gear"),T("pal.clear_drops.keep_gear.note"))+
           row("cdNear",st.keepNear,T("pal.clear_drops.keep_near"),T("pal.clear_drops.keep_near.note"))+
           (st.keepNear
-            ?`<div class="field" style="margin:2px 0 4px 25px;max-width:160px"><label>${esc(T("pal.clear_drops.field.radius"))}</label>`+
-               `<input type="text" id="cdRadius" inputmode="decimal" spellcheck="false" autocomplete="off" value="${esc(st.radius)}"></div>`
+            ?`<div class="field" style="margin:2px 0 4px 25px"><label for="cdRadius">${esc(T("pal.clear_drops.field.radius"))}</label>`+
+               `<input type="text" id="cdRadius" inputmode="decimal" spellcheck="false" autocomplete="off" style="max-width:140px" value="${esc(st.radius)}">`+
+               `<div class="subval" style="margin-top:4px">${esc(T("pal.clear_drops.field.radius.note"))}</div></div>`
             :"")+
         `</div>`+
         (problem?`<div class="subval" id="cdNote" style="color:var(--blood-text);margin-top:6px">${esc(T(problem))}</div>`:"")+
@@ -6719,7 +7228,7 @@ function clearDropsModal(){
       /* A refusal keeps the dialog open with everything still in it. */
       if(built.problemId){problem=built.problemId;again();return;}
       modalClose();
-      sendConsole(built.cmd,reply=>clearDropsToast(clearDropsReply(reply)));
+      sendConsole(built.cmd,reply=>clearDropsToast(clearDropsReply(reply)),SWEEP_FOLLOW.cleardrops);
     });
     if(problem) setTimeout(()=>{m.querySelector("#cdRadius")?.focus();},30);
     return m;
@@ -7799,11 +8308,13 @@ function heraldApply(up){
   setT("tHeraldEvents",up.DiscordEventPosts);
   $("#heraldUrl").value=up.DiscordWebhookUrl||"";
   $("#heraldThread").value=up.DiscordWebhookThreadId||"";
+  try{heraldApplyLook(up);}catch(_){} /* the name, picture, title, status line and link */
   HERALD_HAS_POST=!!up.HasDiscordStatusMessage;
   heraldRenderPost();
 }
 async function refreshHerald(){
   try{heraldRenderModCode();}catch(_){} /* the active realm's code, from its own profile */
+  try{heraldRenderLookLine();}catch(_){} /* what the post is signed and headed with */
   if(!Native.available) return; /* preview keeps whatever the user clicked */
   const up=await rpc("userprefs.get");
   if(up!==FAIL&&up) heraldApply(up);
@@ -7812,6 +8323,7 @@ function heraldSave(extra){
   /* The line under the mod profile code says whether the post carries it, and the sharing
      switch is part of that answer, so every save of the hall's switches repaints it. */
   try{heraldRenderModCodeLine();}catch(_){}
+  try{heraldRenderLookLine();}catch(_){}
   return rpc("userprefs.save",{prefs:Object.assign({
     DiscordSharingEnabled:swOn("tHerald"),
     DiscordShareAddress:swOn("tHeraldAddr"),
@@ -7819,10 +8331,123 @@ function heraldSave(extra){
     DiscordEventPosts:swOn("tHeraldEvents"),
     DiscordWebhookUrl:$("#heraldUrl").value.trim(),
     DiscordWebhookThreadId:$("#heraldThread").value.trim()
-  },extra||{})});
+  },heraldLookValues(),extra||{})});
 }
-["tHerald","tHeraldAddr","tHeraldPass","tHeraldEvents"].forEach(id=>
+["tHerald","tHeraldAddr","tHeraldPass","tHeraldEvents","tHeraldLink"].forEach(id=>
   $("#"+id).addEventListener("click",()=>heraldSave()));
+/* HERALD-LOOK-BEGIN
+   The Herald's look: the name and picture every post is signed with, the status post's title,
+   a line of the host's own at the top of it, and the switch for the small BakaLoader line that
+   links to the project page. All app wide, like the rest of the hall, and all saved through
+   heraldSave. Every box is blank by default and blank is a real choice: the webhook's own
+   name, the BakaLoader logo, the server name as the title, no line.
+   Two of them can be refused, and the host side holds the same rules (DiscordHeraldLook.cs):
+   a picture link has to be https and either end in an image ending or sit on one of the hosts
+   that only serve images, and a name has to be one Discord takes (80 characters at most, and
+   never the words discord or clyde, which Discord answers by refusing the whole post). A
+   refused value is not sent: heraldLookValues leaves it out of every save, so a switch pressed
+   beside it still saves, and the line under the boxes says why in one sentence. */
+const HERALD_LOOK_IMAGE_HOSTS=["raw.githubusercontent.com","cdn.discordapp.com","i.imgur.com"];
+const HERALD_LOOK_IMAGE_EXT=/\.(png|jpe?g|gif|webp)$/i;
+const HERALD_LOOK_NAME_MAX=80;
+/* The catalog id the line under the boxes is standing on, or null. Set by a commit that
+   refused, dropped by the next good commit or by a repaint from the saved preferences. */
+let HERALD_LOOK_REFUSED=null;
+function heraldLookBox(id){const el=$("#"+id);return el?String(el.value||"").trim():"";}
+/* The catalog id of the reason a picture link cannot be saved, or null when it can. Blank can
+   always be saved: blank is the logo. */
+function heraldLookAvatarProblem(v){
+  const u=String(v==null?"":v).trim();
+  if(!u) return null;
+  if(u.length>2048) return "herald.look.avatar.refused";
+  let parsed=null;
+  try{parsed=new URL(u);}catch(_){return "herald.look.avatar.refused";}
+  if(parsed.protocol!=="https:"||parsed.username||parsed.password||!parsed.hostname) return "herald.look.avatar.refused";
+  if(HERALD_LOOK_IMAGE_HOSTS.indexOf(parsed.hostname.toLowerCase())>=0) return null;
+  return HERALD_LOOK_IMAGE_EXT.test(parsed.pathname)?null:"herald.look.avatar.refused";
+}
+/* The catalog id of the reason a display name cannot be saved, or null when it can. Blank can
+   always be saved: blank is the webhook's own name. */
+function heraldLookNameProblem(v){
+  const n=String(v==null?"":v).trim();
+  if(!n) return null;
+  if(n.length>HERALD_LOOK_NAME_MAX||/discord|clyde/i.test(n)) return "herald.look.name.refused";
+  return null;
+}
+/* What a save carries for the look. A value that would be refused is left out, so it is never
+   sent and the rest of the hall still saves around it. */
+function heraldLookValues(){
+  const out={
+    DiscordTitle:heraldLookBox("heraldTitle"),
+    DiscordStatusLine:heraldLookBox("heraldStatusLine"),
+  };
+  const sw=$("#tHeraldLink");
+  if(sw) out.DiscordLinkToBakaLoader=sw.classList.contains("on");
+  const name=heraldLookBox("heraldName"), avatar=heraldLookBox("heraldAvatar");
+  if(!heraldLookNameProblem(name)) out.DiscordBotName=name;
+  if(!heraldLookAvatarProblem(avatar)) out.DiscordAvatarUrl=avatar;
+  return out;
+}
+/* The line under the boxes: the refusal when one is standing, otherwise what the post will
+   carry, part by part, in the host's words. With Discord sharing off there is no post, so it
+   says the look is saved and nothing is posted. */
+function heraldRenderLookLine(){
+  const el=$("#heraldLookStat"); if(!el) return;
+  if(HERALD_LOOK_REFUSED){el.className="wiz-stat bad";el.textContent="ᚦ "+T(HERALD_LOOK_REFUSED);return;}
+  const sharing=$("#tHerald");
+  if(sharing&&!sharing.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.look.preview.off");return;}
+  const name=heraldLookBox("heraldName"), avatar=heraldLookBox("heraldAvatar");
+  const title=heraldLookBox("heraldTitle"), status=heraldLookBox("heraldStatusLine");
+  const link=$("#tHeraldLink");
+  const parts=[
+    name?T("herald.look.part.name",{name}):T("herald.look.part.name.default"),
+    avatar?T("herald.look.part.avatar.custom"):T("herald.look.part.avatar.logo"),
+    title?T("herald.look.part.title",{title}):T("herald.look.part.title.server"),
+  ];
+  if(status) parts.push(T("herald.look.part.status"));
+  if(!link||link.classList.contains("on")) parts.push(T("herald.look.part.link"));
+  el.className="wiz-stat ok";
+  el.textContent=T("herald.look.preview",{parts:parts.join(T("herald.look.part.join"))});
+}
+/* Paint the boxes and the switch from the saved preferences, and drop a standing refusal:
+   it was about text that is no longer in the box. */
+function heraldApplyLook(up){
+  const set=(id,v)=>{const el=$("#"+id); if(el) el.value=v||"";};
+  set("heraldName",up.DiscordBotName);
+  set("heraldAvatar",up.DiscordAvatarUrl);
+  set("heraldTitle",up.DiscordTitle);
+  set("heraldStatusLine",up.DiscordStatusLine);
+  const sw=$("#tHeraldLink");
+  if(sw) sw.classList.toggle("on",up.DiscordLinkToBakaLoader!==false);
+  HERALD_LOOK_REFUSED=null;
+  heraldRenderLookLine();
+}
+/* A commit: a box was left or Enter was pressed. Answers true when the look was saved (or, in
+   the browser preview, kept), false when it was refused. A refusal sends nothing at all. */
+async function heraldLookCommit(){
+  ["heraldName","heraldAvatar","heraldTitle","heraldStatusLine"].forEach(id=>{
+    const el=$("#"+id); if(el) el.value=String(el.value||"").trim();
+  });
+  HERALD_LOOK_REFUSED=heraldLookNameProblem(heraldLookBox("heraldName"))
+    ||heraldLookAvatarProblem(heraldLookBox("heraldAvatar"));
+  heraldRenderLookLine();
+  if(HERALD_LOOK_REFUSED) return false;
+  if(!Native.available) return true;
+  const r=await heraldSave();
+  if(r===FAIL){
+    /* The host side's own refusal of a picture or a name keeps the text so it can be fixed. */
+    const named={"userprefs.save.badAvatarUrl":"herald.look.avatar.refused",
+                 "userprefs.save.badBotName":"herald.look.name.refused"}[window.BAKA_ERR_ID];
+    if(named){HERALD_LOOK_REFUSED=named;heraldRenderLookLine();}
+    return false;
+  }
+  return true;
+}
+/* HERALD-LOOK-END */
+["heraldName","heraldAvatar","heraldTitle","heraldStatusLine"].forEach(id=>{
+  $("#"+id).addEventListener("change",()=>{heraldLookCommit();});
+  $("#"+id).addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();e.target.blur();}});
+});
 /* HERALD-MODCODE-BEGIN
    The mod profile code: the share code a mod manager hands out, which a player pastes into
    their own manager to get this realm's mods. It is the one thing on this hall that belongs
@@ -7831,12 +8456,13 @@ function heraldSave(extra){
    names the realm it was typed on. It still goes through heraldSave, the road every other
    field on the hall takes; the host side writes it to that realm's profile.
    The check is light and the host side holds the same two patterns (ModProfileCodes.cs):
-   letters, digits and dashes, and for Gale the six character code or the longer sync id.
+   letters, digits and dashes for Thunderstore, and for Gale the six character code or the
+   twenty two character sync id, the same id the Mods hall follows (GaleProfileId.cs).
    Nothing is ever sent to Thunderstore or Gale to ask. A code that fails is not sent at all,
    and the line under the box says so in one sentence; the rest of the hall saves as normal. */
 const HERALD_MODCODE_RE={
   thunderstore:/^[A-Za-z0-9][A-Za-z0-9-]{3,63}$/,
-  gale:/^(?:[A-Za-z0-9]{6}|[A-Za-z0-9][A-Za-z0-9-]{7,63})$/,
+  gale:/^(?:[A-Za-z0-9]{6}|[A-Za-z0-9_-]{21}[AQgw])$/,
 };
 /* Whether the line under the box is standing on a refusal. Set by a commit that refused, and
    dropped by the next good commit or by a repaint from the saved profile. */
@@ -8982,10 +9608,15 @@ function renderUpdatePill(){
    now changes that. A save failing on a server that is up this second, a crash, a held
    start, all come first. It sits just above the stray folder row because it is about the
    last few minutes of play, and the folder row is about what an older build did. */
+/* galeChanged, the Gale profile this realm follows has moved, sits under every live failure,
+   under the unsaved stop and under the stray folder: it is a list of mods somebody else
+   changed, nothing on this server is wrong while it stands, and it waits for the host
+   without costing anything. It sits above the two plain lists because it is the one of the
+   three that changes what the server would load if the host said yes. */
 const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
   "bepinexNoMods","bepinexNotLoaded","bepinexMissingFiles","serverUpdate","pluginFailure",
   "bepinexNotice","appUpdate","bepinexAsk","bepinexLeftAlone","bepinexWaiting",
-  "bepinexWritten","unsavedStop","saveFolderStray","modUpdates","restartPending"];
+  "bepinexWritten","unsavedStop","saveFolderStray","galeChanged","modUpdates","restartPending"];
 const CONDITIONS=new Map();
 function setCondition(kind,cond){
   if(!cond) CONDITIONS.delete(kind); else CONDITIONS.set(kind,cond);
@@ -14702,6 +15333,19 @@ if(Native.available){
       :"ᛉ "+T("vikings.cleanse.armed.fired.toast"));
     toast(cleanseToast(cleanseReply(said)));
   });
+  /* A sweep's result, read off the server's own output (Commander 1.9.2 prints it there).
+     The page toasts it only when it was not already waiting on that sweep itself, which is
+     the case for a sweep typed at the console and one that outlasted the ten minute wait.
+     The line itself is already in the Saga: it is the server's own output. The cleanse is
+     left to its own wait, which words the same result. */
+  Native.on("server.sweepResult",d=>{
+    if(!isActiveProfile(d?.profile)) return;
+    const f=SWEEP_FOLLOW[d?.verb]; if(!f) return;
+    const key=sweepKey(d?.profile==null?S.profileName:d.profile,f.verb);
+    if(!sweepEventWanted(key,SWEEP_WAITING,SWEEP_TOLD_AT,Date.now())) return;
+    SWEEP_TOLD_AT[key]=Date.now();
+    toast(f.toast(f.read(String(d?.line||""))));
+  });
   /* The world on disk is still pre-1.0. The next save converts it and there is no way back. */
   Native.on("server.legacyWorld",d=>{
     if(!isActiveProfile(d?.profile)) return;
@@ -14942,6 +15586,12 @@ if(Native.available){
        the first frame, because a host whose worlds are out of the app's sight has to be
        told BEFORE they press Start on what would look like an empty world. */
     await refreshStraySaveFolder();
+
+    /* The followed Gale profile, read off the realm and then asked once, after the frame is
+       up. The trip runs on a worker on the host side and is held to ten seconds, and a
+       service that does not answer is one quiet line in the Mods hall. */
+    await galeRefresh();
+    requestAnimationFrame(()=>setTimeout(()=>galeCheck(),0));
 
     /* 1s heartbeat: uptime + save countdown (ticks only while Running) */
     setInterval(()=>{

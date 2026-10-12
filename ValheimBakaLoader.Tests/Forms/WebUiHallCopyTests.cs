@@ -197,6 +197,12 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.folder.label",
                 // Refresh, beside Scan: reads the plugins folder again off the disk (1.2.11).
                 "mods.refresh.label", "mods.refresh.title",
+                // Follow a Gale profile, under the BepInEx row: its label, the field's two
+                // words, Check now and Forget with their tooltips, and Review. The status line
+                // under them is app.js's, because it carries the check's own counts and times.
+                "mods.gale.box.label", "mods.gale.box.placeholder", "mods.gale.box.aria",
+                "mods.gale.box.check", "mods.gale.box.check.title",
+                "mods.gale.box.forget", "mods.gale.box.forget.title", "mods.gale.box.review",
             });
         }
 
@@ -805,6 +811,21 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.field.thread",
                 "herald.field.thread.title",
                 "herald.thread.placeholder",
+                // The Herald's look (1.2.14): its caption, the four boxes' captions and
+                // placeholders, the note about public image links and the link switch. The
+                // line under them is app.js's (heraldRenderLookLine).
+                "herald.look.label",
+                "herald.look.name.label",
+                "herald.look.name.placeholder",
+                "herald.look.avatar.label",
+                "herald.look.avatar.placeholder",
+                "herald.look.avatar.note",
+                "herald.look.title.label",
+                "herald.look.title.placeholder",
+                "herald.look.status.label",
+                "herald.look.status.placeholder",
+                "herald.look.link",
+                "herald.look.link.title",
                 "herald.carries.label",
                 "herald.carries.note",
                 "herald.share.address",

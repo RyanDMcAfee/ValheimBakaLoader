@@ -72,6 +72,12 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("discordSharePassword")] public bool? DiscordSharePassword { get; set; }
         [JsonProperty("discordEventPosts")] public bool? DiscordEventPosts { get; set; }
         [JsonProperty("discordStatusMessageId")] public string DiscordStatusMessageId { get; set; }
+        [JsonProperty("discordBotName")] public string DiscordBotName { get; set; }
+        [JsonProperty("discordAvatarUrl")] public string DiscordAvatarUrl { get; set; }
+        [JsonProperty("discordStatusLine")] public string DiscordStatusLine { get; set; }
+        [JsonProperty("discordTitle")] public string DiscordTitle { get; set; }
+        [JsonProperty("discordLinkToBakaLoader")] public bool? DiscordLinkToBakaLoader { get; set; }
+        [JsonProperty("discordStatusMessageSignature")] public string DiscordStatusMessageSignature { get; set; }
         [JsonProperty("customJoinDomain")] public string CustomJoinDomain { get; set; }
 
         // -- Nested collections --

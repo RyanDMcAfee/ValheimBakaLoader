@@ -152,6 +152,28 @@ namespace ValheimBakaLoader.Game
         // Discord message id of the status post we keep editing; state, not a user setting.
         public string DiscordStatusMessageId { get; set; }
 
+        // The Herald's look: how its posts are signed and headed. All blank by default, and
+        // blank means Discord's own choice (the webhook's name, BakaLoader's logo, the server
+        // name as the title, no status line). See DiscordHeraldLook.
+        public string DiscordBotName { get; set; }
+
+        // A public https image link. Blank = BakaLoader's logo from the repository.
+        public string DiscordAvatarUrl { get; set; }
+
+        // One line the host writes, shown as the first paragraph of the post.
+        public string DiscordStatusLine { get; set; }
+
+        // The post's title. Blank = the server name, as before.
+        public string DiscordTitle { get; set; }
+
+        // A small BakaLoader line at the top of each post that links to the project page.
+        public bool DiscordLinkToBakaLoader { get; set; } = true;
+
+        // The name and picture the status post was made with; state, not a user setting.
+        // Discord fixes both when a webhook post is made, so a post signed differently from
+        // the current look is made again rather than edited. See DiscordHeraldLook.SignatureFor.
+        public string DiscordStatusMessageSignature { get; set; }
+
         // Optional hostname shown instead of the raw public IP in join prompts and the
         // Discord status post (e.g. "valheim.example.com"). Valheim clients resolve A/AAAA
         // records when joining by name; the port must still be shared (no SRV support).
@@ -218,6 +240,12 @@ namespace ValheimBakaLoader.Game
                 DiscordSharePassword = file.DiscordSharePassword ?? defaults.DiscordSharePassword,
                 DiscordEventPosts = file.DiscordEventPosts ?? defaults.DiscordEventPosts,
                 DiscordStatusMessageId = file.DiscordStatusMessageId ?? defaults.DiscordStatusMessageId,
+                DiscordBotName = file.DiscordBotName ?? defaults.DiscordBotName,
+                DiscordAvatarUrl = file.DiscordAvatarUrl ?? defaults.DiscordAvatarUrl,
+                DiscordStatusLine = file.DiscordStatusLine ?? defaults.DiscordStatusLine,
+                DiscordTitle = file.DiscordTitle ?? defaults.DiscordTitle,
+                DiscordLinkToBakaLoader = file.DiscordLinkToBakaLoader ?? defaults.DiscordLinkToBakaLoader,
+                DiscordStatusMessageSignature = file.DiscordStatusMessageSignature ?? defaults.DiscordStatusMessageSignature,
                 CustomJoinDomain = file.CustomJoinDomain ?? defaults.CustomJoinDomain,
 
                 Servers = (file.Servers ?? new())
@@ -278,6 +306,12 @@ namespace ValheimBakaLoader.Game
             DiscordSharePassword = DiscordSharePassword,
             DiscordEventPosts = DiscordEventPosts,
             DiscordStatusMessageId = DiscordStatusMessageId,
+            DiscordBotName = DiscordBotName,
+            DiscordAvatarUrl = DiscordAvatarUrl,
+            DiscordStatusLine = DiscordStatusLine,
+            DiscordTitle = DiscordTitle,
+            DiscordLinkToBakaLoader = DiscordLinkToBakaLoader,
+            DiscordStatusMessageSignature = DiscordStatusMessageSignature,
             CustomJoinDomain = CustomJoinDomain,
 
             Servers = (Servers ?? new())

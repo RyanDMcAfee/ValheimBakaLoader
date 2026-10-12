@@ -61,6 +61,9 @@ function readers() {
   const context = {
     consoleRefused: null, killAllCounts: null, killAllReply: null,
     killAllScopeBlank: null, killAllCommand: null,
+    sweepRunning: null, sweepIdle: null, sweepPoll: null, sweepEventWanted: null, sweepKey: null,
+    /* sweepPoll's own defaults reach for these; every test here hands its own in */
+    setTimeout, Promise, Date,
   };
   vm.createContext(context);
   vm.runInContext(SOURCE.slice(from, to), context, { filename: "app.js#killall" });
@@ -104,6 +107,13 @@ const CASES = [
     { kind: "started", candidates: 4120 }],
   ["KillAll started: 1 candidate. The result line follows in the server log when the sweep finishes.",
     { kind: "started", candidates: 1 }],
+  // the 1.9.2 wording, which names the status verb
+  ["KillAll started: 4120 candidates. The result line follows in the server log when the sweep finishes, and baka_killall_status says how far it has got.",
+    { kind: "started", candidates: 4120 }],
+
+  // --- the status verb's own two answers (KillAllPlan.StatusRunning, StatusIdle) ---
+  ["killall: running: scanned 812 of 4120, removed 300 so far", { kind: "running" }],
+  ["killall: nothing is running. Run baka_killall to clear the hostiles out of the world.", { kind: "idle" }],
 
   // --- a second sweep while the first is still walking: nothing was struck ---
   ["KillAll is already running: 900 candidates still to go. Wait for its result line before starting another.",
@@ -289,10 +299,222 @@ test("the rule lets the shape that is here now through", () => {
   assert.deepStrictEqual(bad, []);
 });
 
-console.log("");
-if (failures.length) {
-  console.log("KILLALL FAIL " + failures.length + " of " + (passed + failures.length));
-  failures.forEach(line => console.log("  " + line));
-  process.exit(1);
+/* ------------------------------------------------- waiting on a sliced sweep
+   The status lines of all three sweeps, word for word out of the plans (StatusRunning,
+   StatusIdle in BakaClearDropsPlan.cs, BakaKillAllPlan.cs and BakaCleansePlan.cs), and the
+   cleanse's line from a plugin older than 1.9.2, which a server not yet restarted still
+   answers with. */
+
+const RUNNING = [
+  "cleardrops: running: scanned 5000 of 184220, removed 412 so far",
+  "killall: running: scanned 812 of 4120, removed 300 so far",
+  "cleanse: running: scanned 80000 of 240000, removed 12 so far",
+  "Cleanse running: 80000 of 240000 objects checked.",
+];
+const IDLE = [
+  "cleardrops: nothing is running. Run baka_cleardrops to clear the items lying on the ground.",
+  "killall: nothing is running. Run baka_killall to clear the hostiles out of the world.",
+  "cleanse: nothing is running. Run baka_cleanse on an empty server to clear the cheat marks a 1.0.9 to 1.1.2 spawn left behind.",
+  "Cleanse status: nothing is running. Run baka_cleanse on an empty server to clear the cheat marks a 1.0.9 to 1.1.2 spawn left behind.",
+];
+const RESULTS = [
+  "cleardrops: removed 5245 · kept 2 gear · kept 823 near players · scanned 1107305 objects",
+  "KillAll complete: 37 hostiles slain, 4 out of reach, 162 spared (players, pets & allies)",
+  "Cleanse complete: 4 world objects cleared, 1 container rewritten, 9 items cleared.",
+  "cleardrops: started on 5120 ground items out of 184220 objects.",
+];
+
+RUNNING.forEach(line => test("still walking: " + JSON.stringify(line.slice(0, 48)), () => {
+  assert.strictEqual(K.sweepRunning(line), true);
+  assert.strictEqual(K.sweepIdle(line), false);
+}));
+IDLE.forEach(line => test("nothing running: " + JSON.stringify(line.slice(0, 48)), () => {
+  assert.strictEqual(K.sweepIdle(line), true);
+  assert.strictEqual(K.sweepRunning(line), false);
+}));
+RESULTS.forEach(line => test("neither: " + JSON.stringify(line.slice(0, 48)), () => {
+  assert.strictEqual(K.sweepRunning(line), false);
+  assert.strictEqual(K.sweepIdle(line), false);
+}));
+
+test("the three plans still write the running line in the one shape this reads", () => {
+  const cd = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Resources", "Commander", "BakaClearDropsPlan.cs"), "utf8");
+  const ka = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Resources", "KillAll", "BakaKillAllPlan.cs"), "utf8");
+  const cl = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Resources", "KillAll", "BakaCleansePlan.cs"), "utf8");
+  const shape = 'RunningPrefix + " scanned " + ';
+  const tail = '", removed " + removed + " so far"';
+  for (const [name, src] of [["BakaClearDropsPlan.cs", cd], ["BakaKillAllPlan.cs", ka], ["BakaCleansePlan.cs", cl]]) {
+    assert.ok(src.includes(shape) && src.includes(tail), name + " no longer writes the shared status shape");
+  }
+  assert.ok(cd.includes('RunningPrefix = ReplyPrefix + " running:"'), "cleardrops' running opening moved");
+  assert.ok(ka.includes('RunningPrefix = "killall: running:"'), "killall's running opening moved");
+  assert.ok(cl.includes('RunningPrefix = "cleanse: running:"'), "cleanse's running opening moved");
+});
+
+/** A clock and a wait that move together, so ten minutes take no time at all. */
+function fakeTime() {
+  const time = { t: 0, waits: [] };
+  time.now = () => time.t;
+  time.wait = ms => { time.waits.push(ms); time.t += ms; return Promise.resolve(); };
+  return time;
 }
-console.log("KILLALL PASS " + passed + " cases");
+
+/** A transport that answers from a script, one line per ask, and remembers what was asked. */
+function scripted(lines) {
+  const asked = [];
+  const ask = line => { asked.push(line); return Promise.resolve(lines.shift()); };
+  return { asked, ask };
+}
+
+const ASYNC = [];
+function testAsync(name, body) { ASYNC.push([name, body]); }
+
+testAsync("started, then running twice, then done: the result line comes back", async () => {
+  const time = fakeTime();
+  const final = "KillAll complete: 37 hostiles slain, 4 out of reach, 162 spared (players, pets & allies)";
+  const t = scripted([
+    "killall: running: scanned 100 of 4120, removed 30 so far",
+    "killall: running: scanned 2000 of 4120, removed 160 so far",
+    final,
+  ]);
+  const out = await K.sweepPoll(t.ask, "baka_killall_status", { wait: time.wait, now: time.now });
+  assert.strictEqual(out.kind, "done");
+  assert.strictEqual(out.said, final);
+  assert.deepStrictEqual(t.asked, ["baka_killall_status", "baka_killall_status", "baka_killall_status"]);
+  /* every two seconds, by default */
+  assert.deepStrictEqual(time.waits, [2000, 2000, 2000]);
+  /* and the line it hands back is the one a small world would have answered with at once */
+  const read = K.killAllReply(out.said);
+  assert.strictEqual(read.kind, "complete");
+  assert.strictEqual(read.slain, 37);
+});
+
+testAsync("a sweep that is still walking at ten minutes ends the wait as a timeout, clocked", async () => {
+  const time = fakeTime();
+  const line = "cleardrops: running: scanned 5000 of 184220, removed 412 so far";
+  const asked = [];
+  const ask = cmd => { asked.push(cmd); return Promise.resolve(line); };
+  const out = await K.sweepPoll(ask, "baka_cleardrops_status", { wait: time.wait, now: time.now });
+  assert.strictEqual(out.kind, "timeout");
+  assert.strictEqual(out.said, line);
+  assert.strictEqual(asked.length, 300, "asked " + asked.length + " times in ten minutes");
+  assert.strictEqual(time.t, 600000);
+});
+
+testAsync("a poll that does not get through ends the wait as gone, with the last line it had", async () => {
+  const time = fakeTime();
+  const t = scripted(["killall: running: scanned 1 of 2, removed 0 so far", null]);
+  const out = await K.sweepPoll(t.ask, "baka_killall_status", { wait: time.wait, now: time.now });
+  assert.strictEqual(out.kind, "gone");
+  assert.strictEqual(out.said, "killall: running: scanned 1 of 2, removed 0 so far");
+});
+
+testAsync("a server with nothing running ends the wait as idle", async () => {
+  const time = fakeTime();
+  const t = scripted(["cleardrops: nothing is running. Run baka_cleardrops to clear the items lying on the ground."]);
+  const out = await K.sweepPoll(t.ask, "baka_cleardrops_status", { wait: time.wait, now: time.now });
+  assert.strictEqual(out.kind, "idle");
+});
+
+testAsync("a plugin older than the status verb ends the wait as unsupported, not as a result", async () => {
+  const time = fakeTime();
+  const t = scripted(["Forwarded to console: baka_killall_status"]);
+  const out = await K.sweepPoll(t.ask, "baka_killall_status", { wait: time.wait, now: time.now });
+  assert.strictEqual(out.kind, "unsupported");
+  const t2 = scripted(["Unknown command: 'baka_killall_status' (Commander natively supports: broadcast)"]);
+  const out2 = await K.sweepPoll(t2.ask, "baka_killall_status", { wait: time.wait, now: time.now });
+  assert.strictEqual(out2.kind, "unsupported");
+});
+
+testAsync("an empty answer is asked again rather than read as the result", async () => {
+  const time = fakeTime();
+  const final = "cleardrops: removed 3 · kept 0 gear · kept 0 near players · scanned 90 objects";
+  const t = scripted(["", "  ", final]);
+  const out = await K.sweepPoll(t.ask, "baka_cleardrops_status", { wait: time.wait, now: time.now });
+  assert.strictEqual(out.kind, "done");
+  assert.strictEqual(out.said, final);
+  assert.strictEqual(t.asked.length, 3);
+});
+
+/* The host switched realm while the page waited. Sessions are kept per realm, and a poll
+   with no realm on it goes to whichever server is on screen, so without the check the next
+   answer would be the OTHER realm's status verb, and a sweep it ran an hour ago would come
+   back as this one's result. The wait has to end on the switch, not read across it. */
+testAsync("a realm switch during the wait ends it as moved, and never reads the other realm's kept result", async () => {
+  const time = fakeTime();
+  let realm = "Alpha";
+  const asked = [];
+  const ask = line => {
+    asked.push(realm + ":" + line);
+    if (realm === "Alpha") { realm = "Bravo"; return Promise.resolve("cleardrops: running: scanned 5000 of 184220, removed 412 so far"); }
+    return Promise.resolve("cleardrops: removed 7 · kept 0 gear · kept 0 near players · scanned 90 objects");
+  };
+  const out = await K.sweepPoll(ask, "baka_cleardrops_status",
+    { wait: time.wait, now: time.now, here: () => realm === "Alpha" });
+  assert.strictEqual(out.kind, "moved", "read across the switch as " + out.kind + ": " + out.said);
+  assert.deepStrictEqual(asked, ["Alpha:baka_cleardrops_status"], "asked the other realm: " + asked.join(", "));
+});
+
+testAsync("a switch before the first ask ends the wait without asking at all", async () => {
+  const time = fakeTime();
+  const t = scripted(["cleardrops: removed 7 · kept 0 gear · kept 0 near players · scanned 90 objects"]);
+  const out = await K.sweepPoll(t.ask, "baka_cleardrops_status",
+    { wait: time.wait, now: time.now, here: () => false });
+  assert.strictEqual(out.kind, "moved");
+  assert.deepStrictEqual(t.asked, []);
+});
+
+test("the sweep's hold is kept per realm, so one realm's wait does not mute another's result", () => {
+  assert.strictEqual(K.sweepKey("Alpha", "killall"), K.sweepKey("alpha", "killall"));
+  assert.notStrictEqual(K.sweepKey("Alpha", "killall"), K.sweepKey("Bravo", "killall"));
+  assert.notStrictEqual(K.sweepKey("Alpha", "killall"), K.sweepKey("Alpha", "cleardrops"));
+  const waiting = { [K.sweepKey("Alpha", "killall")]: 1 };
+  assert.strictEqual(K.sweepEventWanted(K.sweepKey("Bravo", "killall"), waiting, {}, 100000), true);
+  assert.strictEqual(K.sweepEventWanted(K.sweepKey("Alpha", "killall"), waiting, {}, 100000), false);
+});
+
+test("a result off the server's output is toasted only when nothing else said it", () => {
+  assert.strictEqual(K.sweepEventWanted("killall", {}, {}, 100000), true);
+  assert.strictEqual(K.sweepEventWanted("killall", { killall: true }, {}, 100000), false, "the page is waiting on it");
+  assert.strictEqual(K.sweepEventWanted("killall", { cleardrops: true }, {}, 100000), true, "a different sweep's wait");
+  assert.strictEqual(K.sweepEventWanted("killall", {}, { killall: 90000 }, 100000), false, "said ten seconds ago");
+  assert.strictEqual(K.sweepEventWanted("killall", {}, { killall: 30000 }, 100000), true, "said seventy seconds ago");
+});
+
+test("both sweep dialogs hand their reply to the reader AND follow a started sweep", () => {
+  for (const wire of [
+    "sendConsole(built.cmd,reply=>killAllToast(killAllReply(reply)),SWEEP_FOLLOW.killall);",
+    "sendConsole(built.cmd,reply=>clearDropsToast(clearDropsReply(reply)),SWEEP_FOLLOW.cleardrops);",
+    'killall:{verb:"killall",status:"baka_killall_status",',
+    'cleardrops:{verb:"cleardrops",status:"baka_cleardrops_status",',
+    /* the same RPC the command went out on, sent quiet */
+    /* the same RPC the command went out on, sent quiet and naming the realm it waits on */
+    'rpc("server.command",{command:line,quiet:true,profile:realm})',
+    /* the hold is kept per realm and verb on every side that reads or writes it */
+    "const key=sweepKey(realm,f.verb);",
+    "const key=sweepKey(d?.profile==null?S.profileName:d.profile,f.verb);",
+    'Native.on("server.sweepResult",',
+  ]) assert.ok(SOURCE.includes(wire), "app.js no longer carries " + wire);
+});
+
+(async () => {
+  for (const [name, body] of ASYNC) {
+    try {
+      await body();
+      passed++;
+      console.log("  ok   " + name);
+    } catch (problem) {
+      failures.push(name + ": " + (problem && problem.message ? problem.message : problem));
+      console.log("  FAIL " + name);
+      console.log("       " + (problem && problem.message ? problem.message : problem));
+    }
+  }
+
+  console.log("");
+  if (failures.length) {
+    console.log("KILLALL FAIL " + failures.length + " of " + (passed + failures.length));
+    failures.forEach(line => console.log("  " + line));
+    process.exit(1);
+  }
+  console.log("KILLALL PASS " + passed + " cases");
+})();
