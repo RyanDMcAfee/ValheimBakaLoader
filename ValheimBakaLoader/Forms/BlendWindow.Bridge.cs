@@ -2045,6 +2045,107 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// The dials a caller named as "normal" on purpose, which <see cref="ParseWorldModifiers"/>
+        /// drops along with the empty ones.
+        /// <para>
+        /// The two are different answers on the realm forge. An empty value is a dial nobody
+        /// touched, and the world keeps whatever it already carries for it. The word "normal" is
+        /// the Duplicate dialog saying a copied world's dial goes back to Normal: that dialog
+        /// reads the source world's dials first and sends all five, so without this a Casual
+        /// source stayed Casual whatever the host chose. A dial outside the game's vocabulary is
+        /// refused here the same way <see cref="ParseWorldModifiers"/> refuses a bad value.
+        /// </para>
+        /// </summary>
+        public static HashSet<string> ParseExplicitNormalDials(JObject raw)
+        {
+            var normals = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var prop in raw ?? new JObject())
+            {
+                var value = prop.Value?.Type == JTokenType.String ? prop.Value.Value<string>() : null;
+                if (value != "normal") continue;
+                if (!WorldGen.Modifiers.ContainsKey(prop.Key))
+                    throw new ArgumentException($"'{prop.Key}' is not a world setting");
+                normals.Add(prop.Key);
+            }
+            return normals;
+        }
+
+        /// <summary>
+        /// The dials a forge would change on a world entry it shares with another world, in
+        /// order, or an empty list when every choice matches what the entry already holds.
+        /// <para>
+        /// World settings are stored by world name, so a duplicate that keeps its copy under the
+        /// source's own world name writes into the SOURCE's entry. servers.create used to drop
+        /// the explicit Normals there without a word and write the moved dials anyway, so a Normal
+        /// chosen on purpose was lost and a moved dial changed the source world as well. It now
+        /// asks this first and refuses when the answer is not empty. A moved dial counts when the
+        /// entry holds another value, a Normal counts when the entry holds any value for that dial,
+        /// and any choice at all counts against an entry that carries a preset, because writing a
+        /// dial clears the preset. A switch list counts when it would change the stored switches.
+        /// </para>
+        /// </summary>
+        public static List<string> SharedEntryDialChanges(
+            WorldPreferences current,
+            IReadOnlyDictionary<string, string> moved, ICollection<string> normals, HashSet<string> switches)
+        {
+            var changed = new SortedSet<string>(StringComparer.Ordinal);
+            var held = current?.Modifiers ?? new Dictionary<string, string>();
+            var preset = current?.Preset;
+            var presetHeld = !string.IsNullOrWhiteSpace(preset) && preset != "normal";
+            if (moved != null)
+                foreach (var pair in moved)
+                    if (presetHeld || !held.TryGetValue(pair.Key, out var v) || v != pair.Value)
+                        changed.Add(pair.Key);
+            if (normals != null)
+                foreach (var key in normals)
+                    if (presetHeld || held.ContainsKey(key))
+                        changed.Add(key);
+            if (switches != null)
+            {
+                var before = MergeWorldKeys(current?.Keys, null);
+                if (!before.SetEquals(MergeWorldKeys(current?.Keys, switches))) changed.Add("switches");
+            }
+            return changed.ToList();
+        }
+
+        /// <summary>
+        /// Writes what the realm forge chose for a NEW world over what the first meeting just
+        /// read off it, and hands back what was stored, or null when the forge chose nothing.
+        /// <para>
+        /// A moved dial goes over the stored value, a dial named Normal on purpose
+        /// (<paramref name="normals"/>) is taken off, and a dial the forge said nothing about stays
+        /// as the world had it. Save Config is the other way round on purpose: that page sends
+        /// the whole dial state every time, so there a blank set IS a clear. Switches follow
+        /// <see cref="MergeWorldKeys"/>, and null leaves them alone.
+        /// </para>
+        /// <para>
+        /// Taken out of servers.create so the order a duplicate depends on (copy, first meeting,
+        /// then this) can be proved on a real copied world without a window.
+        /// </para>
+        /// </summary>
+        public static WorldPreferences ApplyForgeWorldChoices(
+            IWorldPreferencesProvider worlds, string world,
+            IReadOnlyDictionary<string, string> moved, ICollection<string> normals, HashSet<string> switches)
+        {
+            if (worlds == null) throw new ArgumentNullException(nameof(worlds));
+            var movedCount = moved?.Count ?? 0;
+            var normalCount = normals?.Count ?? 0;
+            if (movedCount == 0 && normalCount == 0 && switches == null) return null;
+
+            var worldPrefs = worlds.LoadPreferences(world) ?? new WorldPreferences { WorldName = world };
+            worldPrefs.Preset = null; // individual dials replace any preset (mutually exclusive)
+            if (movedCount > 0 || normalCount > 0)
+            {
+                if (worldPrefs.Modifiers == null) worldPrefs.Modifiers = new Dictionary<string, string>();
+                if (normals != null) foreach (var key in normals) worldPrefs.Modifiers.Remove(key);
+                if (moved != null) foreach (var pair in moved) worldPrefs.Modifiers[pair.Key] = pair.Value;
+            }
+            worldPrefs.Keys = MergeWorldKeys(worldPrefs.Keys, switches);
+            worlds.SavePreferences(worldPrefs);
+            return worldPrefs;
+        }
+
+        /// <summary>
         /// Turns a caller-supplied world-switch list into the set BakaLoader stores, or null
         /// when the caller did not send one at all.
         /// <para>
@@ -4363,10 +4464,11 @@ namespace ValheimBakaLoader.Forms
                     throw new HostFacingException("profiles.delete.lastServer",
                         "This is your only active server. Archive it instead of deleting the last one.");
 
+                string installDir = null, saveFolder = null;
                 if (deleteFiles)
                 {
-                    var installDir = GetManagedInstallDir(prefs);
-                    var saveFolder = GetIsolatedSaveFolder(prefs);
+                    installDir = GetManagedInstallDir(prefs);
+                    saveFolder = GetIsolatedSaveFolder(prefs);
 
                     // Two profiles may be pointed at one save folder, deliberately or by a
                     // hand-edited prefs file. Deleting the files then takes the other realm's
@@ -4385,26 +4487,59 @@ namespace ValheimBakaLoader.Forms
                                 ("sharedWith", sharedWith.ProfileName));
                     }
 
+                }
+
+                // The realm's session goes BEFORE its files do, and the window stops standing on
+                // the realm before they go as well. A session is a live server object over that
+                // install, and the page goes on polling the realm it is showing for as long as the
+                // delete is out: both used to be let go of only after the folders were deleted.
+                if (Sessions.TryRemove(name, out var removed)) { ForgetSession(removed); removed.Server.Dispose(); }
+                var wasOnScreen = string.Equals(CurrentProfile, name, StringComparison.OrdinalIgnoreCase);
+                if (wasOnScreen) CurrentProfile = FirstActiveProfileExcept(name);
+
+                if (deleteFiles)
+                {
                     // Slow file work off the UI thread; junction-safe delete never touches shared game data.
-                    await Task.Run(() =>
+                    // What stood before the delete is noted first, so a refusal can say which of them
+                    // already went and the host is not left thinking the realm is still whole.
+                    var stoodBefore = new[] { installDir, saveFolder }
+                        .Where(folder => folder != null && Directory.Exists(folder))
+                        .ToList();
+                    var survivors = await Task.Run(() => DeleteRealmFolders(name, installDir, saveFolder));
+
+                    // A folder still standing is not a deleted realm, whatever the reason, and the
+                    // delete used to say it had worked all the same: the host found the folder later,
+                    // and a realm made again under the same name got "-2" on its folder. The realm is
+                    // kept, so its folders are still known and the delete can be pressed again.
+                    if (survivors.Count > 0)
                     {
-                        if (installDir != null)
+                        if (wasOnScreen) CurrentProfile = prefs.ProfileName;
+                        PostEvent("servers.changed", BuildServersList());
+                        var folders = string.Join(", ", survivors);
+
+                        // Some of it may have gone already: the install is deleted, the save folder
+                        // is held open. The realm is still kept, but it is no longer whole, and the
+                        // sentence says so by naming what was removed.
+                        var gone = stoodBefore
+                            .Where(folder => !survivors.Contains(folder, StringComparer.OrdinalIgnoreCase))
+                            .ToList();
+                        if (gone.Count > 0)
                         {
-                            try { InstallIsolation.DeleteInstall(installDir); }
-                            catch (Exception e) { AppLogger.Error(e, $"Failed to reclaim isolated install for '{name}'."); }
+                            var removedFolders = string.Join(", ", gone);
+                            throw new HostFacingException("profiles.delete.filesSurvivedPartly",
+                                $"Part of '{name}' was deleted: {removedFolders}. These folders are still on disk, so the realm was kept: {folders}. "
+                                + "Close anything that has a file open in them and delete it again to finish.",
+                                ("name", name), ("removed", removedFolders), ("folders", folders));
                         }
-                        if (saveFolder != null && Directory.Exists(saveFolder))
-                        {
-                            try { Directory.Delete(saveFolder, recursive: true); }
-                            catch (Exception e) { AppLogger.Error(e, $"Failed to delete isolated save folder for '{name}'."); }
-                        }
-                    });
+
+                        throw new HostFacingException("profiles.delete.filesSurvived",
+                            $"These folders of '{name}' are still on disk, so the realm was kept: {folders}. "
+                            + "Close anything that has a file open in them and delete it again.",
+                            ("name", name), ("folders", folders));
+                    }
                 }
 
                 ServerPrefsProvider.RemovePreferences(name);
-                if (Sessions.TryRemove(name, out var removed)) { ForgetSession(removed); removed.Server.Dispose(); }
-                if (string.Equals(CurrentProfile, name, StringComparison.OrdinalIgnoreCase))
-                    CurrentProfile = FirstActiveProfileExcept(name);
 
                 PostEvent("servers.changed", BuildServersList());
                 return true;
@@ -4482,6 +4617,11 @@ namespace ValheimBakaLoader.Forms
                 // provisioned. Empty / Normal dials drop out, leaving an empty map.
                 var worldModifiers = ParseWorldModifiers(p["modifiers"] as JObject);
 
+                // And the dials the page named as Normal on purpose. A duplicate that copies a
+                // world sends all five, read off the source first, so a dial the host set back to
+                // Normal is a choice to take that dial off the copy, not silence about it.
+                var worldNormals = ParseExplicitNormalDials(p["modifiers"] as JObject);
+
                 // Optional world switches for the NEW world, on the same gate as Save Config.
                 // Absent leaves whatever the world turns out to carry alone.
                 var worldSwitches = ParseWorldKeys(p["keys"]);
@@ -4523,6 +4663,7 @@ namespace ValheimBakaLoader.Forms
                 var wantsCopy = copyFrom != null && copySourceWorldName.Length > 0;
 
                 WorldInfo copySource = null;
+                var keptUnderSourceName = false;
                 if (wantsCopy)
                 {
                     if (!WorldStore.IsSafeReferenceToken(copySourceWorldName))
@@ -4549,6 +4690,26 @@ namespace ValheimBakaLoader.Forms
 
                     // The Barrow's own rule, and the same method it uses.
                     RefuseWhileTheWorldIsBeingWritten(copySourceWorldName, sourceFolder);
+
+                    // A copy kept under the source's own world name shares the source's world
+                    // settings, because they are stored by world name. A dial that differs from
+                    // the source could not be given to the copy alone: it would change the source
+                    // as well, and a Normal chosen on purpose would have nowhere of its own to
+                    // land. So that is refused here, before anything is created, with the reason
+                    // named. The source is met first, the way worldgen.get meets it, so the entry
+                    // compared against is the one the source really has.
+                    if (string.Equals(world, copySourceWorldName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ImportWorldKeysOnFirstMeeting(copySourceWorldName, sourceFolder);
+                        var shared = SharedEntryDialChanges(
+                            WorldPrefsProvider.LoadPreferences(copySourceWorldName),
+                            worldModifiers, worldNormals, worldSwitches);
+                        if (shared.Count > 0)
+                            throw new HostFacingException("servers.create.copySameWorldDials",
+                                $"The copy would be kept under '{world}', the source's own world name, so changing {string.Join(", ", shared)} would change the source world too. Give the copy a different world name.",
+                                ("world", world));
+                        keptUnderSourceName = true;
+                    }
                 }
 
                 // Ports: explicit values (validated free) else auto-suggested.
@@ -4559,8 +4720,7 @@ namespace ValheimBakaLoader.Forms
                 // Seed the new profile from the active one so it inherits sane backup/save-interval
                 // defaults, then stamp on its own distinct identity.
                 var basePrefs = ServerPrefsProvider.LoadPreferences(ActiveProfileName) ?? new ServerPreferences();
-                var prefs = basePrefs.ToFile();
-                var created = ServerPreferences.FromFile(prefs);
+                var created = SeedNewRealm(basePrefs);
 
                 created.ProfileName = name;
                 created.Name = name;              // its own in-game name, never the base server's
@@ -4674,27 +4834,17 @@ namespace ValheimBakaLoader.Forms
                 // Persist the chosen difficulty to the NEW world so it is born this way on its
                 // very first launch, rather than starting Normal until the host opens Save Config.
                 // Keyed by world name exactly like worldgen.save, under the same gated store.
-                if (worldModifiers.Count > 0 || worldSwitches != null)
+                // World settings are stored by world name, so a copy kept under its source's own
+                // name shares the source's entry. Every choice that would have changed that entry
+                // was refused above, before anything was made, so there is nothing left to write
+                // and nothing is: the copy keeps what the source has.
+                if (keptUnderSourceName)
+                    Logger.Information("World '{0}' is kept under its source's own name and every dial matches the source, so its settings were left as the source has them.", world);
+                else if (ApplyForgeWorldChoices(WorldPrefsProvider, world, worldModifiers, worldNormals, worldSwitches) != null)
                 {
-                    var worldPrefs = WorldPrefsProvider.LoadPreferences(world)
-                        ?? new WorldPreferences { WorldName = world };
-                    worldPrefs.Preset = null; // individual dials replace any preset (mutually exclusive)
-                    // The forge's five dials all start at Normal and only the moved ones are sent,
-                    // so silence about a dial here is not a statement about it. A one-dial wizard
-                    // is no more a statement about the other four than an all-Normal one is about
-                    // all five: the moved ones go over what the import just read off the world,
-                    // and the rest stay as the world had them. Save Config is the other way round
-                    // on purpose: that page sends the whole dial state every time, so there a
-                    // blank set IS a clear.
-                    if (worldModifiers.Count > 0)
-                    {
-                        if (worldPrefs.Modifiers == null) worldPrefs.Modifiers = new Dictionary<string, string>();
-                        foreach (var pair in worldModifiers) worldPrefs.Modifiers[pair.Key] = pair.Value;
-                    }
-                    worldPrefs.Keys = MergeWorldKeys(worldPrefs.Keys, worldSwitches);
-                    WorldPrefsProvider.SavePreferences(worldPrefs);
-                    Logger.Information("New world '{0}' created with modifiers: {1}; switches: {2}", world,
+                    Logger.Information("New world '{0}' created with modifiers: {1}; set back to Normal: {2}; switches: {3}", world,
                         worldModifiers.Count == 0 ? "none" : string.Join(", ", worldModifiers.Select(kv => kv.Key + "=" + kv.Value)),
+                        worldNormals.Count == 0 ? "none" : string.Join(", ", worldNormals.OrderBy(k => k, StringComparer.Ordinal)),
                         worldSwitches == null || worldSwitches.Count == 0 ? "none" : string.Join(", ", worldSwitches.OrderBy(k => k, StringComparer.Ordinal)));
                 }
 
@@ -4804,7 +4954,7 @@ namespace ValheimBakaLoader.Forms
 
                 // Seed from the active profile for sane defaults, then stamp a distinct identity.
                 var basePrefs = ServerPrefsProvider.LoadPreferences(ActiveProfileName) ?? new ServerPreferences();
-                var created = ServerPreferences.FromFile(basePrefs.ToFile());
+                var created = SeedNewRealm(basePrefs);
                 created.ProfileName = name;
                 created.Name = name;   // its own in-game name, never the base server's
                 created.WorldName = world;
@@ -4951,6 +5101,16 @@ namespace ValheimBakaLoader.Forms
                 // moved after the write lands, so the page is already saved at the size it is
                 // about to be shown at.
                 var textSizeMoved = false;
+
+                // The mod profile code rides on this save because the Discord hall saves
+                // everything it holds through here, but it is not an app setting: it belongs to
+                // ONE realm (realms carry different mod sets), so it is written to that realm's
+                // profile. The page names the realm it was showing, so a realm switch that lands
+                // between the keystroke and the write cannot put one realm's code on another.
+                // Checked before anything is written, so a refused code refuses the whole save
+                // rather than landing half of it. Nothing is ever asked of Thunderstore or Gale.
+                var modCode = ReadModProfileCode(dto, ActiveProfileName, ServerPrefsProvider);
+
                 UserPrefsProvider.Mutate(current =>
                 {
                     prefs = current;
@@ -5067,14 +5227,14 @@ namespace ValheimBakaLoader.Forms
                 // defaults rather than null. Belt to that brace so the lines below cannot fault.
                 prefs ??= UserPrefsProvider.LoadPreferences();
 
+                // Outside the gate above: the profile write takes the same document, and it is
+                // written after the app settings rather than inside their edit.
+                var modCodeMoved = WriteModProfileCode(modCode, ServerPrefsProvider);
+
                 // A Discord-affecting save should refresh the status post right away
                 // (e.g. share-password toggled -> the field appears/disappears; the
                 // custom join domain changes the address line in the post).
-                if (dto.Properties().Any(prop => prop.Name.StartsWith("Discord", StringComparison.OrdinalIgnoreCase)
-                    || prop.Name.Equals("CustomJoinDomain", StringComparison.OrdinalIgnoreCase)))
-                {
-                    DiscordStatus.RequestUpdate();
-                }
+                RefreshDiscordPostAfterSave(dto, modCodeMoved, DiscordStatus);
 
                 // A save that touched either language preference changes which catalog the
                 // countdown and the Discord post are written from.
@@ -8578,10 +8738,43 @@ namespace ValheimBakaLoader.Forms
                 if (!string.Equals(parent, "servers", StringComparison.OrdinalIgnoreCase)) return null;
 
                 // Never treat the base/user save folder as deletable even if it somehow matches.
-                if (SamePath(full, ResolveSaveDataFolder(null))) return null;
+                // The app wide folder, read from the app's own settings: ResolveSaveDataFolder
+                // answers for the realm ON SCREEN, and for the realm on screen that is this very
+                // folder, so the realm a host deletes straight after Duplicate had its worlds
+                // called "the base", kept, and the delete said it had worked.
+                if (SamePath(full, PathCheck.Resolve(UserPrefsProvider.LoadPreferences().SaveDataFolderPath))) return null;
+                if (SamePath(full, PathCheck.Resolve(Properties.Resources.DefaultValheimSaveFolder))) return null;
                 return full;
             }
             catch { return null; }
+        }
+
+        /// <summary>
+        /// Deletes a realm's own install and its own save folder, either of which may be null,
+        /// and answers every one of them that is still on disk afterwards. A failure is logged
+        /// and carried on from, so one folder that cannot go never keeps the other; the answer is
+        /// read off the disk after both tries, so a folder put back after its delete is counted
+        /// as well as one that never went.
+        /// </summary>
+        private List<string> DeleteRealmFolders(string name, string installDir, string saveFolder)
+        {
+            if (installDir != null)
+            {
+                try { InstallIsolation.DeleteInstall(installDir); }
+                catch (Exception e) { AppLogger.Error(e, $"Failed to reclaim isolated install for '{name}'."); }
+            }
+            if (saveFolder != null && Directory.Exists(saveFolder))
+            {
+                try { Directory.Delete(saveFolder, recursive: true); }
+                catch (Exception e) { AppLogger.Error(e, $"Failed to delete isolated save folder for '{name}'."); }
+            }
+
+            var survivors = new[] { installDir, saveFolder }
+                .Where(folder => folder != null && Directory.Exists(folder))
+                .ToList();
+            foreach (var folder in survivors)
+                AppLogger.Error("'{name}' was deleted with its files, but {folder} is still on disk, so the realm was kept.", name, folder);
+            return survivors;
         }
 
         /// <summary>Counts files and total bytes under the isolated install + save folder (best effort).</summary>
@@ -10144,6 +10337,93 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// The mod profile code a userprefs.save carries, read and checked: which realm it is
+        /// for, the kind and the trimmed code, or a null realm when the save carries no code
+        /// at all. A blank code is stored as no code and no kind, which is what keeps the line
+        /// out of the post. A code that could not be one is refused by name before anything is
+        /// written; the page checks with the same two patterns first, so a host normally reads
+        /// the sentence under the box rather than in a toast.
+        /// </summary>
+        public static (string Realm, string Kind, string Code) ReadModProfileCode(
+            JObject dto, string activeRealm, IServerPreferencesProvider serverPrefs)
+        {
+            var hasKind = dto.TryGetValue("ModProfileCodeKind", StringComparison.OrdinalIgnoreCase, out var kindToken);
+            var hasCode = dto.TryGetValue("ModProfileCode", StringComparison.OrdinalIgnoreCase, out var codeToken);
+            if (!hasKind && !hasCode) return (null, null, null);
+
+            var realm = dto.TryGetValue("ModProfileCodeRealm", StringComparison.OrdinalIgnoreCase, out var realmToken)
+                ? realmToken.Value<string>()?.Trim()
+                : null;
+            if (string.IsNullOrWhiteSpace(realm)) realm = activeRealm;
+            var current = string.IsNullOrWhiteSpace(realm) ? null : serverPrefs.LoadPreferences(realm);
+            if (current == null)
+                throw new HostFacingException("userprefs.save.modCodeNoRealm",
+                    "The realm this code was typed for is gone, so it was not saved.");
+
+            var kind = ModProfileCodes.NormalizeKind(hasKind ? kindToken.Value<string>() : current.ModProfileCodeKind);
+            var code = (hasCode ? codeToken.Value<string>() : current.ModProfileCode)?.Trim();
+
+            if (string.IsNullOrEmpty(code)) return (realm, ModProfileCodes.None, null);
+            if (kind == ModProfileCodes.None || !ModProfileCodes.IsAcceptable(kind, code))
+                throw new HostFacingException("userprefs.save.badModCode",
+                    "That does not look like a mod profile code; paste it exactly as your mod manager shows it.");
+
+            return (realm, kind, code);
+        }
+
+        /// <summary>
+        /// Writes a code <see cref="ReadModProfileCode"/> read to the ONE realm it was typed for,
+        /// and only when the kind or the code actually moved, so a save of some other Herald
+        /// switch neither rewrites the profile nor edits the post. Never touches userprefs: the
+        /// code is not an app setting. Answers whether anything was written.
+        /// </summary>
+        public static bool WriteModProfileCode(
+            (string Realm, string Kind, string Code) modCode, IServerPreferencesProvider serverPrefs)
+        {
+            if (modCode.Realm == null) return false;
+
+            var realm = serverPrefs.LoadPreferences(modCode.Realm);
+            if (realm == null) return false;
+            if (string.Equals(realm.ModProfileCodeKind, modCode.Kind, StringComparison.Ordinal)
+                && string.Equals(realm.ModProfileCode, modCode.Code, StringComparison.Ordinal))
+                return false;
+
+            realm.ModProfileCodeKind = modCode.Kind;
+            realm.ModProfileCode = modCode.Code;
+            serverPrefs.SavePreferences(realm);
+            return true;
+        }
+
+        /// <summary>
+        /// The status post is edited after a userprefs.save that changed something it shows: any
+        /// Discord field, the custom join domain, or a mod profile code that moved. Once per save,
+        /// however many of those it carried.
+        /// </summary>
+        public static bool RefreshDiscordPostAfterSave(JObject dto, bool modCodeMoved, IDiscordStatusService discord)
+        {
+            var touches = modCodeMoved
+                || dto.Properties().Any(prop => prop.Name.StartsWith("Discord", StringComparison.OrdinalIgnoreCase)
+                    || prop.Name.Equals("CustomJoinDomain", StringComparison.OrdinalIgnoreCase));
+            if (touches) discord?.RequestUpdate();
+            return touches;
+        }
+
+        /// <summary>
+        /// A new realm's preferences, seeded from the active realm's so it inherits sane backup
+        /// and save-interval defaults. The mod profile code is NOT inherited: it names the mods of
+        /// the realm it was typed for, a new realm is often made without those mods, and carried
+        /// over it would put the other realm's code on this realm's Discord post, telling players
+        /// to install mods this server does not run. Same reason the RCON secret is not carried.
+        /// </summary>
+        public static ServerPreferences SeedNewRealm(ServerPreferences basePrefs)
+        {
+            var created = ServerPreferences.FromFile((basePrefs ?? new ServerPreferences()).ToFile());
+            created.ModProfileCodeKind = ModProfileCodes.None;
+            created.ModProfileCode = null;
+            return created;
+        }
+
+        /// <summary>
         /// Everything the Herald's Discord status post shows, built fresh at publish time.
         /// Prefers a live (non-stopped) session - the active one wins ties - and falls back
         /// to the active profile so a stopped server still reports "Offline" truthfully.
@@ -10215,6 +10495,10 @@ namespace ValheimBakaLoader.Forms
                 LastModUpdateUtc = lastModUpdate,
                 NextRestartUtc = server?.NextScheduledRestartUtc,
                 AppVersion = AssemblyHelper.GetApplicationVersion(),
+                // The code of the realm this post is ABOUT, which is the live one when a server
+                // is up and the active one otherwise, so it always matches the mod count above it.
+                ModProfileCodeKind = prefs?.ModProfileCodeKind,
+                ModProfileCode = prefs?.ModProfileCode,
             };
         }
 

@@ -17,7 +17,7 @@
 -->
 <script>
 (function(){
-  var v = window.BAKA_VERSION || "1.2.10";
+  var v = window.BAKA_VERSION || "1.2.11";
   window.BAKA_ASSET_VERSION = v;
   window.BAKA_ASSET = function(name){ return name + "?v=" + encodeURIComponent(v); };
   window.BAKA_ASSET_PLAIN = function(el){
@@ -125,7 +125,7 @@
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
-        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.10</span><!--
+        <span class="foot-ver"><span class="moon">☾</span><span id="sideVer">v1.2.11</span><!--
              The partial-translation mark. A standing fact about the words on screen, so it
              stands here rather than arriving as a toast; app.js lights it and writes the
              same sentence the globe menu carries onto its tooltip. -->
@@ -180,7 +180,7 @@
             <div class="worldupkeep" id="worldUpkeep" role="group" aria-labelledby="worldUpkeepLbl">
               <span class="sub" id="worldUpkeepLbl" data-i18n="hearth.world_upkeep.label">World upkeep</span>
               <button class="btn btn-ghost btn-sm" id="clearDropsBtn" data-i18n="hearth.cleardrops.label">Clear ground items</button>
-              <!-- Clear cheat marks and its armed switch lived in the Players head until 1.2.10. They
+              <!-- Clear cheat marks and its armed switch lived in the Players head until 1.2.11. They
                    are about the world rather than about a person, which is what this group is for,
                    so they stand here now with their ids and handlers as they were. The button opens
                    the same question the command palette opens, from the same dialog, so there is no
@@ -399,6 +399,8 @@
             <!-- Opens this realm's BepInEx plugins folder. Greyed out with a sentence until the folder exists. -->
             <button class="btn btn-ghost btn-sm" id="modFolderBtn" style="margin-right:8px" data-i18n="mods.folder.label" disabled>ᛃ&nbsp; Mod folder</button>
             <button class="btn btn-ghost btn-sm" id="addModBtn">ᚨ&nbsp; Add from Thunderstore</button>
+            <!-- Reads this realm's plugins folder again, off the disk, with the listing already held. -->
+            <button class="btn btn-ghost btn-sm" id="modsRefreshBtn" style="margin-left:8px" title="Reads this realm's mod folder again from disk. The Thunderstore listing already held is reused, so no site is asked unless it is more than fifteen minutes old." data-i18n="mods.refresh.label" data-i18n-title="mods.refresh.title">ᛇ&nbsp; Refresh</button>
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>
             <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
           </div>
@@ -428,7 +430,7 @@
               <span class="sub" id="runesSub">BepInEx config files</span>
               <div class="grow"></div>
               <button class="btn btn-ghost btn-sm" id="cfgOpenBtn" data-i18n="runes.open.label">ᛃ&nbsp; Open folder</button>
-              <button class="btn btn-ghost btn-sm" id="cfgReloadBtn" style="margin-left:8px" data-i18n="runes.reload.label">ᛋ&nbsp; Reload</button>
+              <button class="btn btn-ghost btn-sm" id="cfgReloadBtn" style="margin-left:8px" title="Reads the list of config files, and the open one, again from disk." data-i18n="runes.reload.label" data-i18n-title="runes.reload.title">ᛋ&nbsp; Reload</button>
               <button class="btn btn-ember btn-sm" id="cfgSaveBtn" style="margin-left:8px" disabled>ᛉ&nbsp; Save</button>
             </div>
             <div class="runes-grid">
@@ -924,6 +926,21 @@
               <div class="togglerow"><span class="tl" data-i18n="herald.share.address">Join address (IP:port)</span><span class="toggle" id="tHeraldAddr" data-t title="Include the server's public IP and port so friends copy it straight from Discord." data-i18n-title="herald.share.address.title"></span></div>
               <div class="togglerow"><span class="tl" data-i18n="herald.share.password">Server password</span><span class="toggle" id="tHeraldPass" data-t title="Include the password in the post. Anyone who can read the channel sees it, so use it only for private channels." data-i18n-title="herald.share.password.title"></span></div>
               <div class="subval" style="margin:2px 0 4px;color:var(--amber)" data-i18n="herald.share.password.warn">ᚦ the password is visible to everyone in that channel, so trusted halls only</div>
+              <!-- The mod profile code. It belongs to the ACTIVE realm rather than to the app,
+                   because realms carry different mod sets, so app.js paints it from the realm's
+                   own profile (heraldRenderModCode) and redraws it on every realm switch. The
+                   line under it is app.js's too: it says what the post will carry, or why a
+                   code was refused, so it carries no id of its own. -->
+              <div class="field" style="margin-top:10px"><label for="heraldModCode" data-i18n="herald.modcode.label">Mod profile code</label>
+                <input type="text" id="heraldModCode" spellcheck="false" autocomplete="off" maxlength="64" placeholder="paste the code · blank = no code in the post" data-i18n-placeholder="herald.modcode.placeholder"></div>
+              <!-- Outside the .field on purpose: .field label is the small uppercase caption,
+                   and these two labels are the radios' own words. -->
+              <div id="heraldModKinds" role="radiogroup" aria-label="Which mod manager the code is for" data-i18n-aria="herald.modcode.kinds.aria" style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 0">
+                <label class="togglerow" style="flex:1 1 140px;height:auto;padding:6px 10px;justify-content:flex-start;cursor:pointer"><input type="radio" name="heraldModKind" id="heraldModKindTs" value="thunderstore" checked style="margin:0 8px 0 0"><span class="tl" data-i18n="herald.modcode.kind.thunderstore">Thunderstore code</span></label>
+                <label class="togglerow" style="flex:1 1 140px;height:auto;padding:6px 10px;justify-content:flex-start;cursor:pointer"><input type="radio" name="heraldModKind" id="heraldModKindGale" value="gale" style="margin:0 8px 0 0"><span class="tl" data-i18n="herald.modcode.kind.gale">Gale code</span></label>
+              </div>
+              <div class="subval" style="margin:4px 0 0" data-i18n="herald.modcode.note">Players paste this into their mod manager to get the same mods.</div>
+              <div class="wiz-stat dim" id="heraldModCodeStat" style="margin:2px 0 6px"></div>
               <div class="togglerow"><span class="tl" data-i18n="herald.share.events">Event posts</span><span class="toggle" id="tHeraldEvents" data-t title="Also send one-off messages when the server starts, stops or crashes, and when vikings join or leave. These are separate messages, not edits of the status post." data-i18n-title="herald.share.events.title"></span></div>
               <div class="subval" style="margin:2px 0 0" data-i18n="herald.share.events.note">one-off messages for start · stop · crash · join · leave</div>
             </div>
@@ -1022,7 +1039,7 @@
 
       <!-- STATUSBAR -->
       <div class="statusbar">
-        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.10</span></span>
+        <span class="seg"><span class="ledot"></span>BakaLoader <span class="em" id="sbVersion">v1.2.11</span></span>
         <span class="seg" id="sbWorld">Final Sunset</span>
         <span class="seg" id="sbMods">63 mods</span>
         <span class="seg" id="sbRconSeg"><span data-i18n="status.rcon.label">RCON</span> <span class="em" id="sbRcon">bound</span></span>

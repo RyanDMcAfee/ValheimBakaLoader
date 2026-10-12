@@ -107,6 +107,18 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public bool CleanseWhenEmpty { get; set; }
 
+        /// <summary>
+        /// Which mod manager this realm's mod profile code is for: <c>none</c>,
+        /// <c>thunderstore</c> or <c>gale</c>. See <see cref="ModProfileCodes"/>.
+        /// </summary>
+        public string ModProfileCodeKind { get; set; } = ModProfileCodes.None;
+
+        /// <summary>
+        /// The share code players paste into their mod manager to get this realm's mods. It
+        /// rides on the Discord status post as one field; blank means no field.
+        /// </summary>
+        public string ModProfileCode { get; set; }
+
         public bool RconEnabled { get; set; }
 
         public int RconPort { get; set; } = 25575;
@@ -161,6 +173,8 @@ namespace ValheimBakaLoader.Game
                 ScheduledRestart = file.ScheduledRestart ?? defaults.ScheduledRestart,
                 ScheduledRestartHours = file.ScheduledRestartHours ?? defaults.ScheduledRestartHours,
                 CleanseWhenEmpty = file.CleanseWhenEmpty ?? defaults.CleanseWhenEmpty,
+                ModProfileCodeKind = ModProfileCodes.NormalizeKind(file.ModProfileCodeKind ?? defaults.ModProfileCodeKind),
+                ModProfileCode = string.IsNullOrWhiteSpace(file.ModProfileCode) ? defaults.ModProfileCode : file.ModProfileCode.Trim(),
                 RconEnabled = file.RconEnabled ?? defaults.RconEnabled,
                 RconPort = file.RconPort ?? defaults.RconPort,
                 RconPassword = file.RconPassword ?? defaults.RconPassword,
@@ -199,6 +213,8 @@ namespace ValheimBakaLoader.Game
             ScheduledRestart = ScheduledRestart,
             ScheduledRestartHours = ScheduledRestartHours,
             CleanseWhenEmpty = CleanseWhenEmpty,
+            ModProfileCodeKind = ModProfileCodeKind,
+            ModProfileCode = ModProfileCode,
             RconEnabled = RconEnabled,
             RconPort = RconPort,
             RconPassword = RconPassword,

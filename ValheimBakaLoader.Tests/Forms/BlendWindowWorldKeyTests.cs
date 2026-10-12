@@ -216,7 +216,8 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // and both write the merge rather than a replace
             Assert.Contains("prefs.Keys = MergeWorldKeys(prefs.Keys, chosenSwitches);", bridge, StringComparison.Ordinal);
-            Assert.Contains("worldPrefs.Keys = MergeWorldKeys(worldPrefs.Keys, worldSwitches);", bridge, StringComparison.Ordinal);
+            Assert.Contains("worldPrefs.Keys = MergeWorldKeys(worldPrefs.Keys, switches);", bridge, StringComparison.Ordinal);
+            Assert.Contains("ApplyForgeWorldChoices(WorldPrefsProvider, world, worldModifiers, worldNormals, worldSwitches)", bridge, StringComparison.Ordinal);
 
             // worldgen.get hands the stored keys back whole, and draws the two split views off
             // that one list rather than off a second read that could disagree with it
@@ -246,7 +247,7 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.True(create > 0, "servers.create is gone");
             var body = bridge.Substring(create, bridge.IndexOf("RegisterRpc(\"worlds.listOrphans\"", StringComparison.Ordinal) - create);
             var imported = body.IndexOf("ImportWorldKeysOnFirstMeeting(", StringComparison.Ordinal);
-            var written = body.IndexOf("worldPrefs.Keys = MergeWorldKeys(", StringComparison.Ordinal);
+            var written = body.IndexOf("ApplyForgeWorldChoices(WorldPrefsProvider, world,", StringComparison.Ordinal);
             Assert.True(imported > 0, "a realm forged over an existing world never meets it");
             Assert.True(written > imported, "the wizard's choices must land on top of the import");
         }

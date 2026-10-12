@@ -1369,6 +1369,14 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 .field.field-dirty>label::after{content:"";display:inline-block;width:5px;height:5px;
   margin-left:7px;vertical-align:middle;border-radius:50%;
   background:var(--ember);box-shadow:0 0 7px rgba(255,122,26,.8)}
+/* The Duplicate dialog draws a field that differs from the realm it was duplicated from with
+   the same mark, and names the source's value under it. The listing switch sits in a
+   .togglerow rather than a .field, so the bar is drawn on that row too. */
+.togglerow.field-dirty{position:relative}
+.togglerow.field-dirty::before{content:"";position:absolute;left:-8px;top:2px;bottom:2px;width:2px;
+  border-radius:0 2px 2px 0;background:var(--ember);box-shadow:0 0 8px rgba(255,122,26,.55)}
+.fieldnote.srcnote{color:var(--ember-hi)}
+.togglerow+.fieldnote.srcnote{margin:3px 0 4px}
 
 /* ---- the unsaved notice ----
    Bottom left of the hall, diagonally opposite Save Config. No button: the only button

@@ -335,7 +335,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // a Commander too old to know the verb.
             // 229 with the one the Mod folder button says in the browser preview, where there is
             // no Explorer to open.
-            Assert.Equal(229, marked.Count);
+            // 230 with the one the Refresh press in the Mods head says in the browser preview,
+            // where there is no plugins folder to read.
+            Assert.Equal(230, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

@@ -198,7 +198,10 @@ namespace ValheimBakaLoader.Tests.Tools
             var create = bridge.IndexOf("RegisterRpc(\"servers.create\"", StringComparison.Ordinal);
             Assert.True(create > 0);
 
-            var chunk = bridge.Substring(create, Math.Min(9000, bridge.Length - create));
+            // The whole handler, up to the next registration, rather than a fixed length that
+            // every refusal added ahead of these lines pushes them out of.
+            var next = bridge.IndexOf("RegisterRpc(", create + 10, StringComparison.Ordinal);
+            var chunk = bridge.Substring(create, (next > create ? next : bridge.Length) - create);
             Assert.Contains("created.SaveDataFolderPath = MakeIsolatedSaveFolder(name);", chunk);
             Assert.Contains("created.SaveDataFolderPath = null;", chunk);
         }

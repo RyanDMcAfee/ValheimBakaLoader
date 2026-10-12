@@ -138,7 +138,7 @@ test("the world section says what it will do, both ways, out of the catalog", ()
 
   assert.ok(/const paintWorldSection=\(\)=>/.test(body),
     "nothing repaints the world section, so the note cannot follow the switch");
-  assert.ok(/copyT\.addEventListener\("click",\(\)=>\{copyT\.classList\.toggle\("on"\);paintWorldSection\(\)\;\}\)/.test(body),
+  assert.ok(/copyT\.addEventListener\("click",\(\)=>\{copyT\.classList\.toggle\("on"\);paintWorldSection\(\)\;(?:syncCopyDials\(\);)?\}\)/.test(body),
     "moving the copy switch does not repaint the note under it");
   assert.ok(/seedI\.disabled=copying/.test(body),
     "the seed box stays typable with a copy on, and a copied world keeps the seed it was"
@@ -180,7 +180,8 @@ test("the bridge copies from the named profile's own folder, and before the firs
 
   // The order IS the feature.
   const copy = handler.indexOf("WorldStore.CopyWorldAs(copySource, world, targetSaveFolder)");
-  const meeting = handler.indexOf("ImportWorldKeysOnFirstMeeting(");
+  // The copy's own meeting. The source is met earlier too, when the copy keeps its world name.
+  const meeting = handler.indexOf("ImportWorldKeysOnFirstMeeting(world, created.SaveDataFolderPath)");
   assert.ok(copy > 0, "nothing in servers.create copies the source world");
   assert.ok(meeting > 0, "servers.create no longer holds the first meeting");
   assert.ok(copy < meeting,

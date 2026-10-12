@@ -69,14 +69,13 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.10
+## What is new in 1.2.11
 
-- **Clear ground items.** A World upkeep group on the Dashboard clears the dropped items that pile up over months, across the whole world, and leaves build pieces, containers, item stands, carts, ships and creatures alone. Gear and anything within 32 metres of a player stay by default. [Dashboard (Hearth)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-(Hearth))
-- **Clear cheat marks moved** from the Players page into that same group; it does what it did before. [Dashboard (Hearth)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-(Hearth))
-- **A Mod folder button** on the Mods screen opens the realm's plugins folder in Explorer. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
-- **A stop asks for a save first** and waits for it, and a stop that ends without a reported save is said out loud in the Saga and the condition bar. [Running the server](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Running-the-server)
-- **BakaLoader sits lighter behind the game.** The hearth flame and the ember glow pause while another window is in front, and the flame runs at thirty frames a second when it runs. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
-- **Everything 1.2.9 brought** is in here too: the save folder fix and the one-button move for worlds an older build left behind. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **A mod profile code on the Discord post.** The Discord tab takes a Thunderstore or Gale code and the status post carries it, so players can pull the same mods. [Discord (Herald)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-(Herald))
+- **Duplicate opens on the source world's own settings** when Copy the world is on, Normal is a real choice, and anything you change away from the source is marked. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
+- **A delete with files no longer keeps the on-screen realm's save folder in silence**, and when any folder survives the delete says which one instead of reporting success. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
+- **Mods and Configs follow a changed Server Executable directory**, and both pages carry a refresh control. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
+- **Everything 1.2.10 brought** is in here too: Clear ground items, the save on stop, the Mod folder button and the lighter window. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 

@@ -148,9 +148,19 @@ const HOST_SENTENCES=[
   {named:"servers.create.copyBadSourceRef",  textId:"realm.new.copy.reason.bad_source"},
   {named:"servers.create.copyNoSourceFolder",textId:"realm.new.copy.reason.no_folder"},
   {named:"servers.create.copySourceMissing", textId:"realm.new.copy.reason.missing"},
+  /* A copy kept under its source's own world name with a dial that differs from the source.
+     The dialog refuses this before it sends, with the same sentence; the host side refusing it
+     means the page was walked around. */
+  {named:"servers.create.copySameWorldDials", textId:"realm.duplicate.same_world_dials"},
   /* Removing a mod while a server is up. Windows will not let a loaded plugin be deleted,
      so this is a refusal now rather than a warning the host could walk past. */
   {named:"mods.remove.serverRunning",        textId:"mods.remove.reason.server_running"},
+  /* A delete with files that left a folder standing. The realm is kept so the delete can be
+     pressed again, and the sentence names the folders that are still there. */
+  {named:"profiles.delete.filesSurvived",    textId:"realm.delete.reason.files_survived"},
+  /* The same, when part of it did go: the install is deleted and the save folder is held open.
+     The realm is kept but no longer whole, so the sentence names what was removed as well. */
+  {named:"profiles.delete.filesSurvivedPartly", textId:"realm.delete.reason.files_survived_partly"},
   /* The three refusals behind the "move the folder" button on the stray save folder row.
      All of them are things the host can act on, so all of them are said in their own words. */
   {named:"paths.stray.nothingToMove",        textId:"paths.stray.reason.nothing_to_move"},
@@ -177,6 +187,11 @@ const HOST_SENTENCES=[
      on a realm switch, so a host should never see this; it is worded because the host side
      refuses the write by name and a refusal with no sentence reads as "the call failed". */
   {named:"config.wrongRealm", textId:"runes.write.reason.wrong_realm"},
+  /* The mod profile code on the Discord hall. The page checks a code with the same two
+     patterns before it sends one, so the host side refusing it means something other than
+     this page sent it; and a realm deleted between the keystroke and the write. */
+  {named:"userprefs.save.badModCode",     textId:"herald.modcode.refused"},
+  {named:"userprefs.save.modCodeNoRealm", textId:"herald.modcode.no_realm"},
 ];
 /* Every way a language pack download can end, as the pack service names it in the result,
    beside the catalog entry that words it. This is the same question HOST_SENTENCES answers
@@ -674,6 +689,7 @@ function repaintBootCopy(){
   try{heraldRenderIntro();}catch(_){}     /* the Discord hall's opening sentence */
   try{heraldRenderPost();}catch(_){}      /* whether a status post is placed */
   try{heraldRenderUrlStat();}catch(_){}   /* and the line under the webhook box */
+  try{heraldRenderModCodeLine();}catch(_){} /* and the line under the mod profile code */
   try{renderTermStream();}catch(_){}      /* the Saga console's live or paused chip */
   try{renderMead();}catch(_){}            /* the horn of mead, embers and all */
   try{renderTermEmpty();}catch(_){}       /* the Saga console's empty state */
@@ -736,6 +752,7 @@ function applyLanguage(code){
   try{heraldRenderIntro();}catch(_){}       /* the Discord hall's opening sentence */
   try{heraldRenderPost();}catch(_){}        /* and its post status */
   try{heraldRenderUrlStat();}catch(_){}     /* and the line under its webhook box */
+  try{heraldRenderModCodeLine();}catch(_){} /* and the one under its mod profile code */
   try{renderTermStream();}catch(_){}        /* the Saga console's live/paused chip */
   try{renderAtlasSide();}catch(_){}         /* the Map hall's side panel */
   try{renderWeather();}catch(_){}           /* and the weather box inside it */
@@ -1875,6 +1892,9 @@ async function refreshServers(){
   if(Array.isArray(r)){S.servers=r;renderServerChips();}
 }
 function renderServerChips(){
+  /* A realm starting or stopping changes which realm the Discord post is about, which the
+     line under the mod profile code reports. */
+  try{heraldRenderModCodeLine();}catch(_){}
   const el=$("#srvStrip"); if(!el) return;
   const all=S.servers||[];
   const list=all.filter(s=>!s.archived);       // strip shows only live realms
@@ -2028,7 +2048,7 @@ async function deleteServerFlow(name){
     const df=delFiles?delFiles.classList.contains("on"):false;
     const ok=m.querySelector("#delOk"); ok.disabled=true; ok.textContent=T("realm.delete.working");
     const r=await rpc("profiles.delete",{name,deleteFiles:df});
-    if(r===FAIL){ok.disabled=false;ok.textContent=T("common.button.delete");const st=m.querySelector("#delStatus");if(st)st.textContent=T("realm.delete.failed");return;}
+    if(r===FAIL){ok.disabled=false;ok.textContent=T("common.button.delete");const st=m.querySelector("#delStatus");if(st)st.textContent=hostSentence(window.BAKA_ERR_ID,window.BAKA_ERR_PARAMS)||T("realm.delete.failed");await refreshServers();return;}
     modalClose();
     if(S.profileName===name) S.profileName=null;
     await refreshServers();
@@ -2290,6 +2310,140 @@ function realmPasswordProblem(password,name,world){
   if(world&&value.indexOf(world)>=0) return T("realm.new.password.has_world");
   return null;
 }
+/* DUPLICATE-DIALS-BEGIN
+   The Duplicate dialog's five difficulty dials, when the switch says the world is copied.
+   They used to open on Normal and send only the ones that were moved, so a dial left on
+   Normal was never sent at all, the copy's own header was imported first, and a Casual
+   source stayed Casual whatever the host chose. Now the dials open on what the source world
+   holds, all five are sent with Normal spelled out, and whatever is not what the source has
+   is drawn in the highlight colour with the source's value named under it. The same marking
+   covers the name, the password, the world and the community listing. The selftest
+   (scripts/ui/duplicate_dials_selftest.js) evaluates this block on its own. */
+const DUP_NORMAL="normal";
+/* The source world's five dials out of a worldgen.get answer, "" for Normal, or null when
+   the answer cannot be trusted to be the whole set. Null matters: the dialog then sends only
+   the dials the host moves, which leaves the copy with the difficulty it carries, rather
+   than sending Normal for five dials nobody has read. A preset is the same: the world's
+   difficulty came from it and not from the dials, so they are not seeded from it. */
+function dupSourceDials(r){
+  if(!worldGenAnswered(r)) return null;
+  if(r.preset&&r.preset!==DUP_NORMAL) return null;
+  const out={};
+  for(const key of Object.keys(WORLDGEN)){
+    const v=r.modifiers[key];
+    if(v==null||v===""||v===DUP_NORMAL){out[key]="";continue;}
+    if(typeof v!=="string"||!wgOpt(key,v)) return null;
+    out[key]=v;
+  }
+  return out;
+}
+/* Asked of the realm the dialog was opened from. worldgen.get answers for the realm the
+   page is standing on, and Duplicate switches to the source before it opens the dialog,
+   so a page standing anywhere else has not got the source's answer to give. */
+async function dupReadSourceDials(source){
+  if(!source||!source.profile||!source.world||!Native.available) return null;
+  if(S.profileName!==source.profile) return null;
+  return dupSourceDials(await rpc("worldgen.get",{world:source.world}));
+}
+/* What servers.create is sent. With the source's dials read, every dial goes, and Normal as
+   the word itself so the host side takes it as a choice. Without them only the moved ones go,
+   as for a brand new world. */
+function dupDialsPayload(values,sourceDials){
+  const mods={};
+  for(const key of Object.keys(WORLDGEN)){
+    const v=(values&&values[key])||"";
+    if(v) mods[key]=v; else if(sourceDials) mods[key]=DUP_NORMAL;
+  }
+  return mods;
+}
+function dupDialLabel(key,v){const o=wgOpt(key,v);return o?T(o.labelId):String(v||"");}
+/* Puts a set of values on the dials. A dial the host has already moved is left where it is
+   unless force says otherwise, and each one that moves gets a change event so the sentence
+   under it repaints from the same code a host's own pick runs. */
+function dupSetDials(m,values,touched,force){
+  for(const key of Object.keys(WORLDGEN)){
+    const sel=m.querySelector("#wsMod_"+key);
+    if(!sel) continue;
+    if(!force&&touched&&touched.has(key)) continue;
+    const v=(values&&values[key])||"";
+    if(sel.value===v) continue;
+    sel.value=v;
+    sel.dispatchEvent(new Event("change"));
+  }
+}
+/* One field's mark: the highlight on the field and the source's value under it. */
+function dupMark(field,note,changed,srcText){
+  if(field) field.classList.toggle("field-dirty",!!changed);
+  if(note){
+    note.textContent=changed?T("realm.duplicate.source",{value:srcText}):"";
+    note.style.display=changed?"":"none";
+  }
+}
+/* Every mark in the dialog, from what is on screen now. The dials are only marked while the
+   world is copied and its dials were read; the four realm fields whenever this is a
+   duplicate. An empty name or world box is not marked: nothing has been chosen there yet. */
+function dupPaintMarks(m,source,sourceDials,copying){
+  const fieldOf=el=>el&&el.closest?el.closest(".field"):null;
+  const dials=!!(copying&&sourceDials);
+  for(const key of Object.keys(WORLDGEN)){
+    const sel=m.querySelector("#wsMod_"+key);
+    const src=dials?(sourceDials[key]||""):"";
+    dupMark(fieldOf(sel),m.querySelector("#wsSrc_"+key),
+      dials&&!!sel&&(sel.value||"")!==src,dupDialLabel(key,src));
+  }
+  if(!source||!source.profile) return;
+  const nameI=m.querySelector("#wsName"), passI=m.querySelector("#wsPass");
+  const worldI=m.querySelector("#wsWorld"), pubT=m.querySelector("#wsPublic");
+  const name=nameI?nameI.value.trim():"";
+  dupMark(fieldOf(nameI),m.querySelector("#wsNameSrc"),
+    name.length>0&&name!==source.profile,source.profile);
+  const pass=passI?passI.value:"";
+  dupMark(fieldOf(passI),m.querySelector("#wsPassSrc"),
+    !!passI&&pass!==(source.password||""),source.password||T("realm.duplicate.source.none"));
+  const world=worldI?worldI.value.trim():"";
+  dupMark(fieldOf(worldI),m.querySelector("#wsWorldSrc"),
+    !!source.world&&world.length>0&&world!==source.world,source.world||"");
+  const listed=!!(pubT&&pubT.classList.contains("on"));
+  dupMark(pubT&&pubT.closest?pubT.closest(".togglerow"):null,m.querySelector("#wsPublicSrc"),
+    !!pubT&&listed!==!!source.listed,
+    source.listed?T("realm.duplicate.source.listed"):T("realm.duplicate.source.unlisted"));
+}
+/* What the copy switch does to the dials, taken out of the dialog so the selftest can run it.
+   On, with the source read, they show the source's values; off, or with nothing read, they go
+   back to plain Normal, because a new empty world starts from nothing the source had. Either
+   way the host's earlier picks are forgotten and the marks repaint for the new state, so a
+   switch turned off leaves no dial marked against a world that is no longer being copied. */
+function dupSyncCopyDials(m,source,sourceDials,copying,touched){
+  if(touched) touched.clear();
+  if(copying&&sourceDials) dupSetDials(m,sourceDials,null,true);
+  else dupSetDials(m,null,null,true);
+  dupPaintMarks(m,source,sourceDials,copying);
+}
+/* The world name servers.create will use: the one typed, else the realm name made safe the
+   way the host side's MakeSafeName makes it. Kept in step with that method by the selftest. */
+function dupEffectiveWorld(world,name){
+  const typed=String(world||"").trim();
+  if(typed) return typed;
+  const cleaned=String(name||"").trim().replace(/[\x00-\x1f"<>|:*?\\\/]/g,"_").replace(/^[. ]+|[. ]+$/g,"");
+  return cleaned||"server";
+}
+/* A copy kept under the source's own world name shares the source's world settings, because
+   they are stored by world name. Any dial that differs from the source would then change the
+   source world as well, and a Normal could not be given to the copy alone, so the dialog says
+   so before it sends anything. The host side refuses the same case by the same rule. Returns
+   the sentence, or null when the copy can go ahead. */
+function dupSameWorldProblem(m,source,sourceDials,copying,world,name){
+  if(!copying||!source||!source.world) return null;
+  const target=dupEffectiveWorld(world,name);
+  if(target.toLowerCase()!==String(source.world).toLowerCase()) return null;
+  const changed=Object.keys(WORLDGEN).some(key=>{
+    const sel=m.querySelector("#wsMod_"+key);
+    const v=sel?(sel.value||""):"";
+    return sourceDials?v!==(sourceDials[key]||""):v!=="";
+  });
+  return changed?T("realm.duplicate.same_world_dials",{world:target}):null;
+}
+/* DUPLICATE-DIALS-END */
 async function addServerProfile(source){
   /* Two different things arrive here. A DUPLICATE names the realm it came from, and gets
      its own heading, its own button and the source realm's password and listing prefilled.
@@ -2299,20 +2453,22 @@ async function addServerProfile(source){
   const duplicating=!!(source&&source.profile);
   const copyable=!!(source&&source.world);
   // The realm-forge dials for a brand-new world: their own ids so they never collide with the
-  // settings-page fMod* dials. Every dial defaults to Normal ("").
+  // settings-page fMod* dials. Every dial opens on Normal (""); a duplicate that copies the
+  // world moves them to the source's values once those are read.
+  const srcNote=id=>`<div class="fieldnote srcnote" id="${id}" style="display:none"></div>`;
   const wsModsHtml=Object.entries(WORLDGEN).map(([key,def])=>
     `<div class="field"><label>${esc(T(def.labelId))}`+
       `<button type="button" class="wginfo" id="wsInfo_${key}" aria-controls="wgTip" `+
         `aria-label="${esc(T(def.ariaId))}">?</button></label>`+
       `<select id="wsMod_${key}">${wgOptions(key,"")}</select>`+
-      `<div class="fieldnote wgnote" id="wsNote_${key}"></div></div>`).join("");
+      `<div class="fieldnote wgnote" id="wsNote_${key}"></div>`+srcNote("wsSrc_"+key)+`</div>`).join("");
   const m=modalOpen(
     `<div class="mtitle">${esc(duplicating
       ?T("realm.duplicate.title",{name:source.profile}):T("realm.new.title"))}</div>`+
     `<div class="mbody" style="display:flex;flex-direction:column;gap:2px">`+
       `<div class="field"><label>${esc(T("realm.new.name.label"))}</label>`+
         `<input type="text" id="wsName" placeholder="${esc(T("realm.new.name.placeholder"))}" spellcheck="false" autocomplete="off">`+
-        `<div class="fieldnote" id="wsNameNote"></div></div>`+
+        `<div class="fieldnote" id="wsNameNote"></div>`+srcNote("wsNameSrc")+`</div>`+
       /* The realm's own password, and whether the game lists it. Both used to be missing
          from this dialog altogether: the new profile was seeded from whichever realm the
          host was standing on, so it inherited that realm's password and its Public flag,
@@ -2323,12 +2479,12 @@ async function addServerProfile(source){
           `<input type="text" id="wsPass" placeholder="${esc(T("realm.new.password.placeholder"))}" spellcheck="false" autocomplete="off">`+
           `<button type="button" class="btn btn-ghost btn-sm" id="wsPassGen">${esc(T("realm.new.password.generate"))}</button>`+
         `</div>`+
-        `<div class="fieldnote">${esc(T("realm.new.password.note"))}</div></div>`+
+        `<div class="fieldnote">${esc(T("realm.new.password.note"))}</div>`+srcNote("wsPassSrc")+`</div>`+
       `<div class="togglerow" title="${esc(T("realm.new.public.title"))}"><span class="tl">${esc(T("realm.new.public.label"))}</span>`+
-        `<div class="toggle" id="wsPublic"></div></div>`+
+        `<div class="toggle" id="wsPublic"></div></div>`+srcNote("wsPublicSrc")+
       `<div class="field"><label>${esc(T("realm.new.world.label"))}</label>`+
         `<input type="text" id="wsWorld" placeholder="${esc(T("realm.new.world.placeholder"))}" spellcheck="false" autocomplete="off">`+
-        `<div class="fieldnote" id="wsPorts">${esc(T("realm.new.ports.finding"))}</div></div>`+
+        `<div class="fieldnote" id="wsPorts">${esc(T("realm.new.ports.finding"))}</div>`+srcNote("wsWorldSrc")+`</div>`+
       /* The copy switch, only when there is a world to copy. On by default: a host who
          pressed Duplicate meant the whole realm, and the one they did not mean is the one
          they turn off here. */
@@ -2394,14 +2550,26 @@ async function addServerProfile(source){
      game lists it. A brand new realm starts on neither. */
   if(duplicating&&passI) passI.value=source.password||"";
   if(duplicating&&pubT&&source.listed) pubT.classList.add("on");
-  if(pubT) pubT.addEventListener("click",()=>pubT.classList.toggle("on"));
+  /* The source world's dials once they are read, null until then or when they cannot be,
+     and which dials the host has moved by hand, so a read that lands late never moves a dial
+     out from under them. */
+  let srcDials=null;
+  const touched=new Set();
+  const copyingNow=()=>!!(copyT&&on(copyT));
+  const paintMarks=()=>dupPaintMarks(m,source,srcDials,copyingNow());
+  /* The dials follow the copy switch. On, they show the source's values; off, they go back
+     to plain Normal, because a new empty world starts from nothing the source had. */
+  const syncCopyDials=()=>dupSyncCopyDials(m,source,srcDials,copyingNow(),touched);
+  if(pubT) pubT.addEventListener("click",()=>{pubT.classList.toggle("on");paintMarks();});
   m.querySelector("#wsPassGen")?.addEventListener("click",()=>{
     passI.value=newRealmPassword();
     statusN.textContent="";
+    paintMarks();
     passI.focus(); passI.select();
   });
+  [nameI,passI,worldI].forEach(el=>el&&el.addEventListener("input",paintMarks));
   paintWorldSection();
-  if(copyT) copyT.addEventListener("click",()=>{copyT.classList.toggle("on");paintWorldSection();});
+  if(copyT) copyT.addEventListener("click",()=>{copyT.classList.toggle("on");paintWorldSection();syncCopyDials();});
   /* Whether the source world CAN be copied, asked the moment the dialog opens rather than
      when the host presses the button. It used to be asked by forging the whole realm and
      throwing at the end, which left a stack trace in the log and a host with no idea what
@@ -2424,6 +2592,7 @@ async function addServerProfile(source){
         copyNote.style.display="";
       }
       paintWorldSection();
+      syncCopyDials();
     });
   }
   [iso,seed,saveIso].forEach(t=>t.addEventListener("click",()=>{
@@ -2437,12 +2606,36 @@ async function addServerProfile(source){
   for(const key of Object.keys(WORLDGEN))
     wireWorldDialHelp(key,m.querySelector("#wsMod_"+key),
       m.querySelector("#wsNote_"+key),m.querySelector("#wsInfo_"+key));
+  /* A host's own pick arrives as input as well as change; a value put on a dial by the code
+     above sends change only, so input is what says the host moved it. */
+  for(const key of Object.keys(WORLDGEN)){
+    const sel=m.querySelector("#wsMod_"+key);
+    sel.addEventListener("input",()=>{touched.add(key);paintMarks();});
+    sel.addEventListener("change",paintMarks);
+  }
+  /* The source world's dials, read the moment the dialog opens. A world whose dials could
+     not be read says so under the switch, and the dials then send only what is moved, which
+     leaves the copy with the difficulty it carries. */
+  if(copyable&&copyT){
+    dupReadSourceDials(source).then(read=>{
+      if(!m.isConnected) return;
+      srcDials=read;
+      if(!read&&Native.available&&copyNote&&!copyNote.textContent){
+        copyNote.textContent=T("realm.duplicate.dials.unread",{world:source.world});
+        copyNote.style.display="";
+      }
+      if(read&&copyingNow()) dupSetDials(m,read,touched,false);
+      paintMarks();
+    });
+  }
+  paintMarks();
 
-  // Read the difficulty dials back into a modifiers map (Normal dropped) at forge time.
+  // Read the difficulty dials back into a modifiers map at forge time. Normal is dropped
+  // unless the source's dials were read and the world is copied: then all five are sent.
   const collectWsMods=()=>{
-    const mods={};
-    for(const key of Object.keys(WORLDGEN)){const v=m.querySelector("#wsMod_"+key).value;if(v)mods[key]=v;}
-    return mods;
+    const values={};
+    for(const key of Object.keys(WORLDGEN)) values[key]=m.querySelector("#wsMod_"+key).value;
+    return dupDialsPayload(values,copyingNow()?srcDials:null);
   };
 
   let ports=null;
@@ -2491,6 +2684,11 @@ async function addServerProfile(source){
       if(passI) passI.focus();
       return;
     }
+    /* A copy under the source's own world name shares the source's settings, so a dial
+       that differs from the source cannot be given to the copy alone. Said here, before
+       anything is forged, with the World box named as the fix. */
+    const sameWorld=dupSameWorldProblem(m,source,srcDials,copyingNow(),world,name);
+    if(sameWorld){statusN.textContent=sameWorld;worldI.focus();return;}
     const modifiers=collectWsMods();
     if(!Native.available){
       // Mock/preview: no native host to forge against, so add a local chip so the strip
@@ -3099,13 +3297,93 @@ renderLastSave();
    keeps the dash it already has. */
 async function refreshModCount(){
   if(!Native.available) return;
-  const asked=S.profileName;
+  const asked=S.profileName, disk=S.modsReadGen||0;
   const r=await rpc("mods.count");
+  if(disk!==(S.modsReadGen||0)) return;   // read from the folder Save Config just moved away from
   if(r===FAIL||!r){try{modFolderLookupFailed(asked);}catch(_){}return;}
   if(!modFolderFromCount(r)) return;   // a reply for a realm the host has left
   S.modsOnDisk=(typeof r.count==="number")?r.count:null;
   try{renderMods();}catch(_){}
 }
+
+/* DISKREAD-BEGIN
+   Mods and Configs are both read off one folder: the BepInEx install next to the server
+   executable. A Save Config that points the realm at another executable points both halls at
+   another install, and they used to go on showing the old one's mods and config files until
+   BakaLoader was restarted. Worse than stale: Update and Remove on a mod row, and Save on an
+   open config file, act by name on whatever install the realm points at NOW, so a row read
+   from the old folder could be pressed into the new one.
+   So a save that moved the executable forgets everything read from the old folder and asks
+   the disk again, and both halls carry a press that does the asking by hand: Refresh in the
+   Mods head, beside Scan, and Reload in the Configs head.
+   S.modsReadGen counts the moves. A mod count or a scan that was asked before a move and
+   answers after it is dropped, because it was read from the folder the realm has left.
+   scripts/ui/disk_reread_selftest.js drives these functions out of this block. */
+
+/* One spelling of a path for comparing: no case, one kind of slash, no trailing slash. */
+function exePathKey(p){
+  return String(p==null?"":p).trim().replace(/\//g,"\\").replace(/\\+$/,"").toLowerCase();
+}
+/* The executable a profile reply says is in force. The effective path is the answer when the
+   reply carries one (a blank box falls back to the app's default), the stored field when not. */
+function exePathOf(prefs){
+  if(!prefs) return "";
+  const eff=prefs.EffectiveServerExePath;
+  return exePathKey(typeof eff==="string"&&eff.trim()?eff:prefs.ServerExePath);
+}
+/* Whether a save moved the realm onto another executable, judged from the profile as it was
+   read just before the write and the reply the write came back with. */
+function exePathMoved(before,after){
+  return exePathOf(before)!==exePathOf(after);
+}
+/* Whether the Server Executable box on screen says something other than what is saved. Asked
+   before the write, so an unsaved config file can be raised before it is let go. */
+function exePathBoxMoved(){
+  const box=$("#fServerExe");
+  if(!box||!S.prefs) return false;
+  return exePathKey(box.value)!==exePathKey(S.prefs.ServerExePath);
+}
+/* Everything the two halls hold that was read off the old folder, put down. A scan or an
+   Update all that is out keeps its busy flag: the host side is still doing it, and the reply
+   is dropped when it lands rather than drawn. */
+function forgetRealmDisk(){
+  S.modsReadGen=(S.modsReadGen||0)+1;
+  S.mods=null; S.modsScanned=false; S.lastScan=null;
+  S.modIndexAt=null; S.modIndexSource=null; S.modsIndexBlind=false;
+  S.modsScanReason=null; S.modsScanError=null;
+  S.modsOnDisk=null; S.modsFolder=undefined;
+  /* The waiting-updates bar counted the old install's rows. Its dismissal was about them too. */
+  MOD_UPDATES_HIDDEN=null;
+  try{clearCondition("modUpdates");}catch(_){}
+  cfgForget();
+  CFG.files=[];
+}
+/* A save moved the executable: forget the old folder and read the new one. The Mods hall is
+   scanned again only when it is on screen, the way a realm switch does it; otherwise the count
+   is read and the hall scans when the host asks. */
+function rereadRealmDisk(){
+  forgetRealmDisk();
+  try{renderModFolderBtn();}catch(_){}
+  try{renderMods();}catch(_){}
+  try{renderCfgList();}catch(_){}
+  logLine("info","[BakaLoader] the server executable moved, so the mods and config files were read again from its folder");
+  refreshModCount();
+  refreshBepInEx();   // the loader row above the table is the new install's loader
+  if(currentPage==="mods") scanMods({force:false});
+  return refreshCfgList(false);
+}
+/* The Refresh press in the Mods head. It reads the plugins folder again and reuses the
+   listing already held, which is the scan the page starts by itself; Scan beside it is the
+   one that asks the sites again. */
+function modsRefreshPress(){
+  if(!Native.available){toast("ᛇ "+T("mods.refresh.preview.toast"));return null;}
+  if(S.modsScanning){toast("ᚦ "+T("mods.scan.reason.already_running"));return null;}
+  if(S.modsUpdating) return null;
+  refreshModCount();
+  return scanMods({force:false});
+}
+/* DISKREAD-END */
+$("#modsRefreshBtn")?.addEventListener("click",()=>{modsRefreshPress();});
 
 /* MODFOLDER-BEGIN
    The Mod folder button in the Mods hall head. It opens this realm's BepInEx plugins folder
@@ -4057,6 +4335,7 @@ function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
   $("#addModBtn").disabled=busy;
+  {const rb=$("#modsRefreshBtn"); if(rb) rb.disabled=busy;}
   renderModSourceLabels();
   renderModFolderBtn();
   /* Above the table, and outside it: the loader is not a mod and never joins the list
@@ -5089,7 +5368,7 @@ async function scanMods(opts){
      new realm's hall, with Update, Remove and Configure on every row now pointed at the new
      realm's install. The reply carries the realm the host side read as well; both are
      checked, so an older bridge with no such field is still handled here. */
-  const forRealm=S.profileName;
+  const forRealm=S.profileName, forDisk=S.modsReadGen||0;
   S.modsScanning=true; S.modsScanError=null; S.modsScanReason=null;
   S.modsIndexBlind=false; renderMods();
   toast("ᛋ "+T("mods.scan.begun.toast"));
@@ -5116,6 +5395,16 @@ async function scanMods(opts){
      new realm's own scan may well be holding. */
   if(!scanReplyIsOurs(forRealm,r)){
     logLine("info","[Thunderstore] a scan answered for a server that is no longer open, so it was dropped");
+    return;
+  }
+  /* Same realm, but Save Config moved it onto another executable while this was out, so
+     these rows are the old install's. They are dropped, the busy flag goes down, and the
+     hall asks the new folder when it is the one on screen. */
+  if(forDisk!==(S.modsReadGen||0)){
+    S.modsScanning=false;
+    logLine("info","[Thunderstore] a scan answered from the server folder this realm has moved away from, so it was dropped");
+    renderMods();
+    if(currentPage==="mods") scanMods({force:false});
     return;
   }
   S.modsScanning=false;
@@ -7514,11 +7803,15 @@ function heraldApply(up){
   heraldRenderPost();
 }
 async function refreshHerald(){
+  try{heraldRenderModCode();}catch(_){} /* the active realm's code, from its own profile */
   if(!Native.available) return; /* preview keeps whatever the user clicked */
   const up=await rpc("userprefs.get");
   if(up!==FAIL&&up) heraldApply(up);
 }
 function heraldSave(extra){
+  /* The line under the mod profile code says whether the post carries it, and the sharing
+     switch is part of that answer, so every save of the hall's switches repaints it. */
+  try{heraldRenderModCodeLine();}catch(_){}
   return rpc("userprefs.save",{prefs:Object.assign({
     DiscordSharingEnabled:swOn("tHerald"),
     DiscordShareAddress:swOn("tHeraldAddr"),
@@ -7530,6 +7823,114 @@ function heraldSave(extra){
 }
 ["tHerald","tHeraldAddr","tHeraldPass","tHeraldEvents"].forEach(id=>
   $("#"+id).addEventListener("click",()=>heraldSave()));
+/* HERALD-MODCODE-BEGIN
+   The mod profile code: the share code a mod manager hands out, which a player pastes into
+   their own manager to get this realm's mods. It is the one thing on this hall that belongs
+   to a REALM rather than to the app, because realms carry different mod sets, so it is painted
+   from S.prefs (the active realm's profile) and redrawn on every realm switch, and its save
+   names the realm it was typed on. It still goes through heraldSave, the road every other
+   field on the hall takes; the host side writes it to that realm's profile.
+   The check is light and the host side holds the same two patterns (ModProfileCodes.cs):
+   letters, digits and dashes, and for Gale the six character code or the longer sync id.
+   Nothing is ever sent to Thunderstore or Gale to ask. A code that fails is not sent at all,
+   and the line under the box says so in one sentence; the rest of the hall saves as normal. */
+const HERALD_MODCODE_RE={
+  thunderstore:/^[A-Za-z0-9][A-Za-z0-9-]{3,63}$/,
+  gale:/^(?:[A-Za-z0-9]{6}|[A-Za-z0-9][A-Za-z0-9-]{7,63})$/,
+};
+/* Whether the line under the box is standing on a refusal. Set by a commit that refused, and
+   dropped by the next good commit or by a repaint from the saved profile. */
+let HERALD_MODCODE_REFUSED=false;
+function heraldModCodeKind(){
+  const g=$("#heraldModKindGale");
+  return g&&g.checked?"gale":"thunderstore";
+}
+/* The catalog id of the reason a code cannot be saved, or null when it can. Blank can always
+   be saved: blank is how a host takes the line out of the post. */
+function heraldModCodeProblem(kind,code){
+  const c=String(code==null?"":code).trim();
+  if(!c) return null;
+  const re=HERALD_MODCODE_RE[kind];
+  return re&&re.test(c)?null:"herald.modcode.refused";
+}
+/* The name the post gives the field, in the host's words, for the preview line. */
+function heraldModCodeName(kind){
+  return kind==="gale"?T("herald.modcode.kind.gale"):T("herald.modcode.kind.thunderstore");
+}
+/* The realm the post is about right now, by the host side's own rule (BuildDiscordSnapshot):
+   a realm whose server is up, this one winning a tie, and this one when none is up. */
+function heraldPostRealm(){
+  const mine=S.profileName||(S.prefs&&S.prefs.ProfileName)||null;
+  const same=(a,b)=>String(a||"").toLowerCase()===String(b||"").toLowerCase();
+  const live=(S.servers||[]).filter(s=>s&&s.running);
+  if(!live.length||live.some(s=>same(s.name,mine))) return mine;
+  return live[0].name;
+}
+/* The line under the box: the refusal when there is one standing, otherwise what the post
+   carries for this realm. It only promises the post when the post will keep it: with Discord
+   sharing off there is no post, and while another realm's server is up the post is about that
+   realm and carries its code, so the line says the code is saved and why it is not showing. */
+function heraldRenderModCodeLine(){
+  const el=$("#heraldModCodeStat"); if(!el) return;
+  const box=$("#heraldModCode");
+  const code=box?String(box.value||"").trim():"";
+  const kind=heraldModCodeKind();
+  if(HERALD_MODCODE_REFUSED){el.className="wiz-stat bad";el.textContent="ᚦ "+T("herald.modcode.refused");return;}
+  if(!code){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.none");return;}
+  const sw=$("#tHerald");
+  if(sw&&!sw.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.off");return;}
+  const mine=S.profileName||(S.prefs&&S.prefs.ProfileName)||null;
+  const about=heraldPostRealm();
+  if(about&&mine&&String(about).toLowerCase()!==String(mine).toLowerCase()){
+    el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.other",{realm:about});return;
+  }
+  el.className="wiz-stat ok";
+  el.textContent=T("herald.modcode.preview",{name:heraldModCodeName(kind)});
+}
+/* Paint the radios and the box from the active realm's saved profile. A realm with no kind
+   saved shows Thunderstore chosen, which is only where the radio rests: nothing is posted
+   until a code is in the box. */
+function heraldRenderModCode(){
+  const p=S.prefs||{};
+  const kind=String(p.ModProfileCodeKind||"none").toLowerCase()==="gale"?"gale":"thunderstore";
+  const ts=$("#heraldModKindTs"), gale=$("#heraldModKindGale"), box=$("#heraldModCode");
+  if(ts) ts.checked=kind==="thunderstore";
+  if(gale) gale.checked=kind==="gale";
+  if(box) box.value=p.ModProfileCode||"";
+  HERALD_MODCODE_REFUSED=false;
+  heraldRenderModCodeLine();
+}
+/* A commit: the box was left or Enter was pressed, or a radio moved. Answers true when the
+   code was saved (or, in the browser preview, kept), false when it was refused. */
+async function heraldModCodeCommit(){
+  const box=$("#heraldModCode"); if(!box) return false;
+  const kind=heraldModCodeKind();
+  const code=String(box.value||"").trim();
+  box.value=code;
+  if(heraldModCodeProblem(kind,code)){HERALD_MODCODE_REFUSED=true;heraldRenderModCodeLine();return false;}
+  HERALD_MODCODE_REFUSED=false;
+  heraldRenderModCodeLine();
+  const realm=S.profileName||(S.prefs&&S.prefs.ProfileName)||null;
+  const saved={ModProfileCodeKind:code?kind:"none",ModProfileCode:code||null};
+  const keep=()=>{ if(realm===(S.profileName||(S.prefs&&S.prefs.ProfileName)||null))
+    S.prefs=Object.assign({},S.prefs||{},saved); };
+  if(!Native.available){keep();return true;}
+  const r=await heraldSave({ModProfileCodeKind:saved.ModProfileCodeKind,ModProfileCode:code,ModProfileCodeRealm:realm});
+  if(r===FAIL){
+    /* The host side said no. Its own refusal of the code keeps the text so it can be fixed;
+       anything else puts the box back to what is really saved for this realm. */
+    if(window.BAKA_ERR_ID==="userprefs.save.badModCode"){HERALD_MODCODE_REFUSED=true;heraldRenderModCodeLine();}
+    else heraldRenderModCode();
+    return false;
+  }
+  keep();
+  return true;
+}
+/* HERALD-MODCODE-END */
+$("#heraldModCode").addEventListener("change",()=>{heraldModCodeCommit();});
+$("#heraldModCode").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();e.target.blur();}});
+["heraldModKindTs","heraldModKindGale"].forEach(id=>
+  $("#"+id).addEventListener("change",()=>{heraldModCodeCommit();}));
 /* What the webhook line is saying, as a fact rather than as text already on screen.
    It used to be four textContent writes and no state at all, which meant a language
    switch left whatever the last keystroke had put there: the line is the one place on
@@ -12256,13 +12657,24 @@ function renderCfgRunningNote(){
   el.textContent=up?T("world.running.note"):"";
 }
 renderCfgRunningNote();
-$("#saveCfgBtn").addEventListener("click",async()=>{
+$("#saveCfgBtn").addEventListener("click",()=>{saveConfigPress();});
+async function saveConfigPress(opts){
   /* A typed world name is held to the same rules the native side holds it to, before
      anything is written: a name that could not be a folder is a realm that cannot be
      launched, and the place to say so is here rather than at the next start. */
   const typedProblem=worldNewProblem();
   if(typedProblem){toast("ᚦ "+typedProblem);$("#fWorldNew")?.focus();return;}
   if(!Native.available){toast("ᛉ "+T("world.saved.preview.toast"));return;}
+  /* A new Server Executable points Configs at another install, and the open config file was
+     read from the old one. Its unsaved changes would be let go by the re-read below, so the
+     host is asked first, the same question a realm switch asks. */
+  if(!(opts&&opts.discardRunes)&&CFG.dirty&&CFG.file&&exePathBoxMoved()){
+    confirmModal(()=>T("world.saved.exe_moved.runes.title"),
+      ()=>T("world.saved.exe_moved.runes.body",{file:bold(CFG.file)}),
+      ()=>T("world.saved.exe_moved.runes.discard"),
+      ()=>{saveConfigPress({discardRunes:true});});
+    return;
+  }
   /* The clean state as it stands BEFORE anything is written. It is kept because the
      difficulty write can fail on its own while the profile write lands, and a dial that
      was not written is still unsaved: the snapshot at the foot of this handler would
@@ -12370,6 +12782,9 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   }
   S.prefs=r; S.profileName=r.ProfileName; S.saveInterval=r.SaveInterval??600;
   renderAllFromPrefs();
+  /* The executable moved, so Mods and Configs are read again from the new install's folder
+     rather than left showing the old one's until a restart. */
+  if(exePathMoved(cur,r)) rereadRealmDisk();
   /* The write landed, so the form on screen IS what is saved. renderWorldForm above has
      already said so; this is said again here because "after a successful save" is the
      rule, and a later change to how the form is redrawn must not be able to lose it. */
@@ -12415,7 +12830,7 @@ $("#saveCfgBtn").addEventListener("click",async()=>{
   /* A save can take a realm out of the stray shape (the host typed the folder out by
      hand) or into one, so the row is asked again rather than left standing. */
   refreshStraySaveFolder();
-});
+}
 function renderAllFromPrefs(){
   if(!S.prefs) return;
   $("#hearthSub").textContent=T("hearth.head.sub",{world:S.prefs.WorldName||"-"});
@@ -12432,6 +12847,9 @@ function renderAllFromPrefs(){
   renderHearthNative();
   try{renderCfgRunningNote();}catch(_){}
   try{renderEditBar();}catch(_){}
+  /* The Discord hall's mod profile code is a field on this realm's profile, so a realm switch
+     and a fresh read of the prefs both repaint it rather than leaving the last realm's code. */
+  try{heraldRenderModCode();}catch(_){}
 }
 /* The status bar's RCON word in the browser preview, which has no prefs behind it.
    renderAllFromPrefs owns that element in the app and never runs here, so the word

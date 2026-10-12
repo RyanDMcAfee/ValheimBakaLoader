@@ -57,6 +57,11 @@ namespace ValheimBakaLoader.Game
 
         [JsonProperty("cleanseWhenEmpty")] public bool? CleanseWhenEmpty { get; set; }
 
+        // -- The mod profile code on the Discord post --
+
+        [JsonProperty("modProfileCodeKind")] public string ModProfileCodeKind { get; set; }
+        [JsonProperty("modProfileCode")] public string ModProfileCode { get; set; }
+
         // -- RCON --
 
         [JsonProperty("rconEnabled")] public bool? RconEnabled { get; set; }

@@ -195,6 +195,8 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.search.placeholder",
                 // The Mod folder button. The walker owns its label; app.js only paints its state.
                 "mods.folder.label",
+                // Refresh, beside Scan: reads the plugins folder again off the disk (1.2.11).
+                "mods.refresh.label", "mods.refresh.title",
             });
         }
 
@@ -250,6 +252,8 @@ namespace ValheimBakaLoader.Tests.Forms
                 "runes.search.aria", "runes.find.aria", "runes.find.next",
                 "runes.search.placeholder", "runes.find.placeholder", "runes.editor.placeholder",
                 "runes.find.next.title",
+                // Reload's tooltip, saying it reads the list and the open file off the disk (1.2.11).
+                "runes.reload.title",
             });
         }
 
@@ -808,6 +812,14 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.share.password",
                 "herald.share.password.title",
                 "herald.share.password.warn",
+                // The mod profile code (1.2.11): its caption, the box's placeholder, the
+                // radio group's spoken name and the two radios. The line under it is app.js's.
+                "herald.modcode.label",
+                "herald.modcode.placeholder",
+                "herald.modcode.kinds.aria",
+                "herald.modcode.kind.thunderstore",
+                "herald.modcode.kind.gale",
+                "herald.modcode.note",
                 "herald.share.events",
                 "herald.share.events.title",
                 "herald.share.events.note",

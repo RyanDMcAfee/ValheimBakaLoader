@@ -118,7 +118,11 @@ namespace ValheimBakaLoader.Tests.Forms
         // 90 with the five the unsaved-work question asks before a realm switch throws away
         // what the host typed: the heading, the sentence with both realm names in it, the
         // discard button, and the name of each hall that can be holding unsaved work.
-        [InlineData("realm.", 90)]
+        // 95 with the Duplicate dialog's source marks in 1.2.11, and 96 with the sentence that
+        // refuses a copy kept under its source's own world name with a dial changed. 97 with the
+        // refusal a delete with files gives when a folder of the realm is still on disk, and 98
+        // with the same refusal when part of the realm already went.
+        [InlineData("realm.", 98)]
         [InlineData("barrow.", 54)]
         [InlineData("waystone.wiz.", 46)]
         [InlineData("world.wg.", 65)]
@@ -685,7 +689,10 @@ namespace ValheimBakaLoader.Tests.Forms
             // the World hall was emptied with the unsaved band still up, and the Runes editor
             // kept the previous realm's text while the list redrew for the new one, so one
             // press of Save wrote realm A's scroll into realm B's file.
-            Assert.Equal(26, sites);
+            // 27 with the question Save Config asks when it moves the Server Executable while
+            // a config file is open with unsaved changes: those changes were read from the old
+            // install, and the re-read that follows the move lets them go (1.2.11).
+            Assert.Equal(27, sites);
             Assert.True(frozen.Count == 0,
                 "a dialog would keep its wording through a language switch:\n  "
                 + string.Join("\n  ", frozen));

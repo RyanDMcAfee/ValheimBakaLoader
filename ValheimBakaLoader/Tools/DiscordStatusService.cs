@@ -32,6 +32,12 @@ namespace ValheimBakaLoader.Tools
         public DateTime? LastModUpdateUtc { get; set; }
         public DateTime? NextRestartUtc { get; set; }
         public string AppVersion { get; set; }
+
+        /// <summary>The realm's mod manager: none, thunderstore or gale (<see cref="ModProfileCodes"/>).</summary>
+        public string ModProfileCodeKind { get; set; }
+
+        /// <summary>The realm's mod profile code, or null for no line in the post.</summary>
+        public string ModProfileCode { get; set; }
     }
 
     public class DiscordStatusResult
@@ -296,7 +302,7 @@ namespace ValheimBakaLoader.Tools
 
         private static long ToUnix(DateTime utc) => new DateTimeOffset(utc, TimeSpan.Zero).ToUnixTimeSeconds();
 
-        private static string BuildEmbedPayload(DiscordStatusSnapshot s, UserPreferences prefs)
+        internal static string BuildEmbedPayload(DiscordStatusSnapshot s, UserPreferences prefs)
         {
             var color = s.ServerRunning ? 0x57F287       // green - up
                 : s.ServerStarting ? 0xF39C12            // orange - on the way up/down
@@ -346,6 +352,22 @@ namespace ValheimBakaLoader.Tools
                     : HostCatalog.T("host.status.value.vanilla"),
                 inline = true,
             });
+
+            // The realm's mod profile code, straight after the mod count it is the other half
+            // of. In a code span so a player can copy it in one go, and only when the realm has
+            // one: no kind chosen or a blank code is no field at all, not a field saying "-".
+            var modCode = ModProfileCodes.Postable(s.ModProfileCodeKind, s.ModProfileCode);
+            if (modCode != null)
+            {
+                fields.Add(new
+                {
+                    name = ModProfileCodes.NormalizeKind(s.ModProfileCodeKind) == ModProfileCodes.Gale
+                        ? HostCatalog.T("host.status.field.mod_code.gale")
+                        : HostCatalog.T("host.status.field.mod_code.thunderstore"),
+                    value = $"`{modCode}`",
+                    inline = true,
+                });
+            }
 
             fields.Add(new
             {

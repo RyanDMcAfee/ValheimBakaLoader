@@ -791,5 +791,51 @@ else
   echo "  the unsaved stop row selftest is missing: $UNSAVED_SELFTEST"; fail=1
 fi
 
+echo "== 46. the mod profile code on the Discord hall, from the radio to the post =="
+# 1.2.11 put a mod manager's share code on the status post. It is the one thing on the Discord
+# hall that belongs to a realm rather than to the app, so the quiet ways it goes wrong are a line
+# naming the wrong manager, a blank box taking something else down with it, a refused code sent
+# anyway, and one realm's code left standing on another after a switch. The selftest drives the
+# real block out of app.js and holds the page's patterns to the host side's.
+MODCODE_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/herald_modcode_selftest.js"
+if [ -f "$MODCODE_SELFTEST" ]; then
+  if out=$(node "$MODCODE_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the herald mod code selftest is missing: $MODCODE_SELFTEST"; fail=1
+fi
+
+echo "== 47. the Duplicate dialog's dials open on the source world and mark what differs =="
+# With Copy the world on, the dials used to open on Normal and send only what was moved, so a
+# Casual source stayed Casual and Normal could not be chosen. The selftest drives the real
+# prefill and marking block out of app.js, and holds the word it sends for Normal to the host
+# side's parser and the merge that follows the first meeting.
+DUPDIALS_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/duplicate_dials_selftest.js"
+if [ -f "$DUPDIALS_SELFTEST" ]; then
+  if out=$(node "$DUPDIALS_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the duplicate dials selftest is missing: $DUPDIALS_SELFTEST"; fail=1
+fi
+
+echo "== 48. Mods and Configs read the new folder after the Server Executable moves =="
+# Both halls are read off the BepInEx install beside the server executable, and a Save Config
+# that moved it left them showing the old install's mods and config files until a restart, with
+# the rows and the open file still acting by name on the new one. The selftest drives the real
+# re-read, the scan and count that land after a move, and the Refresh press out of app.js.
+DISKREAD_SELFTEST="$(dirname "$(dirname "$HERE")")/scripts/ui/disk_reread_selftest.js"
+if [ -f "$DISKREAD_SELFTEST" ]; then
+  if out=$(node "$DISKREAD_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the disk reread selftest is missing: $DISKREAD_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

@@ -148,9 +148,16 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var body = HandlerBody("RegisterRpc(\"servers.create\"", "RegisterRpc(\"worlds.listOrphans\"");
 
+            // The write lives in ApplyForgeWorldChoices since 1.2.11, so the Duplicate dialog's
+            // explicit Normal could be proved on a real copied world; the handler hands it over.
             Assert.Contains(
-                "foreach (var pair in worldModifiers) worldPrefs.Modifiers[pair.Key] = pair.Value;",
+                "ApplyForgeWorldChoices(WorldPrefsProvider, world, worldModifiers, worldNormals, worldSwitches)",
                 body, StringComparison.Ordinal);
+            var helper = HandlerBody("public static WorldPreferences ApplyForgeWorldChoices(", "public static HashSet<string> ParseWorldKeys(");
+            Assert.Contains(
+                "if (moved != null) foreach (var pair in moved) worldPrefs.Modifiers[pair.Key] = pair.Value;",
+                helper, StringComparison.Ordinal);
+            Assert.DoesNotContain("worldPrefs.Modifiers = moved", helper, StringComparison.Ordinal);
             Assert.DoesNotContain(
                 "if (worldModifiers.Count > 0) worldPrefs.Modifiers = worldModifiers;", body, StringComparison.Ordinal);
         }
@@ -177,18 +184,12 @@ namespace ValheimBakaLoader.Tests.Forms
             var worlds = new WorldPreferencesProvider(new RoundTrippingUserPrefs(), Quiet());
             Assert.Equal(WorldKeyImportKind.Imported, WorldKeyImportStep.Run(worlds, () => header, "Midgard").Kind);
 
-            // servers.create, line for line, with Combat moved to Hard in the forge.
-            var worldModifiers = BlendWindow.ParseWorldModifiers(JObject.FromObject(new { combat = "hard" }));
+            // servers.create's own write, with Combat moved to Hard in the forge.
+            var sent = JObject.FromObject(new { combat = "hard" });
+            var worldModifiers = BlendWindow.ParseWorldModifiers(sent);
+            var worldNormals = BlendWindow.ParseExplicitNormalDials(sent);
             var worldSwitches = BlendWindow.ParseWorldKeys(null);   // the forge sends no switch list
-            var prefs = worlds.LoadPreferences("Midgard") ?? new WorldPreferences { WorldName = "Midgard" };
-            prefs.Preset = null;
-            if (worldModifiers.Count > 0)
-            {
-                if (prefs.Modifiers == null) prefs.Modifiers = new Dictionary<string, string>();
-                foreach (var pair in worldModifiers) prefs.Modifiers[pair.Key] = pair.Value;
-            }
-            prefs.Keys = BlendWindow.MergeWorldKeys(prefs.Keys, worldSwitches);
-            worlds.SavePreferences(prefs);
+            BlendWindow.ApplyForgeWorldChoices(worlds, "Midgard", worldModifiers, worldNormals, worldSwitches);
 
             var stored = worlds.LoadPreferences("Midgard");
             Assert.Equal("hard", stored.Modifiers["combat"]);       // the forge's own choice wins
