@@ -69,13 +69,11 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.11
+## What is new in 1.2.12
 
-- **A mod profile code on the Discord post.** The Discord tab takes a Thunderstore or Gale code and the status post carries it, so players can pull the same mods. [Discord (Herald)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-(Herald))
-- **Duplicate opens on the source world's own settings** when Copy the world is on, Normal is a real choice, and anything you change away from the source is marked. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
-- **A delete with files no longer keeps the on-screen realm's save folder in silence**, and when any folder survives the delete says which one instead of reporting success. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
-- **Mods and Configs follow a changed Server Executable directory**, and both pages carry a refresh control. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
-- **Everything 1.2.10 brought** is in here too: Clear ground items, the save on stop, the Mod folder button and the lighter window. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **BakaLoader keeps running when an antivirus takes the launcher.** BakaLoader.cmd beside the exe starts the app through the Microsoft-signed dotnet host, the self update no longer rolls back when the launcher is taken, and Start with Windows survives it. [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting)
+- **A Defender scan gate** runs before every release. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **Everything 1.2.11 brought** is in here too: the Discord mod profile code, Duplicate opening on the source world, the delete that says what it left behind, and the Mods and Configs refresh. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 
@@ -99,6 +97,7 @@ Worlds are folders in 1.0 and converting an old one cannot be undone, so BakaLoa
 
 - Windows 10 or 11, 64-bit.
 - [.NET 6 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/6.0). Windows prompts you on first run if it is missing.
+- If your antivirus removed `ValheimBakaLoader.exe`, start `BakaLoader.cmd` in the same folder instead. It runs the same app through the [.NET 6 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/6.0), and [Troubleshooting](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Troubleshooting#the-launcher-keeps-disappearing) has the rest.
 - Valheim Dedicated Server, free in your Steam library under Tools. The wizard can point at any install, including one managed by SteamCMD.
 
 No Linux build and no Docker image. It is a Windows app built around the Windows server binary.

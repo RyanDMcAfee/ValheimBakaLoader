@@ -1,8 +1,8 @@
 {
   "_meta": {
     "language": "en",
-    "appVersion": "1.2.11",
-    "catalog": 10
+    "appVersion": "1.2.12",
+    "catalog": 11
   },
   "keys": {
     "pal.cmd.restart_server": { "lore": "Restart server" },
@@ -2022,6 +2022,7 @@
     "host.time.minutes": { "lore": { "one": "{count} minute", "other": "{count} minutes" }, "plural": "count" },
     "host.time.seconds": { "lore": { "one": "{count} second", "other": "{count} seconds" }, "plural": "count" },
     "host.saga.unsaved_stop": { "lore": "{server} stopped without reporting a world save. The world {world} may be up to one save interval behind what the players last saw.", "params": { "server": "text", "world": "text" } },
+    "host.saga.launcher_missing": { "lore": "The launcher ValheimBakaLoader.exe is missing from the BakaLoader folder, which usually means an antivirus took it, so BakaLoader is running through dotnet instead. Everything works the same. Start {script} in that folder to open BakaLoader this way until the launcher is back.", "params": { "script": "text" } },
 
     "host.discord.started.title": { "lore": "Server Started" },
     "host.discord.started.body": { "lore": "**{server}** is now online.", "params": { "server": "text" } },

@@ -92,6 +92,144 @@ namespace ValheimBakaLoader.Tools
     }
 
     /// <summary>
+    /// What the Run key entry says, which is no longer always a bare path to the launcher.
+    /// <para>
+    /// WHY. On 2026-10-11 Defender quarantined the launcher out of a live install and took the
+    /// Run entry with it. The app runs just the same through the dotnet host Microsoft signs
+    /// (see <see cref="LauncherRoute"/>), and a copy running that way has dotnet.exe as its
+    /// Application.ExecutablePath. Written as it stood, the entry would have named dotnet.exe
+    /// alone, which starts nothing. So a run through dotnet writes the host and the app's own
+    /// library, and reads it back the same way.
+    /// </para>
+    /// <para>
+    /// THE SHAPE. A run through the launcher writes the launcher's path exactly as every
+    /// release before this one did, so no host's entry moves. A run through dotnet writes
+    /// <c>"dotnet.exe" "ValheimBakaLoader.dll"</c> and nothing more. dotnet.exe is a console
+    /// program, so Windows opens a console for it, and the app lets go of that console as the
+    /// first thing it does (see Program.LetGoOfTheDotnetConsole): it shows for a moment and
+    /// closes. Hiding it outright with <c>conhost.exe --headless</c> was tried and dropped
+    /// before release, because a Run entry that starts a hidden console host pointing at a
+    /// file in the user's folder is exactly the kind of thing the heuristics that took the
+    /// launcher look for. A console that flashes once at sign in is the honest form.
+    /// </para>
+    /// </summary>
+    public static class StartupCommand
+    {
+        /// <summary>
+        /// The entry for a run whose process image is <paramref name="hostPath"/> and whose app
+        /// is <paramref name="appLibrary"/>. The launcher's path, unchanged, for a run through
+        /// the launcher; the dotnet form for a run through dotnet.
+        /// </summary>
+        public static string For(string hostPath, string appLibrary)
+        {
+            if (!LauncherRoute.IsDotnetHost(hostPath) || string.IsNullOrWhiteSpace(appLibrary))
+                return hostPath;
+
+            return Quote(hostPath) + " " + Quote(appLibrary);
+        }
+
+        /// <summary>
+        /// The BakaLoader file an entry starts: the launcher's path for the plain form, the
+        /// library's path for the dotnet form. An entry with conhost in front of the dotnet form,
+        /// which only a build from before release ever wrote, still reads to its library. Null
+        /// for nothing at all.
+        /// </summary>
+        public static string TargetOf(string registered)
+        {
+            if (string.IsNullOrWhiteSpace(registered)) return null;
+
+            var rest = registered.Trim();
+            var first = FirstWord(rest, out var after);
+
+            if (string.Equals(SafeFileName(first), "conhost.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                rest = after;
+                if (rest.StartsWith("--", StringComparison.Ordinal)) FirstWord(rest, out rest);
+                first = FirstWord(rest, out after);
+            }
+
+            if (LauncherRoute.IsDotnetHost(first))
+            {
+                var library = FirstWord(after, out _);
+                return string.IsNullOrWhiteSpace(library) ? null : library;
+            }
+
+            // A bare path may hold spaces: unquoted, it is the whole value, exactly as every
+            // release before this one wrote it.
+            return rest.StartsWith("\"", StringComparison.Ordinal) ? first : rest;
+        }
+
+        /// <summary>
+        /// The first word of a command line and what follows it. A quoted run is one word with
+        /// its quotes off. An unquoted one runs to the end of the first ".exe " when there is
+        /// one, because a program path may hold spaces and that is the only place it can end,
+        /// and to the end of the line when there is not, which is the bare path form.
+        /// </summary>
+        private static string FirstWord(string line, out string after)
+        {
+            line = (line ?? "").TrimStart();
+            after = "";
+            if (line.Length == 0) return "";
+
+            if (line[0] == '"')
+            {
+                var close = line.IndexOf('"', 1);
+                if (close < 0) return line.Substring(1);
+                after = line.Substring(close + 1).TrimStart();
+                return line.Substring(1, close - 1);
+            }
+
+            // A flag such as --headless is one word, whatever follows it.
+            var space = line.IndexOf(' ');
+            if (line.StartsWith("--", StringComparison.Ordinal) && space > 0)
+            {
+                after = line.Substring(space + 1).TrimStart();
+                return line.Substring(0, space);
+            }
+
+            var exe = line.IndexOf(".exe ", StringComparison.OrdinalIgnoreCase);
+            if (exe >= 0)
+            {
+                after = line.Substring(exe + 5).TrimStart();
+                return line.Substring(0, exe + 4);
+            }
+
+            return line;
+        }
+
+        /// <summary>
+        /// Which copy of BakaLoader a path or an entry names: its folder and its name, with the
+        /// extension off, so the launcher and the library of ONE install answer the same thing
+        /// and two installs never do. Null when there is nothing to name.
+        /// </summary>
+        public static string CopyOf(string registeredOrPath)
+        {
+            var target = TargetOf(registeredOrPath);
+            if (string.IsNullOrWhiteSpace(target)) return null;
+
+            try
+            {
+                var full = System.IO.Path.GetFullPath(target);
+                return System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(full) ?? "",
+                    System.IO.Path.GetFileNameWithoutExtension(full));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string Quote(string path) => "\"" + path.Trim().Trim('"') + "\"";
+
+        private static string SafeFileName(string path)
+        {
+            try { return System.IO.Path.GetFileName(path); }
+            catch { return null; }
+        }
+    }
+
+    /// <summary>
     /// The "start with Windows" preference, and the one Run key entry that carries it.
     /// <para>
     /// WHY THIS SHAPE. Until 1.2.5 every operation, reads included, opened the Run key for
@@ -307,7 +445,7 @@ namespace ValheimBakaLoader.Tools
         /// What the machine wide hive has to say, which is a fact about this PC rather than
         /// about this account: nothing an ordinary run can do reaches it.
         /// </summary>
-        private static StartupNotice MachineNote(bool userPreference, string machineEntry, string exePath)
+        private StartupNotice MachineNote(bool userPreference, string machineEntry, string exePath)
         {
             if (machineEntry == null) return null;
 
@@ -352,7 +490,7 @@ namespace ValheimBakaLoader.Tools
             // An entry naming a copy that is no longer on disk is the moved install, and the
             // launch puts that one right on its own. One that is still on disk is two copies
             // and a question only the host can answer.
-            if (FileThere(userEntry))
+            if (FileThere(StartupCommand.TargetOf(userEntry) ?? userEntry))
                 return new StartupNotice { Id = OtherCopyNoticeId, Path = userEntry };
 
             // Unless the write that would have put it right is the one Windows refused. The
@@ -424,7 +562,7 @@ namespace ValheimBakaLoader.Tools
 
             if (Same(userEntry, exePath)) return Answer(false, true, entryName, exePath);
 
-            if (userEntry != null && FileThere(userEntry))
+            if (userEntry != null && FileThere(StartupCommand.TargetOf(userEntry) ?? userEntry))
                 return Answer(false, true, entryName, exePath);
 
             if (!Registry.Write(entryName, exePath, out var problem))
@@ -509,7 +647,7 @@ namespace ValheimBakaLoader.Tools
             // a host hunting for a move that never happened.
             if (userEntry == null)
                 logger?.Information("ValheimBakaLoader will now run on Windows startup for this account");
-            else if (FileThere(userEntry))
+            else if (FileThere(StartupCommand.TargetOf(userEntry) ?? userEntry))
                 logger?.Information(
                     "The startup entry for this account was re-pointed from another copy of "
                     + "BakaLoader at {OtherPath}", userEntry);
@@ -652,10 +790,32 @@ namespace ValheimBakaLoader.Tools
                 entryName);
         }
 
-        private static bool Same(string registered, string exePath) =>
-            registered != null
-            && !string.IsNullOrWhiteSpace(exePath)
-            && registered.Equals(exePath, StringComparison.OrdinalIgnoreCase);
+        /// <summary>
+        /// Whether an entry already starts THIS copy of BakaLoader.
+        /// <para>
+        /// The same text always is. Since the dotnet form, so is an entry naming the same copy
+        /// the other way, as long as the file it names is still there: an entry naming this
+        /// install's launcher still starts this copy while the launcher is on disk, and one
+        /// naming its library through dotnet does whichever way this run was started. Neither
+        /// is rewritten, so moving between the launcher and BakaLoader.cmd does not move the
+        /// registry back and forth. An entry naming a launcher that has been taken is not the
+        /// same any more, because it starts nothing, and the launch re-points it at the form
+        /// that does.
+        /// </para>
+        /// </summary>
+        private bool Same(string registered, string exePath)
+        {
+            if (registered == null || string.IsNullOrWhiteSpace(exePath)) return false;
+            if (registered.Equals(exePath, StringComparison.OrdinalIgnoreCase)) return true;
+
+            var mine = StartupCommand.CopyOf(exePath);
+            var theirs = StartupCommand.CopyOf(registered);
+            if (mine == null || theirs == null
+                || !mine.Equals(theirs, StringComparison.OrdinalIgnoreCase)) return false;
+
+            var target = StartupCommand.TargetOf(registered);
+            return target != null && FileThere(target);
+        }
     }
 
     /// <summary>
@@ -671,17 +831,28 @@ namespace ValheimBakaLoader.Tools
         private static readonly StartupEntry Entry = new(new WindowsRunKeyRegistry());
 
         /// <summary>
+        /// What the Run entry for THIS run should say: the launcher's path when it was started
+        /// by the launcher, and the dotnet form when it was started through dotnet, which is
+        /// what keeps Start with Windows working when the launcher has been quarantined. See
+        /// <see cref="StartupCommand"/>.
+        /// </summary>
+        internal static string LaunchCommand() =>
+            StartupCommand.For(
+                Application.ExecutablePath,
+                System.IO.Path.Combine(LauncherRoute.InstallFolder(), LauncherRoute.LibraryName));
+
+        /// <summary>
         /// Puts the Run key where the preference says. Called only by a save that MOVED the
         /// switch: the Upkeep card posts every switch on it together, so the key arriving is
         /// not the switch moving, and an ordinary save must write nothing to the registry.
         /// </summary>
         public static StartupOutcome ApplyStartupSetting(bool userPreference, ILogger logger) =>
-            Entry.Apply(userPreference, Application.ProductName, Application.ExecutablePath, logger);
+            Entry.Apply(userPreference, Application.ProductName, LaunchCommand(), logger);
 
         /// <inheritdoc cref="StartupEntry.RepointIfMoved"/>
         public static StartupOutcome RepointMovedEntry(bool userPreference, ILogger logger) =>
             Entry.RepointIfMoved(
-                userPreference, Application.ProductName, Application.ExecutablePath, logger);
+                userPreference, Application.ProductName, LaunchCommand(), logger);
 
         /// <inheritdoc cref="StartupEntry.NotesFor"/>
         public static StartupNotes NotesFor(bool userPreference)
@@ -689,7 +860,7 @@ namespace ValheimBakaLoader.Tools
             try
             {
                 return Entry.NotesFor(
-                    userPreference, Application.ProductName, Application.ExecutablePath);
+                    userPreference, Application.ProductName, LaunchCommand());
             }
             catch { return StartupNotes.None; }
         }

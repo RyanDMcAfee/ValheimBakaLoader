@@ -122,7 +122,21 @@ namespace ValheimBakaLoader.Tools
     /// </summary>
     public class AppUpdateService : IAppUpdateService
     {
-        private const string ExeName = "ValheimBakaLoader.exe";
+        private const string ExeName = LauncherRoute.LauncherName;
+
+        /// <summary>
+        /// How long the watchdog watches a launcher it has just started. A security tool that
+        /// takes the file out from under the process does it inside this window: on 2026-10-04
+        /// the kill came eighteen seconds after the start.
+        /// </summary>
+        internal const int LauncherWatchSeconds = 30;
+
+        /// <summary>
+        /// How long the watchdog watches a start through dotnet. A host with no .NET 6 Desktop
+        /// Runtime ends inside the first second and says why only on a console nobody can see,
+        /// so an early ending is turned into a note the app reads on its next launch.
+        /// </summary>
+        internal const int DotnetWatchMilliseconds = 8000;
 
         /// <summary>
         /// The clocks the release asset is held to. HttpClient.Timeout used to be the only
@@ -328,12 +342,15 @@ namespace ValheimBakaLoader.Tools
 
                 if (!ZipContainsExe(zipPath))
                 {
-                    Logger.Error("Self-update: downloaded zip does not contain {0}; aborting.", ExeName);
+                    Logger.Error("Self-update: downloaded zip holds neither {0} nor {1}; aborting.", ExeName, LauncherRoute.LibraryName);
                     TryDelete(zipPath);
                     return StageOutcome.NoRelease;
                 }
 
-                var installDir = Path.GetDirectoryName(GetCurrentExePath());
+                // The app's own folder, not the folder of the process image. Through the
+                // launcher those are the same folder; through dotnet the process image is
+                // dotnet.exe, and the update would have been written over the .NET install.
+                var installDir = LauncherRoute.InstallFolder();
                 if (string.IsNullOrWhiteSpace(installDir))
                 {
                     Logger.Error("Self-update: could not resolve the install directory; aborting.");
@@ -481,24 +498,25 @@ namespace ValheimBakaLoader.Tools
                     && a.Name.EndsWith("-win-x64.zip", StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>
+        /// Whether the zip holds BakaLoader: the launcher, or the library that IS the app. The
+        /// launcher alone used to be the test, so a release zip a security tool had taken the
+        /// launcher out of read as a zip with no BakaLoader in it, and the watchdog finds the
+        /// app by the library as well now.
+        /// </summary>
         private static bool ZipContainsExe(string zipPath)
         {
             try
             {
                 using var archive = ZipFile.OpenRead(zipPath);
                 return archive.Entries.Any(e =>
-                    string.Equals(Path.GetFileName(e.FullName), ExeName, StringComparison.OrdinalIgnoreCase));
+                    string.Equals(Path.GetFileName(e.FullName), ExeName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Path.GetFileName(e.FullName), LauncherRoute.LibraryName, StringComparison.OrdinalIgnoreCase));
             }
             catch
             {
                 return false;
             }
-        }
-
-        private static string GetCurrentExePath()
-        {
-            using var proc = Process.GetCurrentProcess();
-            return proc.MainModule?.FileName;
         }
 
         /// <summary>
@@ -514,7 +532,7 @@ namespace ValheimBakaLoader.Tools
             var scriptPath = Path.Combine(workDir, "update-watchdog.ps1");
 
             var script = BuildWatchdogScript(appPid, zipPath, extractDir, installDir, exePath, workDir);
-            File.WriteAllText(scriptPath, script);
+            WriteWatchdogScript(scriptPath, script);
 
             var psi = new ProcessStartInfo
             {
@@ -551,21 +569,202 @@ $zipPath    = '{Escape(zipPath)}'
 $extractDir = '{Escape(extractDir)}'
 $installDir = '{Escape(installDir)}'
 $exePath    = '{Escape(exePath)}'
+$dllPath    = Join-Path $installDir '{LauncherRoute.LibraryName}'
 $workDir    = '{Escape(workDir)}'
 $reportPath = '{Escape(UpdateReportPath())}'
 $rollbackDir = Join-Path $workDir 'rollback'
 $rollbackTaken = $false
+$script:note = $null
 
 # The note the app reads on its next launch. Every way out of this script that is not a
 # finished update goes through here, because a host whose BakaLoader did not come back has
 # no other way of finding out why: the script deletes itself and its own folder, and the
 # app that would have written a log line is not running.
 function Write-Note($note) {{
+  $script:note = $note
   try {{
     $reportDir = Split-Path -Parent $reportPath
     if ($reportDir -and -not (Test-Path $reportDir)) {{ New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }}
     Set-Content -LiteralPath $reportPath -Value $note -Encoding UTF8
   }} catch {{}}
+}}
+
+# A second sentence for the note this run already wrote. A routine note gives way to anything
+# that is not routine, because ""the launcher was already these bytes"" says nothing once the
+# launcher has gone.
+function Add-Note($note) {{
+  if ($script:note -and -not $script:note.StartsWith('{RoutineNoteMark}')) {{ Write-Note ($script:note + ' ' + $note) }}
+  else {{ Write-Note $note }}
+}}
+
+# The words of a failure, without the wrapper PowerShell puts round a .NET call that threw.
+function Get-Reason($failure) {{
+  $e = $failure.Exception
+  if ($e -is [System.Management.Automation.MethodInvocationException] -and $e.InnerException) {{ $e = $e.InnerException }}
+  return $e.Message
+}}
+
+# How long the zip says the launcher that landed at $path is, or -1 when that cannot be told.
+function Get-LauncherEntryLength([string]$path) {{
+  try {{
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $root = [System.IO.Path]::GetFullPath($extractDir).TrimEnd('\') + '\'
+    $relative = [System.IO.Path]::GetFullPath($path).Substring($root.Length).Replace('\', '/')
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {{
+      foreach ($entry in $zip.Entries) {{
+        if ($entry.FullName.Replace('\', '/') -ieq $relative) {{ return $entry.Length }}
+      }}
+    }} finally {{
+      $zip.Dispose()
+    }}
+  }} catch {{}}
+  return -1
+}}
+
+# A SHA-256 of bytes already in memory, so the launcher is compared on what was read and not on
+# a second read of a file that may have changed hands in between.
+function Get-BytesHash([byte[]]$bytes) {{
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {{ return [System.BitConverter]::ToString($sha.ComputeHash($bytes)) }} finally {{ $sha.Dispose() }}
+}}
+
+# BEGIN launch route
+# Which way BakaLoader can be started from a folder. The same rule as LauncherRoute.For in the
+# app: the launcher whenever it is there, dotnet when the launcher is gone and the library is
+# still there, and nothing when both are gone. A missing launcher beside the library is a
+# launcher a security tool took, never a failed update, and never a reason to roll back.
+function Get-LaunchRoute([string]$dir) {{
+  if (Test-Path -LiteralPath (Join-Path $dir '{LauncherRoute.LauncherName}') -PathType Leaf) {{ return 'Launcher' }}
+  if (Test-Path -LiteralPath (Join-Path $dir '{LauncherRoute.LibraryName}') -PathType Leaf) {{ return 'Dotnet' }}
+  return 'None'
+}}
+# END launch route
+
+# The dotnet host. The 64 bit one the runtime installer puts in Program Files comes first,
+# because the release is the x64 build and a 32 bit dotnet earlier on the path would run it as
+# a 32 bit process; the path is the fall back for an install somewhere else.
+function Find-Dotnet {{
+  foreach ($root in @($env:ProgramW6432, $env:ProgramFiles)) {{
+    if ($root) {{
+      $candidate = Join-Path $root 'dotnet\{LauncherRoute.DotnetHostName}'
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) {{ return $candidate }}
+    }}
+  }}
+  $found = Get-Command '{LauncherRoute.DotnetHostName}' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($found) {{ return $found.Path }}
+  return $null
+}}
+
+# The launcher, watched long enough to see a security tool take the file out from under the
+# process it just started. True when BakaLoader is up, or ended on its own with the launcher
+# still on disk, which is not this script's to second guess.
+function Start-ThroughLauncher {{
+  try {{
+    $started = Start-Process -FilePath $exePath -WorkingDirectory $installDir -PassThru -ErrorAction Stop
+  }} catch {{
+    return $false
+  }}
+  for ($i = 0; $i -lt {LauncherWatchSeconds}; $i++) {{
+    Start-Sleep -Seconds 1
+    if (-not (Test-Path -LiteralPath $exePath)) {{ break }}
+    if ($started.HasExited) {{
+      Start-Sleep -Seconds 3
+      return (Test-Path -LiteralPath $exePath)
+    }}
+  }}
+  if (Test-Path -LiteralPath $exePath) {{ return $true }}
+  try {{ $started.WaitForExit(5000) | Out-Null }} catch {{}}
+  return (-not $started.HasExited)
+}}
+
+# The app through the dotnet host, with no console window: CreateNoWindow gives the host no
+# console at all, and the app opens its own window as it always does. Watched for a few
+# seconds, because a machine with no .NET 6 Desktop Runtime ends straight away and says why
+# only on a console nobody can see. $why opens every sentence it leaves.
+function Start-ThroughDotnet([string]$why) {{
+  $dotnet = Find-Dotnet
+  if (-not $dotnet) {{
+    Add-Note ($why + ', and dotnet was not found to start BakaLoader without it. Install the .NET 6 Desktop Runtime from https://dotnet.microsoft.com/download/dotnet/6.0, then start {LauncherRoute.ScriptName} in ' + $installDir + '.')
+    return $false
+  }}
+  try {{
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $dotnet
+    $psi.Arguments = [string][char]34 + $dllPath + [string][char]34
+    $psi.WorkingDirectory = $installDir
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $started = [System.Diagnostics.Process]::Start($psi)
+  }} catch {{
+    Add-Note ($why + ', and starting BakaLoader through dotnet failed: ' + $_.Exception.Message + ' Start {LauncherRoute.ScriptName} in ' + $installDir + ' to try again.')
+    return $false
+  }}
+  if ($started.WaitForExit({DotnetWatchMilliseconds}) -and $started.ExitCode -ne 0) {{
+    Add-Note ($why + ', and starting BakaLoader through dotnet ended straight away with code ' + $started.ExitCode + '. That usually means the .NET 6 Desktop Runtime is missing: https://dotnet.microsoft.com/download/dotnet/6.0. Then start {LauncherRoute.ScriptName} in ' + $installDir + '.')
+    return $false
+  }}
+  Add-Note ($why + ', which is what a security tool taking it looks like, so BakaLoader was started through dotnet instead. Start {LauncherRoute.ScriptName} in ' + $installDir + ' to open it the same way.')
+  return $true
+}}
+
+# Starts BakaLoader by whichever route the folder allows, and goes through dotnet when the
+# launcher is there and will not start or does not stay. Every relaunch in this script comes
+# through here, the one after a good update and the one after a rollback alike.
+function Start-BakaLoader {{
+  $route = Get-LaunchRoute $installDir
+  if ($route -eq 'Launcher') {{
+    if (Start-ThroughLauncher) {{ return }}
+    if (Test-Path -LiteralPath $dllPath -PathType Leaf) {{
+      if (Test-Path -LiteralPath $exePath) {{ $why = 'The launcher {LauncherRoute.LauncherName} would not start' }}
+      else {{ $why = 'The launcher {LauncherRoute.LauncherName} was taken as soon as it started' }}
+      Start-ThroughDotnet $why | Out-Null
+    }}
+    return
+  }}
+  if ($route -eq 'Dotnet') {{
+    Start-ThroughDotnet 'The launcher {LauncherRoute.LauncherName} was not there' | Out-Null
+    return
+  }}
+  Add-Note ('Neither {LauncherRoute.LauncherName} nor {LauncherRoute.LibraryName} is in ' + $installDir + ', so there was nothing to start. Download the release zip again and unzip it there.')
+}}
+
+# The release, entry by entry, letting go of the launcher and nothing else. The plain extraction
+# stops at the first file that will not land, and the launcher is the one file in the release a
+# security tool may refuse to let land. The app is the library, so a release without its
+# launcher still installs and still starts; anything else that will not land stops the update
+# exactly as before. Answers whether the launcher was let go.
+function Expand-AllButLauncher {{
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $root = [System.IO.Path]::GetFullPath($extractDir).TrimEnd('\') + '\'
+  $refused = $false
+  $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+  try {{
+    foreach ($entry in $zip.Entries) {{
+      $target = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($root, $entry.FullName))
+      if (-not $target.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {{
+        throw ('The download names a file outside its own folder: ' + $entry.FullName)
+      }}
+      if ($entry.Name -eq '') {{
+        New-Item -ItemType Directory -Path $target -Force | Out-Null
+        continue
+      }}
+      $parent = Split-Path -Parent $target
+      if (-not (Test-Path -LiteralPath $parent)) {{ New-Item -ItemType Directory -Path $parent -Force | Out-Null }}
+      try {{
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+      }} catch {{
+        if ($entry.Name -ine '{LauncherRoute.LauncherName}') {{ throw }}
+        # A launcher refused part way through is not left behind half written, where it would
+        # read as a launcher that arrived and be copied over the good one in the install.
+        if (Test-Path -LiteralPath $target -PathType Leaf) {{ Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue }}
+        $refused = $true
+      }}
+    }}
+  }} finally {{
+    $zip.Dispose()
+  }}
+  return $refused
 }}
 
 # 1. Wait for BakaLoader to fully exit so its files unlock.
@@ -591,7 +790,7 @@ if (Get-Process -Id $appPid -ErrorAction SilentlyContinue) {{
 function Stop-Update($note) {{
   if ($rollbackTaken) {{ robocopy $rollbackDir $installDir /E /R:1 /W:1 | Out-Null }}
   Write-Note $note
-  if (Test-Path $exePath) {{ Start-Process -FilePath $exePath -WorkingDirectory $installDir }}
+  Start-BakaLoader
   Start-Sleep -Seconds 1
   try {{ Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }} catch {{}}
   exit 1
@@ -601,14 +800,25 @@ try {{
   # 2. Fresh extraction of the downloaded release.
   if (Test-Path $extractDir) {{ Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue }}
   New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-  Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+  #    When the plain extraction stops on anything, the zip is read again entry by entry,
+  #    and only a launcher that would not land is let go (see Expand-AllButLauncher).
+  #    A launcher let go there never counts as arrived, whatever was left of it on disk.
+  $launcherRefused = $false
+  try {{
+    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+  }} catch {{
+    $launcherRefused = [bool](Expand-AllButLauncher)
+  }}
 
-  # 3. Find the folder that actually contains the exe (zips may nest it one level deep).
+  # 3. Find the folder that holds the app (zips may nest it one level deep). The launcher used
+  #    to be the only thing looked for, so a download whose launcher had been taken read as a
+  #    download with no BakaLoader in it. The library IS the app, so it is looked for too.
   $exeFile = Get-ChildItem -Path $extractDir -Filter '{ExeName}' -Recurse -File | Select-Object -First 1
-  if (-not $exeFile) {{
+  $dllFile = Get-ChildItem -Path $extractDir -Filter '{LauncherRoute.LibraryName}' -Recurse -File | Select-Object -First 1
+  if (-not $exeFile -and -not $dllFile) {{
     Stop-Update 'The downloaded release did not contain BakaLoader, so nothing was replaced and the copy you had is still in place. Trying again later is safe.'
   }}
-  $srcDir = $exeFile.DirectoryName
+  if ($exeFile) {{ $srcDir = $exeFile.DirectoryName }} else {{ $srcDir = $dllFile.DirectoryName }}
 
   # 4. Copy the new files over the install directory. /R + /W keep retries short if a
   #    handle lingers; the exe itself is excluded on this pass then copied last.
@@ -616,7 +826,10 @@ try {{
   #    undo a half-finished copy is to have the old files still on disk.
   if (Test-Path $rollbackDir) {{ Remove-Item $rollbackDir -Recurse -Force -ErrorAction SilentlyContinue }}
   New-Item -ItemType Directory -Path $rollbackDir -Force | Out-Null
-  robocopy $installDir $rollbackDir /E /R:1 /W:1 | Out-Null
+  #    The launcher is left out of this pass and taken aside on its own just below, because it
+  #    is the one file a security tool may refuse to let anything read, and that refusal alone
+  #    must not stop an update whose undo only needs the library and the data files.
+  robocopy $installDir $rollbackDir /E /R:1 /W:1 /XF '{ExeName}' | Out-Null
   $keepCode = $LASTEXITCODE
 
   # 4a. The copy that makes the undo possible. When it could not be taken there is nothing to
@@ -625,6 +838,18 @@ try {{
     Stop-Update ('The files that were there before could not be copied aside (robocopy answered ' + $keepCode + '), so the update was not started and nothing was replaced. Trying again later is safe.')
   }}
   $rollbackTaken = $true
+
+  # 4a2. The installed launcher, aside on its own. When it cannot be read it is not written over
+  #      further down either, so the undo never needs a copy of it that it does not have.
+  $launcherAside = $true
+  if (Test-Path -LiteralPath $exePath -PathType Leaf) {{
+    try {{
+      Copy-Item -LiteralPath $exePath -Destination (Join-Path $rollbackDir '{ExeName}') -Force
+    }} catch {{
+      $launcherAside = $false
+      Remove-Item -LiteralPath (Join-Path $rollbackDir '{ExeName}') -Force -ErrorAction SilentlyContinue
+    }}
+  }}
 
   robocopy $srcDir $installDir /E /R:3 /W:2 /XF '{ExeName}' | Out-Null
   $copyCode = $LASTEXITCODE
@@ -647,21 +872,72 @@ try {{
   #     the app and the live Valheim server down with it. So when the download carries the same
   #     launcher that is already installed, the file is not written at all. No new bytes, no new
   #     write time, nothing for a local model to form an opinion about. A future deliberate
-  #     launcher change hashes differently and is copied exactly as before, and a hash that
-  #     cannot be read falls back to copying rather than to skipping.
-  $sameHost = $false
-  try {{
-    if (Test-Path $exePath) {{
-      $here = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
-      $there = (Get-FileHash -LiteralPath $exeFile.FullName -Algorithm SHA256).Hash
-      $sameHost = $here -eq $there
+  #     launcher change hashes differently and is written exactly as before.
+  #
+  #     The downloaded launcher is read into memory once, here, and everything after works from
+  #     those bytes. That keeps the two ways this can fail apart. A downloaded launcher that
+  #     cannot be read, because a scanner is holding it or has taken it since it landed, is a
+  #     launcher that never arrived: the one installed is kept, the app is the library, and the
+  #     update goes on. On 2026-10-11 the old code copied straight from that unreadable file,
+  #     read the failure as a launcher that could not be written while the old one was still
+  #     there, and rolled the whole update back. Only a write INTO the install that fails, with
+  #     an old launcher still there to put back, rolls back now. A short wait between tries lets
+  #     an ordinary on-access scan finish first.
+  $launcherArrived = [bool]($exeFile -and -not $launcherRefused -and (Test-Path -LiteralPath $exeFile.FullName -PathType Leaf))
+  $newLauncher = $null
+  $readProblem = $null
+  if ($launcherArrived) {{
+    for ($try = 0; $try -lt 3 -and $null -eq $newLauncher; $try++) {{
+      if ($try -gt 0) {{ Start-Sleep -Seconds 1 }}
+      try {{ $newLauncher = [System.IO.File]::ReadAllBytes($exeFile.FullName) }}
+      catch {{ $readProblem = Get-Reason $_ }}
     }}
-  }} catch {{ $sameHost = $false }}
+    # A launcher cut short on its way out of the zip reads perfectly well and is still not the
+    # launcher. Written over a good one, every start through it would fail until the next
+    # update. So what was read has to be the size the download says it is.
+    if ($null -ne $newLauncher) {{
+      $expected = Get-LauncherEntryLength $exeFile.FullName
+      if ($expected -ge 0 -and $expected -ne $newLauncher.Length) {{
+        $readProblem = 'it was ' + $newLauncher.Length + ' bytes where the download says ' + $expected
+        $newLauncher = $null
+      }}
+    }}
+  }}
+  $installedThere = Test-Path -LiteralPath $exePath -PathType Leaf
+  $oldLauncher = $null
+  if ($installedThere) {{
+    try {{ $oldLauncher = [System.IO.File]::ReadAllBytes($exePath) }} catch {{ $oldLauncher = $null }}
+  }}
 
-  if ($sameHost) {{
+  # 4d. A launcher that never arrived, or one that arrived and could not be read. Either way the
+  #     rest of the update is in place and the app is the library, so this is said and the
+  #     update goes on: nothing is rolled back over it, whatever is in the install.
+  if ($null -eq $newLauncher) {{
+    if ($launcherArrived) {{ $how = 'The launcher {ExeName} in the download could not be read (' + $readProblem + ')' }}
+    else {{ $how = 'The launcher {ExeName} was taken out of the download before it could be written' }}
+    if ($installedThere) {{
+      Add-Note ($how + ', which is what a security tool doing it looks like. The launcher already installed was kept, and BakaLoader itself, the library beside it, was installed whole. Nothing was rolled back.')
+    }} else {{
+      Add-Note ($how + ', which is what a security tool doing it looks like. The rest of the update is in place, and BakaLoader itself, the library beside the launcher, was installed whole.')
+    }}
+  }} elseif ($null -ne $oldLauncher -and (Get-BytesHash $oldLauncher) -eq (Get-BytesHash $newLauncher)) {{
     Write-Note '{RoutineNoteMark}The update is in place. The launcher was already these exact bytes, so it was left alone: BakaLoader ships the same launcher in every release and reads its own version from the library beside it.'
+  }} elseif ($installedThere -and -not $launcherAside) {{
+    Add-Note 'The launcher {ExeName} already installed could not be read, so it was left as it was rather than written over with no copy of it to put back. The rest of the update is in place, and BakaLoader itself, the library beside the launcher, was installed whole.'
   }} else {{
-    Copy-Item -Path $exeFile.FullName -Destination $exePath -Force
+    try {{
+      # Copy-Item -Force wrote over a read-only launcher, and this must too.
+      if ($installedThere) {{ try {{ [System.IO.File]::SetAttributes($exePath, [System.IO.FileAttributes]::Normal) }} catch {{}} }}
+      [System.IO.File]::WriteAllBytes($exePath, $newLauncher)
+    }} catch {{
+      # 4e. The launcher would not be written. With the old launcher still in place this is the
+      #     failure it always was, and everything goes back. With no launcher left and the new
+      #     library in place, it is the launcher taken and the app intact: rolling back would
+      #     put back an install with no launcher either, and take the update away for nothing.
+      $writeProblem = Get-Reason $_
+      if ((Get-LaunchRoute $installDir) -ne 'Dotnet') {{ throw ('The launcher {ExeName} could not be written: ' + $writeProblem) }}
+      Add-Note ('The update is in place, but the launcher {ExeName} could not be written (' + $writeProblem + '), which is what a security tool taking it looks like. BakaLoader itself, the library beside the launcher, was installed whole and nothing was rolled back.')
+    }}
   }}
 }} catch {{
   # Anything that threw: a zip that would not open, a folder that could not be made, the exe
@@ -670,8 +946,8 @@ try {{
   Stop-Update ('The update could not be written: ' + $_.Exception.Message + ' The files that were there before were put back, and BakaLoader is still on the version it was. Trying again later is safe.')
 }}
 
-# 5. Relaunch the updated app.
-Start-Process -FilePath $exePath -WorkingDirectory $installDir
+# 5. Relaunch the updated app: the launcher when it is there and stays, dotnet when it is not.
+Start-BakaLoader
 
 # 6. Clean up our own temp working folder.
 Start-Sleep -Seconds 1
@@ -680,6 +956,17 @@ try {{ Remove-Item $workDir -Recurse -Force -ErrorAction SilentlyContinue }} cat
         }
 
         private static string Escape(string path) => path?.Replace("'", "''");
+
+        /// <summary>
+        /// Writes the watchdog where Windows PowerShell will read it, WITH a UTF-8 byte order
+        /// mark. Without one, Windows PowerShell reads a script in the machine's ANSI code page,
+        /// so every path in it that holds a letter outside that page arrived as different
+        /// letters: a host whose BakaLoader folder, or whose own user folder under %TEMP%, was
+        /// named with one had an update that copied into a folder that does not exist. The mark
+        /// is for this temporary script only; nothing in the repository carries one.
+        /// </summary>
+        internal static void WriteWatchdogScript(string path, string script) =>
+            File.WriteAllText(path, script, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
 
         /// <summary>
         /// What a note starts with when it is an account of an update that WORKED rather than a

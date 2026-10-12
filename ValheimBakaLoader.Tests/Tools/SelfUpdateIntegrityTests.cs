@@ -189,8 +189,8 @@ namespace ValheimBakaLoader.Tests.Tools
             // And the exe is not copied and nothing is relaunched on a mixed install: the guard
             // sits above both.
             var guard = script.IndexOf("if ($copyCode -ge 8)", StringComparison.Ordinal);
-            var exeCopied = script.IndexOf("Copy-Item -Path $exeFile.FullName", StringComparison.Ordinal);
-            Assert.True(guard < exeCopied, "the exe is copied before the exit code is read");
+            var exeCopied = script.IndexOf("[System.IO.File]::WriteAllBytes($exePath, $newLauncher)", StringComparison.Ordinal);
+            Assert.True(exeCopied > 0 && guard < exeCopied, "the exe is copied before the exit code is read");
         }
 
         [Fact]

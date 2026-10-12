@@ -14,3 +14,7 @@
 # commit, which is a large diff saying nothing and a gate reading the wrong line endings.
 # Keep this file narrow: one line per file that genuinely needs one.
 ValheimBakaLoader/Resources/host/ValheimBakaLoader.exe binary
+
+# A batch file read with bare LF line endings can lose labels and run lines it should skip,
+# and this one ships to every host as the way in when the launcher has been quarantined.
+ValheimBakaLoader/BakaLoader.cmd text eol=crlf

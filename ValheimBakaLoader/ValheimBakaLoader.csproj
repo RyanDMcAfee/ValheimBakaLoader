@@ -10,7 +10,7 @@
 		<Description>A simple user interface for running Valheim Dedicated Server on Windows.</Description>
 		<Copyright>2026</Copyright>
 		<PackageLicenseFile>LICENSE</PackageLicenseFile>
-		<Version>1.2.11</Version>
+		<Version>1.2.12</Version>
     <!-- Build date adapted from: https://rmauro.dev/add-build-time-to-your-csharp-assembly/ -->
     <SourceRevisionId>build$([System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"))</SourceRevisionId>
 	</PropertyGroup>
@@ -124,6 +124,18 @@
 	  so the wildcard simply copies nothing when it hasn't been built yet.
 	-->
 	<ItemGroup>
+		<!-- The way in when the launcher is gone. On 2026-10-11 Defender's cloud heuristic took
+		     the frozen launcher out of a live install and took it again every time it came back;
+		     the app is the DLL, so this starts it through the dotnet host, and the app closes the
+		     console dotnet opens. It ships beside the exe in the build output, which is what the
+		     release zip is made from, and in an ordinary publish. A single file publish has no
+		     DLL beside the exe for it to start, so it is left out of that one. See
+		     Tools\LauncherRoute.cs. -->
+		<Content Include="BakaLoader.cmd">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+			<CopyToPublishDirectory Condition="'$(PublishSingleFile)' == 'true'">Never</CopyToPublishDirectory>
+		</Content>
 		<Content Include="Resources\vanilla-items.json" Condition="Exists('Resources\vanilla-items.json')">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>

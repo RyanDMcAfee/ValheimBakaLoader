@@ -39,38 +39,77 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void The_watchdog_does_not_write_a_launcher_that_is_already_these_bytes()
         {
+            var root = LauncherMissingTests.TempRoot();
+            try
+            {
+                var paths = LauncherMissingTests.Paths(root);
+                Directory.CreateDirectory(paths.Install);
+                File.WriteAllText(paths.Exe, "frozen launcher");
+                var written = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+                File.SetLastWriteTimeUtc(paths.Exe, written);
+                File.WriteAllText(Path.Combine(paths.Install, LauncherRoute.LibraryName), "old library");
+
+                LauncherMissingTests.MakeZip(paths.Zip,
+                    (LauncherRoute.LauncherName, "frozen launcher"),
+                    (LauncherRoute.LibraryName, "new library"));
+
+                LauncherMissingTests.RunWatchdog(paths);
+
+                Assert.Equal("new library", File.ReadAllText(Path.Combine(paths.Install, LauncherRoute.LibraryName)));
+                Assert.Equal("frozen launcher", File.ReadAllText(paths.Exe));
+                Assert.Equal(written, File.GetLastWriteTimeUtc(paths.Exe));
+            }
+            finally
+            {
+                LauncherMissingTests.TryDelete(root);
+            }
+
+            // The write is the last arm, so a matching hash reaches no write at all.
             var script = WatchdogScript();
-
-            Assert.Contains("Get-FileHash -LiteralPath $exePath -Algorithm SHA256", script);
-            Assert.Contains("Get-FileHash -LiteralPath $exeFile.FullName -Algorithm SHA256", script);
-            Assert.Contains("$sameHost = $here -eq $there", script);
-
-            // The copy is the else arm, so a matching hash reaches no write at all.
-            var compared = script.IndexOf("$sameHost = $here -eq $there", StringComparison.Ordinal);
-            var guarded = script.IndexOf("if ($sameHost) {", StringComparison.Ordinal);
-            var copied = script.IndexOf("Copy-Item -Path $exeFile.FullName", StringComparison.Ordinal);
-
-            Assert.True(compared < guarded, "the hashes are compared after the decision is taken");
-            Assert.True(guarded < copied, "the launcher is copied before the hashes are looked at");
-            Assert.Contains("} else {", script.Substring(guarded, copied - guarded));
+            var compared = script.IndexOf("(Get-BytesHash $oldLauncher) -eq (Get-BytesHash $newLauncher)", StringComparison.Ordinal);
+            var wrote = script.IndexOf("[System.IO.File]::WriteAllBytes($exePath, $newLauncher)", StringComparison.Ordinal);
+            Assert.True(compared >= 0 && wrote > compared, "the launcher is written before the hashes are looked at");
+            Assert.Contains("} else {", script.Substring(compared, wrote - compared));
         }
 
         /// <summary>
-        /// A hash that cannot be read falls back to copying, not to skipping. A guard that turns
-        /// an unreadable file into "nothing to do" would hold a host on an old launcher forever
-        /// the day a new one is genuinely needed.
+        /// A launcher that genuinely changed is still written. Leaving a launcher alone is only
+        /// for the same bytes, or for one the update cannot read; a guard that turned every
+        /// difference into "nothing to do" would hold a host on an old launcher forever the day
+        /// a new one is genuinely needed. And an installed launcher whose own hash cannot be
+        /// read is compared as different, so it is written over too, as long as it was taken
+        /// aside first and can be put back.
         /// </summary>
         [Fact]
-        public void A_launcher_whose_hash_cannot_be_read_is_still_copied()
+        public void A_launcher_that_genuinely_changed_is_written()
         {
+            var root = LauncherMissingTests.TempRoot();
+            try
+            {
+                var paths = LauncherMissingTests.Paths(root);
+                Directory.CreateDirectory(paths.Install);
+                File.WriteAllText(paths.Exe, "old launcher");
+                File.WriteAllText(Path.Combine(paths.Install, LauncherRoute.LibraryName), "old library");
+
+                LauncherMissingTests.MakeZip(paths.Zip,
+                    (LauncherRoute.LauncherName, "new launcher"),
+                    (LauncherRoute.LibraryName, "new library"));
+
+                var note = LauncherMissingTests.RunWatchdog(paths);
+
+                Assert.Equal("new launcher", File.ReadAllText(paths.Exe));
+                Assert.Equal("new library", File.ReadAllText(Path.Combine(paths.Install, LauncherRoute.LibraryName)));
+                Assert.DoesNotContain("put back", note ?? "");
+            }
+            finally
+            {
+                LauncherMissingTests.TryDelete(root);
+            }
+
             var script = WatchdogScript();
-
-            var declared = script.IndexOf("$sameHost = $false", StringComparison.Ordinal);
-            var compared = script.IndexOf("$sameHost = $here -eq $there", StringComparison.Ordinal);
-
-            Assert.True(declared >= 0 && declared < compared,
-                "the same-launcher answer is not false until something proves otherwise");
-            Assert.Contains("catch { $sameHost = $false }", script);
+            Assert.Contains("catch { $oldLauncher = $null }", script);
+            Assert.Contains("$null -ne $oldLauncher -and (Get-BytesHash $oldLauncher)", script);
+            Assert.Contains("elseif ($installedThere -and -not $launcherAside)", script);
         }
 
         /// <summary>

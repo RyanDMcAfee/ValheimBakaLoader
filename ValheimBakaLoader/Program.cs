@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 using System;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using ValheimBakaLoader.Forms;
@@ -23,6 +24,7 @@ namespace ValheimBakaLoader
         [STAThread]
         public static void Main(string[] args)
         {
+            LetGoOfTheDotnetConsole();
             PinFrameworkMessagesToEnglish();
 
             Application.SetHighDpiMode(HighDpiMode.SystemAware);
@@ -35,6 +37,7 @@ namespace ValheimBakaLoader
 
             AnnounceLogLevel(container);
             RepointStartupEntry(container);
+            SayWhenTheLauncherIsMissing(container);
 
             try
             {
@@ -114,6 +117,61 @@ namespace ValheimBakaLoader
             catch
             {
                 // A startup entry that could not be looked at is not a reason to refuse to start.
+            }
+        }
+
+        /// <summary>
+        /// Closes the console Windows opened for the dotnet host, on a run started through it.
+        /// <para>
+        /// dotnet.exe is a console program, so a start through BakaLoader.cmd or through the
+        /// Run entry a dotnet run writes (see StartupCommand) comes with a console window, and
+        /// it would sit on the desktop for as long as BakaLoader runs. Letting go of it here,
+        /// first thing, closes it: it shows for a moment and goes. Nothing in the app writes to
+        /// a console, and a run through the launcher has none to let go of, so this does nothing
+        /// there. The other way, starting the host behind conhost --headless, hides the window
+        /// completely but is a pattern the heuristics that quarantined the launcher look for.
+        /// </para>
+        /// </summary>
+        private static void LetGoOfTheDotnetConsole()
+        {
+            try
+            {
+                if (LauncherRoute.IsDotnetHost(Environment.ProcessPath)) FreeConsole();
+            }
+            catch
+            {
+                // A console left open is untidy, never a reason to refuse to start.
+            }
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool FreeConsole();
+
+        /// <summary>
+        /// One line in the Saga when this run started without its launcher.
+        /// <para>
+        /// On 2026-10-11 Defender quarantined ValheimBakaLoader.exe out of a live install and
+        /// took it again every time it was put back. The app does not need it: the launcher is
+        /// the SDK's generic apphost and the app is the library beside it, so BakaLoader.cmd
+        /// and the update watchdog start it through dotnet when the launcher is gone. That works
+        /// quietly, which is the trouble with it, because a host whose launcher keeps vanishing
+        /// should be told why the app is still running and what to start next time. Once per
+        /// run, at the top of the log, and only when the launcher is really not there.
+        /// </para>
+        /// </summary>
+        private static void SayWhenTheLauncherIsMissing(IServiceProvider container)
+        {
+            try
+            {
+                var line = LauncherRoute.MissingLauncherLine(LauncherRoute.InstallFolder());
+                if (line == null) return;
+
+                // The words go in as an argument, never as the template.
+                container.GetRequiredService<ILogger>().Warning("{Line:l}", line);
+            }
+            catch
+            {
+                // A line that could not be written is not a reason to refuse to start.
             }
         }
 

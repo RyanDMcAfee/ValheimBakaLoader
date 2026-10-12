@@ -1457,6 +1457,172 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Single(second.Lines);
         }
 
+        // ------------------------------------------- the dotnet host form (launcher taken)
+
+        private const string Dotnet = @"C:\Program Files\dotnet\dotnet.exe";
+        private const string Library = @"C:\Apps\BakaLoader\ValheimBakaLoader.dll";
+
+        /// <summary>The entry a run through dotnet writes for this install.</summary>
+        private static readonly string DotnetCommand =
+            "\"" + Dotnet + "\" \"" + Library + "\"";
+
+        /// <summary>
+        /// A run through the launcher writes what it always wrote, byte for byte, so no host's
+        /// entry moves; a run through dotnet writes the host with the quoted library and nothing
+        /// in front of it. No conhost --headless: a Run entry that starts a hidden console host
+        /// is a pattern the heuristics that took the launcher look for, so the app closes the
+        /// dotnet console itself instead.
+        /// </summary>
+        [Fact]
+        public void A_run_through_dotnet_writes_the_host_and_the_library_and_a_launcher_run_is_unchanged()
+        {
+            Assert.Equal(ExePath, StartupCommand.For(ExePath, Library));
+            Assert.Equal(DotnetCommand, StartupCommand.For(Dotnet, Library));
+            Assert.Equal("\"" + Dotnet + "\" \"" + Library + "\"", DotnetCommand);
+            Assert.Equal(Dotnet, StartupCommand.For(Dotnet, null));
+            Assert.DoesNotContain("conhost", DotnetCommand, StringComparison.OrdinalIgnoreCase);
+
+            // And the app closes the console the dotnet host came with, first thing, and only
+            // on a run through dotnet.
+            var program = AppSourceTree.Read("ValheimBakaLoader", "Program.cs");
+            Assert.Contains("if (LauncherRoute.IsDotnetHost(Environment.ProcessPath)) FreeConsole();", program);
+            var main = program.IndexOf("public static void Main(", StringComparison.Ordinal);
+            Assert.True(main > 0);
+            Assert.Equal(main, program.LastIndexOf("public static void Main(", StringComparison.Ordinal));
+            var firstLine = program.Substring(main).Split('\n')[2].Trim();
+            Assert.Equal("LetGoOfTheDotnetConsole();", firstLine);
+        }
+
+        /// <summary>
+        /// And reads back to the file it starts, in every form this app has ever written and the
+        /// two it writes now: the bare path (spaces and all, unquoted, as every release wrote it),
+        /// a quoted path, dotnet with the library, and conhost in front of that, which only a build
+        /// from before release ever wrote and which still has to read back to its library.
+        /// </summary>
+        [Theory]
+        [InlineData(@"C:\Apps\BakaLoader\ValheimBakaLoader.exe", @"C:\Apps\BakaLoader\ValheimBakaLoader.exe")]
+        [InlineData(@"C:\My Games\Baka Loader\ValheimBakaLoader.exe", @"C:\My Games\Baka Loader\ValheimBakaLoader.exe")]
+        [InlineData("\"C:\\My Games\\ValheimBakaLoader.exe\"", @"C:\My Games\ValheimBakaLoader.exe")]
+        [InlineData("\"C:\\Program Files\\dotnet\\dotnet.exe\" \"C:\\My Games\\ValheimBakaLoader.dll\"", @"C:\My Games\ValheimBakaLoader.dll")]
+        [InlineData("\"C:\\Windows\\System32\\conhost.exe\" --headless \"C:\\Program Files\\dotnet\\dotnet.exe\" \"C:\\My Games\\ValheimBakaLoader.dll\"", @"C:\My Games\ValheimBakaLoader.dll")]
+        [InlineData(@"C:\Program Files\dotnet\dotnet.exe C:\Games\ValheimBakaLoader.dll", @"C:\Games\ValheimBakaLoader.dll")]
+        [InlineData("", null)]
+        public void Every_form_of_the_entry_reads_back_to_the_file_it_starts(string registered, string expected)
+        {
+            Assert.Equal(expected, StartupCommand.TargetOf(registered));
+        }
+
+        /// <summary>
+        /// Turning the switch on during a run through dotnet writes the dotnet form, and the card
+        /// reads that entry as this copy: no note, nothing rewritten on the next launch.
+        /// </summary>
+        [Fact]
+        public void The_switch_on_through_dotnet_writes_the_dotnet_form_and_reads_it_back_as_this_copy()
+        {
+            var registry = new FakeRunKeyRegistry();
+            var entry = new StartupEntry(registry, path => path == Library);
+            var logger = new Remembering();
+
+            var on = entry.Apply(true, Name, DotnetCommand, logger);
+
+            Assert.True(on.Changed);
+            Assert.Equal(DotnetCommand, registry.Value(RunKeyHive.CurrentUser, Name));
+            Assert.Null(on.NoticeId);
+
+            Assert.Null(entry.NotesFor(true, Name, DotnetCommand).Notice);
+            var launch = entry.RepointIfMoved(true, Name, DotnetCommand, logger);
+            Assert.False(launch.Changed);
+            Assert.Null(launch.NoticeId);
+        }
+
+        /// <summary>
+        /// The incident's own shape. The entry names this install's launcher, the launcher has
+        /// been quarantined, and this run came up through dotnet. An entry naming a file that is
+        /// not there starts nothing, so the launch re-points it at the dotnet form, which is what
+        /// keeps Start with Windows working through a quarantine.
+        /// </summary>
+        [Fact]
+        public void A_launch_through_dotnet_repoints_an_entry_whose_launcher_was_taken()
+        {
+            var registry = new FakeRunKeyRegistry();
+            registry.Put(RunKeyHive.CurrentUser, Name, ExePath);
+            var entry = new StartupEntry(registry, path => path == Library);
+
+            Assert.Null(entry.NotesFor(true, Name, DotnetCommand).Notice);
+
+            var launch = entry.RepointIfMoved(true, Name, DotnetCommand, new Remembering());
+
+            Assert.True(launch.Changed);
+            Assert.Equal(DotnetCommand, registry.Value(RunKeyHive.CurrentUser, Name));
+            Assert.Null(launch.NoticeId);
+        }
+
+        /// <summary>
+        /// The same install the other way round, both directions: an entry naming the launcher
+        /// that is still on disk, read by a run through dotnet, and an entry in the dotnet form,
+        /// read by a run through the launcher. Each still starts this copy, so neither is
+        /// rewritten and neither draws the "another copy" note: starting BakaLoader.cmd once must
+        /// not move the registry, and nor must restoring the launcher.
+        /// </summary>
+        [Fact]
+        public void The_launcher_and_the_dotnet_form_of_one_install_are_the_same_copy()
+        {
+            var both = new Func<string, bool>(path => path == Library || path == ExePath);
+
+            var exeEntry = new FakeRunKeyRegistry();
+            exeEntry.Put(RunKeyHive.CurrentUser, Name, ExePath);
+            var throughDotnet = new StartupEntry(exeEntry, both);
+            Assert.Null(throughDotnet.NotesFor(true, Name, DotnetCommand).Notice);
+            Assert.False(throughDotnet.RepointIfMoved(true, Name, DotnetCommand, new Remembering()).Changed);
+            Assert.False(throughDotnet.Apply(true, Name, DotnetCommand, new Remembering()).Changed);
+            Assert.Equal(ExePath, exeEntry.Value(RunKeyHive.CurrentUser, Name));
+
+            var dotnetEntry = new FakeRunKeyRegistry();
+            dotnetEntry.Put(RunKeyHive.CurrentUser, Name, DotnetCommand);
+            var throughLauncher = new StartupEntry(dotnetEntry, both);
+            Assert.Null(throughLauncher.NotesFor(true, Name, ExePath).Notice);
+            Assert.False(throughLauncher.RepointIfMoved(true, Name, ExePath, new Remembering()).Changed);
+            Assert.Equal(DotnetCommand, dotnetEntry.Value(RunKeyHive.CurrentUser, Name));
+        }
+
+        /// <summary>
+        /// And the dotnet form of ANOTHER install is still another copy: same file names, a
+        /// different folder. The card names it and the entry is left alone, exactly as the plain
+        /// form of another copy always was.
+        /// </summary>
+        [Fact]
+        public void The_dotnet_form_of_another_install_is_still_another_copy()
+        {
+            var other = "\"" + Dotnet + "\" \"D:\\Old\\ValheimBakaLoader.dll\"";
+            var registry = new FakeRunKeyRegistry();
+            registry.Put(RunKeyHive.CurrentUser, Name, other);
+            var entry = new StartupEntry(registry, StillInstalled);
+
+            var notes = entry.NotesFor(true, Name, ExePath);
+            Assert.Equal(StartupEntry.OtherCopyNoticeId, notes.Notice?.Id);
+            Assert.Equal(other, notes.Notice?.Path);
+
+            Assert.False(entry.RepointIfMoved(true, Name, ExePath, new Remembering()).Changed);
+            Assert.Equal(other, registry.Value(RunKeyHive.CurrentUser, Name));
+        }
+
+        /// <summary>
+        /// The layer that knows it is a Windows Forms app hands the entry the command, not the
+        /// process image, in all three of its roads.
+        /// </summary>
+        [Fact]
+        public void The_helper_hands_every_road_the_launch_command()
+        {
+            var helper = Between(
+                AppSourceTree.Files()["StartupHelper.cs"],
+                "public static class StartupHelper", "public static bool ApplySavedValue");
+
+            Assert.Equal(3, System.Text.RegularExpressions.Regex.Matches(helper, @"Application\.ProductName, LaunchCommand\(\)").Count);
+            Assert.DoesNotContain("Application.ProductName, Application.ExecutablePath", helper);
+            Assert.Contains("StartupCommand.For(", helper);
+            Assert.Contains("Application.ExecutablePath,", helper);
+        }
+
         /// <summary>One region of a source file, named by the two lines that bound it.</summary>
         private static string Between(string source, string from, string to)
         {

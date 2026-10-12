@@ -972,15 +972,25 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
-        /// Another live BakaLoader process (same exe name, different PID), or null.
+        /// Another live BakaLoader process, or null: one started by its launcher, or a dotnet
+        /// host that has loaded the app's library.
+        /// <para>
+        /// It used to be "a process with my name", which stopped meaning BakaLoader the day the
+        /// app could run through dotnet (see LauncherRoute). A copy started by BakaLoader.cmd is
+        /// named dotnet, so it would have read every build tool on the machine as another
+        /// BakaLoader and closed itself, and a copy started by the launcher would never have
+        /// seen a dotnet one that owns the server and offered to adopt or end that server.
+        /// </para>
         /// </summary>
         private static Process FindOtherBakaLoaderInstance()
         {
             try
             {
                 using var me = Process.GetCurrentProcess();
-                return Process.GetProcessesByName(me.ProcessName)
-                    .FirstOrDefault(p => p.Id != me.Id);
+                return Process.GetProcessesByName(Path.GetFileNameWithoutExtension(LauncherRoute.LauncherName))
+                    .Concat(Process.GetProcessesByName(Path.GetFileNameWithoutExtension(LauncherRoute.DotnetHostName)))
+                    .Where(p => p.Id != me.Id)
+                    .FirstOrDefault(p => LauncherRoute.IsBakaLoader(p.ProcessName, LauncherRoute.ModulePaths(p)));
             }
             catch
             {
@@ -1006,7 +1016,10 @@ namespace ValheimBakaLoader.Forms
         {
             try
             {
-                var exe = process?.MainModule?.FileName;
+                // A copy running through dotnet has dotnet.exe as its main module, and the
+                // folder that matters is the one its library was loaded from.
+                var exe = LauncherRoute.LibraryIn(LauncherRoute.ModulePaths(process))
+                    ?? process?.MainModule?.FileName;
                 var folder = string.IsNullOrWhiteSpace(exe) ? null : Path.GetDirectoryName(exe);
                 if (string.IsNullOrWhiteSpace(folder)) return null;
 
