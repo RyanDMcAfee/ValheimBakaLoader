@@ -481,6 +481,22 @@ alone, and BepInEx's console logging is off, so the host heard nothing.
 - [ ] Type `baka_cleardrops` in the console box with the window open and wait for the result:
       one toast with the counts, not two.
 
+## The cheated mark on Valheim 1.0.20 (1.2.15, Commander 1.9.3, KillAll 1.8.3, Spawn Helper 1.5.1)
+
+Valheim 1.0.20 counts an object as cheated only when its mark is the number 2. The plugins
+used to write the older true/false mark, which 1.0.20 reads as not cheated, so a creature
+spawned with the mark turned on dropped clean loot. Walk this on a closed server running
+1.0.20, with a character carrying nothing that was spawned before.
+
+- [ ] `BepInEx/LogOutput.log` shows `BakaLoader Commander v1.9.3`, `BakaLoader KillAll v1.8.3`
+      and `BakaLoader Spawn Helper v1.5.1`.
+- [ ] Set `MarkSpawnedAsCheated = true` under `[Spawning]` in `com.baka.commander.cfg`, start
+      the server, spawn a Boar next to you and kill it with a weapon that was not spawned. Its
+      drops say "This item was summoned through cheating means." in the tooltip.
+- [ ] Set it back to false, restart, and do the same. The drops carry no such line.
+- [ ] Run Cleanse on that world with nobody connected. The marked Boar drops from the first
+      step come back clean, and the count in the toast includes them.
+
 ## Sign-off
 
 When all items pass, the third-party trio can be permanently removed from the

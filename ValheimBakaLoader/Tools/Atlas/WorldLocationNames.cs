@@ -7,8 +7,11 @@ namespace ValheimBakaLoader.Tools.Atlas
     /// Vanilla location prefab names keyed by their save-file hash.
     ///
     /// Up to world version 39 the location list inside a world save stored the
-    /// prefab NAME as a string. Valheim 1.0 (world version 41) writes
-    /// name.GetStableHashCode() instead (ZoneSystem.Save, decomp_new :112978),
+    /// prefab NAME as a string. From world version 40 (ChunkedSave, the Valheim
+    /// 1.0 save; 1.0.7 writes 41 and 1.0.20 writes 42) the game writes
+    /// name.GetStableHashCode() instead, and its own load reads that int for
+    /// every version at or above ChunkedSave (ZoneSystem.Save and Load in the
+    /// 1.0.20 decompile, :113298 and :113407),
     /// and the names themselves live in Unity-serialized assets rather than in
     /// any assembly, so they cannot be recovered from the save alone. This
     /// table maps the hash back to the name for every location prefab a

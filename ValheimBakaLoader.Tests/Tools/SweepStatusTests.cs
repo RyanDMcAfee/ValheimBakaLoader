@@ -251,7 +251,7 @@ namespace ValheimBakaLoader.Tests.Tools
         public void Commander_answers_both_new_status_verbs_and_echoes_every_result()
         {
             var commander = Read("ValheimBakaLoader", "Resources", "Commander", "BakaLoaderCommander.cs");
-            Assert.Contains("private const string PluginVersion = \"1.9.2\";", commander);
+            Assert.Contains("private const string PluginVersion = \"1.9.3\";", commander);
             Assert.Contains("case KillAllPlan.StatusVerb: return KillAllSweep.Status();", commander);
             Assert.Contains("case BakaLoaderClearDrops.ClearDropsPlan.StatusVerb: return ClearDropsSweep.Status();", commander);
             Assert.Contains("case \"baka_cleanse_status\": return CleanseSweep.Status();", commander);
@@ -266,7 +266,7 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Contains("\"BakaSweepEcho.cs\"", build.Substring(entry, next - entry));
 
             var killall = Read("ValheimBakaLoader", "Resources", "KillAll", "BakaKillAll.cs");
-            Assert.Contains("private const string PluginVersion = \"1.8.2\";", killall);
+            Assert.Contains("private const string PluginVersion = \"1.8.3\";", killall);
         }
 
         [Theory]

@@ -410,7 +410,7 @@ namespace ValheimBakaLoader.Tests.Game
 
             Assert.Contains("case BakaLoaderSave.SavePlan.Verb: return CmdSave();", source);
             Assert.Contains("net.Save(false, true, true);", source);
-            Assert.Contains("private const string PluginVersion = \"1.9.2\";", source);
+            Assert.Contains("private const string PluginVersion = \"1.9.3\";", source);
             // Offered by the fallback line. It sits before baka_cleanse because
             // scripts/ui/cleanse_reply_selftest.js needs "baka_cleanse, baka_cleanse_status)" to
             // close the list.

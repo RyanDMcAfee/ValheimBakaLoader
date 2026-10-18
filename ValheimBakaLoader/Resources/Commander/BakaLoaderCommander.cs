@@ -1,4 +1,4 @@
-// BakaLoader Commander v1.9.2 - native RCON server + command suite for BakaLoader.
+// BakaLoader Commander v1.9.3 - native RCON server + command suite for BakaLoader.
 //
 // WHY THIS EXISTS:
 // BakaLoader historically depended on THREE third-party mods for remote control:
@@ -90,6 +90,12 @@
 // RCON plugin that forwards to it, so in the COEXISTENCE case below, where AviiNL-RCON won
 // the port and this plugin is dormant, the Spawn Helper's entry is the one in force.
 //
+// THE MARK ON VALHEIM 1.0.20 (v1.9.3):
+// 1.0.20 counts an object as cheated only when the int under ZDOVars.s_cheated is 2, where
+// every build before it read a bool in that same slot. A marked spawn now writes 2 and an
+// unmarked one 0 (SpawnMark.ZdoValue), which each build reads as the host meant, and
+// baka_cleanse takes off either shape (BakaCleanseSweep.cs).
+//
 // SWEEP RESULTS ON STDOUT (v1.9.2):
 // The result line of every sliced sweep is also written through UnityEngine.Debug.Log, tagged
 // "[BakaLoader Commander] <verb>:" (BakaSweepEcho.cs). The BepInEx log was the only place it
@@ -128,7 +134,7 @@ namespace BakaLoaderCommander
     {
         private const string PluginGuid = "com.baka.commander";
         private const string PluginName = "BakaLoader Commander";
-        private const string PluginVersion = "1.9.2";
+        private const string PluginVersion = "1.9.3";
 
         // Source RCON packet types
         private const int TypeAuth = 3;          // SERVERDATA_AUTH
@@ -1033,9 +1039,16 @@ namespace BakaLoaderCommander
         /// </para>
         /// <para>
         /// The ZDO key is written either way for the same reason: a creature's drops read
-        /// ZDOVars.s_cheated off its record, and an explicit false is the only thing that says
-        /// "not cheated" rather than "nobody looked". Whether the console command itself is
+        /// ZDOVars.s_cheated off its record, and an explicit "not cheated" is the only thing
+        /// that says so rather than "nobody looked". Whether the console command itself is
         /// cheat-flagged is a separate thing; this marks the objects, not the console.
+        /// </para>
+        /// <para>
+        /// The value is SpawnMark.ZdoValue's 2 or 0, not the bool. Valheim 1.0.20 counts an
+        /// object as cheated only when that int is 2, and a bool write is the int 1 in the same
+        /// slot, so writing the bool marked nothing on 1.0.20. 2 also reads as true to every
+        /// older build (GetBool is GetInt != 0) and 0 as false to both, so one write is right
+        /// on either game; the game's own "not cheated" is no key at all, and 0 reads the same.
         /// </para>
         /// </summary>
         private static void MarkAsSpawnedIn(GameObject obj)
@@ -1051,7 +1064,7 @@ namespace BakaLoaderCommander
             {
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
-                    view.GetZDO().Set(ZDOVars.s_cheated, mark);
+                    view.GetZDO().Set(ZDOVars.s_cheated, SpawnMark.ZdoValue(mark));
             }
             catch (Exception ex)
             {

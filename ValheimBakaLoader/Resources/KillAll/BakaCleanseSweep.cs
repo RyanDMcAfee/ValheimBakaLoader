@@ -11,8 +11,11 @@
 // slicing live.
 //
 // WHERE THE MARK ACTUALLY LIVES, which is four places and not one
-//   1. On the object itself, as the ZDO bool ZDOVars.s_cheated. Creatures, pieces, crafting
-//      stations, containers and the locations the world spawns all carry it there.
+//   1. On the object itself, under ZDOVars.s_cheated. Creatures, pieces, crafting stations,
+//      containers and the locations the world spawns all carry it there. Every build before
+//      Valheim 1.0.20 wrote it as a bool, which a ZDO keeps as the int 1; 1.0.20 writes the
+//      int 2 and counts only 2 (CheatUtils). Both live in the one int slot, so one read of
+//      the int finds either and one RemoveInt takes either off.
 //   2. In a station's queue, as ZDOVars.s_cheatedQueued. A smelter and a fermenter use the
 //      key itself; a cooking station uses the key plus the slot number (decompiled
 //      assembly_valheim, CookingStation.SetSlot at 122434), so a run of them is cleared.
@@ -460,10 +463,13 @@ namespace BakaLoaderKillAll
 
             var touched = false;
 
-            // 1. The object's own mark.
-            if (zdo.GetBool(ZDOVars.s_cheated, false))
+            // 1. The object's own mark, in either shape. GetBool is GetInt != 0 over the same
+            //    slot, so this is the old bool test and it also sees 1.0.20's 2; asking for the
+            //    int says so instead of leaning on that. A 0 is somebody's explicit "not
+            //    cheated" and is left where it is.
+            if (zdo.GetInt(ZDOVars.s_cheated, 0) != 0)
             {
-                zdo.RemoveBool(ZDOVars.s_cheated);
+                zdo.RemoveInt(ZDOVars.s_cheated);
                 run.ZdosCleared++;
                 touched = true;
             }

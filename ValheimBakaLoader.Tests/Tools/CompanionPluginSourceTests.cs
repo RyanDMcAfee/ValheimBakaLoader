@@ -340,7 +340,7 @@ namespace ValheimBakaLoader.Tests.Tools
             // The rule is asked, and both writes are handed its answer rather than their own.
             Assert.Contains("SpawnMark.ShouldMark(", code);
             Assert.Contains("ItemDrop.OnCreateNew(obj, mark)", code);
-            Assert.Contains("Set(ZDOVars.s_cheated, mark)", code);
+            Assert.Contains("Set(ZDOVars.s_cheated, SpawnMark.ZdoValue(mark))", code);
 
             // What is forbidden is a hardcoded true and the old expression, at either write.
             // Matched as patterns rather than as exact strings so reformatting cannot let one
@@ -351,6 +351,8 @@ namespace ValheimBakaLoader.Tests.Tools
                          @"OnCreateNew\s*\(\s*obj\s*,\s*!\s*CheatChecksBypassed",
                          @"s_cheated\s*,\s*true\s*\)",
                          @"s_cheated\s*,\s*!\s*CheatChecksBypassed",
+                         // The bool write: the int 1, which Valheim 1.0.20 reads as not cheated.
+                         @"s_cheated\s*,\s*mark\s*\)",
                          @"=\s*!\s*CheatChecksBypassed\s*\(\s*\)\s*;",
                      })
                 Assert.False(Regex.IsMatch(code, forbidden),
@@ -361,7 +363,7 @@ namespace ValheimBakaLoader.Tests.Tools
             // writes with it, so the call to that is what has to come first.
             Assert.Contains("SpawnMark.ShouldMark(", code);
             var rule = code.IndexOf("var mark = ShouldMarkSpawn();", StringComparison.Ordinal);
-            var zdo = code.IndexOf("Set(ZDOVars.s_cheated, mark)", StringComparison.Ordinal);
+            var zdo = code.IndexOf("Set(ZDOVars.s_cheated, SpawnMark.ZdoValue(mark))", StringComparison.Ordinal);
             var create = code.IndexOf("ItemDrop.OnCreateNew(obj, mark)", StringComparison.Ordinal);
             Assert.True(rule >= 0 && zdo > rule && create > rule,
                 "the rule has to be asked before the mark is written anywhere");
@@ -406,7 +408,7 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             var code = WithoutComments(SourceNamed(plugin));
 
-            var zdo = code.IndexOf("Set(ZDOVars.s_cheated, mark)", StringComparison.Ordinal);
+            var zdo = code.IndexOf("Set(ZDOVars.s_cheated, SpawnMark.ZdoValue(mark))", StringComparison.Ordinal);
             var create = code.IndexOf("ItemDrop.OnCreateNew(obj, mark)", StringComparison.Ordinal);
             Assert.True(zdo >= 0 && create > zdo, plugin + " no longer writes the ZDO key before OnCreateNew");
 
@@ -517,6 +519,33 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.True(published >= new Version(floor),
                 plugin + " is published as " + published + ", below the " + floor +
                 " the unmarked spawn shipped in");
+        }
+
+        // ---- 1.0.20: the object's mark became the int 2 ----
+
+        /// <summary>
+        /// Valheim 1.0.20 stores an object's cheated mark as the int 2 under ZDOVars.s_cheated
+        /// where every older build stored a bool, the int 1, in the same slot. The cleanse has to
+        /// find and remove either, so it reads the int and removes the int: a test that asked for
+        /// exactly 1 or exactly 2 would leave the other shape on the world.
+        /// </summary>
+        [Fact]
+        public void Cleanse_TakesOffTheObjectMarkInEitherShape()
+        {
+            var code = WithoutComments(
+                Read("ValheimBakaLoader", "Resources", "KillAll", "BakaCleanseSweep.cs"));
+
+            Assert.Contains("if (zdo.GetInt(ZDOVars.s_cheated, 0) != 0)", code);
+            Assert.Contains("zdo.RemoveInt(ZDOVars.s_cheated);", code);
+
+            var test = code.IndexOf("if (zdo.GetInt(ZDOVars.s_cheated, 0) != 0)", StringComparison.Ordinal);
+            var remove = code.IndexOf("zdo.RemoveInt(ZDOVars.s_cheated);", StringComparison.Ordinal);
+            var counted = code.IndexOf("run.ZdosCleared++;", remove, StringComparison.Ordinal);
+            Assert.True(test >= 0 && remove > test && counted > remove,
+                "the object's mark has to be removed and counted inside the one int test");
+
+            Assert.False(Regex.IsMatch(code, @"GetInt\s*\(\s*ZDOVars\.s_cheated\s*(,\s*0\s*)?\)\s*==\s*[12]"),
+                "the cleanse tests for one shape of the mark only");
         }
 
         // ---- 1.0.9: the game turned a field into a property and took spawning with it ----

@@ -85,5 +85,28 @@ namespace BakaLoaderSpawn
             if (!configMarkSpawned) return false;
             return !bypassed;
         }
+
+        /// <summary>
+        /// The int the game counts as "cheated" on an object's ZDO. Valheim 1.0.20 asks
+        /// GetInt(ZDOVars.s_cheated) == 2 (CheatUtils, c_CheatRevision); every build before it
+        /// asked GetBool, which is GetInt != 0 over the same slot, because ZDO keeps a bool as
+        /// the int 1 or 0. So the 1 a bool write leaves is "not cheated" to 1.0.20, and that is
+        /// how a spawn the host asked to mark stopped being marked.
+        /// </summary>
+        internal const int ZdoCheated = 2;
+
+        /// <summary>
+        /// An explicit "not cheated". Both builds read 0 as false: GetBool says false, and
+        /// 1.0.20's IsCheated(defaultValue) maps 0 to false where an absent key falls to the
+        /// default instead. The game's own SetCheated(false) removes the key; writing 0 keeps the
+        /// one record that says somebody looked.
+        /// </summary>
+        internal const int ZdoNotCheated = 0;
+
+        /// <summary>
+        /// What the spawn writes under ZDOVars.s_cheated for <paramref name="mark"/>: 2 or 0, the
+        /// one value each game build reads the way the host meant it.
+        /// </summary>
+        internal static int ZdoValue(bool mark) => mark ? ZdoCheated : ZdoNotCheated;
     }
 }

@@ -64,9 +64,38 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void ShouldMark_TurnedOnMatchesWhatVanillaWrites()
         {
-            // Vanilla's line is Set(ZDOVars.s_cheated, !PlayerProfile.s_bypassCheatChecks).
+            // Vanilla's line is SetCheated(!PlayerProfile.s_bypassCheatChecks) from 1.0.20, and
+            // Set(ZDOVars.s_cheated, !PlayerProfile.s_bypassCheatChecks) before it.
             for (var bypassed = 0; bypassed < 2; bypassed++)
                 Assert.Equal(bypassed == 0, SpawnMark.ShouldMark(true, bypassed == 1));
+        }
+
+        // ------------------------------------------------------------------
+        //  The value written under ZDOVars.s_cheated
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Valheim 1.0.20 counts an object as cheated only when the int under ZDOVars.s_cheated
+        /// is 2 (CheatUtils.IsCheated, c_CheatRevision 2). The bool every older build wrote is
+        /// the int 1 in the same slot, so a marked spawn written as a bool came out unmarked on
+        /// 1.0.20. These are the two values each build reads the way the host meant: 2 is true
+        /// to GetBool (GetInt != 0) and to 1.0.20, 0 is false to both.
+        /// </summary>
+        [Fact]
+        public void ZdoValue_IsTheIntBothGameBuildsReadTheWayTheHostMeantIt()
+        {
+            Assert.Equal(2, SpawnMark.ZdoCheated);
+            Assert.Equal(0, SpawnMark.ZdoNotCheated);
+            Assert.Equal(2, SpawnMark.ZdoValue(true));
+            Assert.Equal(0, SpawnMark.ZdoValue(false));
+
+            // What each build makes of it, written out the way each build asks.
+            foreach (var mark in new[] { true, false })
+            {
+                var stored = SpawnMark.ZdoValue(mark);
+                Assert.Equal(mark, stored != 0);   // up to 1.0.19: GetBool
+                Assert.Equal(mark, stored == 2);   // 1.0.20: IsCheated
+            }
         }
 
         // ------------------------------------------------------------------

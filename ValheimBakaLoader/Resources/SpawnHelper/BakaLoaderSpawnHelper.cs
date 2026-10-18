@@ -1,4 +1,4 @@
-// BakaLoader Spawn Helper v1.5.0 - headless-server-safe spawn via main-thread dispatch.
+// BakaLoader Spawn Helper v1.5.1 - headless-server-safe spawn via main-thread dispatch.
 //
 // WHY THIS EXISTS:
 // WEC's "spawn_object" crashes dedicated servers because RCON commands execute on a
@@ -37,6 +37,9 @@
 // The entry is read off disk once, while the server is starting. BepInEx 5.4 keeps no
 // watcher on the .cfg, so changing the setting while the server runs does nothing until
 // the next start.
+// From 1.5.1 a marked spawn writes the int 2 under ZDOVars.s_cheated and an unmarked one 0
+// (SpawnMark.ZdoValue): Valheim 1.0.20 counts only 2 as cheated, so the bool written before
+// marked nothing there, and 2 still reads as true to every older build.
 // SCOPE: this entry governs the spawns THIS plugin's console command serves, and nothing
 // else. BakaLoader's own spawn button goes over RCON to Commander whenever Commander is the
 // plugin holding the port, which is the normal case, and Commander then reads its own copy
@@ -61,7 +64,7 @@ namespace BakaLoaderSpawnHelper
     {
         private const string PluginGuid = "com.baka.spawnhelper";
         private const string PluginName = "BakaLoader Spawn Helper";
-        private const string PluginVersion = "1.5.0";
+        private const string PluginVersion = "1.5.1";
 
         private static ManualLogSource Log;
 
@@ -388,10 +391,17 @@ namespace BakaLoaderSpawnHelper
         /// </para>
         /// <para>
         /// The ZDO key is written either way for the same reason: a creature's drops read
-        /// ZDOVars.s_cheated off its record, and an explicit false is the only thing that says
-        /// "not cheated" rather than "nobody looked". The console command itself stays
+        /// ZDOVars.s_cheated off its record, and an explicit "not cheated" is the only thing
+        /// that says so rather than "nobody looked". The console command itself stays
         /// uncheat-flagged; that is a separate thing, and this marks the objects, not the
         /// console.
+        /// </para>
+        /// <para>
+        /// The value is SpawnMark.ZdoValue's 2 or 0, not the bool. Valheim 1.0.20 counts an
+        /// object as cheated only when that int is 2, and a bool write is the int 1 in the same
+        /// slot, so writing the bool marked nothing on 1.0.20. 2 also reads as true to every
+        /// older build (GetBool is GetInt != 0) and 0 as false to both, so one write is right
+        /// on either game; the game's own "not cheated" is no key at all, and 0 reads the same.
         /// </para>
         /// </summary>
         private static void MarkAsSpawnedIn(GameObject obj)
@@ -407,7 +417,7 @@ namespace BakaLoaderSpawnHelper
             {
                 var view = obj.GetComponent<ZNetView>();
                 if (view != null && view.IsValid())
-                    view.GetZDO().Set(ZDOVars.s_cheated, mark);
+                    view.GetZDO().Set(ZDOVars.s_cheated, SpawnMark.ZdoValue(mark));
             }
             catch (Exception ex)
             {

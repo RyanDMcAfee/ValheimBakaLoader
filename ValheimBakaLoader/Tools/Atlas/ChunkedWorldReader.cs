@@ -607,7 +607,8 @@ namespace ValheimBakaLoader.Tools.Atlas
             int version = br.ReadUInt16();
             if (version < WorldDbReader.ChunkedSaveVersion || version > WorldDbReader.MaxWorldVersion)
             {
-                report?.Invoke($"{Path.GetFileName(path)}: chunk index version {version} is not supported");
+                report?.Invoke($"{Path.GetFileName(path)}: chunk index version {version} is outside the supported chunked range "
+                    + $"{WorldDbReader.ChunkedSaveVersion}-{WorldDbReader.MaxWorldVersion}");
                 return null;
             }
 
@@ -666,7 +667,8 @@ namespace ValheimBakaLoader.Tools.Atlas
             int version = br.ReadInt16();
             if (version < WorldDbReader.ChunkedSaveVersion || version > WorldDbReader.MaxWorldVersion)
             {
-                throw new InvalidDataException($"chunk version {version} is not supported");
+                throw new InvalidDataException($"chunk version {version} is outside the supported chunked range "
+                    + $"{WorldDbReader.ChunkedSaveVersion}-{WorldDbReader.MaxWorldVersion}");
             }
 
             int count = br.ReadInt32();

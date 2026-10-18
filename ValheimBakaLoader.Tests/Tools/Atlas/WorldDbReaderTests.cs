@@ -470,6 +470,44 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             Assert.Null(ParseBytes(ms.ToArray()));
         }
 
+        /// <summary>
+        /// The single-file gate at the top of the range. A .db claiming any chunked version,
+        /// 42 included now that Valheim 1.0.20 writes it, is a world folder's version on the
+        /// wrong file and is sent to the folder reader; the version after the top is not a
+        /// chunked save at all, it is out of range, and the sentence names the range.
+        /// </summary>
+        [Theory]
+        [InlineData(40)]
+        [InlineData(41)]
+        [InlineData(42)]
+        public void SingleFileClaimingAChunkedVersionIsSentToTheFolder(int version)
+        {
+            var notes = CaptureDiagnostics(() => Assert.Null(ParseBytes(HeaderOnlyDb(version))));
+
+            Assert.Contains(notes, n => n.Contains($"world version {version} is a chunked save"));
+            Assert.DoesNotContain(notes, n => n.Contains("outside the supported range"));
+        }
+
+        [Fact]
+        public void SingleFileAboveTheTopIsOutOfRangeNamingIt()
+        {
+            var notes = CaptureDiagnostics(() => Assert.Null(ParseBytes(HeaderOnlyDb(43))));
+
+            Assert.Contains(notes, n => n.Contains("world version 43 is outside the supported range 9-42"));
+            Assert.DoesNotContain(notes, n => n.Contains("chunked save"));
+        }
+
+        private static byte[] HeaderOnlyDb(int version)
+        {
+            using var ms = new MemoryStream();
+            using var bw = new BinaryWriter(ms);
+            bw.Write(version);
+            bw.Write(1800.0);
+            bw.Write(new byte[64]);
+            bw.Flush();
+            return ms.ToArray();
+        }
+
         [Fact]
         public void InsaneVersionReturnsNull()
         {

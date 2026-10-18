@@ -44,7 +44,7 @@ namespace ValheimBakaLoader.Tools.Atlas
     /// records skipped). World version 40 (ChunkedSave) replaced the single
     /// .db with a directory and changed the ZDO record itself, so those saves
     /// go through <see cref="ChunkedWorldReader"/> instead. Supported range is
-    /// 9 to 41 (41 = World.DeepNorth, the version Valheim 1.0.7 writes).
+    /// 9 to 42 (42 = World.CheatCleanSlate, the version Valheim 1.0.20 writes).
     /// </summary>
     public sealed class WorldDbInfo
     {
@@ -334,8 +334,15 @@ namespace ValheimBakaLoader.Tools.Atlas
         /// </summary>
         internal const int ChunkedSaveVersion = 40;
 
-        /// <summary>Version.World.DeepNorth, what Valheim 1.0.7 writes.</summary>
-        internal const int MaxWorldVersion = 41;
+        /// <summary>
+        /// Version.World.CheatCleanSlate, what Valheim 1.0.20 writes (41, DeepNorth, was the
+        /// top from 1.0.7). 42 changed what the cheated mark is, an int 2 on the object where it
+        /// used to be a bool, and nothing about how a record is laid out: the db2, the chunk
+        /// index and every chunk file are the version 40 layout with 42 in the header. When the
+        /// game moves this again, scripts/release/game_facts.sh fails until this and
+        /// scripts/release/game_facts.json agree.
+        /// </summary>
+        internal const int MaxWorldVersion = 42;
 
         // ZDO key/prefab hashes (game's StableHashCode, same as FwlWriter's,
         // and byte-identical to 1.0's Utils.GetStableHashCode).

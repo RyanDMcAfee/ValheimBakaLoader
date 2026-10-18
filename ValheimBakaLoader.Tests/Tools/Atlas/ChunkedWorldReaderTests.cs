@@ -144,6 +144,13 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
 
         private static int Hash(string s) => FwlWriter.GetStableHashCode(s);
 
+        /// <summary>
+        /// The header every synthetic world carries unless a test asks for another. One
+        /// number for the .db2, the .chunks index, each chunk file and the .ok marker, so a
+        /// test that rewrites one of them by hand cannot quietly disagree with the rest.
+        /// </summary>
+        private const int FixtureWorldVersion = 41;
+
         private sealed class ZdoSpec
         {
             public int Prefab;
@@ -270,7 +277,7 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             List<(int Hash, float X, float Y, float Z, bool Placed)> hashLocations = null,
             int zoneCount = 3,
             string eventName = "",
-            int worldVersion = 41,
+            int worldVersion = FixtureWorldVersion,
             bool writeOkMarker = true,
             IEnumerable<string> extraChunkFiles = null)
         {
@@ -414,8 +421,15 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             return Gzip(raw.ToArray());
         }
 
-        [Fact]
-        public void Synthetic_PortalsMapTablesAndBuildsAreExtracted()
+        /// <summary>
+        /// The main synthetic read, at every version the game has written since 1.0.7. 41 is
+        /// DeepNorth; 42 is CheatCleanSlate, what Valheim 1.0.20 writes, with the record layout
+        /// unchanged, so the same world has to come back the same at both.
+        /// </summary>
+        [Theory]
+        [InlineData(41)]
+        [InlineData(42)]
+        public void Synthetic_PortalsMapTablesAndBuildsAreExtracted(int worldVersion)
         {
             // Portals live in their own chunk (1, 0) and are excluded from the
             // regular chunks, so the portal chunk's contents are portals by
@@ -487,12 +501,13 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
                     (unchecked((int)0xDEADBEEF), 1f, 2f, 3f, true),
                 },
                 eventName: "army_theelder",
+                worldVersion: worldVersion,
                 extraChunkFiles: new[] { "02_03__0_1.chunk" });
 
             var info = WorldDbReader.TryReadAny(dir);
 
             Assert.NotNull(info);
-            Assert.Equal(41, info.WorldVersion);
+            Assert.Equal(worldVersion, info.WorldVersion);
             Assert.Equal(123, info.DayNumber);
             Assert.Equal(3, info.GeneratedZoneCount);
             Assert.True(info.LocationsGenerated);
@@ -570,7 +585,7 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             using (var fs = new FileStream(chunksPath, FileMode.Create, FileAccess.Write))
             using (var bw = new BinaryWriter(fs))
             {
-                bw.Write((ushort)41);
+                bw.Write((ushort)FixtureWorldVersion);
                 bw.Write(5);
                 bw.Write(2);
                 bw.Write((ushort)1); bw.Write((byte)0); bw.Write(1u); bw.Write(1);
@@ -623,7 +638,7 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             using (var fs = new FileStream(chunksPath, FileMode.Create, FileAccess.Write))
             using (var bw = new BinaryWriter(fs))
             {
-                bw.Write((ushort)41);
+                bw.Write((ushort)FixtureWorldVersion);
                 bw.Write(816);          // totalZDOs, as the index believes it
                 bw.Write(2);
                 bw.Write((ushort)1);      bw.Write((byte)0); bw.Write(1u); bw.Write(812);
@@ -696,12 +711,97 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
         }
 
         // ------------------------------------------------------------------
+        // The top of the range: 42 is read, the next one is refused by name
+        // ------------------------------------------------------------------
+
+        /// <summary>
+        /// Issue 23: a 1.0.20 world (42) was turned down with "outside the supported chunked
+        /// range 40-41". The top is the game's own CheatCleanSlate now, and the version after
+        /// it is refused at each of the three headers in a sentence naming the range.
+        /// </summary>
+        [Fact]
+        public void TheReaderKnowsCheatCleanSlateAsItsTop()
+        {
+            Assert.Equal(40, WorldDbReader.ChunkedSaveVersion);
+            Assert.Equal(42, WorldDbReader.MaxWorldVersion);
+        }
+
+        private static ChunkSpec OnePortalChunk(string tag)
+        {
+            var chunk = new ChunkSpec { Chunk = 1, Size = 0 };
+            chunk.Zdos.Add(new ZdoSpec
+            {
+                Prefab = Hash("portal_wood"), X = 1f, Y = 2f, Z = 3f,
+                Strings = { (Hash("tag"), tag) },
+            });
+            return chunk;
+        }
+
+        private static void OverwriteHeader(string file, byte[] header)
+        {
+            using var fs = new FileStream(file, FileMode.Open, FileAccess.Write);
+            fs.Write(header, 0, header.Length);
+        }
+
+        [Fact]
+        public void Db2_AVersionAboveTheTopIsRefusedNamingTheRange()
+        {
+            string dir = WriteWorld("Db2FromTheFuture", 1, 1800,
+                new List<ChunkSpec> { OnePortalChunk("x") }, worldVersion: 43);
+
+            var reasons = CaptureDiagnostics(() => Assert.Null(WorldDbReader.TryReadAny(dir)));
+
+            Assert.Contains(reasons, r =>
+                r.Contains("_main.1.db2: world version 43 is outside the supported chunked range 40-42"));
+        }
+
+        [Fact]
+        public void ChunkIndex_AVersionAboveTheTopIsRefusedNamingTheRange()
+        {
+            // The .db2 says 42 and is read; the index, which the game writes as a short, says 43.
+            string dir = WriteWorld("IndexFromTheFuture", 1, 1800,
+                new List<ChunkSpec> { OnePortalChunk("x") }, worldVersion: 42);
+            OverwriteHeader(Path.Combine(dir, "_main.1.chunks"), BitConverter.GetBytes((ushort)43));
+
+            var reasons = CaptureDiagnostics(() => Assert.Null(WorldDbReader.TryReadAny(dir)));
+
+            Assert.Contains(reasons, r =>
+                r.Contains("_main.1.chunks: chunk index version 43 is outside the supported chunked range 40-42"));
+        }
+
+        [Fact]
+        public void ChunkFile_AVersionAboveTheTopIsSkippedNamingTheRange()
+        {
+            // Two chunks at 42, then one file's own int16 header is made 43. That one becomes a
+            // note and a skipped chunk and the other still reads, which is how one chunk the
+            // reader cannot parse has always been treated.
+            var kept = OnePortalChunk("kept");
+            var odd = new ChunkSpec { Chunk = 0x0202, Size = 0, Version = 3 };
+            odd.Zdos.Add(new ZdoSpec { Prefab = Hash("Beech1"), X = 1f, Y = 2f, Z = 3f });
+            string dir = WriteWorld("ChunkFromTheFuture", 1, 1800,
+                new List<ChunkSpec> { kept, odd }, worldVersion: 42);
+            OverwriteHeader(Path.Combine(dir, odd.FileName), BitConverter.GetBytes((short)43));
+
+            var notes = new List<string>();
+            var info = ChunkedWorldReader.TryRead(dir, notes.Add);
+
+            Assert.NotNull(info);
+            Assert.Equal(42, info.WorldVersion);
+            Assert.Equal(2, info.ChunksTotal);
+            Assert.Equal(1, info.ChunksSkipped);
+            Assert.Equal("kept", Assert.Single(info.Portals).Tag);
+            Assert.Contains(notes, n => n.Contains(odd.FileName)
+                && n.Contains("chunk version 43 is outside the supported chunked range 40-42"));
+        }
+
+        // ------------------------------------------------------------------
         // Legacy .db reader must refuse chunked versions instead of guessing
         // ------------------------------------------------------------------
 
         [Theory]
         [InlineData(40)]
         [InlineData(41)]
+        [InlineData(42)]
         public void LegacyReader_RejectsChunkedWorldVersions(int version)
         {
             // A version 40+ header on a .db: the ZDO record lost its sector
@@ -859,7 +959,7 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             using (var fs = new FileStream(db2, FileMode.Create, FileAccess.Write))
             using (var bw = new BinaryWriter(fs, Encoding.UTF8))
             {
-                bw.Write(41);          // world version
+                bw.Write(FixtureWorldVersion); // world version
                 bw.Write(1800.0);      // net time
                 bw.Write(declaredLength);
                 bw.Write(payload);
@@ -973,7 +1073,7 @@ namespace ValheimBakaLoader.Tests.Tools.Atlas
             using (var fs = new FileStream(Path.Combine(dir, "_main.4.chunks"), FileMode.Create, FileAccess.Write))
             using (var bw = new BinaryWriter(fs))
             {
-                bw.Write((ushort)41);
+                bw.Write((ushort)FixtureWorldVersion);
                 bw.Write(5);
                 bw.Write(2);
                 bw.Write((ushort)1); bw.Write((byte)0); bw.Write(1u); bw.Write(1);
