@@ -623,9 +623,10 @@ namespace ValheimBakaLoader.Tools
     /// Installs and keeps BepInEx, the framework every mod loads under.
     /// <para>
     /// Three facts shape all of this. First, BepInEx is ONE thing per base install and not one
-    /// per profile: an isolated install shares <c>BepInEx/core</c> and <c>BepInEx/patchers</c>
-    /// with the base through directory junctions and hard-links the loose loader files beside
-    /// the executable, so writing BepInEx anywhere writes it everywhere. Second, the pack
+    /// per profile: an isolated install shares <c>BepInEx/core</c> with the base through a
+    /// directory junction and hard-links the loose loader files beside the executable, so
+    /// writing BepInEx anywhere writes it everywhere. (<c>BepInEx/patchers</c> was shared the
+    /// same way before 1.2.15; it holds mods, not the loader, and is per realm now.) Second, the pack
     /// archive is two tier, a metadata layer over a single folder whose CONTENTS are what go
     /// into the install root, so a normal mod install would bury the whole framework three
     /// levels under the plugins folder where it does nothing. Third, nothing a correct install

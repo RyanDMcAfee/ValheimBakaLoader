@@ -92,12 +92,33 @@ namespace ValheimBakaLoader.Tools.Models
         public bool NotListedOnThunderstore { get; set; }
 
         /// <summary>
-        /// Where this copy of the mod came from, when BakaLoader installed it from
-        /// somewhere other than Thunderstore and left a note saying so: "hexium", or
-        /// null for everything else. Only ever set from a note BakaLoader wrote and
-        /// still believes (see <c>ModSourceMarkerFile</c>), never guessed.
+        /// Where this copy of the mod came from, when BakaLoader installed it and left a note
+        /// saying so: "hexium" or "thunderstore", or null for a copy put there by hand or by
+        /// a build older than the note. Only ever set from a note BakaLoader wrote and still
+        /// believes (see <c>ModSourceMarkerFile</c>), never guessed. Only "hexium" changes
+        /// what the row does; "thunderstore" is there so the page can say when it went in.
         /// </summary>
         public string InstalledSource { get; set; }
+
+        /// <summary>
+        /// When this copy went in, in UTC: the time on BakaLoader's own note when there is one
+        /// it believes, otherwise the mod folder's creation time, otherwise null.
+        /// </summary>
+        public DateTime? InstalledUtc { get; set; }
+
+        /// <summary>
+        /// True when the mod is switched off: its plugin folder (and its patcher folder, when
+        /// it has one) holds at least one <c>*.dll.old</c> and no <c>*.dll</c>. That is the
+        /// r2modman and Gale convention, and BepInEx loads <c>*.dll</c> only.
+        /// </summary>
+        public bool Disabled { get; set; }
+
+        /// <summary>
+        /// "managed" when the files sit where a mod manager would put them, "nested" when the
+        /// plugin folder still carries a plugins, patchers, BepInEx or config folder from a
+        /// whole-zip install by an older build, null when it does not apply (a patcher-only row).
+        /// </summary>
+        public string Layout { get; set; }
 
         /// <summary>True when this copy was installed from Hexium by BakaLoader.</summary>
         public bool IsHexiumInstalled =>

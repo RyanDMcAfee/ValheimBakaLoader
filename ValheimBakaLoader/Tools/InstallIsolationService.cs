@@ -28,10 +28,10 @@ namespace ValheimBakaLoader.Tools
     {
         /// <summary>
         /// Provisions a lightweight isolated server install for a profile. The large, read-only
-        /// game folders (valheim_server_Data, MonoBleedingEdge, BepInEx/core, BepInEx/patchers, …)
+        /// game folders (valheim_server_Data, MonoBleedingEdge, BepInEx/core and the rest)
         /// are shared via directory JUNCTIONS, loose root files are hard-linked (same volume) or
-        /// copied, and BepInEx/plugins + config + cache are REAL per-server copies so each server's
-        /// mod set is fully independent. Returns the path to the isolated server .exe.
+        /// copied, and BepInEx/plugins + patchers + config + cache are REAL per-server copies so
+        /// each server's mod set is fully independent. Returns the path to the isolated server .exe.
         ///
         /// Provisioning works at DIRECTORY level off a deny-list, so a game update that adds a
         /// top-level folder or new Managed assemblies is included with no code change.
@@ -230,7 +230,10 @@ namespace ValheimBakaLoader.Tools
         }
 
         // BepInEx subfolders that are read-only at runtime and safe to share via junction.
-        private static readonly string[] JunctionableBepInExDirs = { "core", "patchers" };
+        // patchers used to be one of them, and that made a patcher installed into one realm
+        // land in the base install and load in EVERY realm (and a removal in one realm took it
+        // from all of them). Patchers are mods, so since 1.2.15 every realm has its own copy.
+        private static readonly string[] JunctionableBepInExDirs = { "core" };
 
         /// <summary>
         /// The ONLY top-level entries an isolated install skips. Everything else the base
@@ -355,8 +358,16 @@ namespace ValheimBakaLoader.Tools
 
                 if (JunctionableBepInExDirs.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
-                    // core + patchers are read-only BepInEx runtime: share via junction.
+                    // core is read-only BepInEx runtime: share via junction.
                     CreateJunctionOrThrow(Path.Combine(dstBep, name), dir);
+                }
+                else if (string.Equals(name, "patchers", StringComparison.OrdinalIgnoreCase))
+                {
+                    // A real copy, like plugins: a patcher a mod brings travels with the mods when
+                    // the realm is seeded with them, and a realm that starts with no mods starts
+                    // with what the base install carries, which is what the old junction showed it.
+                    var seedSrc = Path.Combine(seedBep, "patchers");
+                    CopyDirectory(seedPlugins && Directory.Exists(seedSrc) ? seedSrc : dir, Path.Combine(dstBep, "patchers"));
                 }
                 else if (string.Equals(name, "plugins", StringComparison.OrdinalIgnoreCase))
                 {
@@ -514,15 +525,18 @@ namespace ValheimBakaLoader.Tools
                 changed = true;
             }
 
-            foreach (var name in new[] { "plugins", "config", "cache" })
+            foreach (var name in new[] { "plugins", "patchers", "config", "cache" })
             {
                 var destination = Path.Combine(dstBep, name);
                 if (Directory.Exists(destination)) continue;
 
-                // config seeds from the base so the loader's own cfg is there; plugins and the
-                // assembly cache are per server and start empty.
+                // config seeds from the base so the loader's own cfg is there, and patchers from
+                // the base so the realm sees what the junction it used to get showed it, as its
+                // own copy; plugins and the assembly cache are per server and start empty.
                 var source = Path.Combine(srcBep, name);
-                if (string.Equals(name, "config", StringComparison.OrdinalIgnoreCase) && Directory.Exists(source))
+                if ((string.Equals(name, "config", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(name, "patchers", StringComparison.OrdinalIgnoreCase))
+                    && Directory.Exists(source))
                     CopyDirectory(source, destination);
                 else
                     Directory.CreateDirectory(destination);
@@ -722,7 +736,77 @@ namespace ValheimBakaLoader.Tools
             File.Copy(source, dest, overwrite: true);
         }
 
-        private void CreateJunctionOrThrow(string linkPath, string targetPath)
+        /// <summary>
+        /// Gives a realm its own patchers folder when it still has the junction to the base
+        /// install that every realm was provisioned with before 1.2.15, and answers whether it
+        /// changed anything.
+        /// <para>
+        /// Run at the moment something is about to write under <c>BepInEx/patchers</c> of a
+        /// realm (an install, an update, a removal, a switch off or on), never on its own. The
+        /// base's patchers are copied into a staging folder first; only then is the junction
+        /// LINK removed (a non-recursive delete of a reparse point unlinks it and never reaches
+        /// the files behind it, the same rule <see cref="DeleteTreeJunctionSafe"/> stands on) and
+        /// the copy moved into its place. A copy that fails leaves the junction exactly as it
+        /// was. A real folder, or no folder, is left alone: the base install's own patchers is a
+        /// real folder and this never touches it.
+        /// </para>
+        /// </summary>
+        public static bool EnsureOwnPatchersFolder(string bepInExRoot, IApplicationLogger logger)
+        {
+            if (string.IsNullOrWhiteSpace(bepInExRoot)) return false;
+
+            var patchers = Path.Combine(bepInExRoot, "patchers");
+            if (!BepInExService.IsReparsePoint(patchers)) return false;
+
+            string target = null;
+            try { target = new DirectoryInfo(patchers).LinkTarget; }
+            catch (Exception e) { logger?.Debug("Could not read where {0} points: {1}", patchers, e.Message); }
+
+            if (!string.IsNullOrWhiteSpace(target) && !Path.IsPathRooted(target))
+                target = Path.GetFullPath(Path.Combine(bepInExRoot, target));
+
+            var staging = Path.Combine(bepInExRoot, ".bakaloader-patchers-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(target) && Directory.Exists(target)) CopyDirectory(target, staging);
+                else Directory.CreateDirectory(staging);
+            }
+            catch
+            {
+                try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); } catch { /* best effort */ }
+                throw;
+            }
+
+            // Unlink only. The check is asked again right here, because a recursive delete of a
+            // folder that is not a link would take real files with it.
+            if (!BepInExService.IsReparsePoint(patchers))
+            {
+                try { Directory.Delete(staging, recursive: true); } catch { /* best effort */ }
+                return false;
+            }
+            Directory.Delete(patchers);
+
+            try
+            {
+                Directory.Move(staging, patchers);
+            }
+            catch
+            {
+                // Put the old link back rather than leave the realm with no patchers folder.
+                if (!string.IsNullOrWhiteSpace(target) && !Directory.Exists(patchers))
+                {
+                    try { CreateJunctionOrThrow(patchers, target); } catch { /* the throw below says enough */ }
+                }
+                throw;
+            }
+
+            logger?.Information(
+                "The patchers folder of {0} is now its own copy instead of a link to {1}, so a patcher installed there loads on that server only.",
+                Path.GetDirectoryName(bepInExRoot) ?? bepInExRoot, target ?? "(nothing)");
+            return true;
+        }
+
+        internal static void CreateJunctionOrThrow(string linkPath, string targetPath)
         {
             if (Directory.Exists(linkPath))
             {

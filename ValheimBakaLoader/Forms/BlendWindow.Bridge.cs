@@ -7577,6 +7577,74 @@ namespace ValheimBakaLoader.Forms
                 });
             });
 
+            // Switches a mod off or on without removing it: every *.dll under its plugin and
+            // patcher folders becomes *.dll.old and back, the r2modman and Gale convention, so
+            // its folder, its version and its config stay exactly where they are. The page
+            // scans again after a success.
+            // Always answers {ok, count, error, reason,
+            // errorParams}; error is the sentence the page shows and reason a
+            // short name it can word itself, the way mods.addFromUrl answers.
+            // Refused while the realm's own server runs, by the same check mods.addFromUrl makes
+            // for requireStopped: a loaded plugin file cannot be renamed on Windows, and a
+            // switch that half happened is the state nobody asked for. Refused as well while a
+            // mod update is running and when the realm on screen is not the one the page asked
+            // about, so a click from a page that is a realm behind never switches the wrong mod.
+            object SwitchMod(JObject p, bool off)
+            {
+                object Answer(bool ok, int count, string error, string reason,
+                    IReadOnlyDictionary<string, object> errorParams = null) => new
+                {
+                    ok,
+                    count,
+                    error,
+                    reason,
+                    errorParams,
+                };
+
+                if (_modUpdateInProgress)
+                    return Answer(false, 0, "A mod update is already in progress. Try again in a moment.", "busy");
+
+                var forProfile = p?.Value<string>("profile");
+                if (!string.IsNullOrWhiteSpace(forProfile)
+                    && !string.Equals(forProfile.Trim(), ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                    return Answer(false, 0, "The server on screen changed, so nothing was changed.", "realmChanged");
+
+                var pluginsDir = GetPluginsDirectory();
+                if (string.IsNullOrWhiteSpace(pluginsDir))
+                    return Answer(false, 0, "BepInEx plugins folder not found. Set a valid server .exe path first.", "noServerPath");
+
+                var holding = RunningSessionName(new[] { pluginsDir });
+                if (holding != null)
+                    return Answer(false, 0, $"Stop the server '{holding}' first. Nothing was changed.", "serverRunning",
+                        new Dictionary<string, object> { ["name"] = holding });
+
+                Tools.Models.InstalledMod mod;
+                try
+                {
+                    mod = FindInstalledMod(p);
+                }
+                catch (Exception e)
+                {
+                    return Answer(false, 0, e.Message, HostFacingException.IdOf(e) ?? "notFound", HostFacingException.ParamsOf(e));
+                }
+
+                _modUpdateInProgress = true;
+                try
+                {
+                    var result = off ? Tools.ModSwitch.Disable(mod, AppLogger) : Tools.ModSwitch.Enable(mod, AppLogger);
+                    return result.Ok
+                        ? Answer(true, result.Count, null, null)
+                        : Answer(false, 0, result.Error, result.Reason);
+                }
+                finally
+                {
+                    _modUpdateInProgress = false;
+                }
+            }
+
+            RegisterRpc("mods.disable", p => Task.FromResult(SwitchMod(p, off: true)));
+            RegisterRpc("mods.enable", p => Task.FromResult(SwitchMod(p, off: false)));
+
             // Installs a mod from any pasted Thunderstore link (page URL, versions page,
             // direct download URL, or ror2mm:// mod-manager link). No version in the
             // link = latest. Structured errors come back in the result's Error field
@@ -9771,6 +9839,14 @@ namespace ValheimBakaLoader.Forms
                 hexiumUrl = Tools.HexiumUrlParser.PageUrl(mod.HexiumOwner, mod.HexiumName),
                 installedSource = mod.InstalledSource,
                 thunderstoreNewer = mod.ThunderstoreNewer,
+                // When this copy went in (BakaLoader's own note, else the folder's creation
+                // time), ISO 8601 UTC to the second, or null when neither can be read.
+                installedUtc = mod.InstalledUtc?.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
+                // Switched off: *.dll.old and no *.dll in its folders (mods.disable / mods.enable).
+                disabled = mod.Disabled,
+                // "managed" or "nested" (an old whole-zip install the page can offer to reinstall
+                // at its version); null for a patcher-only row, which has no plugin folder to read.
+                layout = mod.IsPatcher ? null : mod.Layout,
             };
         }
 

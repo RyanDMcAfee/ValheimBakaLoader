@@ -175,6 +175,9 @@ namespace ValheimBakaLoader.Tools
         public static GaleProfileDiffResult Compare(
             GaleProfileMeta meta, IEnumerable<InstalledMod> installed, IEnumerable<string> unticked)
         {
+            // A mod the host switched off (mods.disable) is still installed at its version: its
+            // manifest is read like any other, so it compares as Same and the follow never
+            // reinstalls it, which would also be the follow quietly overruling the host.
             var pairs = (installed ?? Enumerable.Empty<InstalledMod>())
                 .Where(m => m != null)
                 .Select(m => (Name: string.IsNullOrWhiteSpace(m.Author) ? m.ModName : m.FullName, Version: m.InstalledVersion));

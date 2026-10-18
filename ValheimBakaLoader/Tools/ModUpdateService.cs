@@ -163,7 +163,8 @@ namespace ValheimBakaLoader.Tools
 
     /// <summary>
     /// Installs Thunderstore mod updates by downloading the package zip, backing up
-    /// the existing plugin folder, and replacing it with the new contents. Backups are
+    /// the mod's existing folders, and laying the new package out the way a mod manager
+    /// does (<see cref="PackageLayout"/>, placed by <see cref="PackagePlacement"/>). Backups are
     /// written OUTSIDE the BepInEx <c>plugins</c> directory so BepInEx never tries to
     /// load a backed-up copy. On any failure the previous folder is restored.
     ///
@@ -172,8 +173,6 @@ namespace ValheimBakaLoader.Tools
     /// </summary>
     public class ModUpdateService : IModUpdateService
     {
-        private const string BackupDirName = ".bakaloader-mod-backups";
-
         /// <summary>
         /// The clocks every mod download is held to. HttpClient.Timeout used to be the only
         /// one and it never covered the body: a site that answered its headers and then stopped
@@ -342,6 +341,7 @@ namespace ValheimBakaLoader.Tools
             var tempZip = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}.zip");
             var tempExtract = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}");
             string backupDir = null;
+            PackagePlacement placement = null;
 
             try
             {
@@ -377,18 +377,32 @@ namespace ValheimBakaLoader.Tools
                     return ModUpdateResult.Skipped(mod);
                 }
 
-                // Back up the current folder OUTSIDE plugins/ so BepInEx won't load it.
-                backupDir = BackupModFolder(mod.PluginDirectory);
+                // The package is laid out the way a mod manager lays it out, and the mod's own
+                // folders are backed up OUTSIDE plugins/ first so BepInEx won't load a copy.
+                var packageFolder = new DirectoryInfo(mod.PluginDirectory).Name;
+                var planned = PackagePlacement.Plan(tempExtract, BepInExRootOfPlugins(Path.GetDirectoryName(mod.PluginDirectory)),
+                    packageFolder, Logger);
+                if (planned.Refusal != null) return ModUpdateResult.Failed(mod, planned.Refusal);
 
-                // Replace the folder contents with the freshly extracted package.
-                ClearDirectory(mod.PluginDirectory);
-                CopyDirectory(tempExtract, mod.PluginDirectory);
+                // A mod the host switched off stays off: an update is not a reason to load it.
+                var wasOff = ModSwitch.IsDisabled(mod.PluginDirectory, ModRemovalService.ResolvePatcherDirectory(mod));
+
+                placement = planned;
+                placement.BeforeEachFile = PlacingFile;
+                placement.Apply(DateTime.Now);
+                backupDir = placement.PluginsBackup;
+
+                if (wasOff) ModSwitch.SwitchOffFiles(new[] { placement.PluginsFolder, placement.PatchersFolder, placement.MonomodFolder });
+
+                WriteThunderstoreNote(placement.PluginsFolder, mod.Author, mod.ModName, toVersion, downloadFrom,
+                    lookup.Published?.FileSize);
 
                 // Reflect the new version on the in-memory model.
                 mod.InstalledVersion = toVersion;
                 mod.LatestVersion = toVersion;
 
-                Logger.Information("Updated {0} to {1} (backup at {2}).", mod.FullName, toVersion, backupDir);
+                Logger.Information("Updated {0} to {1} ({2} file(s) placed, {3} config file(s) kept as they were{4}; backup at {5}).",
+                    mod.FullName, toVersion, placement.Placed, placement.ConfigKept, wasOff ? ", still switched off" : "", backupDir);
                 return ModUpdateResult.Success(mod, fromVersion, toVersion);
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
@@ -404,23 +418,15 @@ namespace ValheimBakaLoader.Tools
             {
                 Logger.Error(e, "Failed to update {0}; attempting to restore the previous version.", mod.FullName);
 
-                // Roll back if we got far enough to back up + start replacing.
-                if (backupDir != null && Directory.Exists(backupDir))
+                // Roll back every folder the package touched, and only the config files it
+                // wrote new, if we got far enough to start placing.
+                if (placement != null)
                 {
-                    try
-                    {
-                        ClearDirectory(mod.PluginDirectory);
-                        CopyDirectory(backupDir, mod.PluginDirectory);
-                        Logger.Information("Restored previous version of {0}.", mod.FullName);
-                    }
-                    catch (Exception restoreError)
-                    {
-                        Logger.Error(restoreError,
-                            "Could not restore {0}. The previous files are preserved at {1}.",
-                            mod.FullName, backupDir);
+                    var stranded = placement.Rollback();
+                    if (stranded != null)
                         return ModUpdateResult.Failed(mod,
-                            $"Update failed AND automatic restore failed. Previous files are at: {backupDir}");
-                    }
+                            $"Update failed AND automatic restore failed. Previous files are at: {stranded}");
+                    Logger.Information("Restored previous version of {0}.", mod.FullName);
                 }
 
                 return ModUpdateResult.Failed(mod, e.Message);
@@ -492,6 +498,7 @@ namespace ValheimBakaLoader.Tools
             var tempZip = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}.zip");
             var tempExtract = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}");
             string backupDir = null;
+            PackagePlacement placement = null;
 
             // Which part of the work was running when something went wrong. The catch below
             // used to hand the host a raw zip-internals sentence and then send them to the
@@ -525,16 +532,26 @@ namespace ValheimBakaLoader.Tools
 
                 stage = "install";
 
-                if (replacing)
-                {
-                    backupDir = BackupModFolder(targetDir);
-                    ClearDirectory(targetDir);
-                }
+                var planned = PackagePlacement.Plan(tempExtract, BepInExRootOfPlugins(pluginsDir), reference.FolderName, Logger);
+                if (planned.Refusal != null) return Fail(planned.Refusal);
 
-                CopyDirectory(tempExtract, targetDir);
+                // Reinstalling a mod the host switched off leaves it off, the same as an update.
+                var wasOff = replacing && ModSwitch.IsDisabled(targetDir, planned.PatchersFolder);
 
-                Logger.Information("Installed {0} v{1} to {2}{3}.",
-                    reference.FolderName, version ?? "?", targetDir,
+                placement = planned;
+                placement.BeforeEachFile = PlacingFile;
+                placement.Apply(DateTime.Now);
+                backupDir = placement.PluginsBackup;
+
+                if (wasOff) ModSwitch.SwitchOffFiles(new[] { placement.PluginsFolder, placement.PatchersFolder, placement.MonomodFolder });
+
+                // The note says this came from Thunderstore and when. It changes nothing about
+                // updates; it is what the Mods page reads the install date off.
+                WriteThunderstoreNote(placement.PluginsFolder, reference.Owner, reference.Name, version, downloadUrl,
+                    published?.FileSize);
+
+                Logger.Information("Installed {0} v{1} to {2} ({3} file(s) placed, {4} config file(s) kept as they were){5}.",
+                    reference.FolderName, version ?? "?", targetDir, placement.Placed, placement.ConfigKept,
                     backupDir != null ? $" (previous copy backed up to {backupDir})" : "");
 
                 return new ModInstallResult
@@ -552,27 +569,15 @@ namespace ValheimBakaLoader.Tools
             {
                 Logger.Error(e, "Failed to install {0} from Thunderstore.", reference.FolderName);
 
-                // Roll back a partially-replaced existing install.
-                if (backupDir != null && Directory.Exists(backupDir))
+                // Roll back a partly placed package: folders that existed come back from their
+                // backup, folders this install made go, and so do config files it wrote new.
+                // A brand-new folder is never left half written for BepInEx to trip on.
+                if (placement != null)
                 {
-                    try
-                    {
-                        ClearDirectory(targetDir);
-                        CopyDirectory(backupDir, targetDir);
-                        Logger.Information("Restored previous copy of {0}.", reference.FolderName);
-                    }
-                    catch (Exception restoreError)
-                    {
-                        Logger.Error(restoreError,
-                            "Could not restore {0}. The previous files are preserved at {1}.",
-                            reference.FolderName, backupDir);
-                        return Fail($"Install failed AND automatic restore failed. Previous files are at: {backupDir}");
-                    }
-                }
-                else if (!replacing)
-                {
-                    // Don't leave a half-written brand-new folder for BepInEx to trip on.
-                    TryDeleteDirectory(targetDir);
+                    var stranded = placement.Rollback();
+                    if (stranded != null)
+                        return Fail($"Install failed AND automatic restore failed. Previous files are at: {stranded}");
+                    Logger.Information("Restored previous copy of {0}.", reference.FolderName);
                 }
 
                 // A pinned download that answered 404 is either a build the site took away or a
@@ -696,6 +701,7 @@ namespace ValheimBakaLoader.Tools
             var tempZip = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}.zip");
             var tempExtract = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}");
             string backupDir = null;
+            PackagePlacement placement = null;
 
             try
             {
@@ -723,13 +729,17 @@ namespace ValheimBakaLoader.Tools
                 if (!HasAnyEntries(tempExtract))
                     return Fail("The downloaded package was empty.");
 
-                if (replacing)
-                {
-                    backupDir = BackupModFolder(targetDir);
-                    ClearDirectory(targetDir);
-                }
+                var planned = PackagePlacement.Plan(tempExtract, BepInExRootOfPlugins(pluginsDir), plan.FolderName, Logger);
+                if (planned.Refusal != null) return Fail(planned.Refusal);
 
-                CopyDirectory(tempExtract, targetDir);
+                var wasOff = replacing && ModSwitch.IsDisabled(targetDir, planned.PatchersFolder);
+
+                placement = planned;
+                placement.BeforeEachFile = PlacingFile;
+                placement.Apply(DateTime.Now);
+                backupDir = placement.PluginsBackup;
+
+                if (wasOff) ModSwitch.SwitchOffFiles(new[] { placement.PluginsFolder, placement.PatchersFolder, placement.MonomodFolder });
 
                 ModSourceMarkerFile.Write(targetDir, new ModSourceMarker
                 {
@@ -764,26 +774,13 @@ namespace ValheimBakaLoader.Tools
             {
                 Logger.Error(e, "Failed to install {0} from Hexium.", plan.FolderName);
 
-                if (backupDir != null && Directory.Exists(backupDir))
+                // Every folder the package touched comes back, and a new one never stays half written.
+                if (placement != null)
                 {
-                    try
-                    {
-                        ClearDirectory(targetDir);
-                        CopyDirectory(backupDir, targetDir);
-                        Logger.Information("Restored previous copy of {0}.", plan.FolderName);
-                    }
-                    catch (Exception restoreError)
-                    {
-                        Logger.Error(restoreError,
-                            "Could not restore {0}. The previous files are preserved at {1}.",
-                            plan.FolderName, backupDir);
-                        return Fail($"Install failed AND automatic restore failed. Previous files are at: {backupDir}");
-                    }
-                }
-                else if (!replacing)
-                {
-                    // Never leave a half-written new folder for BepInEx to trip on.
-                    TryDeleteDirectory(targetDir);
+                    var stranded = placement.Rollback();
+                    if (stranded != null)
+                        return Fail($"Install failed AND automatic restore failed. Previous files are at: {stranded}");
+                    Logger.Information("Restored previous copy of {0}.", plan.FolderName);
                 }
 
                 return Fail(e.Message);
@@ -1130,60 +1127,44 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
-        /// Copies the mod folder to a timestamped backup directory under BepInEx
-        /// (a sibling of <c>plugins</c>, so it is never scanned as a plugin). Returns
-        /// the backup path.
+        /// Called with each destination just before a package file is written there. A test
+        /// throws from it to prove a placement that stops half way is put back.
         /// </summary>
-        private static string BackupModFolder(string pluginDirectory)
+        internal Action<string> PlacingFile { get; set; }
+
+        /// <summary>The BepInEx folder a plugins folder sits in, which is where every package destination is measured from.</summary>
+        private static string BepInExRootOfPlugins(string pluginsDir)
         {
-            // pluginDirectory = ...\BepInEx\plugins\{Author-ModName}
-            var pluginsRoot = Directory.GetParent(pluginDirectory)?.FullName; // ...\BepInEx\plugins
-            var bepInExRoot = Directory.GetParent(pluginsRoot)?.FullName ?? pluginsRoot; // ...\BepInEx
-            var modFolderName = new DirectoryInfo(pluginDirectory).Name;
+            var full = Path.GetFullPath(pluginsDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return Directory.GetParent(full)?.FullName ?? full;
+        }
 
-            var backupRoot = Path.Combine(bepInExRoot, BackupDirName, modFolderName);
-            Directory.CreateDirectory(backupRoot);
-
-            var backupDir = Path.Combine(backupRoot, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
-            CopyDirectory(pluginDirectory, backupDir);
-            return backupDir;
+        /// <summary>
+        /// The note on a Thunderstore install: where the files came from and when. Believed only
+        /// while its version matches the manifest, so a folder replaced by hand since is read as
+        /// a copy of unknown history again.
+        /// </summary>
+        private static void WriteThunderstoreNote(string pluginsFolder, string owner, string name, string version,
+            string downloadUrl, long? fileSize)
+        {
+            ModSourceMarkerFile.Write(pluginsFolder, new ModSourceMarker
+            {
+                Schema = ModSourceMarkerFile.CurrentSchema,
+                Writer = $"{ModSourceMarkerFile.WriterPrefix} {AssemblyHelper.GetApplicationVersion()}",
+                Source = ModSourceMarkerFile.ThunderstoreSource,
+                Owner = owner,
+                Name = name,
+                Version = version,
+                DownloadUrl = downloadUrl,
+                FileSize = fileSize,
+                InstalledUtc = DateTime.UtcNow,
+            });
         }
 
         private static bool HasAnyEntries(string directory)
         {
             return Directory.Exists(directory) &&
                    Directory.EnumerateFileSystemEntries(directory).GetEnumerator().MoveNext();
-        }
-
-        private static void ClearDirectory(string directory)
-        {
-            if (!Directory.Exists(directory)) return;
-
-            foreach (var file in Directory.GetFiles(directory))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-                File.Delete(file);
-            }
-            foreach (var dir in Directory.GetDirectories(directory))
-            {
-                Directory.Delete(dir, recursive: true);
-            }
-        }
-
-        private static void CopyDirectory(string sourceDir, string destinationDir)
-        {
-            Directory.CreateDirectory(destinationDir);
-
-            foreach (var file in Directory.GetFiles(sourceDir))
-            {
-                var target = Path.Combine(destinationDir, Path.GetFileName(file));
-                File.Copy(file, target, overwrite: true);
-            }
-
-            foreach (var dir in Directory.GetDirectories(sourceDir))
-            {
-                CopyDirectory(dir, Path.Combine(destinationDir, Path.GetFileName(dir)));
-            }
         }
 
         private void TryDelete(string path)

@@ -56,8 +56,10 @@ namespace ValheimBakaLoader.Tools
         /// user-installed mod anyone should list or remove:
         /// - denikson-BepInExPack_Valheim: the BepInEx framework itself.
         /// - ValheimModding-HookGenPatcher: generates the MMHOOK assemblies each launch.
-        /// The "patchers" folder is shared across every isolated instance via a junction, so
-        /// removing one of these would break the framework for all servers at once.
+        /// Removing or switching off one of these breaks the loader for that server. Before
+        /// 1.2.15 the "patchers" folder was a junction shared by every isolated realm, so it
+        /// broke all of them at once; a realm still carrying that junction gets its own copy the
+        /// moment anything writes there (<see cref="InstallIsolationService.EnsureOwnPatchersFolder"/>).
         /// <para>
         /// This set is for the patchers folder only. It is deliberately NOT used by the plugins
         /// scan: HookGenPatcher is an ordinary Thunderstore listing a host can add through the
@@ -136,6 +138,7 @@ namespace ValheimBakaLoader.Tools
                 if (mod != null)
                 {
                     mod.PluginDirectory = modDirectory;
+                    mod.Layout = LayoutOf(modDirectory);
                     results.Add(mod);
                     byFolderName[folderName] = mod;
                 }
@@ -144,6 +147,11 @@ namespace ValheimBakaLoader.Tools
             // Patcher-type mods install under BepInEx/patchers, a sibling of plugins. Surface
             // them too so they can be seen and removed; this is read-only.
             ScanPatchers(pluginsDirectory, results, byFolderName);
+
+            // After the patchers are paired, because a mod is off only when BOTH of its folders
+            // hold nothing BepInEx would load.
+            foreach (var mod in results)
+                mod.Disabled = ModSwitch.IsDisabled(mod.PluginDirectory, mod.PatcherDirectory);
 
             Logger.Information("Mod scan complete: found {0} installed mod(s).", results.Count);
             return results;
@@ -224,6 +232,8 @@ namespace ValheimBakaLoader.Tools
                     InstalledVersion = UnknownVersion,
                     // No manifest means no declared dependencies; keep the array empty, not null.
                     Dependencies = Array.Empty<string>(),
+                    // No version for a note to be checked against, so the folder's own clock.
+                    InstalledUtc = FolderCreatedUtc(modDirectory),
                 };
             }
 
@@ -248,6 +258,8 @@ namespace ValheimBakaLoader.Tools
                     ? UnknownVersion
                     : manifest.VersionNumber.Trim();
 
+                var note = ModSourceMarkerFile.ReadTrusted(modDirectory, installedVersion);
+
                 return new InstalledMod
                 {
                     Author = author,
@@ -259,7 +271,14 @@ namespace ValheimBakaLoader.Tools
                     // and left a note saying so. The note is only believed when it names
                     // the same version the manifest does, so a folder replaced since is
                     // read as an ordinary Thunderstore install again.
-                    InstalledSource = ModSourceMarkerFile.ReadTrustedSource(modDirectory, installedVersion),
+                    InstalledSource = ModSourceMarkerFile.SourceOf(note),
+                    // The same note says when; a folder without one says when it was made,
+                    // which is the install for anything BakaLoader or a mod manager put there.
+                    InstalledUtc = note != null && note.InstalledUtc > DateTime.MinValue
+                        ? (note.InstalledUtc.Kind == DateTimeKind.Local
+                            ? note.InstalledUtc.ToUniversalTime()
+                            : DateTime.SpecifyKind(note.InstalledUtc, DateTimeKind.Utc))
+                        : FolderCreatedUtc(modDirectory),
                 };
             }
             catch (JsonException ex)
@@ -270,6 +289,49 @@ namespace ValheimBakaLoader.Tools
             catch (IOException ex)
             {
                 Logger.Warning("Could not read manifest.json in '{0}', skipping: {1}", folderName, ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>The folders a whole-zip install by an older build left inside a package folder.</summary>
+        private static readonly string[] NestedLayoutFolderNames = { "plugins", "patchers", "BepInEx", "config" };
+
+        /// <summary>
+        /// "nested" when a plugin folder still carries a plugins, patchers, BepInEx or config
+        /// folder of its own, which is what unpacking a whole package into it left behind before
+        /// 1.2.15, and "managed" otherwise. Read only; never throws.
+        /// </summary>
+        public static string LayoutOf(string pluginDirectory)
+        {
+            try
+            {
+                foreach (var dir in Directory.EnumerateDirectories(pluginDirectory))
+                {
+                    var name = Path.GetFileName(dir);
+                    foreach (var nested in NestedLayoutFolderNames)
+                        if (string.Equals(name, nested, StringComparison.OrdinalIgnoreCase)) return "nested";
+                }
+            }
+            catch
+            {
+                return null;
+            }
+
+            return "managed";
+        }
+
+        /// <summary>When a folder was made, in UTC, or null when that cannot be read.</summary>
+        private static DateTime? FolderCreatedUtc(string directory)
+        {
+            try
+            {
+                if (!Directory.Exists(directory)) return null;
+                var created = Directory.GetCreationTimeUtc(directory);
+                // A file system that keeps no creation time answers the start of its epoch.
+                return created.Year <= 1601 ? null : created;
+            }
+            catch
+            {
                 return null;
             }
         }

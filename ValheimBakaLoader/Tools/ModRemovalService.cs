@@ -145,14 +145,34 @@ namespace ValheimBakaLoader.Tools
                 }
 
                 // Back up then remove the matching patcher folder, when the mod has one. Only a
-                // NAMED subfolder inside patchers is ever removed; the shared "patchers" junction
-                // itself (which points at the base install) is never deleted or moved.
+                // NAMED subfolder inside patchers is ever removed. A realm whose patchers folder
+                // is still the junction to the base install that realms were given before 1.2.15
+                // gets its own copy first, so this removal takes the patcher from this realm and
+                // never from the base install every other realm also loaded it from.
                 if (hasPatcher)
                 {
                     var patcherFolderName = new DirectoryInfo(patcherDir).Name;
+                    InstallIsolationService.EnsureOwnPatchersFolder(GetBepInExRootFromDir(patcherDir), Logger);
                     var patcherBackup = Path.Combine(backupDir, "patcher", patcherFolderName);
                     CopyDirectory(patcherDir, patcherBackup);
                     Directory.Delete(patcherDir, recursive: true);
+                }
+
+                // A package laid out the managed way may also have put files in monomod and
+                // core under its own name. Those go with it. Nothing under BepInEx/config is
+                // ever touched here except the config files the host asked to remove below,
+                // and a core folder reached through a link belongs to another install.
+                foreach (var extra in new[] { "monomod", "core" })
+                {
+                    var root = GetBepInExRootFromDir(primaryDir);
+                    if (root == null || ModScanner.IsProtectedPatcher(folderName)) break;
+
+                    var kindRoot = Path.Combine(root, extra);
+                    var extraDir = Path.Combine(kindRoot, folderName);
+                    if (!Directory.Exists(extraDir) || BepInExService.IsReparsePoint(kindRoot)) continue;
+
+                    CopyDirectory(extraDir, Path.Combine(backupDir, extra, folderName));
+                    Directory.Delete(extraDir, recursive: true);
                 }
 
                 // Back up then remove each matched config file.
@@ -239,9 +259,10 @@ namespace ValheimBakaLoader.Tools
         /// folder name. Returns null when neither a patcher path nor a plugin folder is known.
         /// <para>
         /// Public because the refusal in front of a removal has to know whether this removal will
-        /// reach into <c>patchers</c> at all: that folder is a junction to the base install on
-        /// every isolated realm and is therefore shared, while <c>plugins</c> is copied and is the
-        /// realm's own. Read only, and the answer is the same one the removal itself uses.
+        /// reach into <c>patchers</c> at all: on a realm provisioned before 1.2.15 that folder is
+        /// still a junction to the base install until something writes there, while
+        /// <c>plugins</c> is copied and is the realm's own. Read only, and the answer is the same
+        /// one the removal itself uses.
         /// </para>
         /// </summary>
         public static string ResolvePatcherDirectory(InstalledMod mod)
