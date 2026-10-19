@@ -139,6 +139,22 @@ namespace ValheimBakaLoader.Game
         /// <summary>The mods this server was last seen running, for restore/export.</summary>
         public List<ModManifestEntry> ModManifest { get; set; }
 
+        // -- How the realm's chip looks in the sidebar --
+
+        /// <summary>
+        /// The Elder Futhark rune the realm's chip shows in place of the first letter of its
+        /// name, by the rune's name ("fehu", "raido"). Null means the letter. The page holds the
+        /// list and draws the letter for any name it does not know, so a hand edit can only ever
+        /// fall back to the letter.
+        /// </summary>
+        public string LookRune { get; set; }
+
+        /// <summary>
+        /// The colour the chip's letter or rune is drawn in, by name from the page's fixed list
+        /// ("ember", "moss"). Null means the chip's own colour.
+        /// </summary>
+        public string LookColor { get; set; }
+
         // -- Following a Gale profile --
 
         /// <summary>
@@ -225,6 +241,17 @@ namespace ValheimBakaLoader.Game
             return check.Ok ? check.Id : null;
         }
 
+        /// <summary>
+        /// A look name as it is stored: trimmed, at most 32 letters, and null when blank, so a
+        /// realm that never chose a look writes nothing at all.
+        /// </summary>
+        public static string NormalizeLook(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            var trimmed = value.Trim();
+            return trimmed.Length > 32 ? trimmed.Substring(0, 32) : trimmed;
+        }
+
         public static ServerPreferences FromFile(ServerPreferencesFile file)
         {
             var defaults = new ServerPreferences();
@@ -267,6 +294,8 @@ namespace ValheimBakaLoader.Game
                 Archived = file.Archived ?? defaults.Archived,
                 IsolatedInstall = file.IsolatedInstall ?? defaults.IsolatedInstall,
                 ModManifest = file.ModManifest ?? defaults.ModManifest,
+                LookRune = NormalizeLook(file.LookRune),
+                LookColor = NormalizeLook(file.LookColor),
                 GaleProfileId = StoredGaleProfileId(file.GaleProfileId),
                 GaleLastUpdatedAt = string.IsNullOrWhiteSpace(file.GaleLastUpdatedAt) ? defaults.GaleLastUpdatedAt : file.GaleLastUpdatedAt,
                 GaleUnticked = NormalizeUnticked(file.GaleUnticked),
@@ -311,6 +340,8 @@ namespace ValheimBakaLoader.Game
             Archived = Archived,
             IsolatedInstall = IsolatedInstall,
             ModManifest = ModManifest,
+            LookRune = NormalizeLook(LookRune),
+            LookColor = NormalizeLook(LookColor),
             GaleProfileId = StoredGaleProfileId(GaleProfileId),
             GaleLastUpdatedAt = string.IsNullOrWhiteSpace(GaleLastUpdatedAt) ? null : GaleLastUpdatedAt,
             // An empty list is written as null, the same as the other two fields of a realm

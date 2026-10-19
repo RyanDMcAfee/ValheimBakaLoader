@@ -8138,12 +8138,14 @@ namespace ValheimBakaLoader.Forms
             });
 
             // --- Config editor ---
+            // Every .cfg, .yaml, .yml, .json and .md under BepInEx/config, folders and all, as
+            // paths relative to it with forward slashes (issue 20). Read fresh on every call, so
+            // a file a mod wrote a moment ago is on the list the next time the hall asks.
             RegisterRpc("config.list", p =>
             {
                 var dir = GetConfigDirectory();
                 if (dir == null || !Directory.Exists(dir)) return Task.FromResult<object>(new List<string>());
-                return Task.FromResult<object>(
-                    Directory.GetFiles(dir, "*.cfg").Select(Path.GetFileName).ToList());
+                return Task.FromResult<object>(ConfigFiles.List(dir));
             });
 
             RegisterRpc("config.read", p =>
@@ -8173,6 +8175,27 @@ namespace ValheimBakaLoader.Forms
                 var path = ResolveConfigFilePath(p.Value<string>("file"));
                 File.WriteAllText(path, p.Value<string>("text") ?? "");
                 return Task.FromResult<object>(true);
+            });
+
+            // The config files that carry one mod's name, for the Configs section of that mod's
+            // row menu. Read off the disk on every call and matched by ConfigFiles.MatchForMod,
+            // which is the whole of the rule. A question about a realm this window is no longer
+            // on is answered with nothing rather than with this realm's files.
+            RegisterRpc("mods.configs", p =>
+            {
+                var forProfile = p.Value<string>("profile");
+                if (!string.IsNullOrWhiteSpace(forProfile)
+                    && !string.Equals(forProfile, ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult<object>(new { files = new List<string>(), stale = true });
+
+                var mod = FindInstalledMod(p);
+                var dir = GetConfigDirectory();
+                var all = dir == null ? new List<string>() : ConfigFiles.List(dir);
+                var folders = new[] { mod.PluginDirectory, mod.PatcherDirectory }
+                    .Where(d => !string.IsNullOrWhiteSpace(d))
+                    .Select(d => Path.GetFileName(d.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
+                var files = ConfigFiles.MatchForMod(all, mod.ModName, mod.Author, mod.ThunderstoreName, folders);
+                return Task.FromResult<object>(new { files });
             });
 
             // --- Logs ---
@@ -8841,10 +8864,15 @@ namespace ValheimBakaLoader.Forms
         {
             // Map each saved profile to its Archived flag so the strip can hide archived
             // realms while a collapsible "archived" section can still surface them.
-            var archivedByName = ServerPrefsProvider.LoadPreferences()
+            // The same read also carries each realm's chosen look, so the strip can draw a rune
+            // in a colour where the host picked one, and the chips and the archive flag can never
+            // disagree about which save they came from.
+            var storedByName = ServerPrefsProvider.LoadPreferences()
                 .Where(pref => !string.IsNullOrWhiteSpace(pref.ProfileName))
                 .GroupBy(pref => pref.ProfileName, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.First().Archived, StringComparer.OrdinalIgnoreCase); // value: bool
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            var archivedByName = storedByName
+                .ToDictionary(kv => kv.Key, kv => kv.Value.Archived, StringComparer.OrdinalIgnoreCase); // value: bool
 
             var names = archivedByName.Keys
                 .Concat(Sessions.Keys)
@@ -8868,6 +8896,8 @@ namespace ValheimBakaLoader.Forms
                     playersOnline,
                     active = string.Equals(name, active, StringComparison.OrdinalIgnoreCase),
                     archived = archivedByName.TryGetValue(name, out var a) && a,
+                    lookRune = storedByName.TryGetValue(name, out var look) ? look.LookRune : null,
+                    lookColor = look?.LookColor,
                 };
             }).ToList();
         }
@@ -11737,19 +11767,16 @@ namespace ValheimBakaLoader.Forms
             return Path.Combine(dir, "BepInEx", "config");
         }
 
+        // A path relative to BepInEx/config, checked by ConfigFiles.Resolve: no traversal, no
+        // rooted path, no link on the way down, an allowed extension, and a file that already
+        // exists. config.write goes through here too, so a save can only ever overwrite a file
+        // the list could have shown, never make a new one.
         private string ResolveConfigFilePath(string fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName)) throw new ArgumentException("file is required");
-
-            // Reject path traversal - only bare .cfg file names inside BepInEx/config are allowed.
-            if (fileName != Path.GetFileName(fileName) || !fileName.EndsWith(".cfg", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException($"Invalid config file name '{fileName}'");
-            }
-
             var dir = GetConfigDirectory()
                 ?? throw new InvalidOperationException("Server exe path is not configured");
-            return Path.Combine(dir, fileName);
+            return ConfigFiles.Resolve(dir, fileName);
         }
 
         private object ReadMaxPlayers()

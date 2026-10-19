@@ -221,15 +221,19 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             // The menu ends where the helper that writes a checked row begins: everything
             // after that belongs to the check itself and has its own inventory.
-            var menu = Between(AppJs(), "function modRowItems(mod){",
-                "/* What one check's answer does to the row");
+            // Since 1.2.15 the menu's own block ends at MODMENU-END, and what its new entries
+            // run (switching a mod off or on, reinstalling it) follows that marker.
+            var menu = Between(AppJs(), "function modRowItems(mod){", "/* MODMENU-END */");
 
             Assert.Equal(new[]
             {
                 "mods.menu.check_one", "mods.menu.check_one.tip.bundled",
                 "mods.menu.check_one.tip.no_package",
+                "mods.menu.disable", "mods.menu.enable",
                 "mods.menu.hexium", "mods.menu.install_hexium", "mods.menu.install_thunderstore",
+                "mods.menu.reinstall", "mods.menu.reinstall.tip.nested",
                 "mods.menu.remove", "mods.menu.thunderstore", "mods.menu.thunderstore.tip.missing",
+                "mods.menu.toggle.tip.running",
                 "mods.menu.update", "mods.menu.update.tip.current", "mods.menu.update.tip.hexium",
                 "mods.menu.update.tip.not_listed", "mods.menu.update.tip.patcher",
             }, IdsAskedIn(menu).ToArray());
@@ -329,8 +333,10 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var catalog = Catalog();
 
-            Assert.Equal("no .cfg scrolls found", Field(catalog["runes.list.empty"], "lore"));
-            Assert.Equal("no .cfg files found", Field(catalog["runes.list.empty"], "plain"));
+            // Since 1.2.15 the list holds .yaml, .json and .md files as well (issue 20), so the
+            // empty list no longer names .cfg; both registers are still there.
+            Assert.Equal("no config scrolls found", Field(catalog["runes.list.empty"], "lore"));
+            Assert.Equal("no config files found", Field(catalog["runes.list.empty"], "plain"));
 
             Assert.Equal("{file} has unsaved rune-work. Abandon it and open {next}?",
                          Field(catalog["runes.dirty.open.body"], "lore"));

@@ -1779,10 +1779,10 @@
       "translation": "[Ẋ Sort by installed version Ẋ] ẊẊẊẊẊẊẊẊ"
     },
     "mods.col.latest": {
-      "translation": "[Ẋ Latest Ẋ] ẊẊ"
+      "translation": "[Ẋ Thunderstore latest Ẋ] ẊẊẊẊẊẊ"
     },
     "mods.col.latest.title": {
-      "translation": "[Ẋ Sort by latest version Ẋ] ẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Installed may be a copy from Hexium, but this column is always the newest version on Thunderstore. Click to sort by it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "mods.col.status": {
       "translation": "[Ẋ Status Ẋ] ẊẊ"
@@ -1798,6 +1798,108 @@
     },
     "mods.col.possibly_outdated.tip.unknown": {
       "translation": "[Ẋ Valheim's last update date could not be read for this server, so this hint is left blank for every mod. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.col.author": {
+      "translation": "[Ẋ Author Ẋ] ẊẊ"
+    },
+    "mods.col.author.title": {
+      "translation": "[Ẋ Sort by author Ẋ] ẊẊẊẊẊ"
+    },
+    "mods.col.installed_on": {
+      "translation": "[Ẋ Installed on Ẋ] ẊẊẊẊ"
+    },
+    "mods.col.installed_on.title": {
+      "translation": "[Ẋ When this mod's files were put on this server. Click to sort by it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.col.updated": {
+      "translation": "[Ẋ Updated Ẋ] ẊẊẊ"
+    },
+    "mods.col.updated.title": {
+      "translation": "[Ẋ When the newest version on Thunderstore came out. Click to sort by it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.sort.statement": {
+      "translation": "[Ẋ sorted by {col}, {dir} Ẋ] ẊẊẊẊ",
+      "params": {
+        "col": "text",
+        "dir": "text"
+      }
+    },
+    "mods.sort.dir.asc": {
+      "translation": "[Ẋ ascending Ẋ] ẊẊẊ"
+    },
+    "mods.sort.dir.desc": {
+      "translation": "[Ẋ descending Ẋ] ẊẊẊẊ"
+    },
+    "mods.tag.installed.hexium.tip": {
+      "translation": "[Ẋ Installed from Hexium. The Thunderstore latest column may show a different version, and that is expected. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.tag.installed.thunderstore.tip": {
+      "translation": "[Ẋ Installed from Thunderstore Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.status.off": {
+      "translation": "[Ẋ Off Ẋ] Ẋ"
+    },
+    "mods.status.off.tip": {
+      "translation": "[Ẋ Switched off: its files are named .dll.old, so BepInEx skips them when the server starts. Switch it on again from the row menu. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.menu.disable": {
+      "translation": "[Ẋ Switch off Ẋ] ẊẊẊẊ"
+    },
+    "mods.menu.enable": {
+      "translation": "[Ẋ Switch on Ẋ] ẊẊẊ"
+    },
+    "mods.menu.toggle.tip.running": {
+      "translation": "[Ẋ Stop the server first: its files are loaded while it runs. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.menu.reinstall": {
+      "translation": "[Ẋ Reinstall this version Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "mods.menu.reinstall.tip.nested": {
+      "translation": "[Ẋ Lays the files out the way a mod manager would Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.menu.configs": {
+      "translation": "[Ẋ Configs Ẋ] ẊẊẊ"
+    },
+    "mods.menu.configs.none": {
+      "translation": "[Ẋ No config files carry this mod's name Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.menu.configs.loading": {
+      "translation": "[Ẋ Looking for config files… Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "mods.disable.done.toast": {
+      "translation": "[Ẋ {mod} is switched off. It stays off until you switch it on again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text"
+      },
+      "mark": "ᚱ"
+    },
+    "mods.enable.done.toast": {
+      "translation": "[Ẋ {mod} is switched on. It loads the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text"
+      },
+      "mark": "ᚱ"
+    },
+    "mods.toggle.failed.toast": {
+      "translation": "[Ẋ {mod} was not changed: {detail} Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text",
+        "detail": "text"
+      },
+      "mark": "ᚦ"
+    },
+    "mods.reinstall.server_running.toast": {
+      "translation": "[Ẋ The server '{name}' is running on this install, so nothing was reinstalled. Stop it first, then try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.reinstall.realm_changed.toast": {
+      "translation": "[Ẋ The server on screen changed before the reinstall began, so nothing was reinstalled. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.toggle.preview.toast": {
+      "translation": "[Ẋ Switching a mod off or on happens in the app Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚱ"
     },
     "mods.tag.patcher": {
       "translation": "[Ẋ patcher Ẋ] ẊẊẊ"
@@ -2336,7 +2438,7 @@
       "translation": "[Ẋ no scroll carries that Ẋ] ẊẊẊẊẊẊẊ"
     },
     "runes.list.empty": {
-      "translation": "[Ẋ no .cfg scrolls found Ẋ] ẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ no config scrolls found Ẋ] ẊẊẊẊẊẊẊ"
     },
     "runes.find.no_match": {
       "translation": "[Ẋ no match Ẋ] ẊẊẊ"
@@ -4269,6 +4371,148 @@
     },
     "realm.menu.stop_first.tip": {
       "translation": "[Ẋ Stop the server first Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "realm.menu.look": {
+      "translation": "[Ẋ Customize look… Ẋ] ẊẊẊẊẊ"
+    },
+    "realm.look.title": {
+      "translation": "[Ẋ How {name} looks in the sidebar Ẋ] ẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "realm.look.note": {
+      "translation": "[Ẋ A rune in place of the first letter of the name, and a colour for it. Saved with this server's settings. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.look.rune.label": {
+      "translation": "[Ẋ Rune Ẋ] ẊẊ"
+    },
+    "realm.look.rune.none": {
+      "translation": "[Ẋ The letter Ẋ] ẊẊẊẊ"
+    },
+    "realm.look.rune.none.tip": {
+      "translation": "[Ẋ The first letter of the server's name, as it was Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.look.color.label": {
+      "translation": "[Ẋ Colour Ẋ] ẊẊ"
+    },
+    "realm.look.color.none": {
+      "translation": "[Ẋ As it was Ẋ] ẊẊẊ"
+    },
+    "realm.look.saved.toast": {
+      "translation": "[Ẋ {name} has its new look Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      },
+      "mark": "ᚹ"
+    },
+    "realm.look.rune.uruz": {
+      "translation": "[Ẋ Uruz Ẋ] ẊẊ"
+    },
+    "realm.look.rune.uruz.tip": {
+      "translation": "[Ẋ the aurochs: strength Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "realm.look.rune.thurisaz": {
+      "translation": "[Ẋ Thurisaz Ẋ] ẊẊẊ"
+    },
+    "realm.look.rune.thurisaz.tip": {
+      "translation": "[Ẋ the giant: a thorn, a force to reckon with Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.look.rune.ansuz": {
+      "translation": "[Ẋ Ansuz Ẋ] ẊẊ"
+    },
+    "realm.look.rune.ansuz.tip": {
+      "translation": "[Ẋ a god: Odin, the word and the breath Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.look.rune.gebo": {
+      "translation": "[Ẋ Gebo Ẋ] ẊẊ"
+    },
+    "realm.look.rune.gebo.tip": {
+      "translation": "[Ẋ a gift, and the bond it makes Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.look.rune.wunjo": {
+      "translation": "[Ẋ Wunjo Ẋ] ẊẊ"
+    },
+    "realm.look.rune.wunjo.tip": {
+      "translation": "[Ẋ joy Ẋ] Ẋ"
+    },
+    "realm.look.rune.naudiz": {
+      "translation": "[Ẋ Naudiz Ẋ] ẊẊ"
+    },
+    "realm.look.rune.naudiz.tip": {
+      "translation": "[Ẋ need Ẋ] ẊẊ"
+    },
+    "realm.look.rune.isa": {
+      "translation": "[Ẋ Isa Ẋ] Ẋ"
+    },
+    "realm.look.rune.isa.tip": {
+      "translation": "[Ẋ ice Ẋ] Ẋ"
+    },
+    "realm.look.rune.eihwaz": {
+      "translation": "[Ẋ Eihwaz Ẋ] ẊẊ"
+    },
+    "realm.look.rune.eihwaz.tip": {
+      "translation": "[Ẋ the yew Ẋ] ẊẊẊ"
+    },
+    "realm.look.rune.algiz": {
+      "translation": "[Ẋ Algiz Ẋ] ẊẊ"
+    },
+    "realm.look.rune.algiz.tip": {
+      "translation": "[Ẋ the elk: protection Ẋ] ẊẊẊẊẊẊ"
+    },
+    "realm.look.rune.berkanan": {
+      "translation": "[Ẋ Berkanan Ẋ] ẊẊẊ"
+    },
+    "realm.look.rune.berkanan.tip": {
+      "translation": "[Ẋ the birch: new growth Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "realm.look.rune.ehwaz": {
+      "translation": "[Ẋ Ehwaz Ẋ] ẊẊ"
+    },
+    "realm.look.rune.ehwaz.tip": {
+      "translation": "[Ẋ the horse Ẋ] ẊẊẊ"
+    },
+    "realm.look.rune.laguz": {
+      "translation": "[Ẋ Laguz Ẋ] ẊẊ"
+    },
+    "realm.look.rune.laguz.tip": {
+      "translation": "[Ẋ water, the lake Ẋ] ẊẊẊẊẊ"
+    },
+    "realm.look.rune.ingwaz": {
+      "translation": "[Ẋ Ingwaz Ẋ] ẊẊ"
+    },
+    "realm.look.rune.ingwaz.tip": {
+      "translation": "[Ẋ Ing, the god of the fields Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "realm.look.rune.othala": {
+      "translation": "[Ẋ Othala Ẋ] ẊẊ"
+    },
+    "realm.look.rune.othala.tip": {
+      "translation": "[Ẋ heritage, the home Ẋ] ẊẊẊẊẊẊ"
+    },
+    "realm.look.color.ember": {
+      "translation": "[Ẋ Ember Ẋ] ẊẊ"
+    },
+    "realm.look.color.gold": {
+      "translation": "[Ẋ Gold Ẋ] ẊẊ"
+    },
+    "realm.look.color.amber": {
+      "translation": "[Ẋ Amber Ẋ] ẊẊ"
+    },
+    "realm.look.color.moss": {
+      "translation": "[Ẋ Moss Ẋ] ẊẊ"
+    },
+    "realm.look.color.frost": {
+      "translation": "[Ẋ Frost Ẋ] ẊẊ"
+    },
+    "realm.look.color.blood": {
+      "translation": "[Ẋ Blood Ẋ] ẊẊ"
+    },
+    "realm.look.color.bronze": {
+      "translation": "[Ẋ Bronze Ẋ] ẊẊ"
+    },
+    "realm.look.color.bone": {
+      "translation": "[Ẋ Bone Ẋ] ẊẊ"
     },
     "realm.renamed.toast": {
       "translation": "[Ẋ Realm renamed · {name} Ẋ] ẊẊẊẊẊ",

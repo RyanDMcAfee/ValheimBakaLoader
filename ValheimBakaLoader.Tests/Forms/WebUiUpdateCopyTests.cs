@@ -352,7 +352,10 @@ namespace ValheimBakaLoader.Tests.Forms
             // Thunderstore: they count the ones that landed and the ones that were not available.
             // The sentence for the build itself carries no mark: it is also the failed row's
             // words, and the toast that prints it leads with its own rune.
-            Assert.Equal(241, marked.Count);
+            // 246 with 1.2.15's five: a mod switched off, switched on, a switch the host side
+            // refused, the preview's note that switching happens in the app, and a realm chip's
+            // new look saved.
+            Assert.Equal(246, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

@@ -92,9 +92,10 @@ const STUB_RPC = `async () => {
 }`;
 
 const TABLES = {
+  /* Seven since 1.2.15: Author and the two dates joined the Mods table (issue 20). */
   mods: {
     page: "mods", head: "#page-mods th.sortable", th: "#page-mods th", body: "#modTable",
-    cols: ["name", "installed", "latest", "status"], state: "modSort",
+    cols: ["name", "author", "installed", "latest", "installedOn", "updated", "status"], state: "modSort",
   },
   vikings: {
     page: "vikings", head: "#page-vikings th.sortable", th: "#page-vikings th", body: "#vikTable",
@@ -118,8 +119,12 @@ const say = (ok, name, said) => {
   if (!ok) failures++;
 };
 
-/* What one click on one header comes to, column by column, with the table put back into its
-   own order after each (the third click is dir 0, app.js:3025). */
+/* What one click on one header comes to, column by column, with the table put back where it
+   rests after each: the third click on a column returns the table to its own order, which for
+   the roster is no column at all and for the Mods table, since 1.2.15, is Name A to Z. Name is
+   the one column whose two extra clicks leave it reversed rather than at rest (its first click
+   reverses the order the table already rests in); the next column's click starts from there
+   on a fresh window and after every event alike, so the comparison is still like for like. */
 async function ask(page, t, when) {
   const read = () => page.evaluate(new Function("return " + READ)(), t);
   await page.evaluate(p => { modalClose(); document.querySelector('[data-page="' + p + '"]').click(); }, t.page);
@@ -179,6 +184,11 @@ async function reseed(page) { await page.evaluate(new Function("return " + RESEE
 
 async function switchTo(page, realm) {
   await page.evaluate(r => document.querySelector('.srvchip[data-srv="' + r + '"]').click(), realm);
+  await page.waitForTimeout(250);
+  /* The preview opens with unsaved Settings, and a switch away from unsaved work asks first
+     (realm.switch.unsaved). Discarding is the answer that lets the switch this is about go
+     ahead; without it the switch never lands and nothing here is asked at all. */
+  await page.evaluate(() => { const ok = document.querySelector("#modalBg.open #mOk"); if (ok) ok.click(); });
   await page.waitForTimeout(450);
   await reseed(page);
   await page.waitForTimeout(150);

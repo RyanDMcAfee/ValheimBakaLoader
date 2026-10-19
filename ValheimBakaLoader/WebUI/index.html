@@ -160,7 +160,7 @@
 
         <!-- ============ PAGE: HEARTH ============ -->
         <section class="page active" id="page-hearth">
-          <div class="pagehead">
+          <div class="pagehead floating">
             <h1 data-i18n="hearth.head.title"><span class="r">ᚠ</span>DASHBOARD</h1>
             <span class="hnorse" data-i18n="common.norse.hearth">Hearth</span>
             <span class="sub" id="hearthSub">Final Sunset · dedicated server ops</span>
@@ -192,7 +192,7 @@
                    turns it on. Static both ways: the walker owns the labels and the tooltips. The
                    copy gate holds both ids inside this group and off the Players page. -->
               <button class="btn btn-ghost btn-sm" id="cleanseBtn" title="Clears the cheat marks BakaLoader 1.0.9 to 1.1.2 left on things it spawned. Needs an empty server." data-i18n="vikings.cleanse.label" data-i18n-title="vikings.cleanse.title">Clear cheat marks</button>
-              <div class="togglerow" id="rowCleanseArmed" style="flex:0 0 auto;gap:10px;height:30px">
+              <div class="togglerow headrow" id="rowCleanseArmed">
                 <span class="tl" data-i18n="vikings.cleanse.armed.label">Clear cheat marks when the realm is next empty</span>
                 <span class="toggle" id="tCleanseArmed" data-t title="Waits for a minute with nobody on this realm, runs the same sweep, writes what it cleared to the Saga and then turns itself off." data-i18n-title="vikings.cleanse.armed.title"></span>
               </div>
@@ -334,7 +334,7 @@
                 <div class="togglerow" id="rowDetailedLog"><span class="tl" data-i18n="hearth.upkeep.connection.detailed_log">Detailed log</span><span class="toggle" id="tDetailedLog" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.connection.detailed_log.note">Writes a line into the application log when a request goes out and a line when it comes back: the address and the proxy in front of it, then the status, the size and how long the answer took to start arriving, or the exception when it failed. No header, no body, no query string and no webhook key goes in with it, so the file stays safe to attach to a bug report. Leave it off unless you are chasing a problem, because the log grows fast.</div>
                 <div class="subval" id="detailedLogForced" style="margin:2px 0 4px;display:none;color:var(--amber)" data-i18n="hearth.upkeep.connection.detailed_log.forced">BakaLoader was started with --verbose, so the detailed log stays on until you close it. The switch follows that and cannot be moved here.</div>
-                <div class="togglerow" style="height:auto;padding:6px 0">
+                <div class="togglerow buttonrow">
                   <span class="tl" data-i18n="hearth.upkeep.connection.test.label">Test the connection</span>
                   <button class="btn btn-ghost btn-sm" id="btnNetTest" title="Asks thunderstore.io the way BakaLoader does, and says which of the two switches would have helped" data-i18n="hearth.upkeep.connection.test" data-i18n-title="hearth.upkeep.connection.test.title">Test connection</button>
                 </div>
@@ -388,9 +388,12 @@
 
         <!-- ============ PAGE: MODS ============ -->
         <section class="page" id="page-mods">
-          <div class="pagehead">
+          <div class="pagehead floating">
             <h1 data-i18n="mods.head.title"><span class="r">ᚱ</span>MODS</h1>
             <span class="sub" id="modsSub">63 loaded · Thunderstore index · last scan 21:38</span>
+            <!-- Quiet while the table rests on Name, A to Z; says the column and the direction
+                 the moment a header has moved it anywhere else. Written by renderMods. -->
+            <span class="sub modsortline" id="modsSortLine" role="status" aria-live="polite"></span>
             <!-- Narrows the rows on screen and nothing else: every count in this header, the
                  Update all button and the unattended paths keep reading the whole list. -->
             <input id="modSearch" class="pagesearch" placeholder="search the mods…" spellcheck="false" autocomplete="off" aria-label="Search the mods" data-i18n-aria="mods.search.aria" data-i18n-placeholder="mods.search.placeholder">
@@ -420,9 +423,12 @@
           <div class="card" style="padding:0"><div style="height:6px"></div>
             <table id="modsTable">
               <thead><tr>
-                <th style="width:36%" class="sortable" data-sort="name" title="Sort by name" data-i18n="mods.col.name" data-i18n-title="common.sort.by_name">Name<span class="sortmark"></span></th>
+                <th style="width:24%" class="sortable" data-sort="name" title="Sort by name" data-i18n="mods.col.name" data-i18n-title="common.sort.by_name">Name<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="author" title="Sort by author" data-i18n="mods.col.author" data-i18n-title="mods.col.author.title">Author<span class="sortmark"></span></th>
                 <th class="sortable" data-sort="installed" title="Sort by installed version" data-i18n="mods.col.installed" data-i18n-title="mods.col.installed.title">Installed<span class="sortmark"></span></th>
-                <th class="sortable" data-sort="latest" title="Sort by latest version" data-i18n="mods.col.latest" data-i18n-title="mods.col.latest.title">Latest<span class="sortmark"></span></th>
+                <th class="sortable" data-sort="latest" title="Installed may be a copy from Hexium, but this column is always the newest version on Thunderstore. Click to sort by it." data-i18n="mods.col.latest" data-i18n-title="mods.col.latest.title">Thunderstore latest<span class="sortmark"></span></th>
+                <th class="sortable mod-date" data-sort="installedOn" title="When this mod's files were put on this server. Click to sort by it." data-i18n="mods.col.installed_on" data-i18n-title="mods.col.installed_on.title">Installed on<span class="sortmark"></span></th>
+                <th class="sortable mod-date" data-sort="updated" title="When the newest version on Thunderstore came out. Click to sort by it." data-i18n="mods.col.updated" data-i18n-title="mods.col.updated.title">Updated<span class="sortmark"></span></th>
                 <th class="sortable" data-sort="status" title="Sort by update status" data-i18n="mods.col.status" data-i18n-title="mods.col.status.title">Status<span class="sortmark"></span></th>
                 <th class="mod-po" id="thPossiblyOutdated" title="The newest version on Thunderstore came out before Valheim last updated, so it may not account for the current game version. It is a hint, not proof the mod is broken." data-i18n="mods.col.possibly_outdated">Possibly outdated</th>
               </tr></thead>
@@ -481,7 +487,7 @@
              and the button itself is hidden; worldTab() moves it. It starts on server because
              that is the tab the hall opens on. -->
         <section class="page" id="page-world" data-wtab="server">
-          <div class="pagehead">
+          <div class="pagehead floating">
             <h1 data-i18n="world.head.title"><span class="r">ᛃ</span>SETTINGS</h1>
             <span class="hnorse" data-i18n="common.norse.world">World</span>
             <span class="sub" data-i18n="world.head.sub">server and world configuration</span>
@@ -718,7 +724,7 @@
                      language is the globe's; this one is the language the people ON the
                      server are written to in, which is a different audience and a different
                      choice. app.js fills the options from the packs actually installed. -->
-                <div class="togglerow" style="height:auto;padding:6px 0">
+                <div class="togglerow buttonrow">
                   <span class="tl" data-i18n="settings.player_messages.label">Messages to players</span>
                   <!-- The one option every install has, spelled out here the way every
                        other static label is, so the select reads correctly on the first
@@ -735,7 +741,7 @@
                    setting rather than for an icon. app.js fills the list from the packs that
                    are actually installed, and the download offer is the globe's own. -->
               <div class="microlabel" style="margin:14px 0 2px" data-i18n="app.sec.language"><span class="r">ᛞ</span>Language</div>
-              <div class="togglerow" style="height:auto;padding:6px 0">
+              <div class="togglerow buttonrow">
                 <span class="tl" data-i18n="app.language.label">Interface language</span>
                 <select id="selAppLang" style="max-width:190px"><option value="en">English</option></select>
               </div>
@@ -749,7 +755,7 @@
                    Extra large also raises the window's own minimum size, because
                    zooming the page is the same thing as making the window smaller from the
                    layout's side. -->
-              <div class="togglerow" style="height:auto;padding:6px 0">
+              <div class="togglerow buttonrow">
                 <span class="tl" data-i18n="app.textsize.label">Text size</span>
                 <select id="selTextSize" style="max-width:190px">
                   <option value="normal" data-i18n="app.textsize.normal">Normal</option>
@@ -964,8 +970,8 @@
               <!-- Outside the .field on purpose: .field label is the small uppercase caption,
                    and these two labels are the radios' own words. -->
               <div id="heraldModKinds" role="radiogroup" aria-label="Which mod manager the code is for" data-i18n-aria="herald.modcode.kinds.aria" style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 0">
-                <label class="togglerow" style="flex:1 1 140px;height:auto;padding:6px 10px;justify-content:flex-start;cursor:pointer"><input type="radio" name="heraldModKind" id="heraldModKindTs" value="thunderstore" checked style="margin:0 8px 0 0"><span class="tl" data-i18n="herald.modcode.kind.thunderstore">Thunderstore code</span></label>
-                <label class="togglerow" style="flex:1 1 140px;height:auto;padding:6px 10px;justify-content:flex-start;cursor:pointer"><input type="radio" name="heraldModKind" id="heraldModKindGale" value="gale" style="margin:0 8px 0 0"><span class="tl" data-i18n="herald.modcode.kind.gale">Gale code</span></label>
+                <label class="togglerow buttonrow choicerow"><input type="radio" name="heraldModKind" id="heraldModKindTs" value="thunderstore" checked style="margin:0 8px 0 0"><span class="tl" data-i18n="herald.modcode.kind.thunderstore">Thunderstore code</span></label>
+                <label class="togglerow buttonrow choicerow"><input type="radio" name="heraldModKind" id="heraldModKindGale" value="gale" style="margin:0 8px 0 0"><span class="tl" data-i18n="herald.modcode.kind.gale">Gale code</span></label>
               </div>
               <div class="subval" style="margin:4px 0 0" data-i18n="herald.modcode.note">Players paste this into their mod manager to get the same mods.</div>
               <div class="wiz-stat dim" id="heraldModCodeStat" style="margin:2px 0 6px"></div>

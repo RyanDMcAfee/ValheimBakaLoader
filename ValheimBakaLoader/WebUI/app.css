@@ -438,11 +438,31 @@ html.lang-pending body>*{visibility:hidden}
 .pages::after{bottom:0;background:linear-gradient(180deg,rgba(26,29,33,0),rgba(26,29,33,.85) 55%,#121418)}
 .pages.cue-up::before{opacity:1}
 .pages.cue-down::after{opacity:1}
-.page{position:absolute;inset:0;padding:20px 22px;overflow-y:auto;display:none;
+/* right:6px is the width of the right-hand resize grip (.grip[data-edge=right]). The grip
+   sits on the window's last 6px and above everything at z-index 90, and every hall's
+   scrollbar used to sit in that same strip, so two thirds of the thumb belonged to the grip
+   and a press there resized the window (issue 20). Moving the hall in by the grip's width
+   leaves the grip on the window's own edge and the whole scrollbar beside it. */
+.page{position:absolute;inset:0;right:6px;padding:20px 22px;overflow-y:auto;display:none;
   animation:pageIn .28s var(--ease)}
 .page.active{display:block}
 @keyframes pageIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .pagehead{flex:none;display:flex;align-items:baseline;gap:14px;row-gap:6px;flex-wrap:wrap;margin-bottom:16px}
+/* The head that stays on screen while its hall scrolls, on the Dashboard, Mods and Settings
+   (issue 20, from the CSS Truncated sent). It reaches out over the hall's own padding so its
+   ground covers the full width, sticks once that padding has scrolled away, and carries the
+   shadow the hall's top edge used to: while the hall is scrolled the fade over the pane's top
+   is switched off and the head casts the shadow instead, so the rows slide under it. */
+.page>.pagehead.floating{position:sticky;top:-20px;z-index:4;background:var(--iron);
+  margin:-20px -22px 4px;padding:20px 22px 12px}
+.pages:has(>.page.active>.pagehead.floating)::before{display:none}
+/* A row brought into view (a palette jump, a flashed setting, a focused field) lands below the
+   head rather than behind it. The Mods head is the tallest at two lines of buttons. */
+.page:has(>.pagehead.floating){scroll-padding-top:120px}
+.pages.cue-up>.page.active>.pagehead.floating{box-shadow:0 14px 14px -14px rgba(0,0,0,.85)}
+/* The sentence that says how the Mods table is sorted. Empty while it rests on Name. */
+.pagehead .modsortline{color:var(--ember-hi)}
+.pagehead .modsortline:empty{display:none}
 /* Hall header: plain title, then the Norse name as a caption in the same serif. */
 .hnorse{font-family:var(--serif-small);font-size:var(--t11);font-weight:600;letter-spacing:3px;
   text-transform:uppercase;color:var(--ember);white-space:nowrap}
@@ -895,6 +915,14 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 /* And the same column folds away when not one row has anything to put in it. A header
    over twenty two blank cells is a column that asks a question nobody answered. */
 #modsTable.po-empty .mod-po{display:none}
+/* The two dates read as days and never wrap. */
+#page-mods .mod-date{white-space:nowrap}
+/* The installed version in the Hexium chip's own style, with the case and size of a version
+   number rather than of a tag. */
+.modchip.modver{font-size:10px;letter-spacing:.3px;text-transform:none;font-weight:600;vertical-align:0}
+/* A mod switched off: quieter, the way an offline viking's row is, and still every word
+   readable. Its Off pill says why. */
+tbody tr.off td,tbody tr.off td.mono,tbody tr.off td strong{color:var(--bone-faint-text)}
 
 /* context menu mock */
 .ctxwrap{position:relative}
@@ -913,6 +941,11 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 .ctxmenu .ci.danger:hover{background:rgba(213,69,60,.12);color:#F08078}
 .ctxmenu hr{border:0;border-top:1px solid rgba(140,109,63,.25);margin:5px 6px}
 .ctxhead{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint-text);padding:5px 10px 4px}
+.ctxsec{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint-text);padding:4px 10px 2px}
+.ctxmenu.wide,.ctxmenu.ctxfixed.wide{width:340px}
+.ctxmenu.wide .ci .cilbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctxmenu .cfgpre{color:var(--bone-faint-text)}
+.ctxmenu .ci b{font-weight:700}
 
 /* ============ WORLD FORM ============ */
 .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
@@ -953,8 +986,26 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 /* A .field select owns its whole column; one in a togglerow shares the line with the label
    it belongs to, so it takes what its own max-width allows and no more. */
 .togglerow select{flex:0 1 auto}
+/* One rule for every settings row: the box, the padding either side and how the label and its
+   control share the line. A switch row is 34px tall. A row whose control is a button or a
+   select (.buttonrow, beside .togglerow so every .togglerow rule still reaches it) takes the
+   height its control needs and the same 12px either side, which is what issue 20 found
+   missing: those rows used to carry an inline padding:6px 0 that took the side padding away,
+   so their labels sat against the border while every switch row's did not. No inline style
+   on a row sets its padding now. */
 .togglerow{display:flex;align-items:center;justify-content:space-between;height:34px;
   padding:0 var(--s3);background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:var(--r2)}
+.togglerow.buttonrow{height:auto;min-height:34px;padding:var(--s1) var(--s3);gap:var(--s3)}
+/* A button row whose label runs to two lines (a heading and a note under it) starts the
+   control level with the heading rather than centred on the pair. */
+.togglerow.buttonrow.top{align-items:flex-start;padding-top:7px;padding-bottom:7px}
+/* A pair of radio rows side by side (the Discord post's code kind): each takes half the line
+   and holds its radio at the start rather than the end. */
+.togglerow.buttonrow.choicerow{flex:1 1 140px;justify-content:flex-start;gap:0;cursor:pointer}
+/* The one switch row that lives in a hall's head (Clear cheat marks when the realm is next
+   empty, in the Dashboard's World upkeep group): as tall as the buttons beside it, and as
+   wide as its words. */
+.togglerow.headrow{flex:0 0 auto;gap:10px;height:30px}
 .togglerow .tl{font-size:11.5px;color:var(--bone)}
 .toggle{width:38px;height:20px;border-radius:20px;background:#2A2E34;border:1px solid #3A3F46;
   position:relative;cursor:pointer;transition:all .2s var(--ease);flex:none}
@@ -1485,6 +1536,8 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 .cfg-item:hover{background:rgba(255,255,255,.035);color:var(--bone)}
 .cfg-item.sel{background:var(--ember-dim);color:var(--ember-hi)}
 .cfg-item .cfgname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The folders a config file sits in, ahead of its name and quieter than it. */
+.cfg-item .cfgpre{color:var(--bone-faint-text)}
 .cfg-item .dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex:none;
   margin-left:auto;box-shadow:0 0 6px rgba(232,169,60,.8)}
 .cfg-edcard{box-shadow:inset 0 2px 12px rgba(0,0,0,.35)}
@@ -1539,6 +1592,39 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 .srvchip .srvbadge{position:absolute;right:-5px;bottom:-5px;min-width:15px;height:15px;padding:0 3px;
   border-radius:8px;background:var(--ember);color:#1A1108;font-size:9px;font-weight:800;
   display:flex;align-items:center;justify-content:center;font-family:var(--mono)}
+/* A chip with a look (issue 20): the rune or letter in one of eight colours the window already
+   uses, glowing the way the active chip glows, and a rune drawn a little larger than a letter
+   so it reads at the same weight. */
+.srvchip.rune .srvinit{font-size:18px;font-weight:400}
+.srvchip.look-ember .srvinit{color:var(--ember);text-shadow:0 0 8px rgba(255,122,26,.55)}
+.srvchip.look-gold .srvinit{color:var(--ember-hi);text-shadow:0 0 8px rgba(255,179,92,.55)}
+.srvchip.look-amber .srvinit{color:var(--amber);text-shadow:0 0 8px rgba(232,169,60,.55)}
+.srvchip.look-moss .srvinit{color:var(--moss-text);text-shadow:0 0 8px rgba(118,167,99,.55)}
+.srvchip.look-frost .srvinit{color:var(--cold-hi);text-shadow:0 0 8px rgba(143,180,201,.55)}
+.srvchip.look-blood .srvinit{color:var(--blood-text);text-shadow:0 0 8px rgba(252,108,99,.55)}
+.srvchip.look-bronze .srvinit{color:var(--bronze-text);text-shadow:0 0 8px rgba(198,164,110,.55)}
+.srvchip.look-bone .srvinit{color:var(--bone);text-shadow:0 0 8px rgba(232,226,213,.55)}
+.lookhead{display:flex;justify-content:center;margin-top:12px}
+.lookgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.lookgrid.colors{grid-template-columns:repeat(3,1fr)}
+.lookrune,.lookcolor{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;
+  background:var(--iron-deeper);border:1px solid var(--bronze);border-radius:var(--r2);
+  color:var(--bone);font-family:var(--sans);transition:border-color .15s var(--ease)}
+.lookrune{flex-direction:column;gap:2px;padding:6px 4px}
+.lookrune .lg{font-size:18px;line-height:1.1}
+.lookrune .ln,.lookcolor .ln{font-size:10.5px;color:var(--bone-dim)}
+.lookrune:hover,.lookcolor:hover{border-color:var(--bronze-hi)}
+.lookrune.on,.lookcolor.on{border-color:var(--ember);box-shadow:0 0 0 2px rgba(255,122,26,.18)}
+.lookrune:focus-visible,.lookcolor:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.lookcolor .sw{width:14px;height:14px;border-radius:50%;flex:none;border:1px solid var(--bronze-hi);background:transparent}
+.lookcolor.look-ember .sw{background:var(--ember)}
+.lookcolor.look-gold .sw{background:var(--ember-hi)}
+.lookcolor.look-amber .sw{background:var(--amber)}
+.lookcolor.look-moss .sw{background:var(--moss-text)}
+.lookcolor.look-frost .sw{background:var(--cold-hi)}
+.lookcolor.look-blood .sw{background:var(--blood-text)}
+.lookcolor.look-bronze .sw{background:var(--bronze-text)}
+.lookcolor.look-bone .sw{background:var(--bone)}
 .srvchip.add{border-style:dashed;color:var(--bone-faint-text)}
 .srvchip.add:hover{color:var(--ember-hi);border-color:var(--ember)}
 .srvsep{width:44px;height:1px;background:rgba(140,109,63,.25);margin:2px 0 4px;flex:none}

@@ -192,6 +192,9 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.col.name", "common.sort.by_name", "mods.col.installed",
                 "mods.col.installed.title", "mods.col.latest", "mods.col.latest.title",
                 "mods.col.status", "mods.col.status.title", "mods.col.possibly_outdated",
+                // 1.2.15 (issue 20): Author as a column of its own, and the two dates.
+                "mods.col.author", "mods.col.author.title", "mods.col.installed_on",
+                "mods.col.installed_on.title", "mods.col.updated", "mods.col.updated.title",
                 "mods.search.placeholder",
                 // The Mod folder button. The walker owns its label; app.js only paints its state.
                 "mods.folder.label",

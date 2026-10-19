@@ -74,6 +74,11 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("isolatedInstall")] public bool? IsolatedInstall { get; set; }
         [JsonProperty("modManifest")] public List<ModManifestEntry> ModManifest { get; set; }
 
+        // -- The chip's look in the sidebar --
+
+        [JsonProperty("lookRune")] public string LookRune { get; set; }
+        [JsonProperty("lookColor")] public string LookColor { get; set; }
+
         // -- Following a Gale profile --
 
         [JsonProperty("galeProfileId")] public string GaleProfileId { get; set; }

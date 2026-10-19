@@ -372,7 +372,13 @@ async function probe() {
           const r = document.querySelector(sel).getBoundingClientRect();
           return { l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom) };
         };
-        return { head: box("#page-hearth .pagehead"), group: box("#worldUpkeep"),
+        /* The head's CONTENT edge. Since 1.2.15 the head stays on screen while the hall
+           scrolls (issue 20), and to do that it reaches out over the hall's own padding and
+           pads itself back in by the same amount, so its border box is wider than the line its
+           buttons sit on by exactly that padding. */
+        const head = box("#page-hearth .pagehead");
+        head.r -= Math.round(parseFloat(getComputedStyle(document.querySelector("#page-hearth .pagehead")).paddingRight) || 0);
+        return { head, group: box("#worldUpkeep"),
           clear: box("#clearDropsBtn"), sail: box("#sailBtn") };
       });
       const mid = b => (b.t + b.b) / 2;

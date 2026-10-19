@@ -359,7 +359,11 @@ const S={
   startWinNoticeAlso:null,
   startWinNoticeAlsoPath:"",
 
-  modSort:{col:null,dir:0},   // mods table sort: col name|installed|latest|status, dir 0=default 1=asc 2=desc
+  /* Mods table sort: col name|author|installed|latest|installedOn|updated|status, dir 1 = the
+     column's first click, 2 = reversed. It starts on Name, A to Z (issue 20: the scan's own
+     order put the list in author order, which is the column the row showed least), and a
+     third click on any column comes back here rather than to the scan order. */
+  modSort:{col:"name",dir:1},
   /* What is typed in the Mods search box. It lives here rather than in the DOM so a
      re-render keeps it, and it narrows the rows on screen ONLY: every count, the Update
      all button and the unattended paths read the whole list. Cleared on a profile switch,
@@ -1898,6 +1902,68 @@ async function refreshServers(){
   const r=await Native.call("servers.list",{}).catch(()=>null);
   if(Array.isArray(r)){S.servers=r;renderServerChips();}
 }
+/* CHIPLOOK-BEGIN: how a realm's chip looks (issue 20). A host can put a rune in place of the
+   first letter of the name, and a colour on it, chosen from fixed lists so every chip still
+   sits in the window's palette. scripts/ui/chip_look_selftest.js draws chips from this block.
+   The runes are the Elder Futhark ones the sidebar's halls do not already stand for (fehu,
+   mannaz, raido, kaunan, jera, dagaz, sowilo, hagalaz and tiwaz are the halls' own), less
+   perthro, whose meaning nobody agrees on: a rune on a chip should mean something. Stored on
+   the profile by name ("uruz"), so the glyph can never be anything but one of these. */
+/* Each entry names its two sentences by id, so the catalog gate can see both. */
+const CHIP_RUNES=[
+  {key:"uruz",g:"\u16A2",nameId:"realm.look.rune.uruz",tipId:"realm.look.rune.uruz.tip"},
+  {key:"thurisaz",g:"\u16A6",nameId:"realm.look.rune.thurisaz",tipId:"realm.look.rune.thurisaz.tip"},
+  {key:"ansuz",g:"\u16A8",nameId:"realm.look.rune.ansuz",tipId:"realm.look.rune.ansuz.tip"},
+  {key:"gebo",g:"\u16B7",nameId:"realm.look.rune.gebo",tipId:"realm.look.rune.gebo.tip"},
+  {key:"wunjo",g:"\u16B9",nameId:"realm.look.rune.wunjo",tipId:"realm.look.rune.wunjo.tip"},
+  {key:"naudiz",g:"\u16BE",nameId:"realm.look.rune.naudiz",tipId:"realm.look.rune.naudiz.tip"},
+  {key:"isa",g:"\u16C1",nameId:"realm.look.rune.isa",tipId:"realm.look.rune.isa.tip"},
+  {key:"eihwaz",g:"\u16C7",nameId:"realm.look.rune.eihwaz",tipId:"realm.look.rune.eihwaz.tip"},
+  {key:"algiz",g:"\u16C9",nameId:"realm.look.rune.algiz",tipId:"realm.look.rune.algiz.tip"},
+  {key:"berkanan",g:"\u16D2",nameId:"realm.look.rune.berkanan",tipId:"realm.look.rune.berkanan.tip"},
+  {key:"ehwaz",g:"\u16D6",nameId:"realm.look.rune.ehwaz",tipId:"realm.look.rune.ehwaz.tip"},
+  {key:"laguz",g:"\u16DA",nameId:"realm.look.rune.laguz",tipId:"realm.look.rune.laguz.tip"},
+  {key:"ingwaz",g:"\u16DC",nameId:"realm.look.rune.ingwaz",tipId:"realm.look.rune.ingwaz.tip"},
+  {key:"othala",g:"\u16DF",nameId:"realm.look.rune.othala",tipId:"realm.look.rune.othala.tip"},
+];
+/* Eight colours, each one a token the window already paints with, so a chip never brings a
+   colour of its own into the sidebar. The class carries the colour; app.css has one rule
+   per name. */
+const CHIP_COLORS=[
+  {key:"ember",nameId:"realm.look.color.ember"},
+  {key:"gold",nameId:"realm.look.color.gold"},
+  {key:"amber",nameId:"realm.look.color.amber"},
+  {key:"moss",nameId:"realm.look.color.moss"},
+  {key:"frost",nameId:"realm.look.color.frost"},
+  {key:"blood",nameId:"realm.look.color.blood"},
+  {key:"bronze",nameId:"realm.look.color.bronze"},
+  {key:"bone",nameId:"realm.look.color.bone"},
+];
+function chipRune(key){return CHIP_RUNES.find(r=>r.key===key)||null;}
+function chipColor(key){return CHIP_COLORS.some(c=>c.key===key)?key:null;}
+/* What the chip shows: the chosen rune, or the first letter of the name when there is none
+   (or the stored name is not one of the list's). */
+function chipInitial(s){
+  const rune=chipRune(s&&s.lookRune);
+  return rune?rune.g:(String((s&&s.name)||"?").trim().charAt(0).toUpperCase()||"?");
+}
+/* The classes the chip's look adds: look-<colour> for the colour, and rune when it shows a
+   rune rather than a letter (a rune sits a little larger to read at the letter's weight). */
+function chipLookClass(s){
+  const c=chipColor(s&&s.lookColor);
+  return (c?" look-"+c:"")+(chipRune(s&&s.lookRune)?" rune":"");
+}
+function chipHtml(s){
+  const cls="srvchip"+(s.active?" active":"")+(s.running?" running":"")+chipLookClass(s);
+  const badge=s.playersOnline>0?`<span class="srvbadge">${s.playersOnline}</span>`:"";
+  /* The running chip says what it is doing as well as who it is, so the two
+     shapes are two entries rather than one with a gap in the middle. */
+  const tip=s.running
+    ?T("side.strip.chip.title.running",{name:s.name,status:s.status})
+    :T("side.strip.chip.title",{name:s.name});
+  return `<div class="${cls}" data-srv="${esc(s.name)}" title="${esc(tip)}"><span class="srvdot${s.running?" on":""}"></span><span class="srvinit">${esc(chipInitial(s))}</span>${badge}</div>`;
+}
+/* CHIPLOOK-END */
 function renderServerChips(){
   /* A realm starting or stopping changes which realm the Discord post is about, which the
      line under the mod profile code reports. */
@@ -1906,17 +1972,7 @@ function renderServerChips(){
   const all=S.servers||[];
   const list=all.filter(s=>!s.archived);       // strip shows only live realms
   const archived=all.filter(s=>s.archived);
-  let html=list.map(s=>{
-    const cls="srvchip"+(s.active?" active":"")+(s.running?" running":"");
-    const initial=(s.name||"?").trim().charAt(0).toUpperCase();
-    const badge=s.playersOnline>0?`<span class="srvbadge">${s.playersOnline}</span>`:"";
-    /* The running chip says what it is doing as well as who it is, so the two
-       shapes are two entries rather than one with a gap in the middle. */
-    const tip=s.running
-      ?T("side.strip.chip.title.running",{name:s.name,status:s.status})
-      :T("side.strip.chip.title",{name:s.name});
-    return `<div class="${cls}" data-srv="${esc(s.name)}" title="${esc(tip)}"><span class="srvdot${s.running?" on":""}"></span><span class="srvinit">${esc(initial)}</span>${badge}</div>`;
-  }).join("");
+  let html=list.map(chipHtml).join("");
   html+=`<div class="srvchip add" id="srvAdd" title="${esc(T("side.strip.add.title"))}"><span class="srvinit">+</span></div>`;
   const archBadge=archived.length?`<span class="srvbadge">${archived.length}</span>`:"";
   const restoreTip=archived.length
@@ -1991,11 +2047,81 @@ function serverChipMenu(name,x,y){
     {r:"ᛒ",label:T("realm.menu.switch"),fn:()=>switchServer(name),disabled:s.active,tip:T("realm.menu.switch.tip")},
     {r:"ᚱ",label:T("realm.menu.rename"),fn:()=>renameServer(name),disabled:s.running,tip:stopFirst},
     {r:"ᛞ",label:T("realm.menu.duplicate"),fn:()=>duplicateServer(name)},
+    {r:"ᚹ",label:T("realm.menu.look"),fn:()=>chipLookFlow(name)},
     "hr",
     {r:"⌂",label:T("realm.menu.archive"),fn:()=>archiveServer(name),disabled:s.running,tip:stopFirst},
     {r:"ᛟ",label:T("realm.menu.delete"),fn:()=>deleteServerFlow(name),danger:true,disabled:s.running,tip:stopFirst},
   ];
   ctxOpen(x,y,name,items,()=>serverChipMenu(name,x,y));
+}
+/* Customize look: a rune (or the letter) and a colour (or none), saved on the realm's own
+   profile through profiles.save like every other setting of it. The picks live beside the
+   rebuilder so a language switch while the dialog is open keeps them.
+   The profile is read and written for the realm on screen, because profiles.get is the realm
+   switch on the host side: a look chosen for another chip switches to that realm first, the
+   way Duplicate does, rather than reading its profile behind the page's back. */
+async function chipLookFlow(name){
+  if(Native.available&&!(S.servers||[]).find(v=>String(v.name)===String(name)&&v.active)){
+    await switchServer(name);
+    if(String(S.profileName)!==String(name)) return;
+  }
+  const s=(S.servers||[]).find(v=>String(v.name)===String(name)); if(!s) return;
+  const pick={rune:chipRune(s.lookRune)?s.lookRune:null,color:chipColor(s.lookColor)};
+  const again=()=>{
+    const preview={name,lookRune:pick.rune,lookColor:pick.color,active:true};
+    const runeBtn=(key,glyph,label,tip)=>
+      `<button type="button" class="lookrune${pick.rune===key?" on":""}" data-rune="${esc(key||"")}" title="${esc(tip)}" aria-pressed="${pick.rune===key}">`+
+      `<span class="lg">${esc(glyph)}</span><span class="ln">${esc(label)}</span></button>`;
+    const colorBtn=(key,label)=>
+      `<button type="button" class="lookcolor${key?" look-"+key:""}${pick.color===key?" on":""}" data-color="${esc(key||"")}" aria-pressed="${pick.color===key}">`+
+      `<span class="sw"></span><span class="ln">${esc(label)}</span></button>`;
+    const m=modalOpen(
+      `<div class="mtitle">${esc(T("realm.look.title",{name}))}</div>`+
+      `<div class="mbody"><div class="mbody-note">${esc(T("realm.look.note"))}</div>`+
+      `<div class="lookhead"><div class="srvchip${chipLookClass(preview)} active lookpreview" aria-hidden="true"><span class="srvinit">${esc(chipInitial(preview))}</span></div></div>`+
+      `<div class="microlabel" style="margin:12px 0 6px">${esc(T("realm.look.rune.label"))}</div>`+
+      `<div class="lookgrid">`+
+        runeBtn(null,String(name||"?").trim().charAt(0).toUpperCase()||"?",T("realm.look.rune.none"),T("realm.look.rune.none.tip"))+
+        CHIP_RUNES.map(r=>runeBtn(r.key,r.g,T(r.nameId),T(r.tipId))).join("")+
+      `</div>`+
+      `<div class="microlabel" style="margin:12px 0 6px">${esc(T("realm.look.color.label"))}</div>`+
+      `<div class="lookgrid colors">`+
+        colorBtn(null,T("realm.look.color.none"))+
+        CHIP_COLORS.map(c=>colorBtn(c.key,T(c.nameId))).join("")+
+      `</div></div>`+
+      `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(T("common.button.save"))}</button></div>`,
+      again);
+    m.querySelectorAll(".lookrune").forEach(b=>b.addEventListener("click",()=>{pick.rune=b.dataset.rune||null;again();}));
+    m.querySelectorAll(".lookcolor").forEach(b=>b.addEventListener("click",()=>{pick.color=b.dataset.color||null;again();}));
+    m.querySelector("#mCancel").addEventListener("click",modalClose);
+    m.querySelector("#mOk").addEventListener("click",async()=>{
+      modalClose();
+      await saveChipLook(name,pick.rune,pick.color);
+    });
+    return m;
+  };
+  again();
+}
+/* Writes the look onto the realm's profile: the profile as the host side has it, with the two
+   look fields changed and nothing else, so a half-edited Settings form is not saved with it. */
+async function saveChipLook(name,rune,color){
+  if(!Native.available){
+    const s=(S.servers||[]).find(v=>String(v.name)===String(name));
+    if(s){s.lookRune=rune;s.lookColor=color;renderServerChips();}
+    toast("ᚹ "+T("realm.look.saved.toast",{name}));
+    return;
+  }
+  if(String(S.profileName)!==String(name)) return;
+  const cur=await rpc("profiles.get",{name});
+  if(cur===FAIL||!cur) return;
+  const prefs={...cur,LookRune:rune||null,LookColor:color||null};
+  delete prefs.EffectiveServerExePath; delete prefs.ServerExePathSource;
+  delete prefs.EffectiveSaveDataFolderPath; delete prefs.SaveDataFolderPathSource;
+  const r=await rpc("profiles.save",{name,prefs});
+  if(r===FAIL) return;
+  if(S.prefs&&String(S.prefs.ProfileName)===String(name)){S.prefs.LookRune=rune||null;S.prefs.LookColor=color||null;}
+  await refreshServers();
+  toast("ᚹ "+T("realm.look.saved.toast",{name}));
 }
 async function renameServer(name){
   promptModal(()=>T("realm.rename.title"),name,async v=>{
@@ -3927,6 +4053,8 @@ $("#hAppUpdPill")?.addEventListener("click",e=>{e.stopPropagation();appUpdateMod
 })();
 
 /* ---------- MODS: scan / update-all / render / sort / remove ---------- */
+/* MODSORT-BEGIN: scripts/ui/mod_sort_selftest.js evaluates everything down to MODSORT-END
+   with the page's globals stood in for, so the sort it proves is the sort the table runs. */
 /* numeric-aware version compare (1.2.10 > 1.2.9); missing/dash versions sort lowest */
 function verCmp(a,b){
   const pa=String(a||"").split("."), pb=String(b||"").split(".");
@@ -3937,18 +4065,59 @@ function verCmp(a,b){
   }
   return 0;
 }
-/* returns a sorted copy per S.modSort; dir 0 = the default scan order untouched.
-   First click: name A→Z, versions hi→lo, status updates-first. Second click reverses. */
+/* The columns whose first click reads high to low: versions, and the two dates, where the
+   newest is what somebody clicking "Updated" is looking for. Up here rather than beside the
+   header wiring, because sortedMods reads it and a const is not there until its line runs. */
+const MOD_DESC_FIRST=new Set(["installed","latest","installedOn","updated"]);
+/* Where the Mods table rests: Name, A to Z. sortReset and the third click of sortCycle both
+   come back here, and the sort statement in the head stays quiet while the table is here. */
+const MOD_SORT_HOME=Object.freeze({col:"name",dir:1});
+/* A date the scan handed over, as a number, or NaN when there is none worth reading. */
+function modDateValue(iso){
+  if(!iso) return NaN;
+  const t=Date.parse(iso);
+  return isNaN(t)?NaN:t;
+}
+/* Two dates, with a blank one sorted LAST whichever way the column runs: a mod nobody knows
+   the date of is not the oldest mod or the newest, and it should not be the first row either
+   way round. */
+function cmpModDate(a,b,m){
+  const x=modDateValue(a), y=modDateValue(b);
+  const nx=isNaN(x), ny=isNaN(y);
+  if(nx||ny) return nx===ny?0:(nx?1:-1);
+  return m*(x-y);
+}
+/* returns a sorted copy per S.modSort. First click: names and authors A to Z, versions and
+   dates high to low, status updates-first. Second click reverses. Rows that tie keep name
+   order, so a column with many equal values still reads as a list someone ordered. */
 function sortedMods(mods){
   const {col,dir}=S.modSort;
   if(!col||!dir) return mods;
-  const ver=col==="installed"||col==="latest";
-  const m=(dir===1)!==ver?1:-1, s=[...mods];
+  const m=(dir===1)!==MOD_DESC_FIRST.has(col)?1:-1, s=[...mods];
+  const byName=(a,b)=>cmpText(a.ModName||"",b.ModName||"");
+  const then=(first)=>(a,b)=>first(a,b)||byName(a,b);
   if(col==="name") s.sort((a,b)=>m*cmpText(a.ModName||"",b.ModName||""));
-  else if(col==="installed") s.sort((a,b)=>m*verCmp(a.InstalledVersion,b.InstalledVersion));
-  else if(col==="latest") s.sort((a,b)=>m*verCmp(a.LatestVersion,b.LatestVersion));
-  else if(col==="status") s.sort((a,b)=>m*((b.UpdateAvailable?1:0)-(a.UpdateAvailable?1:0)));
+  else if(col==="author") s.sort(then((a,b)=>m*cmpText(a.Author||"",b.Author||"")));
+  else if(col==="installed") s.sort(then((a,b)=>m*verCmp(a.InstalledVersion,b.InstalledVersion)));
+  else if(col==="latest") s.sort(then((a,b)=>m*verCmp(a.LatestVersion,b.LatestVersion)));
+  else if(col==="installedOn") s.sort(then((a,b)=>cmpModDate(a.installedUtc,b.installedUtc,m)));
+  else if(col==="updated") s.sort(then((a,b)=>cmpModDate(a.modUpdatedUtc,b.modUpdatedUtc,m)));
+  else if(col==="status") s.sort(then((a,b)=>m*((b.UpdateAvailable?1:0)-(a.UpdateAvailable?1:0))));
   return s;
+}
+/* The header word for each sortable column, by the same id the header itself is worded
+   with, so the sentence in the head names the column exactly as the table does. */
+const MOD_SORT_COLS={name:"mods.col.name",author:"mods.col.author",installed:"mods.col.installed",
+  latest:"mods.col.latest",installedOn:"mods.col.installed_on",updated:"mods.col.updated",status:"mods.col.status"};
+/* "sorted by author, descending": one line in the head while the table is anywhere but at
+   rest, and nothing at all while it is. The direction is the one the header's mark shows,
+   so a version column's first click reads descending, as its arrow does. */
+function modSortStatement(){
+  const {col,dir}=S.modSort;
+  if(!col||!dir||(col===MOD_SORT_HOME.col&&dir===MOD_SORT_HOME.dir)) return "";
+  const id=MOD_SORT_COLS[col]; if(!id) return "";
+  const up=(dir===1)!==MOD_DESC_FIRST.has(col);
+  return T("mods.sort.statement",{col:T(id),dir:up?T("mods.sort.dir.asc"):T("mods.sort.dir.desc")});
 }
 /* ---------- SEARCH BOXES ----------
    One rule for every search box in the app: what is typed is cut at whitespace, and a
@@ -3984,6 +4153,7 @@ function modSearchText(m){
        quiet pill too, or a host looking for the mods that were pulled is the one host
        the box cannot answer. */
     m.Bundled?T("mods.status.bundled")
+      :m.disabled?T("mods.status.off")
       :S.modsIndexBlind?T("mods.status.unchecked")
       :modIsHeld(m)?T("mods.status.held")
       :m.notListed?T("mods.status.not_listed")
@@ -4031,7 +4201,13 @@ function modResultSource(r){
 function sortCycle(state,col){
   if(state.col===col) state.dir=(state.dir+1)%3;
   else{state.col=col;state.dir=1;}
-  if(!state.dir) state.col=null;
+  if(!state.dir){const home=sortHome(state);state.col=home.col;state.dir=home.dir;}
+}
+/* Where a table rests when nothing has been clicked. The roster rests in its own order (no
+   column); the Mods table rests on Name, A to Z. Worked out from WHICH state it is rather than
+   kept on the object, so the state stays the plain {col,dir} every reader already knows. */
+function sortHome(state){
+  return (typeof S!=="undefined"&&state===S.modSort)?MOD_SORT_HOME:{col:null,dir:0};
 }
 function renderSortMarks(sel,state,descFirst){
   document.querySelectorAll(sel).forEach(th=>{
@@ -4045,8 +4221,9 @@ function renderSortMarks(sel,state,descFirst){
 }
 /* Puts one sort state back to the table's own order WITHOUT replacing the object. That is
    the whole point of it: a realm switch used to hand S.modSort and S.vikSort brand new
-   objects, and anything still holding the old one wrote to an orphan from then on. */
-function sortReset(state){if(state){state.col=null;state.dir=0;}}
+   objects, and anything still holding the old one wrote to an orphan from then on. "The
+   table's own order" is sortHome's answer: no column for the roster, Name A to Z for Mods. */
+function sortReset(state){if(state){const home=sortHome(state);state.col=home.col;state.dir=home.dir;}}
 /* stateOf is a GETTER, and it has to stay one. Both tables are wired once while app.js is
    being evaluated and never again, so a closure handed the state OBJECT holds that exact
    object for the life of the window. switchServer puts both sort states back, and the
@@ -4068,9 +4245,9 @@ function wireSort(sel,stateOf,onChange){
     });
   });
 }
-const MOD_DESC_FIRST=new Set(["installed","latest"]);
 function renderModSortMarks(){renderSortMarks("#page-mods th.sortable",S.modSort,MOD_DESC_FIRST);}
 wireSort("#page-mods th.sortable",()=>S.modSort,()=>renderMods());
+/* MODSORT-END */
 /* The six sentences a Mods row explains itself with used to stand as consts here, and
    every one of them is asked for by id now. The Latest cell on a delisted mod was already
    written that way (mods.status.not_listed.tip) and the reason it gave holds for all six:
@@ -4374,6 +4551,7 @@ function renderMods(){
      a number, so the plural falls to the category every language has. */
   $("#sbMods").textContent=T("side.mods.count",{count});
   renderModSortMarks();
+  {const sl=$("#modsSortLine"); if(sl) sl.textContent=modSortStatement();}
   if(!scanned){
     /* Three states here, not two. A scan that FAILED used to leave the hall showing the
        one that says nothing has been read yet, with a Scan button on it: the host pressed
@@ -4381,7 +4559,7 @@ function renderMods(){
        reached at all. The failure is its own state, it says why, and it offers the two
        things there are to do about it. */
     const failed=!S.modsScanning&&S.modsScanError;
-    $("#modTable").innerHTML=`<tr><td colspan="5">${S.modsScanning
+    $("#modTable").innerHTML=`<tr><td colspan="${modColCount()}">${S.modsScanning
       ?emptyState({mark:"ᛋ",title:T("mods.empty.scanning.title"),reason:T("mods.empty.scanning.reason")})
       :failed
       ?emptyState({mark:"ᚦ",title:T("mods.empty.failed.title"),
@@ -4425,43 +4603,7 @@ function renderMods(){
   const table=$("#modsTable");
   if(table) table.classList.toggle("po-empty",
     !mods.some(m=>m.possiblyOutdated&&!m.IsPatcher));
-  $("#modTable").innerHTML=shown.map(m=>{
-    const has=!!m.UpdateAvailable;
-    /* A copy the host took from Hexium is HELD, not CURRENT: BakaLoader leaves it where
-       it is even when a site has moved past it, and the pill has to say so rather than
-       reading like the row is level with the world. */
-    const held=modIsHeld(m);
-    /* A row whose package the list came back without has no Latest to be level with, so
-       it cannot read CURRENT either. It says the one thing that is known: Thunderstore is
-       not listing it at the moment, and nothing has been done about that. */
-    const pill=m.Bundled?`<span class="pill ember">${esc(T("mods.status.bundled"))}</span>`
-      :blind?`<span class="pill grey" title="${esc(T("mods.status.unchecked.tip"))}">${esc(T("mods.status.unchecked"))}</span>`
-      :held?`<span class="pill amber" title="${esc(T("mods.status.held.tip"))}">${esc(T("mods.status.held"))}</span>`
-      :m.notListed?`<span class="pill grey" title="${esc(T("mods.status.not_listed.tip"))}">${esc(T("mods.status.not_listed"))}</span>`
-      :`<span class="pill ${has?"amber":"green"}">${esc(has?T("mods.status.update"):T("mods.status.current"))}</span>`;
-    const st=S.modRowStatus&&S.modRowStatus[m.FullName];
-    const statusCell=st?renderRowStatus(st):pill;
-    /* Patcher-only mods are not update-tracked (the install path is plugins-oriented), so the
-       possibly-outdated hint stays blank for them. */
-    const po=(m.possiblyOutdated&&!m.IsPatcher)
-      ?`<td class="mod-po" style="color:var(--amber)" title="${esc(T("mods.col.possibly_outdated.tip"))}">${esc(T("mods.possibly_outdated.yes"))}</td>`
-      :`<td class="mod-po"></td>`;
-    const patcherTag=m.IsPatcher
-      ?` <span class="mono" style="font-size:10px;color:var(--bone-faint-text)">${esc(T("mods.tag.patcher"))}</span>`:"";
-    /* A copy the host took from the second site says so, and keeps saying so whatever
-       happens to the switch afterwards: it is why this row sits out Update all. */
-    const srcChip=(m.installedSource==="hexium")
-      ?` <span class="modchip" title="${esc(T("mods.tag.hexium.tip"))}">${esc(T("mods.tag.hexium"))}</span>`:"";
-    /* One mark at most on the Latest cell. Either the other site is ahead of both what
-       is installed and what Thunderstore has, or this is a Hexium copy Thunderstore has
-       moved past. Both are offers, and both ask before they do anything. */
-    const mark=modLatestMark(m);
-    return `<tr data-key="${esc(m.FullName)}"><td><strong>${esc(m.ModName)}</strong> <span class="mono" style="font-size:10px;color:var(--bone-faint-text)">${esc(m.Author)}</span>${patcherTag}${srcChip}</td>`+
-      `<td class="mono">${esc(m.InstalledVersion||"-")}</td>`+
-      `<td class="mono"${has?' style="color:var(--amber)"':""}${blind?` title="${esc(T("mods.status.unchecked.tip"))}"`:(m.notListed?` title="${esc(T("mods.status.not_listed.tip"))}"`:"")}>${esc(m.LatestVersion||"-")}${mark}</td>`+
-      `<td>${statusCell}</td>`+
-      po+`</tr>`;
-  }).join("")||`<tr><td colspan="5">${mods.length
+  $("#modTable").innerHTML=shown.map(m=>modRowHtml(m,blind)).join("")||`<tr><td colspan="${modColCount()}">${mods.length
     ?emptyState({mark:"ᚱ",title:T("mods.empty.no_match.title"),
         /* The one reason that counts what it is hiding. The count is a slot and the
            sentence is a plural entry, so a language that inflects around the number
@@ -4493,6 +4635,90 @@ function renderMods(){
   renderModIndexLine(mods.length);
   renderModShowing(shown.length,mods.length);
 }
+/* MODROW-BEGIN: one Mods table row, from the row's DTO and nothing else. Kept out of
+   renderMods so scripts/ui/mod_row_selftest.js can draw a row with the page's globals stood
+   in for; renderMods, just above, is the only caller. */
+/* How many cells a row has, for the colspan an empty state stretches across. A function
+   rather than a const because renderMods, above it, can run before this line is reached. */
+function modColCount(){return 8;}
+/* A date the scan handed over, as the day it fell on in the host's own time zone
+   (YYYY-MM-DD, which sorts the way it reads and means the same thing in every language), or
+   "" when there is none. */
+function modDateText(iso){
+  const t=modDateValue(iso);
+  if(isNaN(t)) return "";
+  const d=new Date(t);
+  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+}
+/* The cell for one date: the day, with the whole timestamp on hover. A date nobody knows is
+   a blank cell, never a dash pretending to be a date. */
+function modDateCell(iso){
+  const day=modDateText(iso);
+  if(!day) return `<td class="mono mod-date"></td>`;
+  let full=day;
+  try{full=new Date(modDateValue(iso)).toLocaleString(LOC());}catch(_){}
+  return `<td class="mono mod-date" title="${esc(full)}">${esc(day)}</td>`;
+}
+/* The Status pill. A switched-off mod says Off before anything about versions: whatever
+   Thunderstore holds, nothing of it loads until it is switched on again. */
+function modStatusPill(m,blind){
+  const has=!!m.UpdateAvailable;
+  /* A copy the host took from Hexium is HELD, not CURRENT: BakaLoader leaves it where
+     it is even when a site has moved past it, and the pill has to say so rather than
+     reading like the row is level with the world. */
+  const held=modIsHeld(m);
+  /* A row whose package the list came back without has no Latest to be level with, so
+     it cannot read CURRENT either. It says the one thing that is known: Thunderstore is
+     not listing it at the moment, and nothing has been done about that. */
+  return m.Bundled?`<span class="pill ember">${esc(T("mods.status.bundled"))}</span>`
+    :m.disabled?`<span class="pill grey" title="${esc(T("mods.status.off.tip"))}">${esc(T("mods.status.off"))}</span>`
+    :blind?`<span class="pill grey" title="${esc(T("mods.status.unchecked.tip"))}">${esc(T("mods.status.unchecked"))}</span>`
+    :held?`<span class="pill amber" title="${esc(T("mods.status.held.tip"))}">${esc(T("mods.status.held"))}</span>`
+    :m.notListed?`<span class="pill grey" title="${esc(T("mods.status.not_listed.tip"))}">${esc(T("mods.status.not_listed"))}</span>`
+    :`<span class="pill ${has?"amber":"green"}">${esc(has?T("mods.status.update"):T("mods.status.current"))}</span>`;
+}
+/* The Installed cell. The version sits in the Hexium pill's own style when the scan knows
+   which site the files came from, so a row whose Installed and Thunderstore latest disagree
+   reads as two sites rather than as a mistake (issue 20). A hand-copied folder has no
+   source and no pill. */
+function modInstalledCell(m){
+  const v=esc(m.InstalledVersion||"-");
+  const src=m.installedSource;
+  if(src==="hexium")
+    return `<td class="mono"><span class="modchip modver" title="${esc(T("mods.tag.installed.hexium.tip"))}">${v}</span></td>`;
+  if(src==="thunderstore")
+    return `<td class="mono"><span class="modchip modver" title="${esc(T("mods.tag.installed.thunderstore.tip"))}">${v}</span></td>`;
+  return `<td class="mono">${v}</td>`;
+}
+function modRowHtml(m,blind){
+  const has=!!m.UpdateAvailable;
+  const st=S.modRowStatus&&S.modRowStatus[m.FullName];
+  const statusCell=st?renderRowStatus(st):modStatusPill(m,blind);
+  /* Patcher-only mods are not update-tracked (the install path is plugins-oriented), so the
+     possibly-outdated hint stays blank for them. */
+  const po=(m.possiblyOutdated&&!m.IsPatcher)
+    ?`<td class="mod-po" style="color:var(--amber)" title="${esc(T("mods.col.possibly_outdated.tip"))}">${esc(T("mods.possibly_outdated.yes"))}</td>`
+    :`<td class="mod-po"></td>`;
+  const patcherTag=m.IsPatcher
+    ?` <span class="mono" style="font-size:10px;color:var(--bone-faint-text)">${esc(T("mods.tag.patcher"))}</span>`:"";
+  /* A copy the host took from the second site says so, and keeps saying so whatever
+     happens to the switch afterwards: it is why this row sits out Update all. */
+  const srcChip=(m.installedSource==="hexium")
+    ?` <span class="modchip" title="${esc(T("mods.tag.hexium.tip"))}">${esc(T("mods.tag.hexium"))}</span>`:"";
+  /* One mark at most on the Latest cell. Either the other site is ahead of both what
+     is installed and what Thunderstore has, or this is a Hexium copy Thunderstore has
+     moved past. Both are offers, and both ask before they do anything. */
+  const mark=modLatestMark(m);
+  return `<tr data-key="${esc(m.FullName)}"${m.disabled?' class="off"':""}><td><strong>${esc(m.ModName)}</strong>${patcherTag}${srcChip}</td>`+
+    `<td class="mono mod-author">${esc(m.Author||"")}</td>`+
+    modInstalledCell(m)+
+    `<td class="mono"${has?' style="color:var(--amber)"':""}${blind?` title="${esc(T("mods.status.unchecked.tip"))}"`:(m.notListed?` title="${esc(T("mods.status.not_listed.tip"))}"`:"")}>${esc(m.LatestVersion||"-")}${mark}</td>`+
+    modDateCell(m.installedUtc)+
+    modDateCell(m.modUpdatedUtc)+
+    `<td>${statusCell}</td>`+
+    po+`</tr>`;
+}
+/* MODROW-END */
 /* "showing N of M", and only while something is typed. It reads the two lengths the
    render already has: the whole list, and the rows that were drawn. */
 function renderModShowing(shown,total){
@@ -5574,6 +5800,79 @@ function openHexiumPage(mod){
    segments it had already checked, and it checks them again before it opens anything. */
 function readHexiumOwner(mod){const p=String(mod.hexiumUrl||"").split("/");return p.length>=2?p[p.length-2]:"";}
 function readHexiumName(mod){const p=String(mod.hexiumUrl||"").split("/");return p.length>=1?p[p.length-1]:"";}
+/* MODMENU-BEGIN: the row menu and what it needs to know about a row's config files.
+   scripts/ui/mod_row_selftest.js evaluates this block, and the three functions its new
+   entries call just after MODMENU-END, with the page's globals stood in for. */
+/* The config files each mod's row menu lists, asked of the host once per mod per scan. A
+   scan hands S.mods a new list, and the cache is keyed to that list, so a scan forgets what
+   it held and the next menu asks again; the files a mod writes can change between scans, and
+   a menu showing last week's list would open a file that is not there. */
+let MOD_CFG={list:null,profile:null,files:{}};
+function modConfigsCached(mod){
+  if(!mod||MOD_CFG.list!==S.mods||MOD_CFG.profile!==S.profileName) return undefined;
+  return MOD_CFG.files[mod.FullName];
+}
+async function modConfigsFor(mod){
+  if(!mod) return [];
+  const known=modConfigsCached(mod);
+  if(known!==undefined) return known;
+  if(MOD_CFG.list!==S.mods||MOD_CFG.profile!==S.profileName)
+    MOD_CFG={list:S.mods,profile:S.profileName,files:{}};
+  const held=MOD_CFG;
+  let files=[];
+  if(Native.available){
+    const r=await rpc("mods.configs",{profile:S.profileName||null,fullName:mod.FullName});
+    files=(r&&r!==FAIL&&Array.isArray(r.files))?r.files.map(String):[];
+  }else{
+    files=modConfigsPreview(mod);
+  }
+  /* An answer that lands after a scan or a realm switch is about a list nobody is looking
+     at any more, so it is handed back and not kept. */
+  if(held===MOD_CFG) MOD_CFG.files[mod.FullName]=files;
+  return files;
+}
+/* The preview's own answer, worked out over its mock config folder with the same rule the
+   host side applies (Forms/ConfigFiles.cs MatchForMod), so the menu a screenshot shows is the
+   menu the app shows for the same files. */
+function modConfigsPreview(mod){
+  const squash=s=>String(s||"").toLowerCase().replace(/[_\- ]/g,"");
+  const names=[mod.ModName,mod.Author&&mod.ModName?mod.Author+"."+mod.ModName:"",mod.thunderstoreName]
+    .map(squash).filter(n=>n.length>=3);
+  const folder=lastPathPart(mod.PluginDirectory).toLowerCase();
+  return Object.keys((typeof CFG!=="undefined"&&CFG.mock)||{}).filter(f=>{
+    const parts=f.split("/"), leaf=parts[parts.length-1];
+    const stem=squash(leaf.replace(/\.[^.]*$/,""));
+    return names.some(n=>stem.includes(n))||(parts.length>1&&folder&&parts[0].toLowerCase()===folder);
+  }).sort(cfgPathCmp);
+}
+/* The Configs section: one entry per file, the folders muted and the file name bold, each
+   opening that file in the Configs hall. Undefined files means the host has not answered
+   yet, and the section says it is looking rather than claiming there are none. */
+function modConfigItems(mod,files){
+  const items=[{section:T("mods.menu.configs")}];
+  if(files===undefined){
+    items.push({r:"ᚲ",label:T("mods.menu.configs.loading"),disabled:true});
+    return items;
+  }
+  if(!files.length){
+    items.push({r:"ᚲ",label:T("mods.menu.configs.none"),disabled:true});
+    return items;
+  }
+  files.forEach(f=>{
+    const p=cfgPathParts(f);
+    items.push({r:"ᚲ",label:f,title:f,wide:true,
+      html:`<span class="cfgpre">${esc(p.pre)}</span><b>${esc(p.name)}</b>`,
+      fn:()=>openModConfig(f)});
+  });
+  return items;
+}
+/* Whether the realm on screen has its server up. A mod's files cannot be renamed while the
+   server holds them open, so the switch entries are greyed for the whole of that time. The
+   host side refuses as well; this only saves the host the round trip. */
+function modRealmUp(){
+  const s=S.state&&S.state.status;
+  return !!s&&s!=="Stopped";
+}
 /* right-click a mod row → its page on either site, the swap offers, or remove */
 function modRowItems(mod){
   const onStore=!!(mod.thunderstoreNamespace&&mod.thunderstoreName);
@@ -5611,9 +5910,59 @@ function modRowItems(mod){
     items.push({r:"ᚺ",label:T("mods.menu.install_hexium"),fn:()=>hexiumInstallFlow(mod)});
   if(mod.thunderstoreNewer&&mod.LatestVersion)
     items.push({r:"ᛋ",label:T("mods.menu.install_thunderstore"),fn:()=>thunderstoreSwapFlow(mod)});
+  /* The same version again, from Thunderstore, laid out the way a mod manager lays it out.
+     Offered only where there is a Thunderstore package and a version to pin it to; a Hexium
+     copy is not a Thunderstore build, and a patcher-only row is not installed this way. */
+  if(onStore&&mod.InstalledVersion&&!isPatcher&&mod.installedSource!=="hexium")
+    items.push({r:"ᚨ",label:T("mods.menu.reinstall"),
+      title:mod.layout==="nested"?T("mods.menu.reinstall.tip.nested"):"",
+      fn:()=>reinstallModFlow(mod)});
+  /* Off and on, by the files' names (.dll.old is what BepInEx skips), with nothing removed
+     and no config touched. One entry, worded for the state the row is in. */
+  const up=modRealmUp();
+  items.push(mod.disabled
+    ?{r:"ᚱ",label:T("mods.menu.enable"),disabled:up,tip:T("mods.menu.toggle.tip.running"),fn:()=>setModEnabled(mod,true)}
+    :{r:"ᚱ",label:T("mods.menu.disable"),disabled:up,tip:T("mods.menu.toggle.tip.running"),fn:()=>setModEnabled(mod,false)});
+  items.push("hr");
+  modConfigItems(mod,modConfigsCached(mod)).forEach(it=>items.push(it));
   items.push("hr");
   items.push({r:"ᛪ",label:T("mods.menu.remove"),danger:true,fn:()=>removeModFlow(mod)});
   return items;
+}
+/* MODMENU-END */
+/* Opens one of a mod's config files in the Configs hall. The hall's own load does the rest,
+   including asking first when the file open there has unsaved changes. */
+async function openModConfig(f){
+  goPage("runes");
+  await refreshCfgList(false);
+  await loadCfg(f,false);
+  const it=[...document.querySelectorAll("#cfgList .cfg-item[data-f]")].find(el=>el.dataset.f===f);
+  if(it) try{it.scrollIntoView({block:"nearest"});}catch(_){}
+}
+/* Switch a mod off (every .dll under its folders renamed .dll.old) or back on. The host side
+   does the renaming and refuses while the realm's server runs; the sentence it refuses with
+   goes to the toast as it stands, the way the other mod refusals do. */
+async function setModEnabled(mod,on){
+  if(!Native.available){toast("ᚱ "+T("mods.toggle.preview.toast"));return;}
+  if(S.modsUpdating||S.modsScanning) return;
+  const r=await rpc(on?"mods.enable":"mods.disable",{profile:S.profileName||null,fullName:mod.FullName});
+  if(r===FAIL||!r) return;
+  if(!r.ok){
+    toast("ᚦ "+T("mods.toggle.failed.toast",{mod:mod.ModName||mod.FullName,detail:r.error||T("common.error.unknown")}));
+    return;
+  }
+  const named={mod:mod.ModName||mod.FullName};
+  toast("ᚱ "+(on?T("mods.enable.done.toast",named):T("mods.disable.done.toast",named)));
+  logLine("ok","[Mods] "+mod.FullName+(on?" switched on":" switched off"));
+  await scanMods({force:false});
+}
+/* The installed version again, through the Mods hall's own add with the version pinned in
+   the address, which is the road the Gale follow already travels. It is refused while the
+   server holds the plugins open, and for a realm the host has left. */
+function reinstallModFlow(mod){
+  if(!mod||!mod.thunderstoreNamespace||!mod.thunderstoreName||!mod.InstalledVersion) return;
+  const url=galeModUrl(mod.thunderstoreNamespace+"-"+mod.thunderstoreName,mod.InstalledVersion);
+  doAddMod(url,{profile:S.profileName||null,requireStopped:true});
 }
 /* What one check's answer does to the row it was asked about, kept apart from the toast
    so the row's state is one readable rule.
@@ -5696,13 +6045,21 @@ async function doUpdateOne(mod){
 }
 $("#modTable").addEventListener("contextmenu",e=>{
   if(!Native.available) return;
+  modRowMenu(e);
+});
+/* Opens the row menu at once, then asks for the mod's config files (one call, kept for the
+   rest of the scan) and draws the menu again when they land, if it is still this mod's menu
+   that is open. The preview's opener calls the same function. */
+function modRowMenu(e){
   const tr=e.target.closest("tr[data-key]"); if(!tr) return;
   e.preventDefault();
   const mod=modByKey(tr.dataset.key); if(!mod) return;
   const x=e.clientX,y=e.clientY;
   const again=()=>ctxOpen(x,y,mod.FullName,modRowItems(mod),again);
   again();
-});
+  if(modConfigsCached(mod)!==undefined) return;
+  modConfigsFor(mod).then(()=>{if(CTX_REDRAW===again) again();}).catch(()=>{});
+}
 async function removeModFlow(mod){
   /* Config files and the mods that depend on this one, both read locally. Dependents come
      back ordered so removing them ahead of the mod never orphans one midway. */
@@ -5919,7 +6276,7 @@ function addModFlow(){
     inp.addEventListener("keydown",e=>{if(e.key==="Enter")document.querySelector("#mOk")?.click();});
   }
 }
-async function doAddMod(url){
+async function doAddMod(url,extra){
   if(S.modsUpdating||S.modsScanning) return;
   S.modsUpdating=true; renderMods();
   toast("ᚨ "+T("mods.add.fetching.toast"));
@@ -5928,7 +6285,9 @@ async function doAddMod(url){
      its own event, and the bar that shows it is opened by the first event that
      arrives rather than guessed at from here. */
   BEP_ADD_IN_FLIGHT=true;
-  const r=await rpc("mods.addFromUrl",{url});
+  /* extra is the realm and the requireStopped a row menu's Reinstall sends; a pasted link
+     sends neither, and the call is exactly what it always was. */
+  const r=await rpc("mods.addFromUrl",Object.assign({url},extra||{}));
   BEP_ADD_IN_FLIGHT=false;
   bepInExProgressDone();
   S.modsUpdating=false;
@@ -5960,7 +6319,7 @@ async function doAddMod(url){
     renderMods();
     /* The pasted address is held right here and the same add is finished with it the
        moment the loader is in, so the host never types it twice. */
-    bepInExOfferModal(()=>doAddMod(url));
+    bepInExOfferModal(()=>doAddMod(url,extra));
     return;
   }
   /* Which site an answer came from. The two Hexium calls spell it Source and the
@@ -5990,7 +6349,13 @@ async function doAddMod(url){
        BepInEx refusal that came back through the add reads exactly as the same refusal
        does on the direct call rather than as the raw English the host side wrote. */
     const own=modNotAvailableText(r)||hostSentence(r.Reason,r.ErrorParams);
-    toast("ᚦ "+(own||T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")})));
+    /* The two refusals only a Reinstall from the row menu can meet, because only it sends the
+       realm and requireStopped: a server that is up on this install, and a realm that changed
+       before the add landed. A pasted link sends neither and never sees them. */
+    const held=r.Reason==="serverRunning"
+      ?T("mods.reinstall.server_running.toast",{name:(r.ErrorParams&&r.ErrorParams.name)||S.profileName||""})
+      :r.Reason==="realmChanged"?T("mods.reinstall.realm_changed.toast"):null;
+    toast("ᚦ "+(held||own||T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")})));
     logLine("warn","[Thunderstore] install failed: "+(r.Error||"unknown"));
     renderMods();
   }
@@ -7128,7 +7493,7 @@ function killAllModal(){
     const pick=KILL_SCOPE.scope;
     const problemId=problem.scope===pick?problem.id:"";
     const row=(value,label,note,inert)=>
-      `<label class="togglerow${inert?" gated":""}" style="height:auto;padding:7px 0;align-items:flex-start;cursor:${inert?"default":"pointer"}">`+
+      `<label class="togglerow buttonrow top${inert?" gated":""}" style="cursor:${inert?"default":"pointer"}">`+
         `<input type="radio" name="kaScope" value="${esc(value)}"${pick===value?" checked":""}${inert?" disabled":""} style="margin:3px 9px 0 0">`+
         `<span class="tl" style="display:block"><span style="display:block">${esc(label)}</span>`+
         `<span class="subval" style="display:block;margin-top:2px">${esc(note)}</span></span></label>`;
@@ -7244,7 +7609,7 @@ function clearDropsModal(){
     const st=CLEAR_DROPS;
     if(!st.keepNear) problem="";
     const row=(id,on,label,note)=>
-      `<label class="togglerow" style="height:auto;padding:7px 0;align-items:flex-start;cursor:pointer">`+
+      `<label class="togglerow buttonrow top" style="cursor:pointer">`+
         `<input type="checkbox" id="${id}"${on?" checked":""} style="margin:3px 9px 0 0">`+
         `<span class="tl" style="display:block"><span style="display:block">${esc(label)}</span>`+
         `<span class="subval" style="display:block;margin-top:2px">${esc(note)}</span></span></label>`;
@@ -8714,9 +9079,14 @@ let CTX_REDRAW=null;
  */
 function ctxOpen(x,y,head,items,again){
   CTX_REDRAW=typeof again==="function"?again:null;
+  /* Three shapes beside the plain entry: a section label ({section}), an entry whose label
+     is markup the caller has already escaped ({html}), and a hover title on an entry that is
+     not greyed ({title}). A menu with a long path in it ({wide}) is drawn wider. */
   ctxEl.innerHTML=`<div class="ctxhead">${esc(head)}</div>`+items.map((it,i)=>it==="hr"?"<hr>":
-    `<div class="ci${it.danger?" danger":""}${it.disabled?" disabled":""}" data-i="${i}"${it.disabled&&it.tip?` title="${esc(it.tip)}"`:""}><span class="r">${it.r}</span><span class="cilbl">${esc(it.label)}</span></div>`
+    it.section?`<div class="ctxsec">${esc(it.section)}</div>`:
+    `<div class="ci${it.danger?" danger":""}${it.disabled?" disabled":""}" data-i="${i}"${it.disabled&&it.tip?` title="${esc(it.tip)}"`:(it.title?` title="${esc(it.title)}"`:"")}><span class="r">${it.r}</span><span class="cilbl">${it.html||esc(it.label)}</span></div>`
   ).join("");
+  ctxEl.classList.toggle("wide",items.some(it=>it&&it.wide));
   ctxEl._items=items;
   ctxEl.style.left="0px"; ctxEl.style.top="0px";
   ctxEl.style.display="block"; ctxEl.classList.add("open");
@@ -14180,8 +14550,12 @@ $("#waystoneBtn")?.addEventListener("click",e=>{e.stopPropagation();waystoneWiza
    screen; it travels anyway, because the host side refusing a write that names another
    realm is the lock that does not depend on this page getting the clearing right. */
 const CFG={files:[],file:null,dirty:false,mock:null,profile:null};
+/* Every config file under BepInEx/config, as a path relative to it with forward slashes
+   ("ModNameFolder/com.author.Mod.cfg"), in path order. The host side walks the folder and
+   sorts it (Forms/ConfigFiles.cs); the preview's mock is put in the same order here, by the
+   same rule, so a screenshot lists what the app lists. */
 async function cfgListFiles(){
-  if(!Native.available) return Object.keys(CFG.mock||{});
+  if(!Native.available) return Object.keys(CFG.mock||{}).sort(cfgPathCmp);
   const r=await rpc("config.list");
   return (r===FAIL||!Array.isArray(r))?null:r;
 }
@@ -14200,11 +14574,14 @@ async function cfgWrite(file,text,profile){
    BepInEx names a config after the plugin that owns it, so the pieces of the name are
    worth searching on their own ("extraslots" finds shudnal.ExtraSlots.cfg), and where a
    scan has matched a plugin to that name its author and title are searchable too. */
+/* The whole relative path is searched as well, so "ModNameData" finds every file in that
+   folder and "yaml" finds every .yaml. */
 function cfgSearchText(f){
   const name=String(f||"");
-  const stem=name.replace(/\.cfg$/i,"");
+  const leaf=cfgPathParts(name).name;
+  const stem=leaf.replace(/\.[^.]+$/,"");
   const bits=[name,stem.split(/[.\-_]+/).filter(Boolean).join(" ")];
-  const low=name.toLowerCase();
+  const low=leaf.toLowerCase();
   (S.mods||[]).forEach(m=>{
     if(!m) return;
     const mod=String(m.ModName||"").toLowerCase(), full=String(m.FullName||"").toLowerCase();
@@ -14221,12 +14598,33 @@ function cfgFilesForList(){
   if(!tokens.length) return CFG.files;
   return CFG.files.filter(f=>searchHit(cfgSearchText(f),tokens));
 }
+/* CFGITEM-BEGIN: one entry in the Configs list. The folders a file sits in come first and
+   quiet, then its name, so a list of a hundred files still reads by name while saying where
+   each one lives (issue 20). scripts/ui/cfg_list_selftest.js draws entries from this block. */
+/* A relative config path split for drawing: the folders in front, muted, and the file name. */
+function cfgPathParts(f){
+  const s=String(f||""), at=s.lastIndexOf("/");
+  return at<0?{pre:"",name:s}:{pre:s.slice(0,at+1),name:s.slice(at+1)};
+}
+/* Path order, case ignored, with "/" before any letter so a folder's files stay together:
+   the same order the host side sorts by. Upper case on purpose, because that is how
+   OrdinalIgnoreCase compares (Forms/ConfigFiles.cs ComparePaths), and it puts "_" after the
+   letters where lower case would put it before them. */
+function cfgPathCmp(a,b){
+  const x=String(a||"").toUpperCase().replace(/\//g,"\u0001");
+  const y=String(b||"").toUpperCase().replace(/\//g,"\u0001");
+  return x<y?-1:x>y?1:0;
+}
+function cfgItemHtml(f,sel,dirty){
+  const p=cfgPathParts(f);
+  const pre=p.pre?`<span class="cfgpre">${esc(p.pre)}</span>`:"";
+  return `<div class="cfg-item${sel?" sel":""}" data-f="${esc(f)}" title="${esc(f)}"><span class="cfgname">${pre}${esc(p.name)}</span>${dirty?'<span class="dot"></span>':""}</div>`;
+}
+/* CFGITEM-END */
 function renderCfgList(){
   $("#runesSub").textContent=T("runes.sub.count",{count:CFG.files.length});
   const shown=cfgFilesForList();
-  $("#cfgList").innerHTML=shown.map(f=>
-    `<div class="cfg-item${f===CFG.file?" sel":""}" data-f="${esc(f)}" title="${esc(f)}"><span class="cfgname">${esc(f)}</span>${(f===CFG.file&&CFG.dirty)?'<span class="dot"></span>':""}</div>`
-  ).join("")||(CFG.files.length
+  $("#cfgList").innerHTML=shown.map(f=>cfgItemHtml(f,f===CFG.file,f===CFG.file&&CFG.dirty)).join("")||(CFG.files.length
     ?`<div class="cfg-item" style="opacity:.5;cursor:default"><span class="cfgname">${esc(T("runes.list.no_match"))}</span></div>`
     :`<div class="cfg-item" style="opacity:.5;cursor:default"><span class="cfgname">${esc(T("runes.list.empty"))}</span></div>`);
   renderRuneShowing(shown.length,CFG.files.length);
@@ -15800,6 +16198,29 @@ if(!Native.available){
     "shudnal-ExtraSlots":"2026-09-08T00:00:00Z",            // after the game update -> blank
     "RandyKnapp-EpicLoot":null,                             // release date unknown -> blank
   };
+  /* Issue 20's rows: one mod switched off (its .dll files renamed .dll.old), one still laid
+     out the old whole-zip way (offered a Reinstall that lays it out as a mod manager would),
+     one copied in by hand (no source, so no pill on its version), and the day each was put
+     on the server, with one the folder could not date. */
+  const demoInstalled={
+    "JereKuusela-WorldEditCommands":"2026-07-02T18:14:00Z",
+    "shudnal-ExtraSlots":"2026-09-20T09:41:00Z",
+    "RandyKnapp-EpicLoot":"2026-05-11T21:03:00Z",
+    "Skogsvandrare-QuietTorches":"2026-03-30T12:00:00Z",
+    "ComfyMods-Gizmo":"2026-08-18T16:22:00Z",
+    "Advize-PlantEverything":"2026-10-14T19:49:41Z",
+    "ComfyMods-SearsCatalog":"2026-08-18T16:23:00Z",
+    "MathiasDecrock-PlanBuild":"2026-04-05T10:10:00Z",
+    "BakaLoader-BakaLoaderSpawnHelper":"2026-10-12T08:00:00Z",
+    "JereKuusela-Rcon_Commands":null,
+    "Dreous-ValheimOptimizer":"2026-06-28T23:15:00Z",
+  };
+  S.mods.forEach(m=>{
+    m.installedUtc=(m.FullName in demoInstalled)?demoInstalled[m.FullName]:null;
+    if(!m.installedSource&&!m.Bundled&&m.FullName!=="Dreous-ValheimOptimizer") m.installedSource="thunderstore";
+    m.disabled=m.FullName==="Advize-PlantEverything";
+    m.layout=m.FullName==="MathiasDecrock-PlanBuild"?"nested":(m.Bundled?null:"managed");
+  });
   S.mods.forEach(m=>{
     const on=!m.Bundled;
     m.thunderstoreNamespace=on?m.Author:null;
@@ -15817,14 +16238,7 @@ if(!Native.available){
   renderMods();
   /* The row menu is host-only in the app, so the preview gets its own opener; it calls
      the same builder, so what a screenshot shows is what the app shows. */
-  $("#modTable").addEventListener("contextmenu",e=>{
-    const tr=e.target.closest("tr[data-key]"); if(!tr) return;
-    e.preventDefault();
-    const mod=modByKey(tr.dataset.key); if(!mod) return;
-    const x=e.clientX,y=e.clientY;
-    const again=()=>ctxOpen(x,y,mod.FullName,modRowItems(mod),again);
-    again();
-  });
+  $("#modTable").addEventListener("contextmenu",e=>modRowMenu(e));
   /* The preview's own world, put INTO the mock list rather than written over the top
      of the field: a hand written option list dropped the New world entry off the end
      and left the names the field is holding saying something other than the names on
@@ -15873,6 +16287,22 @@ Quick slots = 3
 Equipment slots enabled = true
 Food slots amount = 3
 Misc slots amount = 2`,
+    /* Files below the top level, the shapes issue 20 named: a mod's own folder holding a
+       .yaml or a .json, and a folder two deep holding a .md. */
+    "ExtraSlots/shudnal.ExtraSlots.CustomSlots.yaml":
+`slots:
+  ammo: 2
+  food: 3
+  misc: 2`,
+    "PlanBuild/MathiasDecrock.PlanBuild.Blueprints.json":
+`{
+  "blueprintDirectory": "BepInEx/config/PlanBuild/blueprints",
+  "allowDirectBuild": true
+}`,
+    "ComfyMods/Gizmo/notes.md":
+`# Gizmo
+
+Snap angle notes for the build team.`,
     "nl.avii.plugins.rcon.cfg":
 `[RCON]
 ## Enable the RCON listener

@@ -290,7 +290,9 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_offer_finishes_the_add_that_was_interrupted()
         {
-            Assert.Contains("bepInExOfferModal(()=>doAddMod(url));", Body("doAddMod"), StringComparison.Ordinal);
+            // With whatever the add was sent with: a row menu's Reinstall (1.2.15) carries the
+            // realm and requireStopped, and the finished add must not drop them.
+            Assert.Contains("bepInExOfferModal(()=>doAddMod(url,extra));", Body("doAddMod"), StringComparison.Ordinal);
             // the offer hands that continuation through the write, and the write runs it
             Assert.Contains("bepInExWrite(\"bepinex.install\",link===BEPINEX_DEFAULT_URL?{}:{url:link},after);",
                 Body("bepInExOfferModal"), StringComparison.Ordinal);

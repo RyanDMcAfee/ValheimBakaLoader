@@ -229,12 +229,16 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("function modByKey(key){", js);
             Assert.Contains("return (S.mods||[]).find(m=>m&&m.FullName===key)||null;", js);
 
-            // The row itself carries the key, not a position.
-            Assert.Contains("<tr data-key=\"${esc(m.FullName)}\">", js);
+            // The row itself carries the key, not a position (and, since 1.2.15, the off class
+            // of a switched-off mod after it).
+            Assert.Contains("<tr data-key=\"${esc(m.FullName)}\"${m.disabled?' class=\"off\"':\"\"}>", js);
 
-            // Both row menus and both marks go through the key.
-            Assert.Equal(2, Count(js, "e.target.closest(\"tr[data-key]\")"));
-            Assert.Equal(2, Count(js, "modByKey(tr.dataset.key)"));
+            // Both row menus open through one opener since 1.2.15 (it also fetches the mod's
+            // config files), and it and both marks go through the key.
+            Assert.Equal(1, Count(js, "e.target.closest(\"tr[data-key]\")"));
+            Assert.Equal(1, Count(js, "modByKey(tr.dataset.key)"));
+            Assert.Contains("  modRowMenu(e);\n", js.Replace("\r\n", "\n"));
+            Assert.Contains("$(\"#modTable\").addEventListener(\"contextmenu\",e=>modRowMenu(e));", js);
             Assert.Contains("modByKey(mark.dataset.hex)", js);
             Assert.Contains("modByKey(mark.dataset.ts)", js);
 
@@ -299,7 +303,7 @@ namespace ValheimBakaLoader.Tests.Forms
             var expected = new[]
             {
                 "mods.possibly_outdated.yes", "mods.status.bundled", "mods.status.current",
-                "mods.status.held", "mods.status.not_listed", "mods.status.unchecked",
+                "mods.status.held", "mods.status.not_listed", "mods.status.off", "mods.status.unchecked",
                 "mods.status.update", "mods.tag.hexium", "mods.tag.patcher",
             };
             Assert.Equal(expected, IdsAskedIn(text).ToArray());
@@ -336,6 +340,9 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.col.possibly_outdated.tip", "mods.col.possibly_outdated.tip.unknown",
                 "mods.status.held.tip", "mods.status.not_listed.tip",
                 "mods.status.unchecked.tip", "mods.tag.hexium.tip",
+                // 1.2.15 (issue 20): why a switched-off row says Off, and which site the
+                // installed version came from, both said on hover of what the row draws.
+                "mods.status.off.tip", "mods.tag.installed.hexium.tip", "mods.tag.installed.thunderstore.tip",
             };
             // Words the render draws AROUND the table rather than on a row: the pill above
             // it and the two lines under the heading. Subtracted by name for the same
@@ -589,7 +596,10 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var text = Between(AppJs(), "function cfgSearchText(f){", "/* THE ONE PLACE the Configs search");
 
-            Assert.Contains("const stem=name.replace(/\\.cfg$/i,\"\");", text);
+            // 1.2.15: the entry is a path relative to the config folder, so the stem is the
+            // last part's, with whichever extension it carries taken off.
+            Assert.Contains("const leaf=cfgPathParts(name).name;", text);
+            Assert.Contains("const stem=leaf.replace(/\\.[^.]+$/,\"\");", text);
             Assert.Contains("stem.split(/[.\\-_]+/)", text);
             Assert.Contains("bits.push(m.ModName,m.Author,m.FullName);", text);
         }
@@ -676,7 +686,8 @@ namespace ValheimBakaLoader.Tests.Forms
             {
                 ("runes.find.no_match", "no match"),
                 ("runes.list.no_match", "no scroll carries that"),
-                ("runes.list.empty", "no .cfg scrolls found"),
+                // Since 1.2.15 the list holds .yaml, .json and .md files as well (issue 20).
+                ("runes.list.empty", "no config scrolls found"),
             })
             {
                 Assert.True(js.Contains("T(\"" + id + "\")", StringComparison.Ordinal),

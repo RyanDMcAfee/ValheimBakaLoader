@@ -121,8 +121,11 @@ namespace ValheimBakaLoader.Tests.Forms
         // 95 with the Duplicate dialog's source marks in 1.2.11, and 96 with the sentence that
         // refuses a copy kept under its source's own world name with a dial changed. 97 with the
         // refusal a delete with files gives when a folder of the realm is still on disk, and 98
-        // with the same refusal when part of the realm already went.
-        [InlineData("realm.", 98)]
+        // with the same refusal when part of the realm already went. 143 with the 45 the chip's
+        // Customize look dialog brings in 1.2.15: its menu entry, title, note, the two labels,
+        // the two "as it was" choices and the tip of one, the saved toast, fourteen runes with a
+        // name and a meaning each, and eight colours.
+        [InlineData("realm.", 143)]
         [InlineData("barrow.", 54)]
         [InlineData("waystone.wiz.", 46)]
         [InlineData("world.wg.", 65)]

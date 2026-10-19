@@ -865,5 +865,43 @@ else
   echo "  the herald look selftest is missing: $LOOK_SELFTEST"; fail=1
 fi
 
+# 1.2.15, issue 20. Each of these drives a marked block out of app.js against the real catalog,
+# the way 44 to 50 do. The four are one feature each: the Mods table resting on Name with Author
+# and the two dates sortable and the sort said in the head; a row's dates, Installed pill and Off
+# state with its menu's switch, reinstall and configs; the Configs list's folder prefixes; and a
+# realm chip's rune and colour, which come off a file a hand can edit.
+UI_DIR="$(dirname "$(dirname "$HERE")")/scripts/ui"
+for spec in \
+  "51|the Mods table rests on Name, sorts Author and both dates, and says how it is sorted|mod_sort_selftest.js" \
+  "52|a Mods row's dates, its Installed pill, the Off state and the row menu's new entries|mod_row_selftest.js" \
+  "53|the Configs list draws each file's folders ahead of its name and finds it by them|cfg_list_selftest.js" \
+  "54|a realm chip's rune and colour, and the letter for anything the lists do not hold|chip_look_selftest.js"
+do
+  IFS='|' read -r num what file <<<"$spec"
+  echo "== $num. $what =="
+  if [ -f "$UI_DIR/$file" ]; then
+    if out=$(node "$UI_DIR/$file"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+    else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+  else
+    echo "  the selftest is missing: $UI_DIR/$file"; fail=1
+  fi
+done
+
+echo "== 55. issue 20's layout in a real browser: row padding, the grip and the scrollbar, the sticky head =="
+# Three answers only a browser has: whether every settings row is padded the same, whether the
+# right-hand resize grip still covers the scrollbar's thumb, and whether the Dashboard, Mods and
+# Settings heads stay on screen while their halls scroll. Same readiness question as 40 asks.
+LAYOUT_PROBE="$UI_DIR/issue20_layout_probe.js"
+if [ ! -f "$LAYOUT_PROBE" ]; then
+  echo "  the layout probe is missing: $LAYOUT_PROBE"; fail=1
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  NOT RUN: there is no node on this box, so nothing read the page in a browser."
+elif ! ready=$(node "$SWITCH_PROBE" --check); then
+  printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
+else
+  if out=$(node "$LAYOUT_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail
