@@ -14,9 +14,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest"><b>Download the latest release</b></a>, unzip it anywhere, run <code>ValheimBakaLoader.exe</code>. A short setup wizard runs the first time.<br>
-  <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest"><b>最新リリースをダウンロード</b></a>し、好きな場所に展開して <code>ValheimBakaLoader.exe</code> を起動してください。初回起動時に短いセットアップウィザードが開きます。<br>
-  <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest"><b>下载最新版本</b></a>，解压到任意位置，运行 <code>ValheimBakaLoader.exe</code>。首次启动时会运行一个简短的设置向导。<br>
+  <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest"><b>Download the latest release</b></a>, unzip it anywhere, run <code>ValheimBakaLoader.exe</code>. A short setup wizard runs the first time.
+</p>
+
+<p align="center">
+  <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest"><b>最新リリースをダウンロード</b></a>し、好きな場所に展開して <code>ValheimBakaLoader.exe</code> を起動してください。初回起動時に短いセットアップウィザードが開きます。
+</p>
+
+<p align="center">
+  <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest"><b>下载最新版本</b></a>，解压到任意位置，运行 <code>ValheimBakaLoader.exe</code>。首次启动时会运行一个简短的设置向导。
+</p>
+
+<p align="center">
   <a href="https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest"><b>Скачайте последний выпуск</b></a>, распакуйте его в любую папку и запустите <code>ValheimBakaLoader.exe</code>. При первом запуске откроется короткий мастер настройки.
 </p>
 
