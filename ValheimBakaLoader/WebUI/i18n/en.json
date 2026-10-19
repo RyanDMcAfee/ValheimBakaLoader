@@ -1,8 +1,8 @@
 {
   "_meta": {
     "language": "en",
-    "appVersion": "1.2.14",
-    "catalog": 14
+    "appVersion": "1.2.15",
+    "catalog": 15
   },
   "keys": {
     "pal.cmd.restart_server": { "lore": "Restart server" },
@@ -575,6 +575,18 @@
     "mods.reinstall.server_running.toast": { "lore": "The server '{name}' is running on this install, so nothing was reinstalled. Stop it first, then try again.", "params": { "name": "text" } },
     "mods.reinstall.realm_changed.toast": { "lore": "The server on screen changed before the reinstall began, so nothing was reinstalled." },
     "mods.toggle.preview.toast": { "lore": "Switching a mod off or on happens in the app", "mark": "ᚱ" },
+    "mods.switch.reason.busy": { "lore": "A mod update is already in progress. Try again in a moment." },
+    "mods.switch.reason.realm_changed": { "lore": "The server on screen changed, so nothing was changed." },
+    "mods.switch.reason.no_server_path": { "lore": "BepInEx plugins folder not found. Set a valid server .exe path first." },
+    "mods.switch.reason.server_running": { "lore": "Stop the server '{name}' first. Nothing was changed.", "params": { "name": "text" } },
+    "mods.switch.reason.not_found": { "lore": "The folder of {mod} was not found, so nothing was switched.", "params": { "mod": "text" } },
+    "mods.switch.reason.protected": { "lore": "{folder} is managed by BakaLoader or BepInEx and cannot be switched off here.", "params": { "folder": "text" } },
+    "mods.switch.reason.already_off": { "lore": "{mod} is already switched off.", "params": { "mod": "text" } },
+    "mods.switch.reason.already_on": { "lore": "{mod} is already switched on.", "params": { "mod": "text" } },
+    "mods.switch.reason.nothing_to_switch": { "lore": "{mod} has no plugin file to switch, so nothing was changed.", "params": { "mod": "text" } },
+    "mods.switch.reason.name_taken": { "lore": "{taken} is already there beside {beside}, so nothing was switched.", "params": { "taken": "text", "beside": "text" } },
+    "mods.switch.reason.failed.off": { "lore": "{mod} could not be switched off ({detail}), so it was left as it was.", "params": { "mod": "text", "detail": "text" } },
+    "mods.switch.reason.failed.on": { "lore": "{mod} could not be switched on ({detail}), so it was left as it was.", "params": { "mod": "text", "detail": "text" } },
 
     "mods.tag.patcher": { "lore": "patcher" },
     "mods.tag.hexium": { "lore": "Hexium" },

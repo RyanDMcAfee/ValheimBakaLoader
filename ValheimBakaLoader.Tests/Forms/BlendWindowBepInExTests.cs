@@ -711,6 +711,65 @@ namespace ValheimBakaLoader.Tests.Forms
         /// <summary>The unattended BepInEx reasons table, from its opening bracket to its close.</summary>
         private static string BepInExReasonsTable() => NamedTable("const BEPINEX_REASONS=[");
 
+        /// <summary>The refused mod switch table, from its opening bracket to its close.</summary>
+        private static string ModSwitchReasonsTable() => NamedTable("const MOD_SWITCH_REASONS=[");
+
+        /// <summary>
+        /// Every reason mods.disable and mods.enable can answer with has a row in the page's
+        /// MOD_SWITCH_REASONS, every row names a reason one of them can answer with, and every
+        /// row's sentence is in the catalog. Both directions, because both drift: a reason the
+        /// switch learns that the page does not know is said in English for ever, and a row the
+        /// switch can no longer reach is a sentence a translator pays for and nobody reads.
+        /// <para>
+        /// The reasons come from the two places that answer: Tools/ModSwitch.cs (its Refused
+        /// calls) and the SwitchMod helper in the bridge (its own Answer(false, ...) calls).
+        /// "failed" is the one reason with a row per direction, because the sentence says
+        /// which way the switch was going.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void Every_switch_reason_has_a_sentence_and_every_sentence_a_reason()
+        {
+            var catalog = Catalog();
+            var switcher = AppSourceTree.Lf(AppSourceTree.Files()["ModSwitch.cs"]);
+            var bridge = Bridge().Replace("\r\n", "\n");
+            var from = bridge.IndexOf("object SwitchMod(", StringComparison.Ordinal);
+            var to = bridge.IndexOf("RegisterRpc(\"mods.disable\"", from, StringComparison.Ordinal);
+            Assert.True(from > 0 && to > from, "the bridge has no SwitchMod helper ahead of mods.disable");
+            var helper = bridge.Substring(from, to - from);
+
+            var answered = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Match m in Regex.Matches(switcher, "Refused\\((?:off \\? )?\"([A-Za-z]+)\"(?: : \"([A-Za-z]+)\")?"))
+            {
+                answered.Add(m.Groups[1].Value);
+                if (m.Groups[2].Success) answered.Add(m.Groups[2].Value);
+            }
+            foreach (Match m in Regex.Matches(helper, "Answer\\(false, 0, .*?, \"([A-Za-z]+)\"[,)]"))
+                answered.Add(m.Groups[1].Value);
+            Assert.Contains("failed", answered);
+            Assert.Contains("serverRunning", answered);
+
+            var rows = Regex.Matches(ModSwitchReasonsTable(), "named:\\s*\"([^\"]+)\"\\s*,\\s*textId:\\s*\"([^\"]+)\"")
+                .Cast<Match>()
+                .Select(m => (Reason: m.Groups[1].Value, TextId: m.Groups[2].Value))
+                .ToList();
+            Assert.NotEmpty(rows);
+
+            // What each answered reason is worded by on the page.
+            var expected = answered
+                .SelectMany(r => r == "failed" ? new[] { "failedOff", "failedOn" } : new[] { r })
+                .ToHashSet(StringComparer.Ordinal);
+            var named = rows.Select(r => r.Reason).ToHashSet(StringComparer.Ordinal);
+
+            var unworded = expected.Where(r => !named.Contains(r)).OrderBy(r => r, StringComparer.Ordinal).ToList();
+            Assert.True(unworded.Count == 0, "the switch answers reasons the page has no sentence for: " + string.Join(", ", unworded));
+            var unreachable = named.Where(r => !expected.Contains(r)).OrderBy(r => r, StringComparer.Ordinal).ToList();
+            Assert.True(unreachable.Count == 0, "the page words switch reasons nothing answers with: " + string.Join(", ", unreachable));
+
+            foreach (var (_, textId) in rows)
+                Assert.True(catalog.ContainsKey(textId), "the catalog has no " + textId);
+        }
+
         /// <summary>
         /// Every reason the page words is one the service can really name, and every one of
         /// them has a sentence in the catalog.
@@ -760,14 +819,15 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The net under the three tables above. Each of them is checked from one end or the
+        /// The net under the tables above. Each of them is checked from one end or the
         /// other: HOST_SENTENCES against the throws in the source, LANG_REASONS against the
-        /// service's own constants, and BEPINEX_REASONS against the skip reasons the BepInEx
-        /// service can name. Between them they cover every paired row in the page TODAY. What
-        /// none of them covers is a FOURTH table added tomorrow: rows in it would be wording
-        /// something nothing checks, and all three existing gates would stay green while it
-        /// rotted. So the page is held to these three, and a fourth one has to arrive with the
-        /// gate that stands under it.
+        /// service's own constants, BEPINEX_REASONS against the skip reasons the BepInEx
+        /// service can name, and (1.2.15) MOD_SWITCH_REASONS against what a mod switch can
+        /// answer. Between them they cover every paired row in the page TODAY. What none of
+        /// them covers is a table added tomorrow: rows in it would be wording something
+        /// nothing checks, and every existing gate would stay green while it rotted. So the
+        /// page is held to these four, and a fifth one has to arrive with the gate that
+        /// stands under it.
         /// </summary>
         [Fact]
         public void The_page_pairs_its_sentences_in_the_tables_that_are_guarded()
@@ -780,14 +840,14 @@ namespace ValheimBakaLoader.Tests.Forms
 
             Assert.NotEmpty(everywhere);
 
-            var guarded = HostSentencesTable() + LangReasonsTable() + BepInExReasonsTable();
+            var guarded = HostSentencesTable() + LangReasonsTable() + BepInExReasonsTable() + ModSwitchReasonsTable();
             var loose = everywhere
                 .Where(id => !Regex.IsMatch(guarded, "named:\\s*\"" + Regex.Escape(id) + "\""))
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
 
             Assert.True(loose.Count == 0,
-                "these rows pair a sentence outside HOST_SENTENCES, LANG_REASONS and BEPINEX_REASONS, "
+                "these rows pair a sentence outside HOST_SENTENCES, LANG_REASONS, BEPINEX_REASONS and MOD_SWITCH_REASONS, "
                     + "where nothing checks them: " + string.Join(", ", loose));
         }
 

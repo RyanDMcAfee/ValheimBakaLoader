@@ -276,6 +276,46 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.True(Directory.EnumerateFiles(backups, "Full.dll", SearchOption.AllDirectories).Any());
         }
 
+        // ---- what counts as nested: a plugin file a level too deep, never a data folder ----
+
+        [Theory]
+        [InlineData("config/Some.Full.cfg", "managed")]
+        [InlineData("config/deeper/list.yaml", "managed")]
+        [InlineData("plugins/translations/English.json", "managed")]
+        [InlineData("BepInEx/config/Some.Full.cfg", "managed")]
+        [InlineData("patchers/readme.txt", "managed")]
+        [InlineData("Full.dll", "managed")]
+        [InlineData("Assets/Full.dll", "managed")]
+        [InlineData("plugins/Full.dll", "nested")]
+        [InlineData("Plugins/Full.dll", "nested")]
+        [InlineData("plugins/Pets/Full.dll", "nested")]
+        [InlineData("patchers/Full.Patcher.dll.old", "nested")]
+        [InlineData("BepInEx/plugins/Full.dll", "nested")]
+        [InlineData("BepInEx/patchers/deep/Full.Patcher.DLL", "nested")]
+        public void Layout_counts_a_package_nested_only_for_a_plugin_file_under_a_nested_loader_folder(string file, string expected)
+        {
+            var folder = At("plugins/Some-Full");
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "manifest.json"), Manifest("Full", "1.0.0"));
+            var path = Path.Combine(folder, file.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, "x");
+
+            Assert.Equal(expected, ModScanner.LayoutOf(folder));
+            Assert.Equal(expected, Scan("Some-Full").Layout);
+        }
+
+        [Fact]
+        public void Layout_of_an_empty_nested_folder_is_managed()
+        {
+            var folder = At("plugins/Some-Full");
+            Directory.CreateDirectory(Path.Combine(folder, "plugins"));
+            Directory.CreateDirectory(Path.Combine(folder, "BepInEx", "config"));
+            File.WriteAllText(Path.Combine(folder, "manifest.json"), Manifest("Full", "1.0.0"));
+
+            Assert.Equal("managed", ModScanner.LayoutOf(folder));
+        }
+
         // ---- the update path keeps a switched off mod switched off ----
 
         [Fact]

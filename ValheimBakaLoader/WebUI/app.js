@@ -4677,17 +4677,19 @@ function modStatusPill(m,blind){
     :m.notListed?`<span class="pill grey" title="${esc(T("mods.status.not_listed.tip"))}">${esc(T("mods.status.not_listed"))}</span>`
     :`<span class="pill ${has?"amber":"green"}">${esc(has?T("mods.status.update"):T("mods.status.current"))}</span>`;
 }
-/* The Installed cell. The version sits in the Hexium pill's own style when the scan knows
-   which site the files came from, so a row whose Installed and Thunderstore latest disagree
-   reads as two sites rather than as a mistake (issue 20). A hand-copied folder has no
-   source and no pill. */
+/* The Installed cell. The version sits in a pill when the scan knows which site the files
+   came from, so a row whose Installed and Thunderstore latest disagree reads as two sites
+   rather than as a mistake (issue 20). The Hexium copy keeps the Hexium chip's colour and a
+   Thunderstore copy is only an outline in the table's own grey: the second site is the one
+   worth seeing at a glance, and two pills the same colour said nothing about which was which.
+   A hand-copied folder has no source and no pill. */
 function modInstalledCell(m){
   const v=esc(m.InstalledVersion||"-");
   const src=m.installedSource;
   if(src==="hexium")
     return `<td class="mono"><span class="modchip modver" title="${esc(T("mods.tag.installed.hexium.tip"))}">${v}</span></td>`;
   if(src==="thunderstore")
-    return `<td class="mono"><span class="modchip modver" title="${esc(T("mods.tag.installed.thunderstore.tip"))}">${v}</span></td>`;
+    return `<td class="mono"><span class="modchip modver from-ts" title="${esc(T("mods.tag.installed.thunderstore.tip"))}">${v}</span></td>`;
   return `<td class="mono">${v}</td>`;
 }
 function modRowHtml(m,blind){
@@ -5939,16 +5941,51 @@ async function openModConfig(f){
   const it=[...document.querySelectorAll("#cfgList .cfg-item[data-f]")].find(el=>el.dataset.f===f);
   if(it) try{it.scrollIntoView({block:"nearest"});}catch(_){}
 }
+/* Every reason a switch can be refused for, as the host names it in reason, beside the
+   catalog entry that words it. The host sends its own English in error as well; this is the
+   same pairing an add's Reason gets, so a refusal reads in the host's language and a reason
+   this table does not know still says something, in English. failed is two sentences
+   because off and on are words, not values. */
+const MOD_SWITCH_REASONS=[
+  {named:"busy",            textId:"mods.switch.reason.busy"},
+  {named:"realmChanged",    textId:"mods.switch.reason.realm_changed"},
+  {named:"noServerPath",    textId:"mods.switch.reason.no_server_path"},
+  {named:"serverRunning",   textId:"mods.switch.reason.server_running"},
+  {named:"notFound",        textId:"mods.switch.reason.not_found"},
+  {named:"protected",       textId:"mods.switch.reason.protected"},
+  {named:"alreadyOff",      textId:"mods.switch.reason.already_off"},
+  {named:"alreadyOn",       textId:"mods.switch.reason.already_on"},
+  {named:"nothingToSwitch", textId:"mods.switch.reason.nothing_to_switch"},
+  {named:"nameTaken",       textId:"mods.switch.reason.name_taken"},
+  {named:"failedOff",       textId:"mods.switch.reason.failed.off"},
+  {named:"failedOn",        textId:"mods.switch.reason.failed.on"},
+];
+/* The sentence for a refused switch, or null when the reason is not one this page has words
+   for. The mod is named the way the row names it; the values only the host knows (a folder,
+   two file names, why a rename failed) come in errorParams. */
+function modSwitchReasonText(r,mod,on){
+  if(!r||!r.reason) return null;
+  const id=r.reason==="failed"?(on?"failedOn":"failedOff"):r.reason;
+  const row=MOD_SWITCH_REASONS.find(x=>x.named===id);
+  if(!row) return null;
+  const given=r.errorParams||{};
+  const params=Object.assign({folder:"",taken:"",beside:"",detail:""},given,{
+    mod:(mod&&(mod.ModName||mod.FullName))||"",
+    name:given.name||S.profileName||"",
+  });
+  try{return T(row.textId,params);}catch(_){return null;}
+}
 /* Switch a mod off (every .dll under its folders renamed .dll.old) or back on. The host side
-   does the renaming and refuses while the realm's server runs; the sentence it refuses with
-   goes to the toast as it stands, the way the other mod refusals do. */
+   does the renaming and refuses while the realm's server runs; a refusal it named is said in
+   the page's words, and one it did not goes to the toast as the host wrote it. */
 async function setModEnabled(mod,on){
   if(!Native.available){toast("ᚱ "+T("mods.toggle.preview.toast"));return;}
   if(S.modsUpdating||S.modsScanning) return;
   const r=await rpc(on?"mods.enable":"mods.disable",{profile:S.profileName||null,fullName:mod.FullName});
   if(r===FAIL||!r) return;
   if(!r.ok){
-    toast("ᚦ "+T("mods.toggle.failed.toast",{mod:mod.ModName||mod.FullName,detail:r.error||T("common.error.unknown")}));
+    toast("ᚦ "+(modSwitchReasonText(r,mod,on)
+      ||T("mods.toggle.failed.toast",{mod:mod.ModName||mod.FullName,detail:r.error||T("common.error.unknown")})));
     return;
   }
   const named={mod:mod.ModName||mod.FullName};

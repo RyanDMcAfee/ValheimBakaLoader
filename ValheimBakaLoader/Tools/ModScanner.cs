@@ -2,6 +2,7 @@ using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using ValheimBakaLoader.Tools.Logging;
 using ValheimBakaLoader.Tools.Models;
 
@@ -293,13 +294,21 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        /// <summary>The folders a whole-zip install by an older build left inside a package folder.</summary>
-        private static readonly string[] NestedLayoutFolderNames = { "plugins", "patchers", "BepInEx", "config" };
+        /// <summary>
+        /// The folders a whole-zip install by an older build left inside a package folder with
+        /// plugin files in them. config is not one of them: plenty of packages ship a config or
+        /// a plugins folder of data on purpose, and only a plugin file buried a level too deep is
+        /// a sign of the old layout.
+        /// </summary>
+        private static readonly string[] NestedLayoutFolderNames = { "plugins", "patchers", "BepInEx" };
 
         /// <summary>
-        /// "nested" when a plugin folder still carries a plugins, patchers, BepInEx or config
-        /// folder of its own, which is what unpacking a whole package into it left behind before
-        /// 1.2.15, and "managed" otherwise. Read only; never throws.
+        /// "nested" when a plugin folder still carries a plugins, patchers or BepInEx folder of
+        /// its own with at least one plugin file in it (a <c>.dll</c>, or a <c>.dll.old</c> of a
+        /// mod that is switched off), at any depth below it. That is what unpacking a whole
+        /// package into the folder left behind before 1.2.15. "managed" otherwise, which takes
+        /// in a package that ships a config or plugins folder holding only data. Read only;
+        /// never throws.
         /// </summary>
         public static string LayoutOf(string pluginDirectory)
         {
@@ -308,8 +317,10 @@ namespace ValheimBakaLoader.Tools
                 foreach (var dir in Directory.EnumerateDirectories(pluginDirectory))
                 {
                     var name = Path.GetFileName(dir);
-                    foreach (var nested in NestedLayoutFolderNames)
-                        if (string.Equals(name, nested, StringComparison.OrdinalIgnoreCase)) return "nested";
+                    if (!NestedLayoutFolderNames.Any(n => string.Equals(name, n, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    if (Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any(IsPluginFileName))
+                        return "nested";
                 }
             }
             catch
@@ -319,6 +330,12 @@ namespace ValheimBakaLoader.Tools
 
             return "managed";
         }
+
+        // By the real ending, as ModSwitch does: a "*.dll" search pattern is a Windows pattern
+        // with surprises of its own.
+        private static bool IsPluginFileName(string path) =>
+            path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".dll" + ModSwitch.OffSuffix, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>When a folder was made, in UTC, or null when that cannot be read.</summary>
         private static DateTime? FolderCreatedUtc(string directory)

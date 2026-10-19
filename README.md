@@ -69,13 +69,14 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.14
+## What is new in 1.2.15
 
-- **A server can follow a Gale profile.** Paste a synced profile's id once in the Mods screen; when the profile changes, a row names what is new, you review the list, untick what you do not want, and the server installs the rest at the profile's versions. Nothing is ever removed. [Gale profiles](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Gale-profiles)
-- **The Herald post has a face.** A display name, an avatar, a title, a status line, and a link to the BakaLoader page. [Discord (Herald)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-(Herald))
-- **Long sweeps tell you how they ended**, and the ground-items radius says what it keeps. [Dashboard (Hearth)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-(Hearth))
-- **The spawner finds the exact name first.** [Players (Vikings)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-(Vikings))
-- **Everything 1.2.13 brought** is in here too: the app's own updater and the save before every stop. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **The Atlas reads Valheim 1.0.20 worlds** (world version 42), and the bundled plugins write and clear the game's new cheated mark. [World file formats](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-file-formats)
+- **Packages land the way a mod manager lays them out.** Plugins, patchers and configs go where r2modman and Gale put them, and an existing config file is never overwritten. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
+- **A mod can be switched off and on** from its row menu, and patchers belong to their realm. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
+- **The Mods table rests on name**, with Author, Installed on and Updated columns and a pill that says where a mod came from. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
+- **The Configs screen lists folders and yaml, json and md files**, and a mod's row menu opens its configs. [Configs (Runes)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Configs-(Runes))
+- **Everything 1.2.14 brought** is in here too: following a Gale profile and the Herald's new look. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 

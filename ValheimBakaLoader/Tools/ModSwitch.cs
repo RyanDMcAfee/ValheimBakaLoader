@@ -21,9 +21,18 @@ namespace ValheimBakaLoader.Tools
         /// <summary>A short name for why it did not work, so a page can word it itself. Null on success.</summary>
         public string Reason { get; init; }
 
+        /// <summary>
+        /// The values the sentence names that a page cannot know on its own (a folder, two file
+        /// names, the exception's words), so the page's own wording of <see cref="Reason"/> can
+        /// say the same thing. Null when the sentence names nothing beyond the mod.
+        /// </summary>
+        public IReadOnlyDictionary<string, object> Params { get; init; }
+
         public static ModSwitchResult Done(int count) => new() { Ok = true, Count = count };
 
-        public static ModSwitchResult Refused(string reason, string error) => new() { Ok = false, Reason = reason, Error = error };
+        public static ModSwitchResult Refused(string reason, string error,
+            IReadOnlyDictionary<string, object> parameters = null) =>
+            new() { Ok = false, Reason = reason, Error = error, Params = parameters };
     }
 
     /// <summary>
@@ -103,7 +112,8 @@ namespace ValheimBakaLoader.Tools
             var folderName = new DirectoryInfo(pluginDir ?? patcherDir).Name;
             if (ModScanner.IsCompanionFolder(folderName) || ModScanner.IsProtectedPatcher(folderName))
                 return ModSwitchResult.Refused("protected",
-                    $"{folderName} is managed by BakaLoader or BepInEx and cannot be switched off here.");
+                    $"{folderName} is managed by BakaLoader or BepInEx and cannot be switched off here.",
+                    new Dictionary<string, object> { ["folder"] = folderName });
 
             var anchor = pluginDir ?? patcherDir;
             var bepInExRoot = Directory.GetParent(Directory.GetParent(anchor)!.FullName)?.FullName;
@@ -128,7 +138,12 @@ namespace ValheimBakaLoader.Tools
             var taken = plan.FirstOrDefault(p => File.Exists(p.To));
             if (taken.To != null)
                 return ModSwitchResult.Refused("nameTaken",
-                    $"{Path.GetFileName(taken.To)} is already there beside {Path.GetFileName(taken.From)}, so nothing was switched.");
+                    $"{Path.GetFileName(taken.To)} is already there beside {Path.GetFileName(taken.From)}, so nothing was switched.",
+                    new Dictionary<string, object>
+                    {
+                        ["taken"] = Path.GetFileName(taken.To),
+                        ["beside"] = Path.GetFileName(taken.From),
+                    });
 
             // A realm whose patchers folder is still the old link to the base install gets its
             // own copy first, so renaming a patcher here never switches it off on every realm.
@@ -157,7 +172,8 @@ namespace ValheimBakaLoader.Tools
 
                 logger?.Error(e, "Could not switch {0} {1}.", mod.FullName, off ? "off" : "on");
                 return ModSwitchResult.Refused("failed",
-                    $"{mod.FullName} could not be switched {(off ? "off" : "on")} ({e.Message}), so it was left as it was.");
+                    $"{mod.FullName} could not be switched {(off ? "off" : "on")} ({e.Message}), so it was left as it was.",
+                    new Dictionary<string, object> { ["detail"] = e.Message });
             }
 
             logger?.Information("Switched {0} {1}: {2} plugin file(s) in {3} renamed {4}.",

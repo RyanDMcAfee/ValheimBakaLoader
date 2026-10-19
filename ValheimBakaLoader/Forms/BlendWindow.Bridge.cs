@@ -7625,7 +7625,10 @@ namespace ValheimBakaLoader.Forms
                 }
                 catch (Exception e)
                 {
-                    return Answer(false, 0, e.Message, HostFacingException.IdOf(e) ?? "notFound", HostFacingException.ParamsOf(e));
+                    // Every way the lookup can fail comes to the same thing for this row: there is
+                    // no such mod on this realm's disk to switch, so it is one reason the page has
+                    // words for rather than the lookup's own ids.
+                    return Answer(false, 0, e.Message, "notFound");
                 }
 
                 _modUpdateInProgress = true;
@@ -7634,7 +7637,7 @@ namespace ValheimBakaLoader.Forms
                     var result = off ? Tools.ModSwitch.Disable(mod, AppLogger) : Tools.ModSwitch.Enable(mod, AppLogger);
                     return result.Ok
                         ? Answer(true, result.Count, null, null)
-                        : Answer(false, 0, result.Error, result.Reason);
+                        : Answer(false, 0, result.Error, result.Reason, result.Params);
                 }
                 finally
                 {
@@ -8031,8 +8034,9 @@ namespace ValheimBakaLoader.Forms
 
             // --- BepInEx (the framework every mod loads under) ---
             // BepInEx is ONE thing per base install, never one per profile: an isolated
-            // install shares BepInEx/core and BepInEx/patchers with the base through
-            // directory junctions and hard-links the loader files beside the executable. So
+            // install shares BepInEx/core with the base through a directory junction and
+            // hard-links the loader files beside the executable. (Patchers are mods and each
+            // realm's own since 1.2.15, so they are not part of this.) So
             // every answer here is about the base install the active profile runs from, and
             // every write reaches every server on it. That is why the refusal below is a
             // refusal and not a warning.
@@ -10992,8 +10996,9 @@ namespace ValheimBakaLoader.Forms
         /// The name of a server that is up right now and has one of
         /// <paramref name="foldersTheRemovalTouches"/> open, or null when nothing is holding
         /// any of them. It is the folders the removal would delete FROM, plugins and patchers
-        /// both, rather than a plugins folder alone: an isolated realm copies plugins and
-        /// junctions patchers, so the two answer to different owners. Anything but Stopped
+        /// both, rather than a plugins folder alone: a realm made before 1.2.15 still links
+        /// its patchers to the base install until something writes there, so the two can
+        /// answer to different owners. Anything but Stopped
         /// counts: a server that is starting has already loaded its plugins, and one that is
         /// stopping has not let go of them yet.
         /// <para>
@@ -11068,9 +11073,11 @@ namespace ValheimBakaLoader.Forms
         /// <para>
         /// The plugins folder always. The patchers folder only when this mod really has a part
         /// in it, or when the mod could not be read at all and nothing here can say: an
-        /// isolated realm COPIES plugins, which makes them its own, but JUNCTIONS patchers to
-        /// the base install, which makes them everybody's, so a patcher carrying mod removed on
-        /// a stopped realm would delete the folder a running realm has loaded. Naming patchers
+        /// isolated realm has its own plugins, and since 1.2.15 its own patchers too, but a
+        /// realm made before that keeps a junction from its patchers to the base install until
+        /// the first write turns it into a copy, and until then the folder is everybody's. So a
+        /// patcher carrying mod removed on a stopped realm can still be the folder a running
+        /// realm has loaded. Naming patchers
         /// on every removal would put back the refusal this whole change is undoing, so it is
         /// named only when it is really in the way.
         /// </para>

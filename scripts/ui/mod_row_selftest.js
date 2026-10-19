@@ -13,8 +13,9 @@
  *
  *   1. Dates: the day in YYYY-MM-DD, local time, with the whole timestamp on hover; a blank
  *      cell for a date nobody knows.
- *   2. Installed: the version in the Hexium chip's style for hexium and for thunderstore, each
- *      with its own tooltip, and no pill for a hand-copied folder.
+ *   2. Installed: the version in the Hexium chip's colour for hexium and in a grey outline for
+ *      thunderstore, each with its own tooltip, and no pill for a hand-copied folder. The two
+ *      must not look alike, so the stylesheet's rule for the Thunderstore pill is read too.
  *   3. Off: a switched-off row is dimmed (tr.off) and its Status pill says Off with the
  *      .dll.old tooltip; the cell count matches the header.
  *   4. The menu: Switch off or Switch on by state, greyed while the realm runs, under the
@@ -28,6 +29,9 @@
  *   7. Switch off and on send mods.disable / mods.enable with the realm and the mod, scan
  *      again, and put the host's refusal in a toast.
  *   8. Reinstall sends the Mods hall's own add with the pinned Thunderstore address.
+ *   9. Every reason id the host can refuse a switch with has a catalog sentence, the page
+ *      says that sentence with the host's values in it, and an id it does not know falls back
+ *      to the host's own English.
  *
  *     node scripts/ui/mod_row_selftest.js
  */
@@ -43,6 +47,7 @@ const ROOT = path.join(__dirname, "..", "..");
 const WEB = path.join(ROOT, "ValheimBakaLoader", "WebUI");
 const APP = fs.readFileSync(path.join(WEB, "app.js"), "utf8").replace(/\r\n/g, "\n");
 const HTML = fs.readFileSync(path.join(WEB, "index.html"), "utf8").replace(/\r\n/g, "\n");
+const CSS = fs.readFileSync(path.join(WEB, "app.css"), "utf8").replace(/\r\n/g, "\n");
 const KEYS = JSON.parse(fs.readFileSync(path.join(WEB, "i18n", "en.json"), "utf8")).keys || {};
 
 let passed = 0;
@@ -149,9 +154,12 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
   await test("2. Installed: a pill for each known source, none for a hand copy", () => {
     const p = page();
     const ts = p.context.modInstalledCell(mod());
-    assert.ok(ts.includes('class="modchip modver"') && ts.includes(T("mods.tag.installed.thunderstore.tip")), ts);
+    assert.ok(ts.includes('class="modchip modver from-ts"') && ts.includes(T("mods.tag.installed.thunderstore.tip")), ts);
     const hx = p.context.modInstalledCell(mod({ installedSource: "hexium" }));
     assert.ok(hx.includes('class="modchip modver"') && hx.includes(T("mods.tag.installed.hexium.tip")), hx);
+    const rule = (CSS.match(/\.modchip\.modver\.from-ts\{([^}]*)\}/) || [])[1] || "";
+    assert.ok(/background:transparent/.test(rule) && /border-color:var\(--bone-faint\)/.test(rule) && /color:var\(--bone-dim\)/.test(rule),
+      "the Thunderstore pill is not a grey outline: " + (rule || "no rule"));
     assert.ok(/may show a different version/.test(T("mods.tag.installed.hexium.tip")), "the Hexium tooltip does not say the two columns can differ");
     const hand = p.context.modInstalledCell(mod({ installedSource: null }));
     assert.strictEqual(hand, '<td class="mono">0.16.4</td>');
@@ -289,6 +297,52 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
     assert.ok(add.includes('r.Reason==="serverRunning"') && add.includes('T("mods.reinstall.server_running.toast",'), "a running server's refusal is not worded");
     assert.ok(add.includes('T("mods.reinstall.realm_changed.toast")'), "a changed realm's refusal is not worded");
     assert.ok(/nothing was reinstalled/.test(T("mods.reinstall.server_running.toast", { name: "x" })) && !/Review/.test(T("mods.reinstall.server_running.toast", { name: "x" })));
+  });
+
+  await test("9. a refused switch: the host's reason in the page's words, the English when unknown", async () => {
+    // Every id SwitchMod and ModSwitch can answer with (Bridge.cs and Tools/ModSwitch.cs).
+    const HOST = path.join(ROOT, "ValheimBakaLoader");
+    const host = fs.readFileSync(path.join(HOST, "Tools", "ModSwitch.cs"), "utf8")
+      + fs.readFileSync(path.join(HOST, "Forms", "BlendWindow.Bridge.cs"), "utf8").split("object SwitchMod(")[1].split("RegisterRpc(\"mods.disable\"")[0];
+    const ids = new Set();
+    for (const m of host.matchAll(/Refused\((?:off \? )?"([a-zA-Z]+)"(?: : "([a-zA-Z]+)")?/g)) { ids.add(m[1]); if (m[2]) ids.add(m[2]); }
+    for (const m of host.matchAll(/Answer\(false, 0, .*?, "([a-zA-Z]+)"[,)]/g)) ids.add(m[1]);
+    const want = ["busy", "realmChanged", "noServerPath", "serverRunning", "notFound", "protected", "alreadyOff", "alreadyOn", "nothingToSwitch", "nameTaken", "failed"];
+    for (const id of want) assert.ok(ids.has(id), "the host no longer answers " + id + " (found " + [...ids].join(",") + ")");
+    for (const id of ids) assert.ok(want.includes(id), "the host answers " + id + ", which this test and the page do not know");
+
+    for (const id of want) {
+      for (const on of [false, true]) {
+        const p = page({ reply: () => ({ ok: false, error: "HOST ENGLISH", reason: id,
+          errorParams: { name: "Final Sunset", folder: "BakaLoader-Commander", taken: "A.dll.old", beside: "A.dll", detail: "denied" } }) });
+        await p.context.setModEnabled(mod(), on);
+        assert.strictEqual(p.toasts.length, 1);
+        const said = p.toasts[0];
+        assert.ok(!said.includes("HOST ENGLISH"), id + " fell back to the host's English: " + said);
+        assert.ok(!/\{\w+\}/.test(said), id + " left a slot unfilled: " + said);
+        assert.ok(!/undefined|null/.test(said), id + " printed nothing for a value: " + said);
+      }
+    }
+    const named = async (reason, on, errorParams) => {
+      const p = page({ reply: () => ({ ok: false, error: "x", reason, errorParams }) });
+      await p.context.setModEnabled(mod(), on);
+      return p.toasts[0];
+    };
+    assert.strictEqual(await named("serverRunning", false, { name: "Final Sunset" }), "ᚦ " + T("mods.switch.reason.server_running", { name: "Final Sunset" }));
+    assert.strictEqual(await named("nameTaken", true, { taken: "A.dll", beside: "A.dll.old" }), "ᚦ " + T("mods.switch.reason.name_taken", { taken: "A.dll", beside: "A.dll.old" }));
+    assert.strictEqual(await named("failed", false, { detail: "denied" }), "ᚦ " + T("mods.switch.reason.failed.off", { mod: "PlanBuild", detail: "denied" }));
+    assert.strictEqual(await named("failed", true, { detail: "denied" }), "ᚦ " + T("mods.switch.reason.failed.on", { mod: "PlanBuild", detail: "denied" }));
+    assert.strictEqual(await named("alreadyOff", false), "ᚦ " + T("mods.switch.reason.already_off", { mod: "PlanBuild" }));
+    // The realm on screen stands in when the host did not name the server.
+    assert.strictEqual(await named("serverRunning", false, null), "ᚦ " + T("mods.switch.reason.server_running", { name: "Final Sunset" }));
+    // An id the page has no words for says what the host said, in the old shape.
+    const p = page({ reply: () => ({ ok: false, error: "Something new.", reason: "somethingNew" }) });
+    await p.context.setModEnabled(mod(), false);
+    assert.deepStrictEqual(p.toasts, ["ᚦ " + T("mods.toggle.failed.toast", { mod: "PlanBuild", detail: "Something new." })]);
+    // A prototype name is not a reason.
+    const q = page({ reply: () => ({ ok: false, error: "proto", reason: "toString" }) });
+    await q.context.setModEnabled(mod(), false);
+    assert.deepStrictEqual(q.toasts, ["ᚦ " + T("mods.toggle.failed.toast", { mod: "PlanBuild", detail: "proto" })]);
   });
 
   console.log("");

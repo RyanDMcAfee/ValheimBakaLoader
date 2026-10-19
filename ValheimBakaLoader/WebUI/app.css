@@ -920,6 +920,9 @@ td.mono{font-family:var(--mono);font-size:11px;color:var(--bone-dim)}
 /* The installed version in the Hexium chip's own style, with the case and size of a version
    number rather than of a tag. */
 .modchip.modver{font-size:10px;letter-spacing:.3px;text-transform:none;font-weight:600;vertical-align:0}
+/* A Thunderstore copy is the ordinary case, so its pill is only an outline in the table's own
+   grey and the version keeps the cell's colour; the Hexium colour is left to the Hexium copy. */
+.modchip.modver.from-ts{background:transparent;color:var(--bone-dim);border-color:var(--bone-faint)}
 /* A mod switched off: quieter, the way an offline viking's row is, and still every word
    readable. Its Off pill says why. */
 tbody tr.off td,tbody tr.off td.mono,tbody tr.off td strong{color:var(--bone-faint-text)}
