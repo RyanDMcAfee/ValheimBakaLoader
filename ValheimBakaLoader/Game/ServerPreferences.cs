@@ -143,7 +143,7 @@ namespace ValheimBakaLoader.Game
 
         /// <summary>
         /// The Elder Futhark rune the realm's chip shows in place of the first letter of its
-        /// name, by the rune's name ("fehu", "raido"). Null means the letter. The page holds the
+        /// name, by the rune's name ("uruz", "ansuz"). Null means the letter. The page holds the
         /// list and draws the letter for any name it does not know, so a hand edit can only ever
         /// fall back to the letter.
         /// </summary>

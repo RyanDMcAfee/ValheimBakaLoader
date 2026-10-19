@@ -18,9 +18,11 @@ namespace ValheimBakaLoader.Tools
     /// </para>
     /// <para>
     /// The other half is why this takes a LIST of folders rather than one. An isolated install
-    /// copies <c>plugins</c> but JUNCTIONS <c>patchers</c> to the base install, so that one is
-    /// genuinely shared between realms: a mod that carries a patcher part, removed from a
-    /// stopped realm, deletes the very folder a running realm has loaded. Whatever the removal
+    /// has its own <c>plugins</c>, and since 1.2.15 its own <c>patchers</c> too, but a realm
+    /// made before that keeps a junction from its <c>patchers</c> to the base install until
+    /// the first write turns it into a copy, and until then that folder is shared between
+    /// realms: a mod that carries a patcher part, removed from a stopped realm, can delete the
+    /// very folder a running realm has loaded. Whatever the removal
     /// will touch is what is asked about here, and a junction is followed before the two are
     /// compared so a shared folder reached by two names is still one folder.
     /// </para>

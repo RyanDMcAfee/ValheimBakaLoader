@@ -73,7 +73,7 @@ namespace ValheimBakaLoader.Tools
         /// <para>
         /// <see cref="ProvisionInstall"/> only ever walks the folders the base install already
         /// carries, so a profile provisioned before BepInEx existed has no BepInEx folder at
-        /// all: no core junction, no patchers junction, no loader files beside the exe. It
+        /// all: no core junction, no patchers folder, no loader files beside the exe. It
         /// would run vanilla forever with nothing saying so. This is the step that closes
         /// that, run after BepInEx lands in the base.
         /// </para>
