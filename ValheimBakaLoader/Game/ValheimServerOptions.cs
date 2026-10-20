@@ -113,7 +113,8 @@ namespace ValheimBakaLoader.Game
                 Password = serverPrefs.Password,
                 PasswordValidation = userPrefs.EnablePasswordValidation,
                 WorldName = serverPrefs.WorldName,
-                Public = serverPrefs.Public,
+                // A test copy is never listed, not even from a hand edit of its settings.
+                Public = serverPrefs.Public && string.IsNullOrWhiteSpace(serverPrefs.TestCopyOf),
                 Port = serverPrefs.Port,
                 Crossplay = serverPrefs.Crossplay,
                 SaveInterval = serverPrefs.SaveInterval,

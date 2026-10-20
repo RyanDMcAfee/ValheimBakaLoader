@@ -1599,6 +1599,14 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
    uses, glowing the way the active chip glows, and a rune drawn a little larger than a letter
    so it reads at the same weight. */
 .srvchip.rune .srvinit{font-size:18px;font-weight:400}
+/* A test copy's T: the corner the player count does not use, small enough to leave the letter
+   or rune readable. A copy whose source is gone keeps its T as an outline. */
+.srvchip .srvtest{position:absolute;left:-5px;bottom:-5px;width:15px;height:15px;border-radius:5px;
+  display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;line-height:1;
+  background:var(--cold-hi);color:var(--iron-deeper);border:1px solid rgba(0,0,0,.35)}
+.srvchip .srvtest.gone{background:var(--iron-deeper);color:var(--cold-hi);border:1px dashed var(--cold-hi)}
+.wordmark .srvtesthead{color:var(--cold-hi);font-weight:500;letter-spacing:1px;font-size:.85em;text-transform:none}
+.toggle.locked{opacity:.4;cursor:not-allowed}
 .srvchip.look-ember .srvinit{color:var(--ember);text-shadow:0 0 8px rgba(255,122,26,.55)}
 .srvchip.look-gold .srvinit{color:var(--ember-hi);text-shadow:0 0 8px rgba(255,179,92,.55)}
 .srvchip.look-amber .srvinit{color:var(--amber);text-shadow:0 0 8px rgba(232,169,60,.55)}

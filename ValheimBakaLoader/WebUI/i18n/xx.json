@@ -4669,6 +4669,12 @@
     "realm.menu.look": {
       "translation": "[Ẋ Customize look… Ẋ] ẊẊẊẊẊ"
     },
+    "realm.menu.test_copy": {
+      "translation": "[Ẋ Raise a proving ground… Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "realm.menu.test_copy.tip": {
+      "translation": "[Ẋ A copy of this realm to try a game or mod update on, with its own install and its own save folder, never listed in the server browser. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "realm.look.title": {
       "translation": "[Ẋ How {name} looks in the sidebar Ẋ] ẊẊẊẊẊẊẊẊ",
       "params": {
@@ -5043,6 +5049,165 @@
       "translation": "[Ẋ The copy would be kept under {world}, the source's own world name, and world settings are stored by name, so a dial changed here would change the source world too. Give the copy a different world name, or leave the dials as the source has them. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "params": {
         "world": "text"
+      }
+    },
+    "realm.test.title": {
+      "translation": "[Ẋ Proving ground for {name} Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "realm.test.ok": {
+      "translation": "[Ẋ Raise the proving ground Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.note": {
+      "translation": "[Ẋ Everything comes across: the world, the mods with their patchers and configs, and the password. The copy has an install and a save folder of its own, so nothing done on it reaches {name}. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "realm.test.public.locked": {
+      "translation": "[Ẋ A test copy never shows in the server list. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.public.locked.toast": {
+      "translation": "[Ẋ A test copy never shows in the server list, so this switch stays off. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚦ"
+    },
+    "realm.test.name.taken": {
+      "translation": "[Ẋ There is already a realm named {name}. A test copy needs a name of its own. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "realm.test.character.label": {
+      "translation": "[Ẋ Copy a character for it (optional) Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.character.none": {
+      "translation": "[Ẋ No character Ẋ] ẊẊẊẊ"
+    },
+    "realm.test.character.loading": {
+      "translation": "[Ẋ Looking for the characters on this PC… Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.character.empty": {
+      "translation": "[Ẋ No Valheim characters were found on this PC, so there is nothing to copy. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.character.option": {
+      "translation": "[Ẋ {name}, copied as {copy} Ẋ] ẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "copy": "text"
+      }
+    },
+    "realm.test.character.option.exists": {
+      "translation": "[Ẋ {name}, {copy} is already there Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "copy": "text"
+      }
+    },
+    "realm.test.character.option.unreadable": {
+      "translation": "[Ẋ {file}, could not be read Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "realm.test.character.note": {
+      "translation": "[Ẋ A new character called {copy} is written beside {name}, and {name} is never changed. Pick {copy} in the game when you join the test copy. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "copy": "text"
+      }
+    },
+    "realm.test.character.none.note": {
+      "translation": "[Ẋ No character is copied. Whoever joins the test copy plays with their own. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.character.exists": {
+      "translation": "[Ẋ There is already a character file {file}, and BakaLoader never writes over a character. Pick {copy} in the game as it is, or choose No character. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "copy": "text"
+      }
+    },
+    "realm.test.character.unreadable": {
+      "translation": "[Ẋ {file} could not be read as a Valheim character, so it cannot be copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "realm.test.character.gone": {
+      "translation": "[Ẋ That character is not on this PC any more. Choose another, or No character. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.character.done.toast": {
+      "translation": "[Ẋ {source} copied as {name}. Pick {name} in the game for the test copy. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "source": "text",
+        "name": "text"
+      },
+      "mark": "ᛇ"
+    },
+    "realm.test.badge": {
+      "translation": "[Ẋ T Ẋ] Ẋ"
+    },
+    "realm.test.badge.title": {
+      "translation": "[Ẋ Test copy of {source} Ẋ] ẊẊẊẊ",
+      "params": {
+        "source": "text"
+      }
+    },
+    "realm.test.badge.title.gone": {
+      "translation": "[Ẋ Test copy. {source}, its source, is gone. Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "source": "text"
+      }
+    },
+    "realm.test.head": {
+      "translation": "[Ẋ test copy of {source} Ẋ] ẊẊẊẊ",
+      "params": {
+        "source": "text"
+      }
+    },
+    "realm.test.head.gone": {
+      "translation": "[Ẋ test copy, source gone Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "realm.test.reason.source_missing": {
+      "translation": "[Ẋ There is no realm named '{source}' to make a test copy of, so nothing was made. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "source": "text"
+      }
+    },
+    "realm.test.character.reason.bad_ref": {
+      "translation": "[Ẋ That is not a character file BakaLoader can copy. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.character.reason.missing": {
+      "translation": "[Ẋ There is no character file '{file}' on this PC any more, so nothing was copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "realm.test.character.reason.unreadable": {
+      "translation": "[Ẋ '{file}' could not be read as a Valheim character, so nothing was copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "realm.test.character.reason.unknown_version": {
+      "translation": "[Ẋ '{file}' was saved by a version of Valheim BakaLoader does not know, so it was not copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "realm.test.character.reason.exists": {
+      "translation": "[Ẋ There is already a character file '{file}', so '{name}' was not copied. BakaLoader never writes over a character. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "name": "text"
+      }
+    },
+    "realm.test.character.reason.failed": {
+      "translation": "[Ẋ The copy of '{name}' could not be written: {detail} Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "detail": "text"
       }
     },
     "realm.new.working": {

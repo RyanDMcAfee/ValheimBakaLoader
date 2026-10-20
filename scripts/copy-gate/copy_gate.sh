@@ -903,5 +903,18 @@ else
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 fi
 
+echo "== 56. a test copy of a realm: its names, the listing held off, the character, and its T =="
+# 1.2.16, issue 20. A test copy is only worth having while it stays apart from its source: its
+# own name and world, never listed, and a copy of a character rather than the character. The
+# selftest drives the real TEST-COPY block out of app.js against the real catalog, and holds the
+# host side to the listing it refuses and the refusals it words.
+TESTCOPY_SELFTEST="$UI_DIR/test_copy_selftest.js"
+if [ -f "$TESTCOPY_SELFTEST" ]; then
+  if out=$(node "$TESTCOPY_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the test copy selftest is missing: $TESTCOPY_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

@@ -4266,6 +4266,9 @@ namespace ValheimBakaLoader.Forms
             // --- Following a Gale profile (BlendWindow.Gale.cs) ---
             RegisterGaleRpcs();
 
+            // --- A test copy's character (BlendWindow.TestCopy.cs) ---
+            RegisterTestCopyRpcs();
+
             // --- App ---
             RegisterRpc("app.info", p =>
             {
@@ -4362,6 +4365,9 @@ namespace ValheimBakaLoader.Forms
                 // The same for the Gale follow: the form has no boxes for it, and only the
                 // Gale box and its dialog ever write it.
                 prefs = KeepGaleFollow(prefs);
+                // And whether it is a test copy, which the form has no box for either. A test
+                // copy is never listed, so its Public stays off whatever the form sent.
+                prefs = KeepTestCopyOf(prefs);
                 ServerPrefsProvider.SavePreferences(prefs);
                 CurrentProfile = prefs.ProfileName;
                 PostEvent("servers.changed", BuildServersList());
@@ -4430,6 +4436,10 @@ namespace ValheimBakaLoader.Forms
                 prefs.ProfileName = newName;
                 ServerPrefsProvider.SavePreferences(prefs);
                 ServerPrefsProvider.RemovePreferences(name);
+
+                // A test copy names its source by profile name, so the copies of this realm
+                // follow it to the new name rather than reading "source gone".
+                MoveTestCopiesOf(name, newName);
 
                 // Retire any (stopped) session under the old key so the registry stays consistent.
                 if (Sessions.TryRemove(name, out var removed)) { ForgetSession(removed); removed.Server.Dispose(); }
@@ -4666,6 +4676,20 @@ namespace ValheimBakaLoader.Forms
                     throw new HostFacingException("servers.create.nameTaken",
                         $"A server named '{name}' already exists. Pick a different name.", ("name", name));
 
+                // Make a test copy names the realm it is a copy of. That realm has to be there
+                // now: its BepInEx is what the copy's install is seeded from, and its settings are
+                // what the copy starts from.
+                var testCopyOf = (p.Value<string>("testCopyOf") ?? "").Trim();
+                ServerPreferences testSource = null;
+                if (testCopyOf.Length > 0)
+                {
+                    testSource = ServerPrefsProvider.LoadPreferences()
+                        .FirstOrDefault(x => string.Equals(x.ProfileName, testCopyOf, StringComparison.OrdinalIgnoreCase))
+                        ?? throw new HostFacingException("servers.create.testCopySourceMissing",
+                            $"There is no realm named '{testCopyOf}' to make a test copy of, so nothing was made.",
+                            ("source", testCopyOf));
+                }
+
                 // Optional world-generation dials for the NEW world, validated up front (shared
                 // with worldgen.save) so an invalid value is refused before any install is
                 // provisioned. Empty / Normal dials drop out, leaving an empty map.
@@ -4694,6 +4718,9 @@ namespace ValheimBakaLoader.Forms
                 // one's Public flag, and a realm founded from a listed one went up listed. A
                 // realm nobody asked to publish is not published.
                 var listPublicly = p.Value<bool?>("public") ?? false;
+                // A test copy is never listed, whatever the page sent: it is there to try an
+                // update on, and a stranger finding it in the browser is the one thing it is not for.
+                if (testSource != null) listPublicly = false;
 
                 var isolateInstall = p.Value<bool?>("isolateInstall") ?? true;
                 var seedMods = p.Value<bool?>("seedMods") ?? true;
@@ -4773,10 +4800,13 @@ namespace ValheimBakaLoader.Forms
 
                 // Seed the new profile from the active one so it inherits sane backup/save-interval
                 // defaults, then stamp on its own distinct identity.
-                var basePrefs = ServerPrefsProvider.LoadPreferences(ActiveProfileName) ?? new ServerPreferences();
+                // A test copy is seeded from its source by name, whichever realm is on screen.
+                var basePrefs = testSource
+                    ?? ServerPrefsProvider.LoadPreferences(ActiveProfileName) ?? new ServerPreferences();
                 var created = SeedNewRealm(basePrefs);
 
                 created.ProfileName = name;
+                created.TestCopyOf = testSource?.ProfileName;
                 created.Name = name;              // its own in-game name, never the base server's
                 created.WorldName = world;
                 created.Password = password;      // its own password, never the base server's
@@ -4863,7 +4893,11 @@ namespace ValheimBakaLoader.Forms
                 if (isolateInstall)
                 {
                     var baseExe = GetCanonicalBaseServerExe();
-                    var seedSourceBepInEx = GetActiveBepInExDir();
+                    // A test copy's mods, patchers and configs come from its source, read off the
+                    // source's own install, so the copy runs what the source runs.
+                    var seedSourceBepInEx = testSource != null
+                        ? GetBepInExDirFor(testSource.ProfileName)
+                        : GetActiveBepInExDir();
                     var result = await Task.Run(() =>
                         InstallIsolation.ProvisionInstall(baseExe, name, seedMods, seedSourceBepInEx));
                     created.ServerExePath = result.ServerExePath;
@@ -8902,6 +8936,11 @@ namespace ValheimBakaLoader.Forms
                     archived = archivedByName.TryGetValue(name, out var a) && a,
                     lookRune = storedByName.TryGetValue(name, out var look) ? look.LookRune : null,
                     lookColor = look?.LookColor,
+                    // The realm this one is a test copy of, and whether that realm is still
+                    // here. A deleted source leaves the copy standing, and the chip says so.
+                    testCopyOf = look?.TestCopyOf,
+                    testSourceGone = !string.IsNullOrWhiteSpace(look?.TestCopyOf)
+                        && !storedByName.ContainsKey(look.TestCopyOf),
                 };
             }).ToList();
         }
@@ -10703,6 +10742,9 @@ namespace ValheimBakaLoader.Forms
             created.GaleUnticked = new List<string>();
             created.GaleNotAvailable = new List<string>();
             created.GaleConfigUnticked = new List<string>();
+            // Nor whether the realm is a test copy: a duplicate of a test copy is a realm of its
+            // own, and servers.create marks a test copy itself.
+            created.TestCopyOf = null;
             return created;
         }
 

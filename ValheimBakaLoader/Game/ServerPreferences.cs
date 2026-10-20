@@ -139,6 +139,15 @@ namespace ValheimBakaLoader.Game
         /// <summary>The mods this server was last seen running, for restore/export.</summary>
         public List<ModManifestEntry> ModManifest { get; set; }
 
+        /// <summary>
+        /// The profile name of the realm this one is a test copy of, or null for a realm that is
+        /// not one. Set once, by Make a test copy, and moved along when the source is renamed. A
+        /// test copy is never listed in the game's server browser: the host side holds Public
+        /// off for it on every save and on every start, whatever the page sends. A source that
+        /// has been deleted leaves this standing, and the chip says the source is gone.
+        /// </summary>
+        public string TestCopyOf { get; set; }
+
         // -- How the realm's chip looks in the sidebar --
 
         /// <summary>
@@ -230,6 +239,21 @@ namespace ValheimBakaLoader.Game
             return this;
         }
 
+        /// <summary>
+        /// Puts the test copy mark stored on disk back onto a profile the page sent, and holds
+        /// Public off when the realm is a test copy. The settings form has no box for the mark,
+        /// so what it sends back is a copy of an older read at best; what is on disk wins, the
+        /// same as the Gale fields. With nothing on disk (a first save under a new name) the
+        /// mark is kept as sent. Either way a test copy leaves here unlisted.
+        /// </summary>
+        public ServerPreferences KeepTestCopyFrom(ServerPreferences stored)
+        {
+            if (stored != null) TestCopyOf = stored.TestCopyOf;
+            TestCopyOf = string.IsNullOrWhiteSpace(TestCopyOf) ? null : TestCopyOf.Trim();
+            if (TestCopyOf != null) Public = false;
+            return this;
+        }
+
         /// <summary>The unticked list as it is kept: trimmed, no blanks, each name once whatever its case.</summary>
         public static List<string> NormalizeUnticked(IEnumerable<string> names)
         {
@@ -303,6 +327,7 @@ namespace ValheimBakaLoader.Game
                 Archived = file.Archived ?? defaults.Archived,
                 IsolatedInstall = file.IsolatedInstall ?? defaults.IsolatedInstall,
                 ModManifest = file.ModManifest ?? defaults.ModManifest,
+                TestCopyOf = string.IsNullOrWhiteSpace(file.TestCopyOf) ? null : file.TestCopyOf.Trim(),
                 LookRune = NormalizeLook(file.LookRune),
                 LookColor = NormalizeLook(file.LookColor),
                 GaleProfileId = StoredGaleProfileId(file.GaleProfileId),
@@ -350,6 +375,7 @@ namespace ValheimBakaLoader.Game
             Archived = Archived,
             IsolatedInstall = IsolatedInstall,
             ModManifest = ModManifest,
+            TestCopyOf = string.IsNullOrWhiteSpace(TestCopyOf) ? null : TestCopyOf.Trim(),
             LookRune = NormalizeLook(LookRune),
             LookColor = NormalizeLook(LookColor),
             GaleProfileId = StoredGaleProfileId(GaleProfileId),

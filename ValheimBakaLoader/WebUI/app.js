@@ -152,6 +152,15 @@ const HOST_SENTENCES=[
      The dialog refuses this before it sends, with the same sentence; the host side refusing it
      means the page was walked around. */
   {named:"servers.create.copySameWorldDials", textId:"realm.duplicate.same_world_dials"},
+  /* Make a test copy of a realm that was deleted while the dialog was open, and the six ways
+     the character copy can be refused. Every one of them leaves the character untouched. */
+  {named:"servers.create.testCopySourceMissing", textId:"realm.test.reason.source_missing"},
+  {named:"characters.copy.badRef",         textId:"realm.test.character.reason.bad_ref"},
+  {named:"characters.copy.missing",        textId:"realm.test.character.reason.missing"},
+  {named:"characters.copy.unreadable",     textId:"realm.test.character.reason.unreadable"},
+  {named:"characters.copy.unknownVersion", textId:"realm.test.character.reason.unknown_version"},
+  {named:"characters.copy.exists",         textId:"realm.test.character.reason.exists"},
+  {named:"characters.copy.failed",         textId:"realm.test.character.reason.failed"},
   /* Removing a mod while a server is up. Windows will not let a loaded plugin be deleted,
      so this is a refusal now rather than a warning the host could walk past. */
   {named:"mods.remove.serverRunning",        textId:"mods.remove.reason.server_running"},
@@ -1953,9 +1962,18 @@ function chipLookClass(s){
   const c=chipColor(s&&s.lookColor);
   return (c?" look-"+c:"")+(chipRune(s&&s.lookRune)?" rune":"");
 }
+/* A test copy's chip carries a small T, and says whose copy it is when hovered. A copy whose
+   source was deleted keeps its T as an outline, and says the source is gone. */
+function chipTestBadge(s){
+  if(!s||!s.testCopyOf) return "";
+  const tip=s.testSourceGone
+    ?T("realm.test.badge.title.gone",{source:s.testCopyOf})
+    :T("realm.test.badge.title",{source:s.testCopyOf});
+  return `<span class="srvtest${s.testSourceGone?" gone":""}" title="${esc(tip)}">${esc(T("realm.test.badge"))}</span>`;
+}
 function chipHtml(s){
-  const cls="srvchip"+(s.active?" active":"")+(s.running?" running":"")+chipLookClass(s);
-  const badge=s.playersOnline>0?`<span class="srvbadge">${s.playersOnline}</span>`:"";
+  const cls="srvchip"+(s.active?" active":"")+(s.running?" running":"")+chipLookClass(s)+(s.testCopyOf?" test":"");
+  const badge=(s.playersOnline>0?`<span class="srvbadge">${s.playersOnline}</span>`:"")+chipTestBadge(s);
   /* The running chip says what it is doing as well as who it is, so the two
      shapes are two entries rather than one with a gap in the middle. */
   const tip=s.running
@@ -1968,6 +1986,7 @@ function renderServerChips(){
   /* A realm starting or stopping changes which realm the Discord post is about, which the
      line under the mod profile code reports. */
   try{heraldRenderModCodeLine();}catch(_){}
+  renderTestCopyHead();
   const el=$("#srvStrip"); if(!el) return;
   const all=S.servers||[];
   const list=all.filter(s=>!s.archived);       // strip shows only live realms
@@ -2047,6 +2066,7 @@ function serverChipMenu(name,x,y){
     {r:"ᛒ",label:T("realm.menu.switch"),fn:()=>switchServer(name),disabled:s.active,tip:T("realm.menu.switch.tip")},
     {r:"ᚱ",label:T("realm.menu.rename"),fn:()=>renameServer(name),disabled:s.running,tip:stopFirst},
     {r:"ᛞ",label:T("realm.menu.duplicate"),fn:()=>duplicateServer(name)},
+    {r:"ᛇ",label:T("realm.menu.test_copy"),fn:()=>testCopyServer(name),tip:T("realm.menu.test_copy.tip")},
     {r:"ᚹ",label:T("realm.menu.look"),fn:()=>chipLookFlow(name)},
     "hr",
     {r:"⌂",label:T("realm.menu.archive"),fn:()=>archiveServer(name),disabled:s.running,tip:stopFirst},
@@ -2148,6 +2168,25 @@ async function duplicateServer(name){
   addServerProfile({profile:name,world,
     password:(S.prefs&&S.prefs.Password)||"",
     listed:!!(S.prefs&&S.prefs.Public)});
+}
+/* Make a test copy: Duplicate's road, with the dialog told it is a test copy. The switch comes
+   first for the same reason as Duplicate's: the source's world, password and dials are read
+   off the realm on screen. */
+async function testCopyServer(name){
+  if(!(S.servers||[]).find(v=>String(v.name)===String(name)&&v.active)) await switchServer(name);
+  if(Native.available&&String(S.profileName)!==String(name)) return;
+  const world=(S.prefs&&S.prefs.WorldName)||"";
+  addServerProfile({profile:name,world,
+    password:(S.prefs&&S.prefs.Password)||"",
+    listed:!!(S.prefs&&S.prefs.Public),
+    test:true});
+}
+/* The title bar's line for the realm on screen, from the strip's own list. */
+function renderTestCopyHead(){
+  const el=$("#tbTest"); if(!el) return;
+  const text=testCopyHead((S.servers||[]).find(v=>v&&v.active));
+  el.textContent=text;
+  el.style.display=text?"":"none";
 }
 async function archiveServer(name){
   const r=await rpc("profiles.archive",{name});
@@ -2542,7 +2581,7 @@ function dupPaintMarks(m,source,sourceDials,copying){
     !!source.world&&world.length>0&&world!==source.world,source.world||"");
   const listed=!!(pubT&&pubT.classList.contains("on"));
   dupMark(pubT&&pubT.closest?pubT.closest(".togglerow"):null,m.querySelector("#wsPublicSrc"),
-    !!pubT&&listed!==!!source.listed,
+    !!pubT&&!source.test&&listed!==!!source.listed,
     source.listed?T("realm.duplicate.source.listed"):T("realm.duplicate.source.unlisted"));
 }
 /* What the copy switch does to the dials, taken out of the dialog so the selftest can run it.
@@ -2581,6 +2620,102 @@ function dupSameWorldProblem(m,source,sourceDials,copying,world,name){
   return changed?T("realm.duplicate.same_world_dials",{world:target}):null;
 }
 /* DUPLICATE-DIALS-END */
+/* TEST-COPY-BEGIN
+   Make a test copy (issue 20): a copy of a realm to try a game or mod update on, kept apart
+   from it. It is the Duplicate dialog opened with source.test set, so the world copy, the
+   install seeded from the source's BepInEx and the save folder of its own are the ones
+   Duplicate already makes, through the same servers.create. What this block adds is the
+   suffix the names are offered with, the refusal for a name another realm has, the listing
+   switch held off with its reason, and the optional character copy. The selftest
+   (scripts/ui/test_copy_selftest.js) evaluates this block on its own. */
+/* The suffix a test copy's realm, world and character are offered under. Truncated asked for
+   something a host would never type by chance, which "_test" is not. */
+const TEST_COPY_SUFFIX="_bakaT";
+/* The name a test copy of `source` is offered under: source_bakaT, or source_bakaT2, 3 and on
+   when a realm already has that name, so the dialog never opens on a name it would refuse. */
+function testCopyName(source,servers){
+  const taken=new Set((servers||[]).map(s=>String(s&&s.name).toLowerCase()));
+  const base=String(source||"").trim()+TEST_COPY_SUFFIX;
+  if(!taken.has(base.toLowerCase())) return base;
+  for(let n=2;n<100;n++){const next=base+n;if(!taken.has(next.toLowerCase())) return next;}
+  return base;
+}
+/* The world a test copy's world is offered under, or "" when the source has none. */
+function testCopyWorld(world){
+  const w=String(world||"").trim();
+  return w?w+TEST_COPY_SUFFIX:"";
+}
+/* The refusal for a name another realm already has, whatever its case, or null. An empty
+   name is left to the dialog's own "give it a name". */
+function testCopyNameProblem(name,servers){
+  const n=String(name||"").trim();
+  if(!n) return null;
+  return (servers||[]).some(s=>String(s&&s.name).toLowerCase()===n.toLowerCase())
+    ?T("realm.test.name.taken",{name:n}):null;
+}
+/* The listing switch of the dialog held off, out of the pointer's and the keyboard's reach,
+   with the reason under it. The host side holds the same line whatever arrives. */
+function testCopyLockPublic(pubT,note){
+  if(!pubT) return false;
+  pubT.classList.remove("on");
+  pubT.style.opacity=".4";
+  pubT.style.pointerEvents="none";
+  pubT.title=T("realm.test.public.locked");
+  gateDialogSwitch(pubT);
+  markSwitch(pubT);
+  if(note){note.textContent=T("realm.test.public.locked");note.style.display="";}
+  return true;
+}
+/* The character drop down's options from a characters.list answer. A character whose copy is
+   already there can still be picked, so the refusal can say what to do about it, and one that
+   could not be read is shown but cannot be picked. */
+function testCopyCharacterOptions(list){
+  const out=[{value:"",label:T("realm.test.character.none"),disabled:false}];
+  for(const c of list||[]){
+    if(!c||!c.folder||!c.file) continue;
+    const value=c.folder+"/"+c.file;
+    if(c.problem||!c.name) out.push({value,label:T("realm.test.character.option.unreadable",{file:c.file}),disabled:true});
+    else if(c.copyExists) out.push({value,label:T("realm.test.character.option.exists",{name:c.name,copy:c.copyName}),disabled:false});
+    else out.push({value,label:T("realm.test.character.option",{name:c.name,copy:c.copyName}),disabled:false});
+  }
+  return out;
+}
+/* The character a drop down value names, out of the list it was drawn from, or null. */
+function testCopyCharacter(list,value){
+  if(!value) return null;
+  return (list||[]).find(c=>c&&(c.folder+"/"+c.file)===value)||null;
+}
+/* What the note under the drop down says for the current pick. */
+function testCopyCharacterNote(list,value){
+  if(!value) return T("realm.test.character.none.note");
+  const c=testCopyCharacter(list,value);
+  return testCopyCharacterProblem(list,value)
+    ||T("realm.test.character.note",{name:c.name,copy:c.copyName});
+}
+/* Why the picked character cannot be copied, or null when it can (or none is picked). Asked
+   before anything is forged, so a refused character never leaves a realm half made. */
+function testCopyCharacterProblem(list,value){
+  if(!value) return null;
+  const c=testCopyCharacter(list,value);
+  if(!c) return T("realm.test.character.gone");
+  if(c.problem||!c.name) return T("realm.test.character.unreadable",{file:c.file});
+  if(c.copyExists) return T("realm.test.character.exists",{file:c.copyFile,copy:c.copyName});
+  return null;
+}
+/* What servers.create is sent for a test copy, on top of what the Duplicate dialog sends: the
+   source by name, and the listing off whatever the switch says. */
+function testCopyPayload(payload,source){
+  payload.testCopyOf=source.profile;
+  payload.public=false;
+  return payload;
+}
+/* The line beside the realm's name in the title bar: which realm this is a test copy of, or
+   that the source is gone. "" for a realm that is not a test copy. */
+function testCopyHead(s){
+  if(!s||!s.testCopyOf) return "";
+  return s.testSourceGone?T("realm.test.head.gone"):T("realm.test.head",{source:s.testCopyOf});
+}
+/* TEST-COPY-END */
 async function addServerProfile(source){
   /* Two different things arrive here. A DUPLICATE names the realm it came from, and gets
      its own heading, its own button and the source realm's password and listing prefilled.
@@ -2589,6 +2724,10 @@ async function addServerProfile(source){
      the plain forge under the plain heading and the host had no way to tell. */
   const duplicating=!!(source&&source.profile);
   const copyable=!!(source&&source.world);
+  /* A test copy is a duplicate with the names offered under the suffix, the listing held
+     off, and a character to copy as well if the host wants one. */
+  const testing=duplicating&&!!source.test;
+  const okLabel=()=>testing?T("realm.test.ok"):duplicating?T("realm.duplicate.ok"):T("realm.new.ok");
   // The realm-forge dials for a brand-new world: their own ids so they never collide with the
   // settings-page fMod* dials. Every dial opens on Normal (""); a duplicate that copies the
   // world moves them to the source's values once those are read.
@@ -2600,9 +2739,10 @@ async function addServerProfile(source){
       `<select id="wsMod_${key}">${wgOptions(key,"")}</select>`+
       `<div class="fieldnote wgnote" id="wsNote_${key}"></div>`+srcNote("wsSrc_"+key)+`</div>`).join("");
   const m=modalOpen(
-    `<div class="mtitle">${esc(duplicating
+    `<div class="mtitle">${esc(testing?T("realm.test.title",{name:source.profile}):duplicating
       ?T("realm.duplicate.title",{name:source.profile}):T("realm.new.title"))}</div>`+
     `<div class="mbody" style="display:flex;flex-direction:column;gap:2px">`+
+      (testing?`<div class="mbody-note" id="wsTestNote">${esc(T("realm.test.note",{name:source.profile}))}</div>`:"")+
       `<div class="field"><label>${esc(T("realm.new.name.label"))}</label>`+
         `<input type="text" id="wsName" placeholder="${esc(T("realm.new.name.placeholder"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote" id="wsNameNote"></div>`+srcNote("wsNameSrc")+`</div>`+
@@ -2619,6 +2759,7 @@ async function addServerProfile(source){
         `<div class="fieldnote">${esc(T("realm.new.password.note"))}</div>`+srcNote("wsPassSrc")+`</div>`+
       `<div class="togglerow" title="${esc(T("realm.new.public.title"))}"><span class="tl">${esc(T("realm.new.public.label"))}</span>`+
         `<div class="toggle" id="wsPublic"></div></div>`+srcNote("wsPublicSrc")+
+      (testing?`<div class="fieldnote" id="wsPublicLock" style="display:none"></div>`:"")+
       `<div class="field"><label>${esc(T("realm.new.world.label"))}</label>`+
         `<input type="text" id="wsWorld" placeholder="${esc(T("realm.new.world.placeholder"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote" id="wsPorts">${esc(T("realm.new.ports.finding"))}</div>`+srcNote("wsWorldSrc")+`</div>`+
@@ -2647,10 +2788,17 @@ async function addServerProfile(source){
         `<div class="toggle on" id="wsSeed"></div></div>`+
       `<div class="togglerow" title="${esc(T("realm.new.savedir.title"))}"><span class="tl">${esc(T("realm.new.savedir.label"))}</span>`+
         `<div class="toggle on" id="wsSaveIso"></div></div>`+
+      /* The character step of a test copy. Optional, and read only until the copy is made:
+         the copy is a new file beside the character, never the character itself. */
+      (testing
+        ?`<div class="field" id="wsCharField"><label>${esc(T("realm.test.character.label"))}</label>`+
+           `<select id="wsChar"><option value="">${esc(T("realm.test.character.none"))}</option></select>`+
+           `<div class="fieldnote" id="wsCharNote">${esc(Native.available?T("realm.test.character.loading"):T("realm.test.character.none.note"))}</div></div>`
+        :"")+
       `<div class="mbody-note" id="wsStatus"></div>`+
     `</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="wsCancel">${esc(T("common.button.cancel"))}</button>`+
-      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(duplicating
+      `<button class="btn btn-ember btn-sm" id="wsOk">${esc(testing?T("realm.test.ok"):duplicating
         ?T("realm.duplicate.ok"):T("realm.new.ok"))}</button></div>`,
     ()=>addServerProfile(source));
 
@@ -2686,7 +2834,32 @@ async function addServerProfile(source){
   /* A duplicate shows what it is duplicating: the source realm's password and whether the
      game lists it. A brand new realm starts on neither. */
   if(duplicating&&passI) passI.value=source.password||"";
-  if(duplicating&&pubT&&source.listed) pubT.classList.add("on");
+  if(duplicating&&!testing&&pubT&&source.listed) pubT.classList.add("on");
+  /* A test copy opens on its own names, the realm's and the world's, and with the listing
+     held off. The names stay editable; the listing does not. */
+  if(testing){
+    nameI.value=testCopyName(source.profile,S.servers);
+    if(worldI) worldI.value=testCopyWorld(source.world);
+    testCopyLockPublic(pubT,m.querySelector("#wsPublicLock"));
+  }
+  /* This PC's characters for the test copy's drop down, read when the dialog opens. */
+  const charSel=m.querySelector("#wsChar"), charNote=m.querySelector("#wsCharNote");
+  let chars=[];
+  const paintCharNote=()=>{if(charNote&&charSel) charNote.textContent=testCopyCharacterNote(chars,charSel.value);};
+  if(testing&&charSel){
+    charSel.addEventListener("change",paintCharNote);
+    if(Native.available){
+      rpc("characters.list",{}).then(list=>{
+        if(!m.isConnected) return;
+        chars=Array.isArray(list)?list:[];
+        const keep=charSel.value;
+        charSel.innerHTML=testCopyCharacterOptions(chars).map(o=>
+          `<option value="${esc(o.value)}"${o.disabled?" disabled":""}>${esc(o.label)}</option>`).join("");
+        if(keep&&testCopyCharacter(chars,keep)) charSel.value=keep;
+        if(charNote) charNote.textContent=chars.length?testCopyCharacterNote(chars,charSel.value):T("realm.test.character.empty");
+      });
+    }
+  }
   /* The source world's dials once they are read, null until then or when they cannot be,
      and which dials the host has moved by hand, so a read that lands late never moves a dial
      out from under them. */
@@ -2799,9 +2972,18 @@ async function addServerProfile(source){
     }
     if(nameNote) nameNote.textContent="";
     nameI.classList.remove("bad");
+    /* A test copy names the realm that already has the name, because the name it was
+       offered under is the source's own with the suffix, and the host may have typed it. */
+    const takenTest=testing?testCopyNameProblem(name,S.servers):null;
+    if(takenTest){statusN.textContent=takenTest;nameI.focus();return;}
     if((S.servers||[]).some(s=>String(s.name).toLowerCase()===name.toLowerCase())){
       statusN.textContent=T("realm.new.name.taken"); return;
     }
+    /* The character, refused here before anything is forged rather than after a realm
+       has been made for it. */
+    const charPick=testing&&charSel?charSel.value:"";
+    const charProblem=testing?testCopyCharacterProblem(chars,charPick):null;
+    if(charProblem){statusN.textContent=charProblem;if(charSel) charSel.focus();return;}
     /* The world name is held to the same rule the World field and Copy world as
        hold one to. The forge used to send whatever was typed: an unusable name got
        as far as the first start, which then could not build a command line out of
@@ -2849,15 +3031,26 @@ async function addServerProfile(source){
        the decision on the far side of the wire, where a handler that read the pair and not
        the flag would copy a world the host had just said not to copy. */
     if(copyable&&copyT&&on(copyT)) payload.copyWorldFrom={profile:source.profile,world:source.world};
+    if(testing) testCopyPayload(payload,source);
     const created=await rpc("servers.create",payload);
     if(created===FAIL||!created){
-      okB.disabled=false; okB.textContent=T("realm.new.ok");
+      okB.disabled=false; okB.textContent=okLabel();
       statusN.textContent=T("realm.new.failed");
       return;
     }
     modalClose();
     await switchServer(created.ProfileName);
     goPage("world"); // land on World so ports/paths are visible for the new realm
+    /* The character goes last, once the realm stands: a copy that is refused now (a file
+       that turned up since the dialog looked) leaves the realm as it is and says why. */
+    const pickedChar=testCopyCharacter(chars,charPick);
+    if(testing&&pickedChar){
+      const copied=await rpc("characters.copy",{folder:pickedChar.folder,file:pickedChar.file});
+      if(copied!==FAIL&&copied){
+        toast("ᛇ "+T("realm.test.character.done.toast",{source:copied.sourceName,name:copied.name}));
+        logLine("ok","[BakaLoader] copied character '"+copied.sourceName+"' as '"+copied.name+"' for test copy '"+created.ProfileName+"'");
+      }
+    }
   });
   setTimeout(()=>nameI.focus(),30);
 }
@@ -8517,6 +8710,15 @@ $$("[data-t]").forEach(t=>{
    first cut of 1.2.6, and arming a sweep from the window was impossible.
    The catalog's own toast wording lives in onCleanseArmedClick. */
 $("#tCleanseArmed")?.addEventListener("click",()=>{onCleanseArmedClick();});
+/* A test copy is never listed, so its listing switch refuses to move. Stopped in the CAPTURE
+   phase on the row, before the generic [data-t] handler on the switch flips it. */
+$("#tPublic")?.parentElement?.addEventListener("click",e=>{
+  if(!(S.prefs&&S.prefs.TestCopyOf)) return;
+  const t=e.target;
+  if(!t||typeof t.closest!=="function"||!t.closest("#tPublic")) return;
+  e.stopPropagation(); e.preventDefault();
+  toast("ᚦ "+T("realm.test.public.locked.toast"));
+},true);
 
 /* A SWITCH A DIALOG BUILDS, given the same road the window's own switches have.
    The generic pass above runs ONCE, over the markup index.html shipped, so a switch written
@@ -12693,7 +12895,12 @@ function renderWorldForm(){
   $("#fServerExe").value=p.ServerExePath??"";
   $("#fSaveDir").value=p.SaveDataFolderPath??"";
   $("#fArgs").value=p.AdditionalArgs??"";
-  setT("tPublic",p.Public); setT("tCrossplay",p.Crossplay);
+  setT("tPublic",p.Public&&!p.TestCopyOf); setT("tCrossplay",p.Crossplay);
+  const pubSw=$("#tPublic");
+  if(pubSw){
+    pubSw.classList.toggle("locked",!!p.TestCopyOf);
+    if(p.TestCopyOf) pubSw.title=T("realm.test.public.locked"); else pubSw.removeAttribute("title");
+  }
   setT("tEmpty",p.EmptyServerRestart); setT("tSched",p.ScheduledRestart); setT("tRcon",p.RconEnabled);
   setT("tLogs",p.WriteServerLogsToFile); setT("tAutoStart",p.AutoStart); setT("tCrash",p.AutoRestart);
   syncAdvGates();
