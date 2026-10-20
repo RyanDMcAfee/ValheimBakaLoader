@@ -100,6 +100,85 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         public static string Resolve(string configDir, string relative)
         {
+            var (root, parts, full) = Check(configDir, relative);
+
+            // Each step below the config folder, the file included. The config folder itself
+            // may be a junction (an isolated install can share it), and that one is the folder
+            // the hall is about, so it is not held against the path.
+            var step = root;
+            foreach (var part in parts)
+            {
+                step = Path.Combine(step, part);
+                FileAttributes attrs;
+                try { attrs = File.GetAttributes(step); }
+                catch (FileNotFoundException) { throw new FileNotFoundException($"No config file '{relative}'"); }
+                catch (DirectoryNotFoundException) { throw new FileNotFoundException($"No config file '{relative}'"); }
+                if ((attrs & FileAttributes.ReparsePoint) != 0)
+                    throw new ArgumentException($"Invalid config file name '{relative}'");
+            }
+
+            if (!File.Exists(full)) throw new FileNotFoundException($"No config file '{relative}'");
+            return full;
+        }
+
+        /// <summary>
+        /// Every rule <see cref="Resolve"/> holds a path to except the last: the file need not
+        /// exist yet, nor the folders above it. Made for the one writer that may create a config,
+        /// the Gale profile's apply, which writes a file the profile carries and the realm lacks.
+        /// A folder or file on the way down that is there must still not be a link, and a path
+        /// that names a folder is not a file.
+        /// </summary>
+        public static string ResolveForCreate(string configDir, string relative, out bool exists)
+        {
+            var (root, parts, full) = Check(configDir, relative);
+
+            exists = false;
+            var step = root;
+            foreach (var part in parts)
+            {
+                step = Path.Combine(step, part);
+                FileAttributes attrs;
+                try { attrs = File.GetAttributes(step); }
+                catch (FileNotFoundException) { return full; }
+                catch (DirectoryNotFoundException) { return full; }
+                if ((attrs & FileAttributes.ReparsePoint) != 0)
+                    throw new ArgumentException($"Invalid config file name '{relative}'");
+            }
+
+            if (Directory.Exists(full)) throw new ArgumentException($"Invalid config file name '{relative}'");
+            exists = File.Exists(full);
+            return full;
+        }
+
+        /// <summary>
+        /// Makes the folders a new config file at <paramref name="relative"/> goes into, one at a
+        /// time, and looks at each again once it is there, so a link that turned up on the way is
+        /// refused before a byte is written through it. Answers the file's full path.
+        /// </summary>
+        public static string CreateFoldersFor(string configDir, string relative)
+        {
+            var full = ResolveForCreate(configDir, relative, out _);
+            var (root, parts, _) = Check(configDir, relative);
+            Directory.CreateDirectory(root);
+
+            var step = root;
+            for (var i = 0; i < parts.Length - 1; i++)
+            {
+                step = Path.Combine(step, parts[i]);
+                if (!Directory.Exists(step)) Directory.CreateDirectory(step);
+                if ((File.GetAttributes(step) & FileAttributes.ReparsePoint) != 0)
+                    throw new ArgumentException($"Invalid config file name '{relative}'");
+            }
+            return full;
+        }
+
+        /// <summary>
+        /// The shape rules every door shares: not empty, not rooted, no "." or ".." or empty
+        /// segment, nothing Windows cannot hold in a name, an allowed extension, and still under
+        /// the folder once worked out. Answers the folder, the segments and the full path.
+        /// </summary>
+        private static (string Root, string[] Parts, string Full) Check(string configDir, string relative)
+        {
             if (string.IsNullOrWhiteSpace(relative)) throw new ArgumentException("file is required");
             if (string.IsNullOrWhiteSpace(configDir))
                 throw new InvalidOperationException("Server exe path is not configured");
@@ -121,23 +200,7 @@ namespace ValheimBakaLoader.Forms
             if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException($"Invalid config file name '{relative}'");
 
-            // Each step below the config folder, the file included. The config folder itself
-            // may be a junction (an isolated install can share it), and that one is the folder
-            // the hall is about, so it is not held against the path.
-            var step = root;
-            foreach (var part in parts)
-            {
-                step = Path.Combine(step, part);
-                FileAttributes attrs;
-                try { attrs = File.GetAttributes(step); }
-                catch (FileNotFoundException) { throw new FileNotFoundException($"No config file '{relative}'"); }
-                catch (DirectoryNotFoundException) { throw new FileNotFoundException($"No config file '{relative}'"); }
-                if ((attrs & FileAttributes.ReparsePoint) != 0)
-                    throw new ArgumentException($"Invalid config file name '{relative}'");
-            }
-
-            if (!File.Exists(full)) throw new FileNotFoundException($"No config file '{relative}'");
-            return full;
+            return (root, parts, full);
         }
 
         /// <summary>

@@ -188,7 +188,14 @@ namespace ValheimBakaLoader.Game
         public List<string> GaleNotAvailable { get; set; } = new();
 
         /// <summary>
-        /// Puts the three Gale fields of <paramref name="stored"/> onto this profile. The
+        /// The config files (paths under BepInEx/config, forward slashes) the host unticked in
+        /// the configs part of the Gale dialog. Shown unticked on every later review until the
+        /// host ticks them again, and never written while unticked. Never null on a loaded profile.
+        /// </summary>
+        public List<string> GaleConfigUnticked { get; set; } = new();
+
+        /// <summary>
+        /// Puts the Gale fields of <paramref name="stored"/> onto this profile. The
         /// settings form has no Gale fields: it fetches the profile, changes what it has boxes
         /// for, and sends the whole object back, so whatever Gale state it carries is a copy of
         /// an older read. An approval that landed between that read and the save would be
@@ -202,6 +209,7 @@ namespace ValheimBakaLoader.Game
             GaleLastUpdatedAt = stored.GaleLastUpdatedAt;
             GaleUnticked = NormalizeUnticked(stored.GaleUnticked);
             GaleNotAvailable = NormalizeUnticked(stored.GaleNotAvailable);
+            GaleConfigUnticked = NormalizeUnticked(stored.GaleConfigUnticked);
             return this;
         }
 
@@ -218,6 +226,7 @@ namespace ValheimBakaLoader.Game
             GaleLastUpdatedAt = null;
             GaleUnticked = NormalizeUnticked(GaleUnticked);
             GaleNotAvailable = NormalizeUnticked(GaleNotAvailable);
+            GaleConfigUnticked = NormalizeUnticked(GaleConfigUnticked);
             return this;
         }
 
@@ -300,6 +309,7 @@ namespace ValheimBakaLoader.Game
                 GaleLastUpdatedAt = string.IsNullOrWhiteSpace(file.GaleLastUpdatedAt) ? defaults.GaleLastUpdatedAt : file.GaleLastUpdatedAt,
                 GaleUnticked = NormalizeUnticked(file.GaleUnticked),
                 GaleNotAvailable = NormalizeUnticked(file.GaleNotAvailable),
+                GaleConfigUnticked = NormalizeUnticked(file.GaleConfigUnticked),
             };
         }
 
@@ -348,6 +358,7 @@ namespace ValheimBakaLoader.Game
             // that has never followed a profile, and null reads back as an empty list.
             GaleUnticked = NormalizeUnticked(GaleUnticked) is { Count: > 0 } kept ? kept : null,
             GaleNotAvailable = NormalizeUnticked(GaleNotAvailable) is { Count: > 0 } gone ? gone : null,
+            GaleConfigUnticked = NormalizeUnticked(GaleConfigUnticked) is { Count: > 0 } left ? left : null,
         };
     }
 }

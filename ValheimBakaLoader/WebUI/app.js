@@ -6416,6 +6416,12 @@ $("#addModBtn").addEventListener("click",()=>{
  *
  * The installs are the Mods hall's own add, one mod at a time, with the version pinned in the
  * address, so the download, its checks and its failure sentences are the ones that road has.
+ *
+ * The dialog has two more parts. Config files from the profile: the profile's zip is fetched
+ * when the dialog opens (and on its Refresh), never at the three moments, and each file is
+ * listed against this server's own with a preview, applied apart from the mods by its own
+ * button. On this server only: the server's mods the profile does not name, for information,
+ * each with the Mods hall's own switch off and on. Nothing in either part removes anything.
  * The selftest scripts/ui/gale_profile_selftest.js drives this block for real.
  */
 /* Every sentence the host side can name for the status line. The host side names them by
@@ -6433,14 +6439,37 @@ const GALE_STATUS=[
   {textId:"mods.gale.check.cancelled"},
   {textId:"mods.gale.check.unreadable"},
   {textId:"mods.gale.check.other_game"},
+  {textId:"mods.gale.configs.not_following"},
+  {textId:"mods.gale.configs.fetch.bad_request"},
+  {textId:"mods.gale.configs.fetch.not_found"},
+  {textId:"mods.gale.configs.fetch.timeout"},
+  {textId:"mods.gale.configs.fetch.server_error"},
+  {textId:"mods.gale.configs.fetch.network"},
+  {textId:"mods.gale.configs.fetch.malformed"},
+  {textId:"mods.gale.configs.fetch.cancelled"},
+  {textId:"mods.gale.configs.refused.not_zip"},
+  {textId:"mods.gale.configs.refused.too_many"},
+  {textId:"mods.gale.configs.refused.unsafe"},
+  {textId:"mods.gale.configs.refused.too_large"},
 ];
 let GALE=null;            // this realm's follow, as the host side last answered it
 let GALE_BUSY=false;      // a check is out
 let GALE_REFUSED=null;    // the sentence id a refused paste gets, until the box is used again
 let GALE_INSTALLING=false;
-function galeSentence(id,params){
+let GALE_DLG=null;        // the dialog on screen, so its configs and only-here parts can be drawn again in place
+let GALE_DLG_ST=null;     // the state the dialog was opened with, kept fresh by the only-here switch
+let GALE_CFG=null;        // the configs part's last answer from the host side
+let GALE_CFG_LOADING=false;
+let GALE_CFG_APPLYING=false;
+let GALE_CFG_TICKS={};    // ticks the host changed in the open dialog, by path, so a redraw keeps them
+let GALE_CFG_SHOWN={};    // previews open in the open dialog, by path
+let GALE_SWITCHING=false; // a switch from the only-here list is out
+function galeSentence(id,params,fallback){
   const row=GALE_STATUS.find(r=>r.textId===id);
-  return T(row?row.textId:"mods.gale.check.network",params);
+  return T(row?row.textId:(fallback||"mods.gale.check.network"),params);
+}
+function galeSameRealm(a,b){
+  return String(a||"").toLowerCase()===String(b||"").toLowerCase();
 }
 /* A server is up on this realm when the host side says something holds its plugins folder,
    or when the state on screen says this realm is not stopped. Either is enough to refuse. */
@@ -6472,7 +6501,18 @@ function galeStatusLine(st,busy,refused){
   else if(c.due) first=T("mods.gale.status.due",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
   else first=T("mods.gale.status.waved",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
   const skipped=c&&c.ok&&c.skipped>0?" "+T("mods.gale.status.skipped",{count:c.skipped}):"";
-  return first+skipped+" "+approved;
+  const here=c&&c.ok&&c.onlyHereCount>0?" "+T("mods.gale.status.only_here",{count:c.onlyHereCount}):"";
+  return first+skipped+here+" "+approved;
+}
+/* Whether Review has anything to open on: mods to add or update, mods only this server has, or
+   config files the profile would change. The configs are not known until the dialog has fetched
+   them once, and not known counts as something, so a profile whose only news is a config still
+   gets its Review. */
+function galeReviewable(st){
+  const c=st&&st.check;
+  if(!c||!c.ok) return false;
+  if(c.addCount+c.updateCount>0||c.onlyHereCount>0) return true;
+  return c.configChanges==null||c.configChanges>0;
 }
 /* Takes an answer from the host side, unless it is about a realm the host has left. */
 function galeApply(st){
@@ -6494,9 +6534,7 @@ function renderGaleBox(){
   if(check) check.disabled=busy;
   if(forget) forget.disabled=busy||!(st&&st.following);
   if(review){
-    const c=st&&st.check;
-    const work=!!(c&&c.ok&&c.addCount+c.updateCount>0);
-    review.style.display=work?"":"none";
+    review.style.display=galeReviewable(st)?"":"none";
     review.disabled=busy;
   }
 }
@@ -6558,14 +6596,20 @@ async function galeForget(){
   if(st) galeApply(st); else renderGaleBox();
 }
 /* What the dialog lists: every add and every update, the ones the host unticked earlier among
-   them with the tick off, and the names the profile has switched off for the one note line. */
+   them with the tick off, the names the profile has switched off for the one note line, and
+   the mods only this server has (never the framework rows, which are the BepInEx row's). Each
+   of those carries the scan's own FullName, which the switch looks it up by. */
 function galeDialogRows(st){
   const c=st&&st.check;
-  const rows=[], disabled=[];
-  if(!c||!c.ok) return {rows,disabled};
+  const rows=[], disabled=[], onlyHere=[];
+  if(!c||!c.ok) return {rows,disabled,onlyHere};
   for(const r of c.rows||[]){
     const kind=r.kind==="unticked"?r.untickedFrom:r.kind;
     if(r.kind==="disabled"){disabled.push(String(r.name));continue;}
+    if(r.kind==="notInProfile"){
+      onlyHere.push({name:String(r.name),version:r.serverVersion||"",fullName:String(r.fullName||r.name),off:!!r.off});
+      continue;
+    }
     if(kind!=="add"&&kind!=="update") continue;
     /* A pinned build Thunderstore no longer has keeps its mark and starts unticked, so it is
        not offered as a plain add again; ticking it tries it once more. */
@@ -6573,7 +6617,7 @@ function galeDialogRows(st){
     rows.push({name:String(r.name),profileVersion:r.profileVersion,serverVersion:r.serverVersion,
       ticked:r.kind!=="unticked"&&!gone,downgrade:!!r.downgrade,notAvailable:gone});
   }
-  return {rows,disabled};
+  return {rows,disabled,onlyHere};
 }
 /* BepInEx on the realm, as the last check read it: missing (the install was looked at and
    has none) and whether the profile carries the pack, which is what lets Install put it in
@@ -6583,7 +6627,7 @@ function galeBepInEx(st){
   return {missing:!!(b&&b.missing),inProfile:!!(b&&b.inProfile)};
 }
 function galeDialogHtml(st){
-  const {rows,disabled}=galeDialogRows(st);
+  const {rows,disabled,onlyHere}=galeDialogRows(st);
   const held=galeHeldBy(st);
   const body=rows.length
     ?`<div class="mbody-note">${esc(T("mods.gale.dialog.intro"))}</div>`+
@@ -6613,19 +6657,239 @@ function galeDialogHtml(st){
       ?`<div class="mbody-note" style="margin-top:8px">${esc(T("mods.gale.dialog.bepinex_first"))}</div>`
       :`<div class="mwarn">⚠ ${esc(T("mods.gale.dialog.bepinex_missing"))}</div>`;
   const off=held||!rows.length||bepBlocked?" disabled":"";
+  /* The mods part never blocks the other two: with nothing to install it says so in one line
+     and the configs and the only-here list are still there under it. */
+  const mods=`<div class="galesec"><div class="galesech">${esc(T("mods.gale.dialog.mods.title"))}</div>${body}${note}${bepNote}${warn}</div>`;
+  const cfg=`<div class="galesec" id="galeCfg">${galeConfigsHtml(st)}</div>`;
+  const here=onlyHere.length?`<div class="galesec" id="galeHere">${galeOnlyHereHtml(st)}</div>`:"";
   return `<div class="mtitle">${esc(T("mods.gale.dialog.title"))}</div>`+
-    `<div class="mbody">${body}${note}${bepNote}${warn}</div>`+
+    `<div class="mbody">${mods}${cfg}${here}</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="galeNotNow">${esc(T("guard.btn.not_now"))}</button>`+
     `<button class="btn btn-ember btn-sm" id="galeInstall"${off}>${esc(T("common.button.install"))}</button></div>`;
+}
+/* ---- Config files from the profile ----
+   The host side fetches the profile's zip and answers each config file it carries with its
+   state against this server's own copy (added, changed, the same), a preview, and the tick
+   the host left it at last time. Only added and changed files can be ticked; the same ones are
+   counted and listed folded away. Apply configs is its own button, so the mods and the configs
+   are approved apart. */
+function galeCfgFor(st){
+  return GALE_CFG&&st&&galeSameRealm(GALE_CFG.profile,st.profile)?GALE_CFG:null;
+}
+/* The files with the ticks the host changed in this dialog laid over the host side's. */
+function galeConfigFiles(cfg){
+  const c=cfg&&cfg.configs;
+  if(!c||!c.ok) return [];
+  return (c.files||[]).map(f=>{
+    const path=String(f.path);
+    const ticked=f.state==="same"?false
+      :Object.prototype.hasOwnProperty.call(GALE_CFG_TICKS,path)?!!GALE_CFG_TICKS[path]:!!f.ticked;
+    return {path,realmPath:String(f.realmPath||path),state:String(f.state),ticked,preview:f.preview||[],more:Number(f.more)||0};
+  });
+}
+function galeCfgStateWord(state){
+  return state==="added"?T("mods.gale.configs.state.added")
+    :state==="changed"?T("mods.gale.configs.state.changed")
+    :T("mods.gale.configs.state.same");
+}
+/* The folders a file sits in, muted ahead of its name, the way the Configs list draws them. */
+function galeCfgPathHtml(path){
+  const s=String(path||""), at=s.lastIndexOf("/");
+  const pre=at<0?"":s.slice(0,at+1), name=at<0?s:s.slice(at+1);
+  return (pre?`<span class="cfgpre">${esc(pre)}</span>`:"")+esc(name);
+}
+/* A line the profile brings is marked "+", one it takes out "-", and context is two spaces,
+   so the preview reads the same without its colours. */
+function galeDiffHtml(f){
+  const lines=(f.preview||[]).map(l=>{
+    const k=String(l.k||" "), t=String(l.t==null?"":l.t);
+    const cls=k==="+"?"add":k==="-"?"del":k==="@"?"hunk":"ctx";
+    const lead=k==="@"?"":k==="+"?"+ ":k==="-"?"- ":"  ";
+    return `<span class="${cls}">${esc(lead+t)}</span>`;
+  }).join("");
+  const more=f.more>0?`<div class="mbody-note">${esc(T("mods.gale.configs.more",{count:f.more}))}</div>`:"";
+  return `<pre class="galediff" data-gale-cfg-pre="${esc(f.path)}">${lines}</pre>${more}`;
+}
+function galeCfgRowHtml(f){
+  const open=!!GALE_CFG_SHOWN[f.path];
+  const tick=f.state==="same"?""
+    :`<input type="checkbox" data-gale-cfg="${esc(f.path)}"${f.ticked?" checked":""}`+
+      ` aria-label="${esc(T("mods.gale.configs.tick.aria",{path:f.realmPath}))}">`;
+  const show=f.state==="same"?""
+    :`<button class="btn btn-ghost btn-sm galecfgshow" data-gale-cfg-show="${esc(f.path)}" aria-expanded="${open?"true":"false"}">`+
+      `${esc(open?T("mods.gale.configs.hide"):T("mods.gale.configs.show"))}</button>`;
+  return `<div class="galecfgrow">${tick}<span class="galecfgpath mono" title="${esc(f.realmPath)}">${galeCfgPathHtml(f.path)}</span>`+
+    `<span class="galecfgstate ${esc(f.state)}">${esc(galeCfgStateWord(f.state))}</span>${show}</div>`+
+    (open&&f.state!=="same"?galeDiffHtml(f):"");
+}
+function galeConfigsHtml(st){
+  const head=`<div class="galesech">${esc(T("mods.gale.configs.title"))}</div>`;
+  const cfg=galeCfgFor(st);
+  if(!cfg||GALE_CFG_LOADING) return head+`<div class="mbody-note galecfgloading">${esc(T("mods.gale.configs.loading"))}</div>`;
+  const refresh=`<button class="btn btn-ghost btn-sm" data-gale-cfg-refresh title="${esc(T("mods.gale.configs.refresh.title"))}"`+
+    `${GALE_CFG_APPLYING?" disabled":""}>${esc(T("mods.gale.configs.refresh"))}</button>`;
+  const c=cfg.configs;
+  if(!c) return head+`<div class="mbody-note">${esc(galeSentence(cfg.statusId,{},"mods.gale.configs.not_following"))}</div>`;
+  if(!c.ok) return head+`<div class="mbody-note">${esc(galeSentence(c.statusId,{},"mods.gale.configs.fetch.network"))}</div>`+
+    `<div class="galecfgbtns">${refresh}</div>`;
+  const files=galeConfigFiles(cfg);
+  const work=files.filter(f=>f.state!=="same"), same=files.filter(f=>f.state==="same");
+  const held=galeHeldBy(cfg.heldBy?cfg:st);
+  let out=head+`<div class="mbody-note">${esc(T("mods.gale.configs.intro"))}</div>`;
+  if(!files.length) out+=`<div class="mbody-note">${esc(T("mods.gale.configs.none"))}</div>`;
+  else{
+    out+=`<div class="mbody-note galecfgcounts">${esc(T("mods.gale.configs.counts",{added:Number(c.added)||0,changed:Number(c.changed)||0,same:Number(c.same)||0}))}</div>`;
+    if(!work.length) out+=`<div class="mbody-note">${esc(T("mods.gale.configs.nothing"))}</div>`;
+  }
+  if(c.skipped>0) out+=`<div class="mbody-note">${esc(T("mods.gale.configs.skipped",{count:c.skipped}))}</div>`;
+  out+=work.map(galeCfgRowHtml).join("");
+  if(same.length) out+=`<details class="galecfgsame"><summary>${esc(T("mods.gale.configs.same.show",{count:same.length}))}</summary>`+
+    same.map(galeCfgRowHtml).join("")+`</details>`;
+  if(held) out+=`<div class="mwarn">⚠ ${esc(T("mods.gale.configs.running",{name:held}))}</div>`;
+  const off=held||!work.length||GALE_CFG_APPLYING?" disabled":"";
+  out+=`<div class="galecfgbtns">${refresh}<button class="btn btn-ember btn-sm" data-gale-cfg-apply${off}>${esc(T("mods.gale.configs.apply"))}</button></div>`;
+  return out;
+}
+/* ---- On this server only ----
+   Information, and the Mods hall's own switch. Nothing here removes a mod: a switch renames
+   its .dll files to .dll.old and back. */
+function galeOnlyHereHtml(st){
+  const {onlyHere}=galeDialogRows(st);
+  if(!onlyHere.length) return "";
+  const held=galeHeldBy(st);
+  const off=held||GALE_SWITCHING?" disabled":"";
+  const rows=onlyHere.map((r,i)=>
+    `<div class="galeherow"><span class="mono">${esc(r.name)}</span>`+
+    `<span class="mono galeherever">${esc(r.version)}</span>`+
+    (r.off?`<span class="pill grey" title="${esc(T("mods.status.off.tip"))}">${esc(T("mods.status.off"))}</span>`:"")+
+    `<button class="btn btn-ghost btn-sm" data-gale-here="${i}"${off}`+
+      ` aria-label="${esc(r.off?T("mods.gale.only_here.on.aria",{name:r.name}):T("mods.gale.only_here.off.aria",{name:r.name}))}">`+
+      `${esc(r.off?T("mods.gale.only_here.on"):T("mods.gale.only_here.off"))}</button></div>`).join("");
+  const warn=held?`<div class="mwarn">⚠ ${esc(T("mods.gale.only_here.running",{name:held}))}</div>`:"";
+  return `<div class="galesech">${esc(T("mods.gale.only_here.title"))}</div>`+
+    `<div class="mbody-note">${esc(T("mods.gale.only_here.intro"))}</div>${rows}${warn}`;
+}
+function galeCfgRedraw(){
+  const box=GALE_DLG&&GALE_DLG.querySelector?GALE_DLG.querySelector("#galeCfg"):null;
+  if(box) box.innerHTML=galeConfigsHtml(GALE_DLG_ST);
+}
+function galeHereRedraw(){
+  const box=GALE_DLG&&GALE_DLG.querySelector?GALE_DLG.querySelector("#galeHere"):null;
+  if(box) box.innerHTML=galeOnlyHereHtml(GALE_DLG_ST);
+}
+/* Asks the host side for the configs. On open it fetches only what it does not hold for this
+   profile as it is now; Refresh fetches again whatever it holds. */
+async function galeConfigsLoad(refresh){
+  if(!Native.available||GALE_CFG_LOADING||GALE_CFG_APPLYING) return;
+  const st=GALE_DLG_ST; if(!st) return;
+  const profile=st.profile;
+  GALE_CFG_LOADING=true; galeCfgRedraw();
+  const r=await Native.call("gale.configs",{profile,refresh:!!refresh}).catch(()=>null);
+  GALE_CFG_LOADING=false;
+  if(r&&galeSameRealm(r.profile,profile)) GALE_CFG=r;
+  else if(!r) GALE_CFG={profile,heldBy:null,configs:{ok:false,statusId:"mods.gale.configs.fetch.network"}};
+  galeCfgRedraw();
+  /* The box's Review link reads what the configs part found, through the stored state. */
+  await galeRefresh();
+}
+function galeCfgToggle(path){
+  GALE_CFG_SHOWN[path]=!GALE_CFG_SHOWN[path];
+  galeCfgRedraw();
+}
+function galeCfgTick(path,on){
+  GALE_CFG_TICKS[path]=!!on;
+}
+/* The sentence for a refused or failed apply. The host side names its reason; its English is
+   only the fallback for one this page has no words for. */
+function galeCfgFailSentence(r){
+  const p=r.ErrorParams||{};
+  if(r.Reason==="serverRunning") return T("mods.gale.install.server_running.toast",{name:p.name||S.profileName||""});
+  if(r.Reason==="realmChanged") return T("mods.gale.configs.reason.realm_changed");
+  if(r.Reason==="busy") return T("mods.gale.configs.reason.busy");
+  if(r.Reason==="noServerPath") return T("mods.gale.configs.reason.no_server_path");
+  if(r.Reason==="stale") return T("mods.gale.configs.reason.stale");
+  if(r.Reason==="notInProfile") return T("mods.gale.configs.reason.not_in_profile",{file:p.file||""});
+  if(r.Reason==="unsafePath") return T("mods.gale.configs.reason.unsafe_path",{file:p.file||""});
+  if(r.Reason==="writeFailed") return T("mods.gale.configs.failed.toast",{file:p.file||"",done:Number(p.done)||0,detail:r.Error||""});
+  return T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")});
+}
+async function galeApplyConfigs(){
+  if(!Native.available||GALE_CFG_APPLYING||GALE_CFG_LOADING) return;
+  const st=GALE_DLG_ST, cfg=galeCfgFor(st);
+  if(!st||!cfg||!cfg.configs||!cfg.configs.ok) return;
+  const held=galeHeldBy(cfg.heldBy?cfg:st);
+  if(held){toast("ᚦ "+T("mods.gale.configs.running",{name:held}));return;}
+  const paths=galeConfigFiles(cfg).filter(f=>f.state!=="same"&&f.ticked).map(f=>f.path);
+  GALE_CFG_APPLYING=true; galeCfgRedraw();
+  const r=await Native.call("gale.configs.apply",{profile:st.profile,paths}).catch(()=>null);
+  GALE_CFG_APPLYING=false;
+  /* The ticks are on the host side now, unticks included, so its answer is the one to draw. */
+  if(r&&r.state&&galeSameRealm(r.state.profile,st.profile)){GALE_CFG=r.state; GALE_CFG_TICKS={};}
+  galeCfgRedraw();
+  if(!r) toast("ᚦ "+T("mods.add.failed.toast",{detail:T("common.error.unknown")}));
+  else if(!r.ok) toast("ᚦ "+galeCfgFailSentence(r));
+  else if(!paths.length) toast("ᚨ "+T("mods.gale.configs.applied.none.toast"));
+  else if(!r.written) toast("ᚨ "+T("mods.gale.configs.applied.same.toast"));
+  else if(r.replaced) toast("ᚨ "+T("mods.gale.configs.applied.toast",{added:Number(r.added)||0,replaced:Number(r.replaced)||0,folder:String(r.backup||"")}));
+  else toast("ᚨ "+T("mods.gale.configs.applied.new.toast",{count:Number(r.added)||0}));
+  await galeRefresh();
+}
+/* Switch one only-here mod off or on through the Mods hall's own switch, then have the host
+   side read the folder again (gale.rescan, which asks Gale nothing), so the list shows the
+   mod's new state. */
+async function galeOnlyHereSwitch(i){
+  const st=GALE_DLG_ST;
+  const r=galeDialogRows(st).onlyHere[i];
+  if(!r||GALE_SWITCHING) return;
+  const held=galeHeldBy(st);
+  if(held){toast("ᚦ "+T("mods.gale.only_here.running",{name:held}));return;}
+  GALE_SWITCHING=true; galeHereRedraw();
+  try{
+    await setModEnabled({FullName:r.fullName,ModName:r.name},r.off);
+  }finally{
+    GALE_SWITCHING=false;
+  }
+  const re=Native.available?await Native.call("gale.rescan",{profile:st.profile}).catch(()=>null):null;
+  if(re&&re.state&&galeApply(re.state)) GALE_DLG_ST=re.state;
+  galeHereRedraw();
+}
+/* One listener each for the whole dialog, so a part drawn again in place keeps working. */
+function galeDialogClick(e){
+  const t=e&&e.target;
+  if(!t||typeof t.closest!=="function") return;
+  const show=t.closest("[data-gale-cfg-show]");
+  if(show){galeCfgToggle(show.getAttribute("data-gale-cfg-show"));return;}
+  const refresh=t.closest("[data-gale-cfg-refresh]");
+  if(refresh){if(!refresh.disabled) galeConfigsLoad(true);return;}
+  const apply=t.closest("[data-gale-cfg-apply]");
+  if(apply){if(!apply.disabled) galeApplyConfigs();return;}
+  const here=t.closest("[data-gale-here]");
+  if(here&&!here.disabled) galeOnlyHereSwitch(Number(here.getAttribute("data-gale-here")));
+}
+function galeDialogChange(e){
+  const t=e&&e.target;
+  if(!t||typeof t.getAttribute!=="function") return;
+  const path=t.getAttribute("data-gale-cfg");
+  if(path!=null) galeCfgTick(path,!!t.checked);
 }
 function galeDialog(){
   const st=GALE;
   if(!st||!st.check||!st.check.ok) return;
-  const {rows}=galeDialogRows(st);
+  GALE_DLG_ST=st; GALE_CFG_TICKS={}; GALE_CFG_SHOWN={};
   const again=()=>{
-    const m=modalOpen(galeDialogHtml(st),again);
+    const m=modalOpen(galeDialogHtml(GALE_DLG_ST||st),again);
+    GALE_DLG=m;
+    if(m.classList) m.classList.add("galedlg");
+    if(typeof m.addEventListener==="function"){
+      m.addEventListener("click",galeDialogClick);
+      m.addEventListener("change",galeDialogChange);
+    }
     m.querySelector("#galeNotNow").addEventListener("click",modalClose);
     m.querySelector("#galeInstall").addEventListener("click",()=>{
+      /* The state the list on screen was drawn from: the only-here switch may have read the
+         folder again since the dialog opened. */
+      const shown=GALE_DLG_ST||st;
+      const {rows}=galeDialogRows(shown);
       const ticks=Array.from(m.querySelectorAll("[data-gale-row]"));
       const ticked=[], unticked=[];
       for(const box of ticks){
@@ -6636,11 +6900,14 @@ function galeDialog(){
         else if(!r.notAvailable) unticked.push(r);
       }
       modalClose();
-      galeInstall(st,ticked,unticked);
+      galeInstall(shown,ticked,unticked);
     });
     return m;
   };
-  return again();
+  const m=again();
+  /* The configs are fetched now, when the host has opened the dialog, and at no other time. */
+  galeConfigsLoad(false);
+  return m;
 }
 /* The pinned address the Mods hall's add already reads: a version page, never "latest". */
 function galeModUrl(name,version){

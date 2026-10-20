@@ -14,14 +14,16 @@ namespace ValheimBakaLoader.Forms
 {
     /// <summary>
     /// Following a Gale synced profile: the eight RPCs the Mods hall's box, the condition bar row
-    /// and the approval dialog talk to.
+    /// and the approval dialog talk to. The two the dialog's configs part adds are in
+    /// BlendWindow.GaleConfigs.cs.
     /// <para>
     /// The page never sees the service. It asks gale.check, this side reads the profile's meta
     /// through <see cref="IGaleSyncClient"/> on a worker, reads the realm's installed mods the
     /// way the Mods hall does, and hands back the comparison and whether the row is due. Only
-    /// gale.check ever reaches the network, and only for a realm with an id set; the page calls
-    /// it at the three moments the spec names (after the first frame, when the Mods hall opens,
-    /// and on Check now) and at no other.
+    /// gale.check reaches the network for the meta, and only for a realm with an id set; the page
+    /// calls it at the three moments the spec names (after the first frame, when the Mods hall
+    /// opens, and on Check now) and at no other. gale.configs fetches the profile's zip, and only
+    /// when the host opens the dialog's configs part or presses its Refresh.
     /// </para>
     /// <para>
     /// The installs themselves are not here. The dialog runs the Mods hall's own add, one mod at
@@ -69,7 +71,23 @@ namespace ValheimBakaLoader.Forms
 
             /// <summary>The realm's mods as the scan read them, as name and version. Null when the check failed.</summary>
             public IReadOnlyList<(string Name, string Version)> Installed { get; init; }
+
+            /// <summary>
+            /// The same scan with what the "on this server only" list needs beside each name: the
+            /// mod's own FullName, which the switch looks it up by, and whether it is switched off.
+            /// Null when the check failed.
+            /// </summary>
+            public IReadOnlyList<GaleInstalledMod> Mods { get; init; }
         }
+
+        /// <summary>
+        /// One mod the scan read, as the Gale check holds it. <see cref="Name"/> is what the diff
+        /// compares by (the manifest's FullName, or the bare ModName for a folder with no author);
+        /// <see cref="FullName"/> is the scan's own, the one mods.disable and mods.enable look a mod
+        /// up by. They differ for an author-less folder ("-Name" against "Name"), and a switch sent
+        /// with the diff's name would find nothing.
+        /// </summary>
+        internal readonly record struct GaleInstalledMod(string Name, string Version, string FullName, bool Off);
 
         private void RegisterGaleRpcs()
         {
@@ -100,8 +118,10 @@ namespace ValheimBakaLoader.Forms
                     prefs.GaleLastUpdatedAt = null;
                     prefs.GaleUnticked = new List<string>();
                     prefs.GaleNotAvailable = new List<string>();
+                    prefs.GaleConfigUnticked = new List<string>();
                     ServerPrefsProvider.SavePreferences(prefs);
                     GaleMemos.TryRemove(profile, out _);
+                    GaleConfigMemos.TryRemove(profile, out _);
                 }
 
                 return Task.FromResult<object>(new { ok = true, sentenceId = (string)null, state = GaleState(profile) });
@@ -115,6 +135,7 @@ namespace ValheimBakaLoader.Forms
                 var prefs = LoadGalePrefs(profile);
                 if (prefs != null) ForgetGale(prefs);
                 GaleMemos.TryRemove(profile, out _);
+                GaleConfigMemos.TryRemove(profile, out _);
                 return Task.FromResult<object>(GaleState(profile));
             });
 
@@ -195,6 +216,9 @@ namespace ValheimBakaLoader.Forms
             // ahead because they approved it here. Held to the realm on screen, to a stopped
             // server, and to a last check that really lists the pack.
             RegisterRpc("gale.bepinex", async p => await GaleBepInExAsync(GaleProfileOf(p)));
+
+            // The profile's config files: the list with its previews, and the apply.
+            RegisterGaleConfigRpcs();
         }
 
         /// <summary>The pack the dialog puts in first: the one BakaLoader installs everywhere else.</summary>
@@ -296,8 +320,10 @@ namespace ValheimBakaLoader.Forms
             prefs.GaleLastUpdatedAt = null;
             prefs.GaleUnticked = new List<string>();
             prefs.GaleNotAvailable = new List<string>();
+            prefs.GaleConfigUnticked = new List<string>();
             ServerPrefsProvider.SavePreferences(prefs);
             GaleMemos.TryRemove(prefs.ProfileName ?? "", out _);
+            GaleConfigMemos.TryRemove(prefs.ProfileName ?? "", out _);
         }
 
         private static List<string> Names(JToken token)
@@ -361,6 +387,7 @@ namespace ValheimBakaLoader.Forms
                     CheckedUtc = memo.CheckedUtc,
                     Result = memo.Result,
                     Installed = memo.Installed,
+                    Mods = memo.Mods,
                 };
             }
 
@@ -385,7 +412,7 @@ namespace ValheimBakaLoader.Forms
             // A profile for another game is a status line, never a comparison and never a row.
             result = GaleProfileDiff.RefuseOtherGame(result);
 
-            IReadOnlyList<(string, string)> installed = null;
+            IReadOnlyList<GaleInstalledMod> installed = null;
             if (result?.Ok == true)
             {
                 installed = ReadInstalledForGale(pluginsDir);
@@ -397,7 +424,11 @@ namespace ValheimBakaLoader.Forms
                 }
             }
 
-            return new GaleCheckMemo { ProfileId = id, CheckedUtc = DateTime.UtcNow, Result = result, Installed = installed };
+            return new GaleCheckMemo
+            {
+                ProfileId = id, CheckedUtc = DateTime.UtcNow, Result = result,
+                Installed = Pairs(installed), Mods = installed,
+            };
         }
 
         /// <summary>
@@ -416,9 +447,13 @@ namespace ValheimBakaLoader.Forms
                 ProfileId = memo.ProfileId,
                 CheckedUtc = memo.CheckedUtc,
                 Result = memo.Result,
-                Installed = installed,
+                Installed = Pairs(installed),
+                Mods = installed,
             }, memo);
         }
+
+        private static IReadOnlyList<(string Name, string Version)> Pairs(IReadOnlyList<GaleInstalledMod> mods) =>
+            mods?.Select(m => (m.Name, m.Version)).ToList();
 
         /// <summary>The status line when the realm's own mod folder could not be read.</summary>
         internal const string GaleUnreadableSentence = "mods.gale.check.unreadable";
@@ -428,15 +463,16 @@ namespace ValheimBakaLoader.Forms
         /// and version per folder. A realm with no plugins folder yet has no mods, which is an
         /// answer; a folder that is there and will not read is null, which is not.
         /// </summary>
-        private IReadOnlyList<(string, string)> ReadInstalledForGale(string pluginsDir)
+        private IReadOnlyList<GaleInstalledMod> ReadInstalledForGale(string pluginsDir)
         {
             if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
-                return Array.Empty<(string, string)>();
+                return Array.Empty<GaleInstalledMod>();
             try
             {
                 return ModScanner.ScanPlugins(pluginsDir)
                     .Where(m => m != null)
-                    .Select(m => (string.IsNullOrWhiteSpace(m.Author) ? m.ModName : m.FullName, m.InstalledVersion))
+                    .Select(m => new GaleInstalledMod(
+                        string.IsNullOrWhiteSpace(m.Author) ? m.ModName : m.FullName, m.InstalledVersion, m.FullName, m.Disabled))
                     .ToList();
             }
             catch (Exception e)
@@ -471,6 +507,12 @@ namespace ValheimBakaLoader.Forms
                 bool Gone(GaleDiffRow r) => gone.Contains(GaleNotAvailableKey(r.Name, r.ProfileVersion));
                 var addCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Add && !Gone(r)) ?? 0;
                 var updateCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Update && !Gone(r)) ?? 0;
+                // The framework rows are the BepInEx row's, so the list and its count are the
+                // server's own mods the profile does not name, and nothing else.
+                var onlyHereCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.NotInProfile) ?? 0;
+                var here = new Dictionary<string, GaleInstalledMod>(StringComparer.OrdinalIgnoreCase);
+                foreach (var m in memo.Mods ?? Array.Empty<GaleInstalledMod>())
+                    if (!string.IsNullOrWhiteSpace(m.Name)) here.TryAdd(m.Name.Trim(), m);
                 check = new
                 {
                     seq = memo.Seq,
@@ -483,7 +525,14 @@ namespace ValheimBakaLoader.Forms
                     addCount,
                     updateCount,
                     skipped = diff?.Skipped ?? 0,
-                    rows = diff == null ? new List<object>() : diff.Rows.Select(r => GaleRowDto(r, Gone(r))).ToList(),
+                    onlyHereCount,
+                    rows = diff == null
+                        ? new List<object>()
+                        : diff.Rows.Select(r => GaleRowDto(r, Gone(r),
+                            r.Kind == GaleDiffKind.NotInProfile && here.TryGetValue(r.Name ?? "", out var m) ? m : null)).ToList(),
+                    // What the configs part last found, so the Review link knows whether the
+                    // dialog has anything there. Null until the configs part has been opened.
+                    configChanges = GaleConfigChanges(profile, prefs),
                     // BepInEx on this realm, for the dialog: missing is only said when the
                     // install could be looked at, and inProfile is whether the profile lists the
                     // pack, which is what lets Install put it in first.
@@ -531,10 +580,14 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
-        private static object GaleRowDto(GaleDiffRow r, bool notAvailable) => new
+        private static object GaleRowDto(GaleDiffRow r, bool notAvailable, GaleInstalledMod? onServer) => new
         {
             name = r.Name,
             notAvailable,
+            // For a server-only row: the scan's own FullName, which the switch looks the mod up
+            // by, and whether it is switched off now. Null and false on every other row.
+            fullName = onServer?.FullName,
+            off = onServer?.Off ?? false,
             kind = GaleKindWord(r.Kind),
             untickedFrom = r.UntickedFrom == null ? null : GaleKindWord(r.UntickedFrom.Value),
             profileVersion = r.ProfileVersion,

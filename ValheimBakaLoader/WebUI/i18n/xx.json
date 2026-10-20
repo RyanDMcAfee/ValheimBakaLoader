@@ -2283,6 +2283,234 @@
       },
       "mark": "ᚦ"
     },
+    "mods.gale.status.only_here": {
+      "translation": {
+        "one": "[Ẋ {count} mod on this server is not in the profile. Review lists it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} mods on this server are not in the profile. Review lists them. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      }
+    },
+    "mods.gale.dialog.mods.title": {
+      "translation": "[Ẋ Mods from the profile Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.title": {
+      "translation": "[Ẋ Config files from the profile Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.intro": {
+      "translation": "[Ẋ Each ticked file is written into this server's BepInEx\\config exactly as the profile has it, and a file it replaces is copied into BepInEx\\.bakaloader-config-backups first. A config the profile does not carry is never touched, and nothing is deleted. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.loading": {
+      "translation": "[Ẋ Reading the profile's config files from Gale… Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.counts": {
+      "translation": "[Ẋ {added} to add, {changed} changed, {same} the same. Ẋ] ẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "added": "number",
+        "changed": "number",
+        "same": "number"
+      }
+    },
+    "mods.gale.configs.none": {
+      "translation": "[Ẋ The profile carries no config files. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.nothing": {
+      "translation": "[Ẋ Every config file the profile carries is already the same on this server. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.skipped": {
+      "translation": {
+        "one": "[Ẋ {count} file in the profile's config folder was left out: a kind the Configs screen does not show, larger than 2 MB, or a path that leads out of this server's config folder. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} files in the profile's config folder were left out: a kind the Configs screen does not show, larger than 2 MB, or a path that leads out of this server's config folder. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      }
+    },
+    "mods.gale.configs.state.added": {
+      "translation": "[Ẋ to add Ẋ] ẊẊ"
+    },
+    "mods.gale.configs.state.changed": {
+      "translation": "[Ẋ changed Ẋ] ẊẊẊ"
+    },
+    "mods.gale.configs.state.same": {
+      "translation": "[Ẋ the same Ẋ] ẊẊẊ"
+    },
+    "mods.gale.configs.show": {
+      "translation": "[Ẋ Show changes Ẋ] ẊẊẊẊ"
+    },
+    "mods.gale.configs.hide": {
+      "translation": "[Ẋ Hide changes Ẋ] ẊẊẊẊ"
+    },
+    "mods.gale.configs.more": {
+      "translation": {
+        "one": "[Ẋ and {count} more line Ẋ] ẊẊẊẊẊ",
+        "other": "[Ẋ and {count} more lines Ẋ] ẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      }
+    },
+    "mods.gale.configs.tick.aria": {
+      "translation": "[Ẋ Write {path} Ẋ] ẊẊ",
+      "params": {
+        "path": "text"
+      }
+    },
+    "mods.gale.configs.same.show": {
+      "translation": {
+        "one": "[Ẋ {count} file that is the same Ẋ] ẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} files that are the same Ẋ] ẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      }
+    },
+    "mods.gale.configs.refresh": {
+      "translation": "[Ẋ Refresh Ẋ] ẊẊẊ"
+    },
+    "mods.gale.configs.refresh.title": {
+      "translation": "[Ẋ Fetches the profile's config files from Gale again and compares them with this server's. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.apply": {
+      "translation": "[Ẋ Apply configs Ẋ] ẊẊẊẊ"
+    },
+    "mods.gale.configs.running": {
+      "translation": "[Ẋ The server '{name}' is running on this install. Stop it first, then apply: a running server can write its configs back over the new ones. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.gale.configs.not_following": {
+      "translation": "[Ẋ This server does not follow a Gale profile, so there are no config files to show. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.fetch.bad_request": {
+      "translation": "[Ẋ Gale did not accept that code for the profile's files. Copy the code from Gale again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.fetch.not_found": {
+      "translation": "[Ẋ Gale has no files for that profile. It may have been deleted, or the code was copied short. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.fetch.timeout": {
+      "translation": "[Ẋ The profile's files did not arrive within thirty seconds. Nothing was changed. Press Refresh to try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.fetch.server_error": {
+      "translation": "[Ẋ Gale answered with an error when asked for the profile's files. Nothing was changed. Press Refresh to try again later. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.fetch.network": {
+      "translation": "[Ẋ The profile's files could not be fetched. Nothing was changed. Press Refresh to try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.fetch.malformed": {
+      "translation": "[Ẋ Gale sent something that is not a profile's files, or more than 50 MB of them. Nothing was changed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.fetch.cancelled": {
+      "translation": "[Ẋ Fetching the profile's files was called off. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.refused.not_zip": {
+      "translation": "[Ẋ The profile's files are not a zip that can be read. Nothing was changed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.refused.too_many": {
+      "translation": "[Ẋ The profile's zip holds more than 2000 files, which is not a profile. Nothing was taken from it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.refused.unsafe": {
+      "translation": "[Ẋ The profile's zip has a file whose path points outside the profile, or a link. Nothing was taken from it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.refused.too_large": {
+      "translation": "[Ẋ The profile's config files come to more than 50 MB unpacked, which is not a profile. Nothing was taken from it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.reason.realm_changed": {
+      "translation": "[Ẋ The server on screen changed, so no config was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.reason.busy": {
+      "translation": "[Ẋ A mod install or update is running. Apply the configs when it has finished. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.reason.no_server_path": {
+      "translation": "[Ẋ This server's BepInEx\\config folder was not found. Set a valid server .exe path first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.reason.stale": {
+      "translation": "[Ẋ The profile's config files are not loaded any more. Press Refresh and look again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.configs.reason.not_in_profile": {
+      "translation": "[Ẋ {file} is not one of the profile's files, so no config was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.gale.configs.reason.unsafe_path": {
+      "translation": "[Ẋ {file} would land outside this server's config folder, so no config was written. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.gale.configs.applied.toast": {
+      "translation": "[Ẋ Configs from the profile written: {added} new, {replaced} replaced. The files they replaced are kept in {folder}. They are read the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "added": "number",
+        "replaced": "number",
+        "folder": "text"
+      },
+      "mark": "ᚨ"
+    },
+    "mods.gale.configs.applied.new.toast": {
+      "translation": {
+        "one": "[Ẋ {count} config from the profile written, a new file. It is read the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} configs from the profile written, all new files. They are read the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      },
+      "mark": "ᚨ"
+    },
+    "mods.gale.configs.applied.none.toast": {
+      "translation": "[Ẋ Nothing was ticked, so no config was written. Your choices are saved. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚨ"
+    },
+    "mods.gale.configs.applied.same.toast": {
+      "translation": "[Ẋ The ticked configs are already the same on this server, so nothing needed writing. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚨ"
+    },
+    "mods.gale.configs.failed.toast": {
+      "translation": "[Ẋ Stopped at {file}: it could not be written, and the files after it were left as they are. {done} written before it. {detail} Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "done": "number",
+        "detail": "text"
+      }
+    },
+    "mods.gale.only_here.title": {
+      "translation": "[Ẋ On this server only Ẋ] ẊẊẊẊẊẊ"
+    },
+    "mods.gale.only_here.intro": {
+      "translation": "[Ẋ Gale does not have these. BakaLoader never removes them. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.only_here.off": {
+      "translation": "[Ẋ Switch off Ẋ] ẊẊẊẊ"
+    },
+    "mods.gale.only_here.on": {
+      "translation": "[Ẋ Switch on Ẋ] ẊẊẊ"
+    },
+    "mods.gale.only_here.off.aria": {
+      "translation": "[Ẋ Switch {name} off Ẋ] ẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.gale.only_here.on.aria": {
+      "translation": "[Ẋ Switch {name} on Ẋ] ẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.gale.only_here.running": {
+      "translation": "[Ẋ The server '{name}' is running on this install. Stop it first to switch a mod off or on. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
     "mods.add.not_available.toast": {
       "translation": "[Ẋ {mod} {version} is no longer on Thunderstore (the package is deprecated or that version was removed); Gale on the players' machines may still carry it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "params": {

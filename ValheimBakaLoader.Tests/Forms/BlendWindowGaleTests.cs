@@ -24,7 +24,8 @@ using Xunit;
 namespace ValheimBakaLoader.Tests.Forms
 {
     /// <summary>
-    /// The seven Gale RPCs, and the two holds the dialog's install puts on mods.addFromUrl, driven through the real RPC table over a fake HTTP handler. Nothing
+    /// The Gale RPCs (the seven of the follow, and from 1.2.16 the configs list and its apply and
+    /// the server-only list's FullName and off state), and the two holds the dialog's install puts on mods.addFromUrl, driven through the real RPC table over a fake HTTP handler. Nothing
     /// here reaches gale.kesomannen.com, and no window is shown: the Form is constructed without
     /// a handle, the way ProfileDeleteFilesTests builds one.
     /// <para>
@@ -750,6 +751,302 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Empty(Stored().GaleNotAvailable);
         }
 
+        // ------------------------------------------------------------------ the profile's configs (1.2.16)
+
+        private string ConfigDir => Path.Combine(Path.GetDirectoryName(Plugins)!, "config");
+        private string BackupRoot => Path.Combine(Path.GetDirectoryName(Plugins)!, BlendWindow.GaleConfigBackupFolder);
+
+        private void RealmConfig(string rel, string text)
+        {
+            var full = Path.Combine(ConfigDir, rel.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllBytes(full, Encoding.UTF8.GetBytes(text));
+        }
+
+        private string RealmText(string rel) =>
+            Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(ConfigDir, rel.Replace('/', Path.DirectorySeparatorChar))));
+
+        /// <summary>
+        /// The realm holds a changed Jotunn config (BepInEx wrote it with CRLF), a BepInEx.cfg the
+        /// profile has with LF only, a config the profile does not carry, and no Azumatt config.
+        /// </summary>
+        private async Task FollowWithConfigs()
+        {
+            RealmConfig("Jotunn/jotunn.cfg", "[General]\r\nSpeed = 1\r\n");
+            RealmConfig("BepInEx.cfg", "[Logging]\r\nEnabled = true\r\n");
+            RealmConfig("mine.cfg", "host = mine\r\n");
+            RealmConfig("second.cfg", "b = 1\r\n");
+            Handler.ZipBody = GaleProfileConfigsTests.Zip(
+                ("export.r2x", "profileName: p"),
+                ("config/Azumatt.AzuCraftyBoxes.yml", "range: 20\n"),
+                ("config/Jotunn/jotunn.cfg", "[General]\nSpeed = 2\n"),
+                ("config/BepInEx.cfg", "[Logging]\nEnabled = true"),
+                ("config/second.cfg", "b = 2\n"));
+            Handler.Body = WorkMeta(Stamp1);
+            await Follow();
+            await Check();
+        }
+
+        private Task<JObject> Configs(bool refresh = false) => Call("gale.configs", new { profile = Profile, refresh });
+
+        private Task<JObject> Apply(params string[] paths) => Call("gale.configs.apply", new { profile = Profile, paths });
+
+        private static Dictionary<string, JToken> FilesOf(JObject state) =>
+            state["configs"]!["files"]!.ToDictionary(f => f.Value<string>("path")!, f => f);
+
+        [Fact]
+        public async Task The_configs_are_listed_against_the_realm_with_their_ticks_and_previews()
+        {
+            await FollowWithConfigs();
+            Assert.DoesNotContain(Handler.Requests, r => !r.EndsWith("/meta", StringComparison.Ordinal));
+
+            var state = await Configs();
+            var c = (JObject)state["configs"]!;
+            Assert.True(c.Value<bool>("ok"));
+            Assert.Equal((1, 2, 1), (c.Value<int>("added"), c.Value<int>("changed"), c.Value<int>("same")));
+            var files = FilesOf(state);
+            Assert.Equal("added", files["Azumatt.AzuCraftyBoxes.yml"].Value<string>("state"));
+            Assert.Equal("changed", files["Jotunn/jotunn.cfg"].Value<string>("state"));
+            // CRLF against LF, and no newline at the end, is the same file.
+            Assert.Equal("same", files["BepInEx.cfg"].Value<string>("state"));
+            Assert.False(files["BepInEx.cfg"].Value<bool>("ticked"));
+            Assert.True(files["Jotunn/jotunn.cfg"].Value<bool>("ticked"));
+            Assert.Equal("BepInEx/config/Jotunn/jotunn.cfg", files["Jotunn/jotunn.cfg"].Value<string>("realmPath"));
+            var preview = files["Jotunn/jotunn.cfg"]["preview"]!.Select(l => l.Value<string>("k") + l.Value<string>("t")).ToList();
+            Assert.Contains("-Speed = 1", preview);
+            Assert.Contains("+Speed = 2", preview);
+            Assert.False(files.ContainsKey("mine.cfg"), "a config the profile does not carry is listed");
+
+            // One zip fetch, to the service, and opening the part again fetches nothing more.
+            Assert.Single(Handler.Requests, r => r == "https://gale.kesomannen.com/api/profile/" + Code);
+            await Configs();
+            Assert.Single(Handler.Requests, r => !r.EndsWith("/meta", StringComparison.Ordinal));
+            await Configs(refresh: true);
+            Assert.Equal(2, Handler.Requests.Count(r => !r.EndsWith("/meta", StringComparison.Ordinal)));
+
+            // The box learns there is config news, for its Review link.
+            var box = await Call("gale.get", new { profile = Profile });
+            Assert.Equal(3, box["check"]!.Value<int>("configChanges"));
+        }
+
+        [Fact]
+        public async Task Before_the_configs_part_is_opened_the_box_does_not_know_and_the_check_fetches_no_zip()
+        {
+            await FollowWithConfigs();
+            var box = await Call("gale.get", new { profile = Profile });
+            Assert.Equal(JTokenType.Null, box["check"]!["configChanges"]!.Type);
+            await Check();
+            Assert.All(Handler.Requests, r => Assert.EndsWith("/meta", r));
+        }
+
+        [Fact]
+        public async Task Apply_writes_only_the_ticked_files_byte_for_byte_backs_up_what_it_replaces_and_remembers_the_unticked()
+        {
+            await FollowWithConfigs();
+            await Configs();
+
+            var applied = await Apply("Azumatt.AzuCraftyBoxes.yml", "Jotunn/jotunn.cfg");
+
+            Assert.True(applied.Value<bool>("ok"), applied.ToString());
+            Assert.Equal(2, applied.Value<int>("written"));
+            Assert.Equal((1, 1), (applied.Value<int>("added"), applied.Value<int>("replaced")));
+
+            // The profile's bytes exactly: LF as the profile has them, not the realm's CRLF.
+            Assert.Equal("[General]\nSpeed = 2\n", RealmText("Jotunn/jotunn.cfg"));
+            Assert.Equal("range: 20\n", RealmText("Azumatt.AzuCraftyBoxes.yml"));
+            // Not ticked, not touched; not in the profile, not touched; the same, not written.
+            Assert.Equal("b = 1\r\n", RealmText("second.cfg"));
+            Assert.Equal("host = mine\r\n", RealmText("mine.cfg"));
+            Assert.Equal("[Logging]\r\nEnabled = true\r\n", RealmText("BepInEx.cfg"));
+
+            // The replaced file, as it was, under one stamped folder; nothing for the new one.
+            var stamps = Directory.GetDirectories(BackupRoot);
+            var stamp = Assert.Single(stamps);
+            Assert.Matches(@"^\d{8}-\d{6}$", Path.GetFileName(stamp));
+            Assert.Equal("BepInEx/" + BlendWindow.GaleConfigBackupFolder + "/" + Path.GetFileName(stamp), applied.Value<string>("backup"));
+            Assert.Equal("[General]\r\nSpeed = 1\r\n", File.ReadAllText(Path.Combine(stamp, "Jotunn", "jotunn.cfg")));
+            Assert.Single(Directory.GetFiles(stamp, "*", SearchOption.AllDirectories));
+
+            // The one offered and left unticked is remembered, and shown unticked next time.
+            Assert.Equal(new[] { "second.cfg" }, Stored().GaleConfigUnticked);
+            var after = FilesOf(await Configs());
+            Assert.False(after["second.cfg"].Value<bool>("ticked"));
+            Assert.Equal("same", after["Jotunn/jotunn.cfg"].Value<string>("state"));
+
+            // Ticking it in a later apply takes it off the list and writes it, with a second backup folder.
+            var again = await Apply("second.cfg");
+            Assert.True(again.Value<bool>("ok"));
+            Assert.Equal("b = 2\n", RealmText("second.cfg"));
+            Assert.Empty(Stored().GaleConfigUnticked);
+            Assert.Equal(2, Directory.GetDirectories(BackupRoot).Length);
+        }
+
+        [Fact]
+        public async Task Apply_with_nothing_ticked_writes_nothing_and_stores_the_unticks()
+        {
+            await FollowWithConfigs();
+            await Configs();
+            var applied = await Apply();
+            Assert.True(applied.Value<bool>("ok"));
+            Assert.Equal(0, applied.Value<int>("written"));
+            Assert.Equal(new[] { "Azumatt.AzuCraftyBoxes.yml", "Jotunn/jotunn.cfg", "second.cfg" }, Stored().GaleConfigUnticked.OrderBy(x => x, StringComparer.Ordinal));
+            Assert.False(File.Exists(Path.Combine(ConfigDir, "Azumatt.AzuCraftyBoxes.yml")));
+            Assert.False(Directory.Exists(BackupRoot));
+        }
+
+        [Fact]
+        public async Task Apply_refuses_a_running_server_another_realm_and_configs_it_has_not_loaded()
+        {
+            await FollowWithConfigs();
+
+            var unloaded = await Apply("Jotunn/jotunn.cfg");
+            Assert.Equal("stale", unloaded.Value<string>("Reason"));
+
+            await Configs();
+            PlantRunning(Profile);
+            var held = await Apply("Jotunn/jotunn.cfg");
+            Assert.False(held.Value<bool>("ok"));
+            Assert.Equal("serverRunning", held.Value<string>("Reason"));
+            Assert.Equal(Profile, held["ErrorParams"]!.Value<string>("name"));
+            Assert.Equal(Profile, (await Configs())["heldBy"]!.Value<string>());
+            Sessions().Clear();
+
+            var other = await Call("gale.configs.apply", new { profile = "Some Other Realm", paths = new[] { "Jotunn/jotunn.cfg" } });
+            Assert.Equal("realmChanged", other.Value<string>("Reason"));
+
+            Assert.Equal("[General]\r\nSpeed = 1\r\n", RealmText("Jotunn/jotunn.cfg"));
+            Assert.Empty(Stored().GaleConfigUnticked);
+            Assert.False(Directory.Exists(BackupRoot));
+        }
+
+        [Fact]
+        public async Task Apply_refuses_a_path_the_profile_does_not_carry_and_one_that_leads_out_through_a_junction()
+        {
+            var outside = Path.Combine(Root, "outside");
+            Directory.CreateDirectory(outside);
+            File.WriteAllText(Path.Combine(outside, "x.cfg"), "theirs");
+            await FollowWithConfigs();
+            InstallIsolationService.CreateJunctionOrThrow(Path.Combine(ConfigDir, "link"), outside);
+            Handler.ZipBody = GaleProfileConfigsTests.Zip(("config/link/x.cfg", "ours"), ("config/second.cfg", "b = 2\n"));
+            var listed = await Configs(refresh: true);
+            Assert.False(FilesOf(listed).ContainsKey("link/x.cfg"), "a file behind a junction is offered");
+            Assert.Equal(1, listed["configs"]!.Value<int>("skipped"));
+
+            foreach (var path in new[] { "../evil.cfg", "mine.cfg", "C:\\evil.cfg" })
+            {
+                var r = await Apply(path, "second.cfg");
+                Assert.Equal("notInProfile", r.Value<string>("Reason"));
+            }
+            var through = await Apply("link/x.cfg", "second.cfg");
+            Assert.Equal("unsafePath", through.Value<string>("Reason"));
+            Assert.Equal("link/x.cfg", through["ErrorParams"]!.Value<string>("file"));
+
+            // Refused whole: not even the good one went in.
+            Assert.Equal("theirs", File.ReadAllText(Path.Combine(outside, "x.cfg")));
+            Assert.Equal("b = 1\r\n", RealmText("second.cfg"));
+            Assert.False(Directory.Exists(Path.Combine(Root, "evil.cfg")));
+        }
+
+        [Fact]
+        public async Task A_bad_zip_is_one_sentence_and_nothing_to_apply()
+        {
+            await FollowWithConfigs();
+            Handler.ZipBody = GaleProfileConfigsTests.Zip(("config/../../evil.cfg", "x"));
+            var state = await Configs(refresh: true);
+            Assert.False(state["configs"]!.Value<bool>("ok"));
+            Assert.Equal(GaleProfileConfigs.UnsafeSentence, state["configs"]!.Value<string>("statusId"));
+            Assert.Equal("stale", (await Apply("second.cfg")).Value<string>("Reason"));
+
+            Handler.ZipStatus = HttpStatusCode.NotFound;
+            var gone = await Configs(refresh: true);
+            Assert.Equal("mods.gale.configs.fetch.not_found", gone["configs"]!.Value<string>("statusId"));
+        }
+
+        [Fact]
+        public async Task Forget_and_a_new_code_clear_the_config_unticks_and_the_fetched_files()
+        {
+            await FollowWithConfigs();
+            await Configs();
+            await Apply();
+            Assert.NotEmpty(Stored().GaleConfigUnticked);
+
+            await Call("gale.forget", new { profile = Profile });
+            Assert.Empty(Stored().GaleConfigUnticked);
+            Assert.Equal(JTokenType.Null, (await Configs())["configs"]!.Type);
+            Assert.Equal(BlendWindow.GaleConfigsNotFollowingSentence, (await Configs()).Value<string>("statusId"));
+
+            await Follow();
+            await Check();
+            await Configs();
+            await Apply();
+            Assert.NotEmpty(Stored().GaleConfigUnticked);
+            var set = await Call("gale.set", new { profile = Profile, id = "zz99ZZ" });
+            Assert.True(set.Value<bool>("ok"));
+            Assert.Empty(Stored().GaleConfigUnticked);
+        }
+
+        [Fact]
+        public void A_new_realm_does_not_carry_the_config_unticks_and_an_empty_list_is_written_as_nothing()
+        {
+            var basePrefs = new ServerPreferences { ProfileName = "Base", GaleConfigUnticked = new List<string> { "a.cfg", " A.cfg ", "" } };
+            Assert.Equal(new[] { "a.cfg" }, basePrefs.ToFile().GaleConfigUnticked);
+            Assert.Equal(new[] { "a.cfg" }, ServerPreferences.FromFile(basePrefs.ToFile()).GaleConfigUnticked);
+            Assert.Empty(BlendWindow.SeedNewRealm(basePrefs).GaleConfigUnticked);
+            Assert.Null(new ServerPreferences().ToFile().GaleConfigUnticked);
+            Assert.Empty(ServerPreferences.FromFile(new ServerPreferencesFile()).GaleConfigUnticked);
+            // A settings save that comes back with no Gale fields keeps what is on disk.
+            Assert.Equal(new[] { "a.cfg" }, new ServerPreferences().KeepGaleFollowFrom(basePrefs).GaleConfigUnticked);
+        }
+
+        // ------------------------------------------------------------------ on this server only (1.2.16)
+
+        [Fact]
+        public async Task Server_only_mods_carry_the_scans_FullName_and_their_off_state_and_the_switch_finds_them_by_it()
+        {
+            // A folder with no author: the diff names it LooseMod, the scan's FullName is -LooseMod.
+            var loose = Path.Combine(Plugins, "LooseMod");
+            Directory.CreateDirectory(loose);
+            File.WriteAllText(Path.Combine(loose, "LooseMod.dll"), "MZ");
+            Install("Someone-OnlyHere", "3.0.0");
+            File.WriteAllText(Path.Combine(Plugins, "Someone-OnlyHere", "OnlyHere.dll"), "MZ");
+
+            Handler.Body = WorkMeta(Stamp1);
+            await Follow();
+            var check = (JObject)(await Check())["check"]!;
+
+            Assert.Equal(2, check.Value<int>("onlyHereCount"));
+            var rows = check["rows"]!.Where(r => r.Value<string>("kind") == "notInProfile").ToDictionary(r => r.Value<string>("name")!);
+            Assert.Equal(new[] { "LooseMod", "Someone-OnlyHere" }, rows.Keys.OrderBy(k => k, StringComparer.Ordinal));
+            Assert.Equal("-LooseMod", rows["LooseMod"].Value<string>("fullName"));
+            Assert.Equal("Someone-OnlyHere", rows["Someone-OnlyHere"].Value<string>("fullName"));
+            Assert.False(rows["LooseMod"].Value<bool>("off"));
+            // Rows the server does not have carry no FullName.
+            Assert.Null(check["rows"]!.Single(r => r.Value<string>("name") == "Azumatt-AzuCraftyBoxes").Value<string>("fullName"));
+
+            // The switch the list sends, through the real mods.disable, by the FullName the row carried.
+            var off = await Call("mods.disable", new { profile = Profile, fullName = rows["LooseMod"].Value<string>("fullName") });
+            Assert.True(off.Value<bool>("ok"), off.ToString());
+            Assert.True(File.Exists(Path.Combine(loose, "LooseMod.dll.old")));
+
+            var rescanned = await Call("gale.rescan", new { profile = Profile });
+            var after = rescanned["state"]!["check"]!["rows"]!.Single(r => r.Value<string>("name") == "LooseMod");
+            Assert.True(after.Value<bool>("off"), "the list does not show the mod as off after the switch");
+            Assert.Equal("notInProfile", after.Value<string>("kind"));
+            // Nothing was removed and Gale was not asked again.
+            Assert.True(Directory.Exists(loose));
+            Assert.Single(Handler.Requests);
+        }
+
+        [Fact]
+        public async Task The_framework_row_is_not_a_server_only_mod()
+        {
+            Handler.Body = Meta(Stamp1, ("denikson-BepInExPack_Valheim", true, 5, 4, 2202), ("ValheimModding-Jotunn", true, 2, 20, 1));
+            await Follow();
+            var check = (JObject)(await Check())["check"]!;
+            Assert.Equal(0, check.Value<int>("onlyHereCount"));
+            Assert.DoesNotContain(check["rows"]!, r => r.Value<string>("kind") == "notInProfile");
+        }
+
         // ------------------------------------------------------------------ plumbing
 
         /// <summary>A handler that answers from a script, can be held at a gate, or can stall past the bound.</summary>
@@ -760,6 +1057,9 @@ namespace ValheimBakaLoader.Tests.Forms
             public bool Stall;
             public TaskCompletionSource<bool> Gate;
             public bool RanOnPoolThread;
+            /// <summary>What the profile's own address answers: its zip, straight from the service.</summary>
+            public byte[] ZipBody = Array.Empty<byte>();
+            public HttpStatusCode ZipStatus = HttpStatusCode.OK;
             public List<string> Requests { get; } = new();
             public int Count => Requests.Count;
 
@@ -770,6 +1070,8 @@ namespace ValheimBakaLoader.Tests.Forms
                 RanOnPoolThread = Thread.CurrentThread.IsThreadPoolThread;
                 if (Gate != null) await Gate.Task;
                 if (Stall) await Task.Delay(TimeSpan.FromSeconds(30), token);
+                if (!(request.RequestUri?.AbsolutePath ?? "").EndsWith("/meta", StringComparison.Ordinal))
+                    return new HttpResponseMessage(ZipStatus) { Content = new ByteArrayContent(ZipBody ?? Array.Empty<byte>()) };
                 return new HttpResponseMessage(Status) { Content = new StringContent(Body ?? "", Encoding.UTF8, "application/json") };
             }
         }

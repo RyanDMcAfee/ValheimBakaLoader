@@ -15,7 +15,7 @@ namespace ValheimBakaLoader.Tests.Tools
 {
     /// <summary>
     /// The client for Gale's sync service, driven through a fake handler. Nothing here reaches
-    /// gale.kesomannen.com: the 200 body below is the shape the spec and the service's own
+    /// gale.kesomannen.com or any storage host: the 200 body below is the shape the spec and the service's own
     /// answers describe, and the 400 and 404 bodies are the service's own text, copied once.
     /// Every outcome has to come back as an answer; a throw at the Mods hall is the bug.
     /// </summary>
@@ -341,6 +341,231 @@ namespace ValheimBakaLoader.Tests.Tools
                 Assert.Null(answer.Meta);
                 Assert.False(answer.Ok);
             }
+        }
+
+        // ------------------------------------------------------------------ the profile zip (1.2.16)
+
+        private static readonly byte[] ZipBytes = { 0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+
+        private static HttpResponseMessage Redirect(HttpStatusCode code, string location)
+        {
+            var r = new HttpResponseMessage(code);
+            r.Headers.Location = new Uri(location, UriKind.RelativeOrAbsolute);
+            return r;
+        }
+
+        private static HttpResponseMessage ZipAnswer(byte[] bytes) =>
+            new(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+
+        /// <summary>A temp folder of the test's own, so a file left behind is seen.</summary>
+        private static string Scratch()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "vbl-galezip-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        [Fact]
+        public async Task The_zip_follows_the_services_redirect_once_to_its_storage_and_lands_in_a_temp_file()
+        {
+            var dir = Scratch();
+            var handler = new RecordingHttpHandler(req => req.RequestUri!.Host == GaleSyncClient.Host
+                ? Redirect(HttpStatusCode.Found, "https://storage.example.net/profiles/ab12CD.zip?sig=1")
+                : ZipAnswer(ZipBytes));
+            var client = new GaleSyncClient(Over(handler)) { TempDirectory = dir };
+
+            using (var zip = await client.GetProfileZipAsync("ab12CD"))
+            {
+                Assert.True(zip.Ok);
+                Assert.Equal(200, zip.StatusCode);
+                Assert.Null(zip.SentenceId);
+                Assert.Equal(ZipBytes, File.ReadAllBytes(zip.ZipPath));
+                Assert.Equal(dir, Path.GetDirectoryName(zip.ZipPath));
+            }
+
+            // The first trip is to the service and nowhere else; the second is where it pointed.
+            Assert.Equal(new[] { "https://gale.kesomannen.com/api/profile/ab12CD", "https://storage.example.net/profiles/ab12CD.zip?sig=1" },
+                handler.Requests);
+            Assert.Equal(GaleSyncClient.Host, handler.Hosts[0]);
+            // Disposed, the temp file is gone.
+            Assert.Empty(Directory.GetFiles(dir));
+            Directory.Delete(dir, true);
+        }
+
+        [Fact]
+        public async Task A_relative_redirect_is_read_against_the_service()
+        {
+            var handler = new RecordingHttpHandler(req => req.RequestUri!.AbsolutePath.EndsWith("/file.zip", StringComparison.Ordinal)
+                ? ZipAnswer(ZipBytes)
+                : Redirect(HttpStatusCode.TemporaryRedirect, "/api/file.zip"));
+            using var zip = await new GaleSyncClient(Over(handler)).GetProfileZipAsync("ab12CD");
+            Assert.True(zip.Ok);
+            Assert.Equal("https://gale.kesomannen.com/api/file.zip", handler.Requests[1]);
+        }
+
+        [Fact]
+        public async Task A_redirect_to_plain_http_or_a_second_redirect_is_not_followed()
+        {
+            var toHttp = new RecordingHttpHandler(_ => Redirect(HttpStatusCode.Found, "http://storage.example.net/p.zip"));
+            using (var zip = await new GaleSyncClient(Over(toHttp)).GetProfileZipAsync("ab12CD"))
+            {
+                Assert.Equal(GaleCheckOutcome.ServerError, zip.Outcome);
+                Assert.Equal("mods.gale.configs.fetch.server_error", zip.SentenceId);
+            }
+            Assert.Equal(1, toHttp.Count);
+
+            var twice = new RecordingHttpHandler(req => Redirect(HttpStatusCode.Found, "https://elsewhere.example.net/" + Guid.NewGuid().ToString("N")));
+            using (var zip = await new GaleSyncClient(Over(twice)).GetProfileZipAsync("ab12CD"))
+                Assert.Equal(GaleCheckOutcome.ServerError, zip.Outcome);
+            Assert.Equal(2, twice.Count);
+
+            var nowhere = new RecordingHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.Found));
+            using (var zip = await new GaleSyncClient(Over(nowhere)).GetProfileZipAsync("ab12CD"))
+                Assert.Equal(GaleCheckOutcome.ServerError, zip.Outcome);
+            Assert.Equal(1, nowhere.Count);
+        }
+
+        [Fact]
+        public async Task A_404_from_the_service_or_from_the_storage_is_not_found()
+        {
+            var service = new RecordingHttpHandler(_ => Answer(HttpStatusCode.NotFound, "{\"message\":\"Not found.\"}"));
+            using (var zip = await new GaleSyncClient(Over(service)).GetProfileZipAsync("ab12CD"))
+            {
+                Assert.Equal(GaleCheckOutcome.NotFound, zip.Outcome);
+                Assert.Equal(404, zip.StatusCode);
+                Assert.Equal("mods.gale.configs.fetch.not_found", zip.SentenceId);
+                Assert.Null(zip.ZipPath);
+            }
+
+            var storage = new RecordingHttpHandler(req => req.RequestUri!.Host == GaleSyncClient.Host
+                ? Redirect(HttpStatusCode.Found, "https://storage.example.net/expired.zip")
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+            using (var zip = await new GaleSyncClient(Over(storage)).GetProfileZipAsync("ab12CD"))
+                Assert.Equal(GaleCheckOutcome.NotFound, zip.Outcome);
+        }
+
+        [Fact]
+        public async Task A_zip_past_the_size_cap_is_malformed_and_leaves_no_file_whether_it_said_so_or_not()
+        {
+            var dir = Scratch();
+
+            // Declared too large: refused before a byte is read.
+            var declared = new RecordingHttpHandler(_ =>
+            {
+                var r = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new MemoryStream(new byte[16])) };
+                r.Content.Headers.ContentLength = GaleSyncClient.MaxZipBytes + 1;
+                return r;
+            });
+            using (var zip = await new GaleSyncClient(Over(declared)) { TempDirectory = dir }.GetProfileZipAsync("ab12CD"))
+            {
+                Assert.Equal(GaleCheckOutcome.Malformed, zip.Outcome);
+                Assert.Equal("mods.gale.configs.fetch.malformed", zip.SentenceId);
+            }
+            Assert.Empty(Directory.GetFiles(dir));
+
+            // No length given, and the body runs on past the cap: stopped there, and the half
+            // written file is dropped.
+            var streamed = new RecordingHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new CountingStream(GaleSyncClient.MaxZipBytes + 1)),
+            });
+            using (var zip = await new GaleSyncClient(Over(streamed)) { TempDirectory = dir }.GetProfileZipAsync("ab12CD"))
+                Assert.Equal(GaleCheckOutcome.Malformed, zip.Outcome);
+            Assert.Empty(Directory.GetFiles(dir));
+
+            // At the cap exactly is a zip, as far as the trip is concerned.
+            var atCap = new RecordingHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new CountingStream(GaleSyncClient.MaxZipBytes)),
+            });
+            using (var zip = await new GaleSyncClient(Over(atCap)) { TempDirectory = dir }.GetProfileZipAsync("ab12CD"))
+            {
+                Assert.True(zip.Ok);
+                Assert.Equal(GaleSyncClient.MaxZipBytes, new FileInfo(zip.ZipPath).Length);
+            }
+            Assert.Empty(Directory.GetFiles(dir));
+            Directory.Delete(dir, true);
+        }
+
+        [Fact]
+        public async Task A_zip_that_never_arrives_is_a_timeout_inside_its_bound_and_leaves_no_file()
+        {
+            var dir = Scratch();
+            var client = new GaleSyncClient(Over(new SilentHandler())) { ZipBound = TimeSpan.FromMilliseconds(300), TempDirectory = dir };
+            using (var zip = await client.GetProfileZipAsync("ab12CD"))
+            {
+                Assert.Equal(GaleCheckOutcome.Timeout, zip.Outcome);
+                Assert.Equal("mods.gale.configs.fetch.timeout", zip.SentenceId);
+            }
+
+            // Headers in, then the body stalls: the same bound still holds.
+            var stalling = new RecordingHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new StallingStream(new byte[] { 0x50, 0x4B })),
+            });
+            using (var zip = await new GaleSyncClient(Over(stalling)) { ZipBound = TimeSpan.FromMilliseconds(300), TempDirectory = dir }
+                .GetProfileZipAsync("ab12CD"))
+                Assert.Equal(GaleCheckOutcome.Timeout, zip.Outcome);
+            Assert.Empty(Directory.GetFiles(dir));
+            Directory.Delete(dir, true);
+        }
+
+        [Fact]
+        public async Task The_zip_bound_is_thirty_seconds_and_a_bad_id_asks_nothing()
+        {
+            var handler = new RecordingHttpHandler(_ => ZipAnswer(ZipBytes));
+            var client = new GaleSyncClient(Over(handler));
+            Assert.Equal(TimeSpan.FromSeconds(30), client.ZipBound);
+
+            using var zip = await client.GetProfileZipAsync("../../etc");
+            Assert.Equal(GaleCheckOutcome.InvalidId, zip.Outcome);
+            Assert.Equal(0, handler.Count);
+        }
+
+        [Fact]
+        public async Task The_meta_check_never_follows_a_redirect_off_the_service()
+        {
+            // The privacy line for the check stands: only the service is asked, even when it
+            // points somewhere else. Only the zip, which the host asks for, goes past it.
+            var handler = new RecordingHttpHandler(_ => Redirect(HttpStatusCode.Found, "https://storage.example.net/meta.json"));
+            var result = await new GaleSyncClient(Over(handler)).GetMetaAsync("ab12CD");
+            Assert.Equal(GaleCheckOutcome.ServerError, result.Outcome);
+            Assert.All(handler.Hosts, h => Assert.Equal(GaleSyncClient.Host, h));
+            Assert.Equal(1, handler.Count);
+        }
+
+        [Fact]
+        public void The_real_transport_follows_redirects_itself()
+        {
+            // The hand-followed hop above is the fallback; the app's own handler takes the
+            // service's redirect on its own (and .NET never follows https to http).
+            var handler = HttpClientProvider.NewHandler(HttpTransportOptions.Default);
+            Assert.True(handler.AllowAutoRedirect);
+        }
+
+        /// <summary>Hands out <paramref name="length"/> zero bytes and then ends, without ever holding them all.</summary>
+        private sealed class CountingStream : Stream
+        {
+            private long Left;
+            public CountingStream(long length) => Left = length;
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                var n = (int)Math.Min(count, Left);
+                Array.Clear(buffer, offset, n);
+                Left -= n;
+                return n;
+            }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         }
 
         /// <summary>Never answers; gives up only when the token says so.</summary>

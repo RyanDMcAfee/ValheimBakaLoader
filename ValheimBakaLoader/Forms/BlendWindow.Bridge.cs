@@ -10702,6 +10702,7 @@ namespace ValheimBakaLoader.Forms
             created.GaleLastUpdatedAt = null;
             created.GaleUnticked = new List<string>();
             created.GaleNotAvailable = new List<string>();
+            created.GaleConfigUnticked = new List<string>();
             return created;
         }
 
@@ -11763,6 +11764,14 @@ namespace ValheimBakaLoader.Forms
                 return null;
             }
         }
+
+        /// <summary>
+        /// One realm's BepInEx/config, by its own server exe, whichever realm is on screen. The
+        /// Gale RPCs are keyed by the realm the page names, and the active realm's folder is not
+        /// always that one.
+        /// </summary>
+        private string GetConfigDirectoryFor(string profileName)
+            => BepInExSubdirectoryOf(GetServerExePathFor(profileName), "config");
 
         private string GetConfigDirectory()
         {

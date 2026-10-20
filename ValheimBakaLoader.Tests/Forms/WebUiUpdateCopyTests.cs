@@ -355,7 +355,12 @@ namespace ValheimBakaLoader.Tests.Forms
             // 246 with 1.2.15's five: a mod switched off, switched on, a switch the host side
             // refused, the preview's note that switching happens in the app, and a realm chip's
             // new look saved.
-            Assert.Equal(246, marked.Count);
+            // 250 with 1.2.16's four for the Gale dialog's Apply configs: written with some
+            // replaced (naming the backup folder), written all new, nothing ticked, and
+            // everything ticked already the same. A write that stopped at a file and the
+            // apply's refusals carry no mark of their own: one helper words them all, and the
+            // toast that prints its answer leads with its own rune.
+            Assert.Equal(250, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

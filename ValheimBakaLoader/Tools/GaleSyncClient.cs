@@ -117,6 +117,34 @@ namespace ValheimBakaLoader.Tools
         public bool Ok => Outcome == GaleCheckOutcome.Ok;
     }
 
+    /// <summary>
+    /// What fetching a profile's zip came to. On <see cref="GaleCheckOutcome.Ok"/> the zip is
+    /// in a temp file at <see cref="ZipPath"/>, and disposing this result deletes it, so the
+    /// caller holds it in a using and nothing is left behind in the temp folder.
+    /// </summary>
+    public sealed class GaleZipResult : IDisposable
+    {
+        public GaleCheckOutcome Outcome { get; init; }
+
+        /// <summary>The HTTP status of the last answer, or null when nothing answered.</summary>
+        public int? StatusCode { get; init; }
+
+        /// <summary>The catalog id of the sentence for a fetch that did not come back, or null on Ok.</summary>
+        public string SentenceId { get; init; }
+
+        /// <summary>The temp file the zip was written to. Set only on Ok.</summary>
+        public string ZipPath { get; init; }
+
+        public bool Ok => Outcome == GaleCheckOutcome.Ok;
+
+        public void Dispose()
+        {
+            if (string.IsNullOrEmpty(ZipPath)) return;
+            try { if (File.Exists(ZipPath)) File.Delete(ZipPath); }
+            catch (Exception) { /* a temp file the system will clear; nothing to say about it */ }
+        }
+    }
+
     public interface IGaleSyncClient
     {
         /// <summary>
@@ -125,34 +153,58 @@ namespace ValheimBakaLoader.Tools
         /// <see cref="GaleCheckResult"/>.
         /// </summary>
         Task<GaleCheckResult> GetMetaAsync(string profileId, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Fetches one profile's zip (its configs and its export) into a temp file. Never throws,
+        /// and never takes longer than <see cref="GaleSyncClient.ZipBound"/>.
+        /// </summary>
+        Task<GaleZipResult> GetProfileZipAsync(string profileId, CancellationToken cancellationToken = default);
     }
 
     /// <summary>
-    /// The one thing in BakaLoader that talks to Gale's sync service, and all it does is read a
-    /// profile's meta: GET https://gale.kesomannen.com/api/profile/{id}/meta, which needs no
-    /// login. It is never asked about a profile the host has not named, and nothing is ever
-    /// sent to it except the id in the address.
+    /// The one thing in BakaLoader that talks to Gale's sync service. It reads two things, both
+    /// with no login: a profile's meta, GET https://gale.kesomannen.com/api/profile/{id}/meta,
+    /// and the profile's zip, GET https://gale.kesomannen.com/api/profile/{id}. It is never
+    /// asked about a profile the host has not named, and nothing is ever sent to it except the
+    /// id in the address.
     /// <para>
-    /// The whole trip, headers and body, is held to <see cref="Bound"/>. The check runs at
+    /// The meta trip, headers and body, is held to <see cref="Bound"/>. The check runs at
     /// start up, when the Mods hall opens and on Check now, and a service that is slow or down
     /// must cost the host one quiet line, not a stuck hall. A body larger than
-    /// <see cref="MaxBodyBytes"/> is read as malformed rather than read to the end.
+    /// <see cref="MaxBodyBytes"/> is read as malformed rather than read to the end. The meta
+    /// check talks to <see cref="Host"/> and nothing else.
     /// </para>
     /// <para>
-    /// Only the manifest's mods and community and the profile's updatedAt are read. The rest of the meta
-    /// (and the config zip behind /profile/{id}) is step two and is not touched here.
+    /// The zip is the config step, and it is fetched only when the host opens the configs part
+    /// of the Gale dialog or presses its Refresh, never by the check. The service answers the
+    /// zip's address with a redirect to the file's storage, so that second host is contacted
+    /// too, for that fetch only. The shared transport follows a redirect on its own; when an
+    /// answer still comes back as one, a single hop is followed here, and only to an https
+    /// address. The trip is held to <see cref="ZipBound"/> and <see cref="MaxZipBytes"/>.
     /// </para>
     /// </summary>
     public sealed class GaleSyncClient : IGaleSyncClient
     {
-        /// <summary>The service's address. Nothing else is ever contacted.</summary>
+        /// <summary>The service's address. The meta check contacts nothing else.</summary>
         public const string BaseUrl = "https://gale.kesomannen.com/api";
 
-        /// <summary>The service's host, for the tests that prove nothing else is asked.</summary>
+        /// <summary>The service's host, for the tests that prove the check asks nothing else.</summary>
         public const string Host = "gale.kesomannen.com";
 
         /// <summary>A profile's meta is a few kilobytes; a hundred times that is not a meta.</summary>
         public const int MaxBodyBytes = 2 * 1024 * 1024;
+
+        /// <summary>A profile zip is configs and a manifest. Fifty megabytes is far past any real one.</summary>
+        public const long MaxZipBytes = 50L * 1024 * 1024;
+
+        /// <summary>
+        /// The longest one zip fetch may take, start to finish. Thirty seconds in the app;
+        /// settable for a test. Only the host's own press waits on it.
+        /// </summary>
+        public TimeSpan ZipBound { get; set; } = TimeSpan.FromSeconds(30);
+
+        /// <summary>Where the zip is written while it is read. The system temp folder in the app; settable for a test.</summary>
+        public string TempDirectory { get; set; }
 
         public const string BadRequestSentence = "mods.gale.check.bad_request";
         public const string NotFoundSentence = "mods.gale.check.not_found";
@@ -161,6 +213,17 @@ namespace ValheimBakaLoader.Tools
         public const string NetworkErrorSentence = "mods.gale.check.network";
         public const string MalformedSentence = "mods.gale.check.malformed";
         public const string CancelledSentence = "mods.gale.check.cancelled";
+
+        // The zip's own sentences. The trip is the same shape as the meta's, but the host is
+        // somewhere else when it fails (the configs part of the dialog, with its Refresh, not
+        // the box with its Check now) and the bound is thirty seconds, not ten.
+        public const string ZipBadRequestSentence = "mods.gale.configs.fetch.bad_request";
+        public const string ZipNotFoundSentence = "mods.gale.configs.fetch.not_found";
+        public const string ZipTimeoutSentence = "mods.gale.configs.fetch.timeout";
+        public const string ZipServerErrorSentence = "mods.gale.configs.fetch.server_error";
+        public const string ZipNetworkErrorSentence = "mods.gale.configs.fetch.network";
+        public const string ZipMalformedSentence = "mods.gale.configs.fetch.malformed";
+        public const string ZipCancelledSentence = "mods.gale.configs.fetch.cancelled";
 
         private readonly Func<HttpClient> NewClient;
 
@@ -261,6 +324,154 @@ namespace ValheimBakaLoader.Tools
 
         private static GaleCheckResult Failed(GaleCheckOutcome outcome, string sentence, int? status) =>
             new() { Outcome = outcome, SentenceId = sentence, StatusCode = status };
+
+        /// <summary>The address a profile's zip is read from. Null for an id the shape check refuses.</summary>
+        public static Uri ProfileUri(string profileId)
+        {
+            var check = GaleProfileId.Check(profileId);
+            if (!check.Ok) return null;
+            return new Uri(BaseUrl + "/profile/" + Uri.EscapeDataString(check.Id));
+        }
+
+        public async Task<GaleZipResult> GetProfileZipAsync(string profileId, CancellationToken cancellationToken = default)
+        {
+            var uri = ProfileUri(profileId);
+            if (uri == null)
+                return new GaleZipResult { Outcome = GaleCheckOutcome.InvalidId, SentenceId = GaleProfileId.BadIdSentence };
+
+            using var bound = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bound.CancelAfter(ZipBound);
+
+            int? status = null;
+            string path = null;
+            var handedOver = false;
+            try
+            {
+                using var client = NewClient();
+                // The same single clock as the meta: HttpClient's own Timeout lets go once the
+                // headers are in, and a zip is exactly the body that can stall after them.
+                client.Timeout = Timeout.InfiniteTimeSpan;
+
+                var response = await ZipRequestAsync(client, uri, bound.Token).ConfigureAwait(false);
+                try
+                {
+                    status = (int)response.StatusCode;
+                    if (IsRedirect(response.StatusCode))
+                    {
+                        // The transport did not follow it (a test's handler never does). One hop,
+                        // to an https address only, and a second redirect is not a zip.
+                        var next = RedirectTarget(uri, response);
+                        response.Dispose();
+                        response = null;
+                        if (next == null) return ZipFailed(GaleCheckOutcome.ServerError, ZipServerErrorSentence, status);
+                        response = await ZipRequestAsync(client, next, bound.Token).ConfigureAwait(false);
+                        status = (int)response.StatusCode;
+                        if (IsRedirect(response.StatusCode))
+                            return ZipFailed(GaleCheckOutcome.ServerError, ZipServerErrorSentence, status);
+                    }
+
+                    if (response.StatusCode == HttpStatusCode.BadRequest)
+                        return ZipFailed(GaleCheckOutcome.BadRequest, ZipBadRequestSentence, status);
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                        return ZipFailed(GaleCheckOutcome.NotFound, ZipNotFoundSentence, status);
+                    if (!response.IsSuccessStatusCode)
+                        return ZipFailed(GaleCheckOutcome.ServerError, ZipServerErrorSentence, status);
+
+                    if (response.Content?.Headers.ContentLength is long declared && declared > MaxZipBytes)
+                        return ZipFailed(GaleCheckOutcome.Malformed, ZipMalformedSentence, status);
+
+                    var folder = string.IsNullOrWhiteSpace(TempDirectory) ? Path.GetTempPath() : TempDirectory;
+                    path = Path.Combine(folder, "bakaloader-gale-" + Guid.NewGuid().ToString("N") + ".zip");
+                    if (!await WriteBoundedAsync(response.Content, path, bound.Token).ConfigureAwait(false))
+                        return ZipFailed(GaleCheckOutcome.Malformed, ZipMalformedSentence, status);
+
+                    handedOver = true;
+                    return new GaleZipResult { Outcome = GaleCheckOutcome.Ok, StatusCode = status, ZipPath = path };
+                }
+                finally
+                {
+                    response?.Dispose();
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return ZipFailed(GaleCheckOutcome.Cancelled, ZipCancelledSentence, status);
+            }
+            catch (OperationCanceledException)
+            {
+                return ZipFailed(GaleCheckOutcome.Timeout, ZipTimeoutSentence, status);
+            }
+            catch (HttpRequestException)
+            {
+                return ZipFailed(GaleCheckOutcome.NetworkError, ZipNetworkErrorSentence, status);
+            }
+            catch (IOException)
+            {
+                return ZipFailed(GaleCheckOutcome.NetworkError, ZipNetworkErrorSentence, status);
+            }
+            catch (Exception)
+            {
+                return status == null
+                    ? ZipFailed(GaleCheckOutcome.NetworkError, ZipNetworkErrorSentence, status)
+                    : ZipFailed(GaleCheckOutcome.Malformed, ZipMalformedSentence, status);
+            }
+            finally
+            {
+                if (!handedOver && path != null)
+                {
+                    try { if (File.Exists(path)) File.Delete(path); }
+                    catch (Exception) { /* a half written temp file the system will clear */ }
+                }
+            }
+        }
+
+        private static Task<HttpResponseMessage> ZipRequestAsync(HttpClient client, Uri uri, CancellationToken token)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            request.Headers.Accept.ParseAdd("application/zip");
+            request.Headers.Accept.ParseAdd("application/octet-stream");
+            request.Headers.Accept.ParseAdd("*/*");
+            return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        }
+
+        private static bool IsRedirect(HttpStatusCode code) =>
+            code is HttpStatusCode.MovedPermanently or HttpStatusCode.Found or HttpStatusCode.SeeOther
+                or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
+
+        /// <summary>Where a redirect points, or null when it points nowhere or anywhere but an https address.</summary>
+        internal static Uri RedirectTarget(Uri from, HttpResponseMessage response)
+        {
+            var location = response?.Headers.Location;
+            if (location == null) return null;
+            if (!location.IsAbsoluteUri)
+            {
+                if (!Uri.TryCreate(from, location, out var joined)) return null;
+                location = joined;
+            }
+            return location.Scheme == Uri.UriSchemeHttps ? location : null;
+        }
+
+        private static GaleZipResult ZipFailed(GaleCheckOutcome outcome, string sentence, int? status) =>
+            new() { Outcome = outcome, SentenceId = sentence, StatusCode = status };
+
+        /// <summary>The body into a file. False when it runs past <see cref="MaxZipBytes"/>, and the file is then left for the caller to drop.</summary>
+        private static async Task<bool> WriteBoundedAsync(HttpContent content, string path, CancellationToken token)
+        {
+            await using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            if (content == null) return true;
+            await using var stream = await content.ReadAsStreamAsync(token).ConfigureAwait(false);
+            var chunk = new byte[64 * 1024];
+            long total = 0;
+            while (true)
+            {
+                var read = await stream.ReadAsync(chunk.AsMemory(0, chunk.Length), token).ConfigureAwait(false);
+                if (read == 0) break;
+                total += read;
+                if (total > MaxZipBytes) return false;
+                await file.WriteAsync(chunk.AsMemory(0, read), token).ConfigureAwait(false);
+            }
+            return true;
+        }
 
         /// <summary>The body as text, or null when it runs past <see cref="MaxBodyBytes"/>.</summary>
         private static async Task<string> ReadBoundedAsync(HttpContent content, CancellationToken token)

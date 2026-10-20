@@ -1790,6 +1790,35 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 .modal .galetbl td{padding:4px 6px;color:var(--bone);overflow-wrap:anywhere}
 .modal .galetbl input{accent-color:var(--ember)}
 .modal .galetbl .galeold{color:var(--amber);font-size:10px;margin-left:4px}
+/* The Gale dialog's three parts (mods, the profile's config files, the mods only this server
+   has). Wider than a plain dialog, because a config path and a preview line are long and a
+   preview that wraps every line reads as a different file. */
+.modal.galedlg{width:620px;max-width:calc(100vw - 40px)}
+.modal .galesec+.galesec{margin-top:14px;padding-top:10px;border-top:1px solid var(--bronze)}
+.modal .galesech{font-family:var(--serif-small);font-size:11px;font-weight:700;letter-spacing:1.6px;
+  text-transform:uppercase;color:var(--bone);margin-bottom:4px}
+.modal .galecfgrow,.modal .galeherow{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;color:var(--bone)}
+.modal .galecfgrow input{accent-color:var(--ember);flex:none}
+.modal .galecfgpath{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.modal .galecfgpath .cfgpre{color:var(--bone-faint-text)}
+.modal .galecfgstate{flex:none;font-size:10px;color:var(--bone-dim)}
+.modal .galecfgstate.added{color:var(--moss-text)}
+.modal .galecfgstate.changed{color:var(--amber)}
+.modal .galecfgrow .btn,.modal .galeherow .btn{flex:none}
+.modal .galecfgsame{margin-top:6px;font-size:11px;color:var(--bone-dim)}
+.modal .galecfgsame summary{cursor:pointer}
+.modal .galecfgbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.modal .galeherow .mono:first-child{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.modal .galeherever{flex:none;color:var(--bone-dim)}
+/* A preview: each line its own row, the mark (+, - or two spaces) part of the text so it reads
+   without the colour too. */
+.modal .galediff{margin:4px 0 6px;padding:6px 8px;max-height:260px;overflow:auto;background:var(--iron-deeper);
+  border:1px solid var(--bronze);border-radius:6px;font-family:var(--mono);font-size:10.5px;line-height:1.5}
+.modal .galediff span{display:block;white-space:pre;min-height:1.5em}
+.modal .galediff .add{color:var(--moss-text);background:rgba(111,160,92,.10)}
+.modal .galediff .del{color:var(--blood-text);background:rgba(213,69,60,.10)}
+.modal .galediff .hunk{color:var(--cold-hi)}
+.modal .galediff .ctx{color:var(--bone-dim)}
 
 /* One row lit for a moment, so "the setting is over here" can be shown rather than
    said. Used by the loader notice's action, which walks to the Upkeep card. */

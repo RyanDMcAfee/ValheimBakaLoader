@@ -34,7 +34,8 @@
  *      the walk.
  *   8. The wiring: the box is in the Mods hall, the hall's walk-in, the first frame and Check now
  *      are the only callers of the check, a realm switch takes the row down, and the host side
- *      has the seven RPCs and holds the add to the realm and a stopped server.
+ *      has the ten RPCs (1.2.16 added gale.configs and gale.configs.apply, in their own file)
+ *      and holds the add to the realm and a stopped server.
  *   9. Every id the block asks for is in the catalog, with no long dash and no "AI".
  *  10. No BepInEx on the server: with the pack in the profile the dialog says it goes in first
  *      and Install puts it in through the host side before the first mod; without the pack
@@ -42,6 +43,22 @@
  *  11. A pinned build Thunderstore no longer has: the add's sentence names the mod and the
  *      version, the walk goes on, the summary counts the ones that landed and the ones that
  *      were not available, and the next review marks the row instead of offering a plain add.
+ *  12. Config files from the profile: opening the dialog fetches once (refresh false) and shows
+ *      a loading line until the answer; each added or changed file has a tick (off for one the
+ *      host unticked before), its folders muted, its state word and a Show changes toggle whose
+ *      preview marks lines with + and - as well as colour and says how many lines were cut; the
+ *      same ones are counted and folded away; Refresh asks again with refresh true; Apply sends
+ *      only the ticked paths, apart from Install; with the server up Apply is off with the
+ *      sentence; a failed fetch is its sentence.
+ *  13. Reachable with nothing to install: Review shows for config news, for mods only this
+ *      server has, and while the configs are not known, and not when everything is known to be
+ *      in step; the dialog with no mod rows still draws the other two parts.
+ *  14. On this server only: every notInProfile row and no framework row, with its version and
+ *      the Off pill, the sentence that nothing is removed, Switch off or on through the Mods
+ *      hall's switch with the scan's FullName, then gale.rescan (never gale.check); greyed with
+ *      the sentence when the server is up; the status line names the count.
+ *  15. The dialog's one click and one change listener reach the toggle, Refresh, Apply, the
+ *      switch and the ticks, and a disabled control reaches nothing.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -63,6 +80,8 @@ const KEYS = JSON.parse(fs.readFileSync(path.join(WEB, "i18n", "en.json"), "utf8
 const FORMS = path.join(ROOT, "ValheimBakaLoader", "Forms");
 const BRIDGE = fs.readFileSync(path.join(FORMS, "BlendWindow.Bridge.cs"), "utf8");
 const GALE_CS = fs.readFileSync(path.join(FORMS, "BlendWindow.Gale.cs"), "utf8");
+const GALE_CFG_CS = fs.readFileSync(path.join(FORMS, "BlendWindow.GaleConfigs.cs"), "utf8");
+const TOOLS = path.join(ROOT, "ValheimBakaLoader", "Tools");
 
 let passed = 0;
 const failures = [];
@@ -118,11 +137,54 @@ function fakeModal(html) {
     addEventListener: (_, fn) => { handlers[id] = fn; },
   });
   const buttons = { "#galeNotNow": button("galeNotNow"), "#galeInstall": button("galeInstall") };
+  /* The two parts the dialog draws again in place. Each keeps what was last written into it;
+     until then it holds the slice of the opening html between its own id and the next part. */
+  const part = id => {
+    const at = html.indexOf('id="' + id + '"');
+    if (at < 0) return null;
+    const next = html.indexOf('<div class="galesec"', at + 1);
+    return { innerHTML: html.slice(at, next < 0 ? html.length : next) };
+  };
+  const parts = { "#galeCfg": part("galeCfg"), "#galeHere": part("galeHere") };
+  const listeners = {};
+  const classes = [];
   return {
-    html, boxes, handlers, buttons,
-    querySelector: sel => buttons[sel] || null,
+    html, boxes, handlers, buttons, parts, listeners, classes,
+    classList: { add: c => classes.push(c) },
+    addEventListener: (type, fn) => { listeners[type] = fn; },
+    querySelector: sel => buttons[sel] || parts[sel] || null,
     querySelectorAll: sel => (sel === "[data-gale-row]" ? boxes : []),
   };
+}
+
+/* The configs part as the host side answers it: one file to add, one changed (with a preview
+   long enough to be cut), one the host unticked before, and two the same. */
+function configs(over) {
+  const preview = [{ k: "@", t: "@@ -1,3 +1,3 @@" }, { k: " ", t: "[General]" }, { k: "-", t: "Speed = 1" }, { k: "+", t: "Speed = 2" }];
+  return Object.assign({
+    profile: "Final Sunset", following: true, statusId: null, heldBy: null,
+    configs: {
+      ok: true, statusId: null, at: "2026-10-12T10:00:00Z", added: 2, changed: 1, same: 2, skipped: 1,
+      files: [
+        { path: "Azumatt.AzuCraftyBoxes.yml", realmPath: "BepInEx/config/Azumatt.AzuCraftyBoxes.yml", state: "added", ticked: true, preview: [{ k: "+", t: "range: 20" }], more: 0 },
+        { path: "Jotunn/jotunn.cfg", realmPath: "BepInEx/config/Jotunn/jotunn.cfg", state: "changed", ticked: true, preview, more: 37 },
+        { path: "odd.cfg", realmPath: "BepInEx/config/odd.cfg", state: "added", ticked: false, preview: [{ k: "+", t: "x = <b>" }], more: 0 },
+        { path: "BepInEx.cfg", realmPath: "BepInEx/config/BepInEx.cfg", state: "same", ticked: false, preview: [], more: 0 },
+        { path: "same/two.json", realmPath: "BepInEx/config/same/two.json", state: "same", ticked: false, preview: [], more: 0 },
+      ],
+    },
+  }, over);
+}
+
+/* A click on something inside the dialog, as the delegated listener sees it: the target answers
+   closest() for the one attribute it carries. */
+function clickOn(attr, value, disabled) {
+  const node = { disabled: !!disabled, getAttribute: a => (a === attr ? value : null) };
+  return { target: { closest: sel => (sel === "[" + attr + "]" ? node : null) } };
+}
+
+async function settle() {
+  for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
 }
 
 /* A fresh page: the real block and a record of everything it sends. */
@@ -132,6 +194,7 @@ function page(opts) {
   const toasts = [];
   const conditions = new Map();
   const modals = [];
+  const switches = [];
   const els = { "#galeId": el(), "#galeStatus": el(), "#galeCheckBtn": el(), "#galeForgetBtn": el(), "#galeReviewBtn": el() };
   const replies = opts.replies || {};
   const answer = (method, params) => {
@@ -163,15 +226,32 @@ function page(opts) {
     hostSentence: () => null,
     BEP_ADD_IN_FLIGHT: false,
     bepInExProgressDone: () => {},
+    /* The Mods hall's own switch, which lives outside the block: the only-here list must hand
+       it the scan's FullName and the direction, and nothing else. */
+    setModEnabled: (mod, on) => { switches.push({ FullName: mod.FullName, ModName: mod.ModName, on }); return Promise.resolve(); },
   };
   context.isActiveProfile = p => p == null || !context.S.profileName
     || String(p).toLowerCase() === String(context.S.profileName).toLowerCase();
   vm.createContext(context);
   vm.runInContext(block(), context, { filename: "app.js#gale" });
   for (const name of ["galeApply", "renderGaleBox", "conditionGale", "galeCheck", "galeCheckNow", "galeForget",
-    "galeDialog", "galeDialogRows", "galeInstall", "galeStatusLine"])
+    "galeDialog", "galeDialogRows", "galeInstall", "galeStatusLine", "galeReviewable", "galeConfigsHtml", "galeConfigsLoad",
+    "galeApplyConfigs", "galeOnlyHereHtml", "galeOnlyHereSwitch", "galeDialogClick", "galeDialogChange"])
     assert.strictEqual(typeof context[name], "function", name + " did not come out of the block");
-  return { context, sent, toasts, conditions, modals, els, methods: () => sent.map(s => s.method) };
+  /* What the install walk sent, with the configs part's own two calls taken out: opening the
+     dialog asks gale.configs, and its answer is followed by one gale.get for the Review link.
+     Rule 12 holds those two to their own order. */
+  const walk = () => {
+    const out = [];
+    let afterConfigs = false;
+    for (const s of sent) {
+      if (s.method === "gale.configs") { afterConfigs = true; continue; }
+      if (afterConfigs && s.method === "gale.get") { afterConfigs = false; continue; }
+      out.push(s);
+    }
+    return out;
+  };
+  return { context, sent, toasts, conditions, modals, els, switches, walk, methods: () => walk().map(s => s.method) };
 }
 
 /* A followed realm with a check that found one add, one update and one switched off mod. */
@@ -184,8 +264,11 @@ function state(over) {
       { name: "ValheimModding-Jotunn", kind: "update", untickedFrom: null, profileVersion: "2.21.0", serverVersion: "2.20.1", downgrade: false },
       { name: "RandyKnapp-EpicLoot", kind: "disabled", untickedFrom: null, profileVersion: "0.11.0", serverVersion: null, downgrade: false },
       { name: "shudnal-ExtraSlots", kind: "unticked", untickedFrom: "add", profileVersion: "1.0.0", serverVersion: null, downgrade: false },
-      { name: "Someone-OnlyHere", kind: "notInProfile", untickedFrom: null, profileVersion: null, serverVersion: "3.0.0", downgrade: false },
+      { name: "Someone-OnlyHere", kind: "notInProfile", untickedFrom: null, profileVersion: null, serverVersion: "3.0.0", downgrade: false, fullName: "Someone-OnlyHere", off: false },
+      { name: "LooseDll", kind: "notInProfile", untickedFrom: null, profileVersion: null, serverVersion: "unknown", downgrade: false, fullName: "-LooseDll", off: true },
+      { name: "denikson-BepInExPack_Valheim", kind: "framework", untickedFrom: null, profileVersion: "5.4.2202", serverVersion: null, downgrade: false },
     ],
+    onlyHereCount: 2, configChanges: null,
   }, over && over.check);
   return Object.assign({ profile: "Final Sunset", following: true, id: "ab12CD", lastApproved: null, unticked: ["shudnal-ExtraSlots"], heldBy: null, check }, over, { check: over && over.check === null ? null : check });
 }
@@ -346,7 +429,11 @@ function fnBody(source, head) {
     assert.strictEqual(m.html.split(lead).length - 1, 1, "not exactly one note line for switched off mods");
     assert.ok(m.html.includes(T("mods.gale.dialog.not_installed")), "an add does not say it is not installed");
     assert.ok(m.html.includes("2.20.1") && m.html.includes("2.21.0"), "an update does not show both versions");
-    assert.ok(!m.html.includes("Someone-OnlyHere"), "a mod only the server has is offered");
+    /* A mod only the server has is never offered for install: it has no tick, and it is listed
+       in the only-here part under the configs, nowhere above it. */
+    const onlyAt = m.html.indexOf('id="galeHere"');
+    assert.ok(onlyAt > 0, "the only-here part is missing");
+    assert.ok(m.html.indexOf("Someone-OnlyHere") > onlyAt, "a mod only the server has is listed among the mods to install");
     assert.strictEqual(m.buttons["#galeInstall"].disabled, false, "Install is off on a stopped server");
     assert.ok(!m.html.includes("mwarn"), "a stopped server got the stop sentence");
 
@@ -380,7 +467,7 @@ function fnBody(source, head) {
     for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
 
     assert.deepStrictEqual(ok.methods(), ["gale.untick", "mods.addFromUrl", "gale.dismiss"], ok.methods().join(","));
-    const untick = ok.sent[0].params;
+    const untick = ok.walk()[0].params;
     assert.deepStrictEqual(Array.from(untick.unticked), ["ValheimModding-Jotunn", "shudnal-ExtraSlots"],
       "the untick the host made, and the one remembered from before, were not both written");
     assert.deepStrictEqual(Array.from(untick.ticked), ["Azumatt-AzuCraftyBoxes"]);
@@ -388,7 +475,7 @@ function fnBody(source, head) {
     assert.strictEqual(added[0].url, "https://thunderstore.io/c/valheim/p/Azumatt/AzuCraftyBoxes/v/1.8.4/", "the version is not pinned");
     assert.strictEqual(added[0].profile, "Final Sunset");
     assert.strictEqual(added[0].requireStopped, true, "the add does not ask for a stopped server");
-    assert.strictEqual(ok.sent[2].params.seq, 7, "the approval was not stamped with the check that was shown");
+    assert.strictEqual(ok.walk()[2].params.seq, 7, "the approval was not stamped with the check that was shown");
     assert.ok(ok.toasts.some(t => t.includes(T("mods.gale.install.done.toast", { count: 1 }))), ok.toasts.join(" | "));
 
     /* A walk with a failure stamps nothing, so the row stays for the rest. The mod that did
@@ -407,7 +494,7 @@ function fnBody(source, head) {
     bad.modals[0].handlers.galeInstall();
     for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
     assert.deepStrictEqual(bad.methods(), ["gale.untick", "mods.addFromUrl", "mods.addFromUrl", "gale.rescan"], bad.methods().join(","));
-    assert.strictEqual(bad.sent[3].params.profile, "Final Sunset", "the rescan was not for the realm the walk ran on");
+    assert.strictEqual(bad.walk()[3].params.profile, "Final Sunset", "the rescan was not for the realm the walk ran on");
     assert.strictEqual(bad.conditions.get("galeChanged").msg, T("cond.gale.msg", { add: 0, update: 1 }),
       "the row still counts the mod that went in: " + bad.conditions.get("galeChanged").msg);
     bad.context.galeDialog();
@@ -458,16 +545,24 @@ function fnBody(source, head) {
     assert.ok(/"galeChanged"\]\.forEach\(clearCondition\)/.test(sw), "a realm switch leaves the Gale row up");
     assert.ok(/GALE=null;/.test(sw) && /galeRefresh\(\);/.test(sw), "a realm switch keeps the old realm's follow in the box");
 
+    /* Ten RPCs now, where 1.2.14 had seven and 1.2.15 eight: the configs part adds the list and
+       the apply, in their own file. */
     for (const rpc of ["gale.get", "gale.set", "gale.forget", "gale.check", "gale.dismiss", "gale.untick", "gale.rescan", "gale.bepinex"])
       assert.ok(GALE_CS.includes('RegisterRpc("' + rpc + '"'), "the host side has no " + rpc);
+    for (const rpc of ["gale.configs", "gale.configs.apply"])
+      assert.ok(GALE_CFG_CS.includes('RegisterRpc("' + rpc + '"'), "the host side has no " + rpc);
+    assert.ok(/RegisterGaleConfigRpcs\(\);/.test(GALE_CS), "the configs RPCs are never registered");
+    const registered = (GALE_CS + GALE_CFG_CS).match(/RegisterRpc\("gale\.[a-z.]+"/g) || [];
+    assert.strictEqual(registered.length, 10, "the host side registers " + registered.length + " Gale RPCs, not ten");
     assert.ok(/RegisterGaleRpcs\(\);/.test(BRIDGE), "the Gale RPCs are never registered");
     assert.ok(/Task\.Run\(\(\) => RunGaleCheckAsync/.test(GALE_CS), "the check does not run on a worker");
     const add = BRIDGE.slice(BRIDGE.indexOf('RegisterRpc("mods.addFromUrl"'), BRIDGE.indexOf('RegisterRpc("mods.hexiumPrepare"'));
     assert.ok(/Value<bool\?>\("requireStopped"\)/.test(add) && /RunningSessionName\(new\[\] \{ pluginsDir \}\)/.test(add),
       "the add does not refuse a plugins folder a running server holds");
     assert.ok(/Value<string>\("profile"\)/.test(add) && /"realmChanged"/.test(add), "the add does not hold the walk to its realm");
-    assert.ok(!/Remove|Delete/.test(GALE_CS.replace(/TryRemove/g, "").replace(/\/\/\/.*|\/\/.*/g, "")),
-      "the Gale bridge calls something that removes");
+    for (const [file, src] of [["BlendWindow.Gale.cs", GALE_CS], ["BlendWindow.GaleConfigs.cs", GALE_CFG_CS]])
+      assert.ok(!/Remove|Delete/.test(src.replace(/TryRemove/g, "").replace(/\/\/\/.*|\/\/.*/g, "")),
+        file + " calls something that removes");
   });
 
   await test("9. every id the block asks for is in the catalog, with no long dash and no AI", () => {
@@ -488,8 +583,9 @@ function fnBody(source, head) {
       assert.ok(!/\bAI\b/.test(words), id + " says AI");
     }
     /* Every sentence the host side can name is in the table the status line reads. */
-    for (const id of (GALE_CS + fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Tools", "GaleSyncClient.cs"), "utf8")
-      + fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Tools", "GaleProfileId.cs"), "utf8")).match(/"mods\.gale\.[a-z_.]+"/g) || [])
+    for (const id of (GALE_CS + GALE_CFG_CS + fs.readFileSync(path.join(TOOLS, "GaleSyncClient.cs"), "utf8")
+      + fs.readFileSync(path.join(TOOLS, "GaleProfileConfigs.cs"), "utf8")
+      + fs.readFileSync(path.join(TOOLS, "GaleProfileId.cs"), "utf8")).match(/"mods\.gale\.[a-z_.]+"/g) || [])
       assert.ok(src.includes('{textId:' + id + '}'), "the status line cannot say " + id);
   });
 
@@ -530,7 +626,7 @@ function fnBody(source, head) {
     order.modals[0].handlers.galeInstall();
     for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
     assert.deepStrictEqual(order.methods(), ["gale.untick", "gale.bepinex", "mods.addFromUrl", "mods.addFromUrl", "gale.dismiss"], order.methods().join(","));
-    assert.strictEqual(order.sent[1].params.profile, "Final Sunset", "BepInEx was not asked for the realm the dialog was opened on");
+    assert.strictEqual(order.walk()[1].params.profile, "Final Sunset", "BepInEx was not asked for the realm the dialog was opened on");
     assert.deepStrictEqual(JSON.parse(JSON.stringify(order.context.S.bepinex)), { installed: true, consent: true }, "the loader's new state was not taken");
 
     /* A BepInEx write that did not land stops the walk before any mod. */
@@ -611,6 +707,203 @@ function fnBody(source, head) {
     /* The plain add says the same sentence. */
     assert.ok(/const own=modNotAvailableText\(r\)\|\|hostSentence\(r\.Reason,r\.ErrorParams\);/.test(fnBody(APP, "async function doAddMod(")),
       "a pasted link does not get the not available sentence");
+  });
+
+  await test("12. config files from the profile: fetched on open, ticks, previews, Refresh, Apply apart from Install", async () => {
+    let answer;
+    const gate = new Promise(r => { answer = r; });
+    const applied = [];
+    const p = page({ replies: {
+      "gale.configs": params => (params.refresh ? configs() : gate),
+      "gale.get": state(),
+      "gale.configs.apply": params => { applied.push(params); return { ok: true, written: 2, added: 1, replaced: 1, same: 0,
+        backup: "BepInEx/.bakaloader-config-backups/20261012-100000", state: configs() }; },
+    } });
+    p.context.galeApply(state());
+    p.context.galeDialog();
+    const m = p.modals[0];
+    const asked = p.sent.filter(s => s.method === "gale.configs");
+    assert.strictEqual(asked.length, 1, "opening the dialog did not ask for the configs exactly once");
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(asked[0].params)), { profile: "Final Sunset", refresh: false });
+    assert.ok(!p.sent.some(s => s.method === "gale.check"), "opening the dialog asked for the meta");
+    assert.ok(m.parts["#galeCfg"].innerHTML.includes(T("mods.gale.configs.loading")), "no loading line while the configs are out");
+    assert.ok(m.classes.includes("galedlg"), "the dialog is not the wide one");
+
+    answer(configs());
+    await settle();
+    const html = m.parts["#galeCfg"].innerHTML;
+    assert.ok(html.includes(T("mods.gale.configs.title")), "the configs part has no heading");
+    assert.ok(html.includes(p.context.esc(T("mods.gale.configs.counts", { added: 2, changed: 1, same: 2 }))), "no counts sentence");
+    assert.ok(html.includes(p.context.esc(T("mods.gale.configs.skipped", { count: 1 }))), "the left out file is not said");
+    const ticks = [...html.matchAll(/data-gale-cfg="([^"]+)"( checked)?/g)].map(x => [x[1], !!x[2]]);
+    assert.deepStrictEqual(ticks, [["Azumatt.AzuCraftyBoxes.yml", true], ["Jotunn/jotunn.cfg", true], ["odd.cfg", false]],
+      "the ticks are not one per added or changed file, off for the one unticked before: " + JSON.stringify(ticks));
+    assert.ok(html.includes('<span class="cfgpre">Jotunn/</span>jotunn.cfg'), "the folder is not muted ahead of the name");
+    for (const id of ["mods.gale.configs.state.added", "mods.gale.configs.state.changed", "mods.gale.configs.state.same"])
+      assert.ok(html.includes(">" + T(id) + "<"), "no state word " + T(id));
+    assert.ok(/<details class="galecfgsame">[\s\S]*BepInEx\.cfg[\s\S]*two\.json[\s\S]*<\/details>/.test(html), "the same files are not folded away");
+    assert.ok(!/data-gale-cfg="BepInEx\.cfg"/.test(html), "a file that is the same can be ticked");
+    assert.ok(!html.includes("galediff"), "a preview is open before anybody asked");
+    assert.ok(/data-gale-cfg-apply(?![^>]*disabled)/.test(html), "Apply configs is off on a stopped server with files to write");
+    assert.ok(!/id="galeInstall"[^>]*data-gale-cfg/.test(m.html), "Install and Apply configs are one button");
+
+    /* Show changes opens the preview: + and - lead the lines, so it reads without colour. */
+    p.context.galeDialogClick(clickOn("data-gale-cfg-show", "Jotunn/jotunn.cfg"));
+    const open = m.parts["#galeCfg"].innerHTML;
+    assert.ok(open.includes('<span class="del">- Speed = 1</span>') && open.includes('<span class="add">+ Speed = 2</span>'),
+      "the preview does not mark its lines with - and +: " + open.slice(open.indexOf("galediff"), open.indexOf("galediff") + 300));
+    assert.ok(open.includes('<span class="ctx">  [General]</span>') && open.includes('<span class="hunk">@@ -1,3 +1,3 @@</span>'), "context or the hunk head is lost");
+    assert.ok(open.includes(p.context.esc(T("mods.gale.configs.more", { count: 37 }))), "the cut preview does not say how many lines are left");
+    assert.ok(open.includes(">" + T("mods.gale.configs.hide") + "<"), "the toggle does not offer to hide");
+    p.context.galeDialogClick(clickOn("data-gale-cfg-show", "odd.cfg"));
+    assert.ok(m.parts["#galeCfg"].innerHTML.includes("x = &lt;b&gt;"), "a preview line is not escaped");
+    p.context.galeDialogClick(clickOn("data-gale-cfg-show", "Jotunn/jotunn.cfg"));
+    assert.ok(!m.parts["#galeCfg"].innerHTML.includes("Speed = 2"), "the preview did not close again");
+
+    /* The host unticks the changed file and ticks the one unticked before; Apply sends exactly
+       the ticked two, through its own RPC. */
+    p.context.galeDialogChange({ target: { getAttribute: a => (a === "data-gale-cfg" ? "Jotunn/jotunn.cfg" : null), checked: false } });
+    p.context.galeDialogChange({ target: { getAttribute: a => (a === "data-gale-cfg" ? "odd.cfg" : null), checked: true } });
+    p.context.galeCfgRedraw();
+    assert.ok(/data-gale-cfg="Jotunn\/jotunn\.cfg"(?! checked)/.test(m.parts["#galeCfg"].innerHTML), "a redraw put back a tick the host took off");
+    await p.context.galeApplyConfigs();
+    await settle();
+    assert.strictEqual(applied.length, 1);
+    assert.deepStrictEqual(Array.from(applied[0].paths), ["Azumatt.AzuCraftyBoxes.yml", "odd.cfg"], "Apply did not send only the ticked files");
+    assert.strictEqual(applied[0].profile, "Final Sunset");
+    assert.ok(!p.sent.some(s => s.method === "mods.addFromUrl" || s.method === "gale.untick"), "Apply configs ran the mod install");
+    assert.ok(p.toasts.includes("ᚨ " + T("mods.gale.configs.applied.toast",
+      { added: 1, replaced: 1, folder: "BepInEx/.bakaloader-config-backups/20261012-100000" })), p.toasts.join(" | "));
+
+    /* Refresh asks again, with refresh true. */
+    p.context.galeDialogClick(clickOn("data-gale-cfg-refresh", ""));
+    await settle();
+    const again = p.sent.filter(s => s.method === "gale.configs");
+    assert.strictEqual(again.length, 2, "Refresh did not ask again");
+    assert.strictEqual(again[1].params.refresh, true, "Refresh did not ask for a fresh fetch");
+
+    /* The server up: Apply off, the sentence said. */
+    const held = page({ replies: { "gale.configs": configs({ heldBy: "Final Sunset" }), "gale.get": state() } });
+    held.context.galeApply(state());
+    held.context.galeDialog();
+    await settle();
+    const h = held.modals[0].parts["#galeCfg"].innerHTML;
+    assert.ok(/data-gale-cfg-apply[^>]*disabled/.test(h), "Apply configs is offered with the server up");
+    assert.ok(h.includes(held.context.esc(T("mods.gale.configs.running", { name: "Final Sunset" }))), "no stop sentence by Apply");
+    await held.context.galeApplyConfigs();
+    assert.ok(!held.sent.some(s => s.method === "gale.configs.apply"), "an apply went out with the server up");
+
+    /* A refused apply says the host side's reason in the page's words. */
+    const refused = page({ replies: { "gale.configs": configs(), "gale.get": state(),
+      "gale.configs.apply": { ok: false, written: 0, Reason: "unsafePath", ErrorParams: { file: "x.cfg" }, Error: "raw", state: configs() } } });
+    refused.context.galeApply(state());
+    refused.context.galeDialog();
+    await settle();
+    await refused.context.galeApplyConfigs();
+    assert.ok(refused.toasts.includes("ᚦ " + T("mods.gale.configs.reason.unsafe_path", { file: "x.cfg" })), refused.toasts.join(" | "));
+
+    /* A fetch that failed is its one sentence, with Refresh still there. */
+    const failed = page({ replies: { "gale.configs": configs({ configs: { ok: false, statusId: "mods.gale.configs.fetch.timeout" } }), "gale.get": state() } });
+    failed.context.galeApply(state());
+    failed.context.galeDialog();
+    await settle();
+    const f = failed.modals[0].parts["#galeCfg"].innerHTML;
+    assert.ok(f.includes(T("mods.gale.configs.fetch.timeout")), "a failed fetch is not said");
+    assert.ok(f.includes("data-gale-cfg-refresh") && !f.includes("data-gale-cfg-apply"), "a failed fetch offers Apply or no Refresh");
+    assert.strictEqual(failed.toasts.length, 0, "a failed fetch toasted");
+  });
+
+  await test("13. Review is there with nothing to install, and the dialog draws its other parts", () => {
+    const p = page();
+    const none = { addCount: 0, updateCount: 0, due: false };
+    assert.strictEqual(p.context.galeReviewable(state({ check: Object.assign({}, none, { onlyHereCount: 0, configChanges: 0 }) })), false,
+      "Review shows when everything is known to be in step");
+    assert.strictEqual(p.context.galeReviewable(state({ check: Object.assign({}, none, { onlyHereCount: 0, configChanges: 3 }) })), true, "config news has no Review");
+    assert.strictEqual(p.context.galeReviewable(state({ check: Object.assign({}, none, { onlyHereCount: 2, configChanges: 0 }) })), true, "mods only here have no Review");
+    assert.strictEqual(p.context.galeReviewable(state({ check: Object.assign({}, none, { onlyHereCount: 0, configChanges: null }) })), true,
+      "configs not looked at yet hide Review");
+    assert.strictEqual(p.context.galeReviewable(state({ check: { ok: false, statusId: "mods.gale.check.timeout" } })), false, "a failed check has a Review");
+    p.context.galeApply(state({ check: Object.assign({}, none, { onlyHereCount: 0, configChanges: 3 }) }));
+    assert.strictEqual(p.els["#galeReviewBtn"].style.display, "", "the box hides Review with config news");
+    p.context.galeApply(state({ check: Object.assign({}, none, { onlyHereCount: 0, configChanges: 0 }) }));
+    assert.strictEqual(p.els["#galeReviewBtn"].style.display, "none", "the box shows Review with nothing to see");
+
+    const q = page();
+    const quiet = state({ check: Object.assign({}, none, {
+      rows: state().check.rows.filter(r => r.kind === "notInProfile" || r.kind === "framework"), onlyHereCount: 2, configChanges: null }) });
+    q.context.galeApply(quiet);
+    q.context.galeDialog();
+    const m = q.modals[0];
+    assert.ok(m, "the dialog did not open with no mods to install");
+    assert.ok(m.html.includes(T("mods.gale.dialog.empty")), "the empty mods sentence is gone");
+    assert.strictEqual(m.buttons["#galeInstall"].disabled, true, "Install is on with nothing to install");
+    assert.ok(m.html.includes('id="galeCfg"') && m.html.includes('id="galeHere"'), "the empty mods part blocked the other two");
+  });
+
+  await test("14. on this server only: the list, the pill, the switch through the Mods hall, the rescan, the hold", async () => {
+    const p = page({ replies: {
+      "gale.configs": configs(), "gale.get": state(),
+      "gale.rescan": { ok: true, state: state({ check: { rows: state().check.rows.map(r => (r.name === "Someone-OnlyHere" ? Object.assign({}, r, { off: true }) : r)) } }) },
+    } });
+    p.context.galeApply(state());
+    p.context.galeDialog();
+    const m = p.modals[0];
+    const here = m.parts["#galeHere"].innerHTML;
+    assert.ok(here.includes(T("mods.gale.only_here.title")), "no heading");
+    assert.ok(here.includes(T("mods.gale.only_here.intro")), "the list does not say nothing is removed");
+    assert.strictEqual(T("mods.gale.only_here.intro"), "Gale does not have these. BakaLoader never removes them.");
+    assert.ok(here.includes("Someone-OnlyHere") && here.includes("3.0.0"), "a server-only mod or its version is missing");
+    assert.ok(here.includes("LooseDll"), "an author-less server-only mod is missing");
+    assert.ok(!here.includes("denikson-BepInExPack_Valheim"), "a framework row is listed as a server-only mod");
+    assert.strictEqual(here.split(">" + T("mods.status.off") + "<").length - 1, 1, "not exactly one Off pill, for the one that is off");
+    assert.ok(here.includes(">" + T("mods.gale.only_here.off") + "<") && here.includes(">" + T("mods.gale.only_here.on") + "<"),
+      "the switch does not offer off for the on mod and on for the off one");
+
+    p.context.galeDialogClick(clickOn("data-gale-here", "0"));
+    await settle();
+    assert.deepStrictEqual(p.switches, [{ FullName: "Someone-OnlyHere", ModName: "Someone-OnlyHere", on: false }], JSON.stringify(p.switches));
+    const after = p.sent.map(s => s.method);
+    assert.ok(after.includes("gale.rescan"), "the list was not read again after the switch");
+    assert.ok(!after.includes("gale.check"), "the switch asked Gale");
+    assert.strictEqual(m.parts["#galeHere"].innerHTML.split(">" + T("mods.status.off") + "<").length - 1, 2, "the list did not take the rescan's answer");
+
+    /* The author-less one is switched by the scan's own FullName, not the diff's name. */
+    await p.context.galeOnlyHereSwitch(1);
+    assert.deepStrictEqual(p.switches[1], { FullName: "-LooseDll", ModName: "LooseDll", on: true }, JSON.stringify(p.switches[1]));
+
+    /* The server up: greyed with the sentence, and nothing is switched. */
+    const held = page({ status: "Running", replies: { "gale.configs": configs(), "gale.get": state() } });
+    held.context.galeApply(state());
+    held.context.galeDialog();
+    const h = held.modals[0].parts["#galeHere"].innerHTML;
+    assert.ok(/data-gale-here="0" disabled/.test(h), "the switch is offered with the server up");
+    assert.ok(h.includes(held.context.esc(T("mods.gale.only_here.running", { name: "Final Sunset" }))), "no stop sentence");
+    await held.context.galeOnlyHereSwitch(0);
+    assert.strictEqual(held.switches.length, 0, "a mod was switched with the server up");
+
+    /* The status line names the count. */
+    const line = p.context.galeStatusLine(state(), false, null);
+    assert.ok(line.includes(T("mods.gale.status.only_here", { count: 2 })), line);
+    assert.ok(!p.context.galeStatusLine(state({ check: { onlyHereCount: 0 } }), false, null).includes("not in the profile"), "a zero count is said");
+  });
+
+  await test("15. the dialog's two listeners reach every control, and a disabled one reaches nothing", async () => {
+    const p = page({ replies: { "gale.configs": configs(), "gale.get": state(), "gale.rescan": { ok: true, state: state() } } });
+    p.context.galeApply(state());
+    p.context.galeDialog();
+    const m = p.modals[0];
+    assert.strictEqual(typeof m.listeners.click, "function", "no click listener on the dialog");
+    assert.strictEqual(typeof m.listeners.change, "function", "no change listener on the dialog");
+    await settle();
+    m.listeners.click(clickOn("data-gale-cfg-apply", "", true));
+    m.listeners.click(clickOn("data-gale-here", "0", true));
+    m.listeners.click(clickOn("data-gale-cfg-refresh", "", true));
+    await settle();
+    assert.ok(!p.sent.some(s => s.method === "gale.configs.apply"), "a disabled Apply applied");
+    assert.strictEqual(p.switches.length, 0, "a disabled switch switched");
+    assert.strictEqual(p.sent.filter(s => s.method === "gale.configs").length, 1, "a disabled Refresh fetched");
+    m.listeners.click({ target: null });
+    m.listeners.change({ target: { getAttribute: () => null } });
   });
 
   console.log("");
