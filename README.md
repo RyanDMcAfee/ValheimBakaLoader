@@ -81,14 +81,13 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.15
+## What is new in 1.2.16
 
-- **The Atlas reads Valheim 1.0.20 worlds** (world version 42), and the bundled plugins write and clear the game's new cheated mark. [World file formats](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-file-formats)
-- **Packages land the way a mod manager lays them out.** Plugins, patchers and configs go where r2modman and Gale put them, and an existing config file is never overwritten. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
-- **A mod can be switched off and on** from its row menu, and patchers belong to their realm. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
-- **The Mods table rests on name**, with Author, Installed on and Updated columns and a pill that says where a mod came from. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
-- **The Configs screen lists folders and yaml, json and md files**, and a mod's row menu opens its configs. [Configs (Runes)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Configs-(Runes))
-- **Everything 1.2.14 brought** is in here too: following a Gale profile and the Herald's new look. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **The Herald works per realm.** Each realm has its own switch, webhook and status post, and event posts split into routine news, crashes (with an optional role ping) and players joining or leaving, each sent where you choose. A forum channel gives every realm its own forum post, and the Discord screen previews the post before anything is sent. [Discord (Herald)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-(Herald))
+- **A mod says what it needs.** Installing a mod offers the mods it depends on, and a row whose dependency is missing, too old or switched off says so. [Mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods)
+- **Gale profiles bring their config files**, each with a preview of what changes, and the mods only your server has are listed beside them. [Gale profiles](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Gale-profiles)
+- **Make a test copy of a realm**, unlisted, with its own world and mods, and optionally a copy of your character. [Multiple servers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers)
+- **The Saga keeps two running realms apart**, so each realm's log shows its own lines. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 
