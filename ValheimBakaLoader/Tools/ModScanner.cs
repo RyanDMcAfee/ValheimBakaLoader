@@ -151,8 +151,13 @@ namespace ValheimBakaLoader.Tools
 
             // After the patchers are paired, because a mod is off only when BOTH of its folders
             // hold nothing BepInEx would load.
+            // The GUIDs too, once both folders are known, since a patcher DLL can name a plugin
+            // as well. Cached per file, so a rescan of an unchanged realm opens no DLL.
             foreach (var mod in results)
+            {
                 mod.Disabled = ModSwitch.IsDisabled(mod.PluginDirectory, mod.PatcherDirectory);
+                mod.PluginGuids = PluginGuidReader.ReadFolders(mod.PluginDirectory, mod.PatcherDirectory);
+            }
 
             Logger.Information("Mod scan complete: found {0} installed mod(s).", results.Count);
             return results;

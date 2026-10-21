@@ -75,6 +75,13 @@ namespace ValheimBakaLoader.Tools.Models
         /// </summary>
         public bool IsPatcher { get; set; }
 
+        /// <summary>
+        /// The plugin GUIDs this mod's DLLs declare in [BepInPlugin], read by the scan. BepInEx
+        /// names config files after them, so they pair a config with its mod when the file name
+        /// looks nothing like the package. Never null; empty when no DLL could be read.
+        /// </summary>
+        public string[] PluginGuids { get; set; } = Array.Empty<string>();
+
         /// <summary>Optional website URL from the manifest ("website_url").</summary>
         public string Website { get; set; }
 

@@ -216,9 +216,17 @@ namespace ValheimBakaLoader.Forms
         /// A name shorter than three letters matches nothing on its own: "Ab" is inside half the
         /// files on any server.
         /// </para>
+        /// <para>
+        /// The names are only a guess, and the guess misses whenever the GUID reads nothing like
+        /// the package ("MySix_ForgeOfPotential" writes "com.mysix.forgeofpotential.cfg"). So when
+        /// the GUIDs the mod's DLLs declare are known (<paramref name="pluginGuids"/>), a file
+        /// named "guid.cfg" or "guid.anything.cfg", or one whose first folder is named after the
+        /// GUID, belongs to the mod too, ignoring case. The names stay as the fallback for a mod
+        /// whose DLL could not be read.
+        /// </para>
         /// </summary>
         public static List<string> MatchForMod(IEnumerable<string> files, string modName, string author,
-            string manifestName, IEnumerable<string> packageFolders)
+            string manifestName, IEnumerable<string> packageFolders, IEnumerable<string> pluginGuids = null)
         {
             var names = new List<string>();
             void Add(string value)
@@ -235,6 +243,10 @@ namespace ValheimBakaLoader.Forms
                 .Where(f => !string.IsNullOrWhiteSpace(f))
                 .Select(f => f.Trim())
                 .ToList();
+            var guids = (pluginGuids ?? Enumerable.Empty<string>())
+                .Where(g => !string.IsNullOrWhiteSpace(g))
+                .Select(g => g.Trim())
+                .ToList();
 
             var matched = new List<string>();
             foreach (var file in files ?? Enumerable.Empty<string>())
@@ -247,10 +259,25 @@ namespace ValheimBakaLoader.Forms
                 var byName = names.Any(n => squashed.Contains(n));
                 var byFolder = parts.Length > 1
                     && folders.Any(f => string.Equals(f, parts[0], StringComparison.OrdinalIgnoreCase));
-                if (byName || byFolder) matched.Add(file);
+                if (byName || byFolder || ByGuid(parts, leaf, guids)) matched.Add(file);
             }
             matched.Sort(ComparePaths);
             return matched;
+        }
+
+        // The GUID is compared whole, never squashed or searched inside a name: it is the one
+        // thing here that is not a guess, and "com.a.b" sitting inside "com.a.bc.cfg" is another
+        // plugin's file.
+        private static bool ByGuid(string[] parts, string leaf, List<string> guids)
+        {
+            foreach (var guid in guids)
+            {
+                if (parts.Length > 1 && string.Equals(parts[0], guid, StringComparison.OrdinalIgnoreCase)) return true;
+                if (!leaf.EndsWith(".cfg", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(leaf, guid + ".cfg", StringComparison.OrdinalIgnoreCase)) return true;
+                if (leaf.StartsWith(guid + ".", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         /// <summary>Lower case, with "_", "-" and spaces taken out. Dots stay, so the author

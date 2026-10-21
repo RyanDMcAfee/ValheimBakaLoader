@@ -8471,7 +8471,7 @@ namespace ValheimBakaLoader.Forms
                 var folders = new[] { mod.PluginDirectory, mod.PatcherDirectory }
                     .Where(d => !string.IsNullOrWhiteSpace(d))
                     .Select(d => Path.GetFileName(d.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)));
-                var files = ConfigFiles.MatchForMod(all, mod.ModName, mod.Author, mod.ThunderstoreName, folders);
+                var files = ConfigFiles.MatchForMod(all, mod.ModName, mod.Author, mod.ThunderstoreName, folders, mod.PluginGuids);
                 return Task.FromResult<object>(new { files });
             });
 
