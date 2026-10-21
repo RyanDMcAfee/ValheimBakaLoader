@@ -79,6 +79,9 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("discordLinkToBakaLoader")] public bool? DiscordLinkToBakaLoader { get; set; }
         [JsonProperty("discordStatusMessageSignature")] public string DiscordStatusMessageSignature { get; set; }
         [JsonProperty("customJoinDomain")] public string CustomJoinDomain { get; set; }
+        // True once the single status post has been handed to the realm it described; see
+        // UserPreferences.HeraldPerRealmMigrated.
+        [JsonProperty("heraldPerRealmMigrated")] public bool? HeraldPerRealmMigrated { get; set; }
 
         // -- Nested collections --
 

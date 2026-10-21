@@ -184,14 +184,19 @@ namespace ValheimBakaLoader.Tools
         private void SendEmbed(string title, string description, int color)
         {
             var prefs = UserPrefsProvider.LoadPreferences();
-            var webhookUrl = prefs?.DiscordWebhookUrl;
+            // The app-wide Discord switch is the master over everything the Herald sends: off
+            // means nothing from any realm, the event posts included.
+            if (prefs == null || !prefs.DiscordSharingEnabled) return;
+            var webhookUrl = prefs.DiscordWebhookUrl?.Trim();
             if (string.IsNullOrWhiteSpace(webhookUrl)) return;
 
-            var threadId = prefs?.DiscordWebhookThreadId;
+            // Escaped the way the status service escapes it. The box takes whatever is pasted,
+            // and a stray character in a thread id must not become a second query parameter.
+            var threadId = prefs.DiscordWebhookThreadId?.Trim();
             if (!string.IsNullOrWhiteSpace(threadId))
             {
                 var separator = webhookUrl.Contains("?") ? "&" : "?";
-                webhookUrl = $"{webhookUrl}{separator}thread_id={threadId}";
+                webhookUrl = $"{webhookUrl}{separator}thread_id={Uri.EscapeDataString(threadId)}";
             }
 
             var json = BuildEventPayload(title, description, color, prefs);

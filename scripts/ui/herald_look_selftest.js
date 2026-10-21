@@ -14,7 +14,8 @@
  *
  * The rules:
  *   1. All blank: the line names the webhook's own name, the logo, the server name as the title
- *      and the link, and a save carries blank boxes and the switch on.
+ *      and the link, and a save carries blank boxes and the switch on. Since 1.2.16 the title and
+ *      the status line are the realm's and ride in its Herald block, never as app-wide keys.
  *   2. Every box set: the line names each of them and a save carries each of them.
  *   3. The switch off takes the link out of the line and out of the save as false.
  *   4. A picture link that is not a picture shows the one refusal sentence and sends nothing; it
@@ -22,7 +23,10 @@
  *   5. A name Discord refuses does the same.
  *   6. The host side's own refusal keeps the text and shows the sentence.
  *   7. With Discord sharing off the line says the look is saved and nothing is posted.
- *   8. A repaint from the saved preferences fills the boxes and the switch and drops a refusal.
+ *   8. A repaint from the saved preferences fills the boxes and the switch and drops a refusal,
+ *      and leaves the realm's title and status line to the realm's own repaint.
+ *  12. With the master on and this realm's own switch off, the line says the look is kept and
+ *      nothing is posted for this realm.
  *   9. In the browser preview nothing is sent and the hall still answers.
  *  10. The page and the host side hold the same picture rules and name rules.
  *  11. The wiring: where the controls sit, what is bound to them, the save, the redraws, the
@@ -90,7 +94,9 @@ function switchEl(on) {
 }
 
 /* A fresh hall: the real block, the controls it reads, and a record of every save. heraldSave
-   is the page's own shape: the base keys, then the look, then the extras. */
+   is the page's own shape: the base keys with the realm's block (whose title and status line
+   are read off the same two boxes, as heraldRealmValues reads them), then the look, then the
+   extras. The realm block itself is driven for real in herald_realm_selftest.js. */
 function hall(opts) {
   opts = opts || {};
   const sent = [];
@@ -102,6 +108,7 @@ function hall(opts) {
     "#heraldLookStat": { className: "", textContent: "" },
     "#tHeraldLink": switchEl(opts.link !== false),
     "#tHerald": switchEl(opts.sharing !== false),
+    "#tHeraldRealm": switchEl(opts.realm !== false),
   };
   const context = {
     Native: { available: opts.native !== false },
@@ -112,7 +119,8 @@ function hall(opts) {
     $: sel => el[sel] || null,
   };
   context.heraldSave = extra => {
-    sent.push(JSON.parse(JSON.stringify(Object.assign({ DiscordSharingEnabled: true }, context.heraldLookValues(), extra || {}))));
+    const realm = { Realm: "Final Sunset", Title: el["#heraldTitle"].value.trim(), StatusLine: el["#heraldStatusLine"].value.trim() };
+    sent.push(JSON.parse(JSON.stringify(Object.assign({ DiscordSharingEnabled: true, Herald: realm }, context.heraldLookValues(), extra || {}))));
     if (opts.onSave) return opts.onSave(context);
     return Promise.resolve(opts.reply === undefined ? {} : opts.reply);
   };
@@ -147,8 +155,9 @@ function preview(parts) {
     const s = h.sent[0];
     assert.strictEqual(s.DiscordBotName, "");
     assert.strictEqual(s.DiscordAvatarUrl, "");
-    assert.strictEqual(s.DiscordTitle, "");
-    assert.strictEqual(s.DiscordStatusLine, "");
+    assert.strictEqual(s.Herald.Title, "");
+    assert.strictEqual(s.Herald.StatusLine, "");
+    assert.ok(!("DiscordTitle" in s) && !("DiscordStatusLine" in s), "the title or status line went out as an app-wide key");
     assert.strictEqual(s.DiscordLinkToBakaLoader, true);
   });
 
@@ -163,8 +172,9 @@ function preview(parts) {
     const s = h.sent[0];
     assert.strictEqual(s.DiscordBotName, NAME);
     assert.strictEqual(s.DiscordAvatarUrl, AVATAR);
-    assert.strictEqual(s.DiscordTitle, TITLE);
-    assert.strictEqual(s.DiscordStatusLine, STATUS);
+    assert.strictEqual(s.Herald.Title, TITLE);
+    assert.strictEqual(s.Herald.StatusLine, STATUS);
+    assert.ok(!("DiscordTitle" in s) && !("DiscordStatusLine" in s), "the title or status line went out as an app-wide key");
   });
 
   await test("3. the switch off: no link in the line, false in the save", async () => {
@@ -190,7 +200,7 @@ function preview(parts) {
     await h.context.heraldSave();
     assert.strictEqual(h.sent.length, 1);
     assert.ok(!("DiscordAvatarUrl" in h.sent[0]), "a switch press carried the refused link");
-    assert.strictEqual(h.sent[0].DiscordTitle, TITLE);
+    assert.strictEqual(h.sent[0].Herald.Title, TITLE);
     assert.strictEqual(h.line().textContent, "ᚦ " + T("herald.look.avatar.refused"), "the refusal fell off on a switch press");
 
     fill(h, { avatar: "https://i.imgur.com/AbCdEf" });
@@ -238,12 +248,14 @@ function preview(parts) {
     fill(h, { avatar: "nope" });
     await h.context.heraldLookCommit();
     assert.strictEqual(h.line().className, "wiz-stat bad");
-    h.context.heraldApplyLook({ DiscordBotName: NAME, DiscordAvatarUrl: AVATAR, DiscordTitle: null,
-                                DiscordStatusLine: STATUS, DiscordLinkToBakaLoader: false });
+    fill(h, { title: TITLE, status: STATUS });
+    h.context.heraldApplyLook({ DiscordBotName: NAME, DiscordAvatarUrl: AVATAR, DiscordTitle: "an app-wide title",
+                                DiscordStatusLine: null, DiscordLinkToBakaLoader: false });
     assert.strictEqual(h.el["#heraldName"].value, NAME);
     assert.strictEqual(h.el["#heraldAvatar"].value, AVATAR);
-    assert.strictEqual(h.el["#heraldTitle"].value, "");
-    assert.strictEqual(h.el["#heraldStatusLine"].value, STATUS);
+    /* The realm's two boxes are the realm's repaint to fill; the app-wide read leaves them. */
+    assert.strictEqual(h.el["#heraldTitle"].value, TITLE, "the app-wide repaint wrote over the realm's title");
+    assert.strictEqual(h.el["#heraldStatusLine"].value, STATUS, "the app-wide repaint wrote over the realm's status line");
     assert.strictEqual(h.el["#tHeraldLink"].classList.contains("on"), false, "the switch is drawn on while the preference is off");
     assert.strictEqual(h.line().className, "wiz-stat ok");
     /* A file from before the look has no key at all, and that is the default: on. */
@@ -293,26 +305,38 @@ function preview(parts) {
   });
 
   await test("11. the wiring around the block", async () => {
-    /* Under the webhook fields, in the sharing card, before the card about what the post carries. */
+    /* The app-wide look under the webhook fields, in the sharing card. The title and the status
+       line are the realm's since 1.2.16, so they sit in the realm's card under its webhook. */
     const card = HTML.slice(HTML.indexOf('<div class="card b-herald">'), HTML.indexOf('<div class="card b-heraldshare">'));
     const order = ['id="heraldUrl"', 'id="heraldThread"', 'id="heraldName"', 'id="heraldAvatar"',
-                   'id="heraldTitle"', 'id="heraldStatusLine"', 'id="tHeraldLink"', 'id="heraldLookStat"'];
+                   'id="tHeraldLink"', 'id="heraldLookStat"'];
     let at = -1;
     for (const id of order) {
       const i = card.indexOf(id);
       assert.ok(i > at, id + " is not where the hall puts it");
       at = i;
     }
+    assert.ok(!card.includes('id="heraldTitle"') && !card.includes('id="heraldStatusLine"'),
+      "the title or status line is still in the app-wide card");
+    const realmCard = HTML.slice(HTML.indexOf('<div class="card b-heraldshare">'), HTML.indexOf("<!-- THE POST -->"));
+    const realmOrder = ['id="tHeraldRealm"', 'id="heraldRealmUrl"', 'id="heraldRealmThread"', 'id="heraldTitle"', 'id="heraldStatusLine"'];
+    at = -1;
+    for (const id of realmOrder) {
+      const i = realmCard.indexOf(id);
+      assert.ok(i > at, id + " is not where the realm's card puts it");
+      at = i;
+    }
     assert.ok(/<span class="toggle on" id="tHeraldLink" data-t/.test(card), "the link switch is not on by default");
-    for (const [id, key] of [["heraldName", "herald.look.name.label"], ["heraldAvatar", "herald.look.avatar.label"],
-                             ["heraldTitle", "herald.look.title.label"], ["heraldStatusLine", "herald.look.status.label"]])
-      assert.ok(card.includes('<label for="' + id + '" data-i18n="' + key + '">'), id + " has no label");
+    for (const [id, key, where] of [["heraldName", "herald.look.name.label", card], ["heraldAvatar", "herald.look.avatar.label", card],
+                                    ["heraldTitle", "herald.look.title.label", realmCard], ["heraldStatusLine", "herald.look.status.label", realmCard]])
+      assert.ok(where.includes('<label for="' + id + '" data-i18n="' + key + '">'), id + " has no label");
     assert.ok(card.includes('data-i18n="herald.look.avatar.note"'), "the plain note about public image links is gone");
 
     const save = APP.slice(APP.indexOf("function heraldSave(extra){"), APP.indexOf("\n}", APP.indexOf("function heraldSave(extra){")));
-    assert.ok(save.includes("},heraldLookValues(),extra||{})});"), "heraldSave does not carry the look");
+    assert.ok(save.includes("},heraldLookValues(),extra||{})}))"), "heraldSave does not carry the look");
+    assert.ok(save.includes("Herald:realm") && save.includes("const realm=heraldRealmValues();"), "heraldSave does not carry the realm's block");
     assert.ok(save.includes("heraldRenderLookLine()"), "a save does not repaint the line");
-    assert.ok(/\["tHerald","tHeraldAddr","tHeraldPass","tHeraldEvents","tHeraldLink"\]\.forEach\(id=>\s*\$\("#"\+id\)\.addEventListener\("click",\(\)=>heraldSave\(\)\)\);/.test(APP),
+    assert.ok(/\["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldEvents","tHeraldLink"\]\.forEach\(id=>\s*\$\("#"\+id\)\.addEventListener\("click",\(\)=>heraldSave\(\)\)\);/.test(APP),
       "the link switch does not save");
     assert.ok(APP.includes('["heraldName","heraldAvatar","heraldTitle","heraldStatusLine"].forEach(id=>{\n  $("#"+id).addEventListener("change",()=>{heraldLookCommit();});'),
       "leaving a box does not commit the look");
@@ -336,16 +360,36 @@ function preview(parts) {
                       "herald.look.preview.off", "host.discord.author"])
       assert.ok(KEYS[id] && typeof KEYS[id].lore === "string", "the catalog has no " + id);
 
-    /* The host side reads and writes every one, and refuses before it writes. */
-    for (const key of ["DiscordBotName", "DiscordAvatarUrl", "DiscordStatusLine", "DiscordTitle", "DiscordLinkToBakaLoader"]) {
+    /* The host side reads and writes every one, and refuses before it writes: the app-wide three
+       as app settings, the realm's two in its Herald block. */
+    for (const key of ["DiscordBotName", "DiscordAvatarUrl", "DiscordLinkToBakaLoader"]) {
       assert.ok(BRIDGE.includes('Apply("' + key + '"'), "userprefs.save does not write " + key);
       assert.ok(BRIDGE.includes("prefs." + key + ",\n"), "userprefs.get does not hand back " + key);
     }
+    for (const [key, field] of [["Title", "HeraldTitle"], ["StatusLine", "HeraldStatusLine"]]) {
+      assert.ok(BRIDGE.includes('Text("' + key + '", v => realm.' + field + ' = v);'), "userprefs.save does not write the realm's " + key);
+      assert.ok(BRIDGE.includes(key + " = r." + field + ","), "userprefs.get does not hand back the realm's " + key);
+    }
+    assert.ok(!BRIDGE.includes('Apply("DiscordTitle"') && !BRIDGE.includes('Apply("DiscordStatusLine"'),
+      "userprefs.save still writes an app-wide title or status line");
     const check = BRIDGE.indexOf("CheckHeraldLook(dto);");
     const mutate = BRIDGE.indexOf("UserPrefsProvider.Mutate(current =>", check);
     assert.ok(check > 0 && mutate > check, "the look is not checked before the save writes");
     assert.ok(BRIDGE.includes('HostFacingException("userprefs.save.badAvatarUrl"'));
     assert.ok(BRIDGE.includes('HostFacingException("userprefs.save.badBotName"'));
+  });
+
+  await test("12. the master on and this realm off: kept, and nothing posted for this realm", async () => {
+    const h = hall({ realm: false });
+    fill(h, { title: TITLE });
+    assert.strictEqual(await h.context.heraldLookCommit(), true);
+    assert.strictEqual(h.sent.length, 1, "the look was not saved while this realm is off");
+    assert.strictEqual(h.line().className, "wiz-stat dim");
+    assert.strictEqual(h.line().textContent, T("herald.look.preview.realm_off"));
+    /* The master off says so first: that is the switch that holds every realm. */
+    const both = hall({ realm: false, sharing: false });
+    both.context.heraldRenderLookLine();
+    assert.strictEqual(both.line().textContent, T("herald.look.preview.off"));
   });
 
   if (failures.length) {

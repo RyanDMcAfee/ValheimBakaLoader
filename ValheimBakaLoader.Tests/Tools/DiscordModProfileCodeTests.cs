@@ -38,7 +38,7 @@ namespace ValheimBakaLoader.Tests.Tools
                 ModProfileCodeKind = kind,
                 ModProfileCode = code,
             };
-            var payload = JObject.Parse(DiscordStatusService.BuildEmbedPayload(snapshot, new UserPreferences()));
+            var payload = JObject.Parse(DiscordStatusService.BuildEmbedPayload(snapshot, new UserPreferences(), new ServerPreferences()));
             return (JArray)payload["embeds"][0]["fields"];
         }
 
@@ -147,7 +147,7 @@ namespace ValheimBakaLoader.Tests.Tools
         public void The_bridge_hands_the_posted_realms_code_to_the_post_and_refuses_by_name()
         {
             var bridge = AppSourceTree.Files()["BlendWindow.Bridge.cs"];
-            var from = bridge.IndexOf("private DiscordStatusSnapshot BuildDiscordSnapshot()", StringComparison.Ordinal);
+            var from = bridge.IndexOf("private DiscordStatusSnapshot BuildDiscordSnapshot(string profile)", StringComparison.Ordinal);
             var to = bridge.IndexOf("private object BuildSetupStatus()", from, StringComparison.Ordinal);
             Assert.True(from > 0 && to > from, "the snapshot builder moved");
             var snapshot = bridge.Substring(from, to - from);
@@ -221,12 +221,16 @@ namespace ValheimBakaLoader.Tests.Tools
 
         private sealed class CountingDiscord : IDiscordStatusService
         {
-            public int Requests { get; private set; }
-            public Func<DiscordStatusSnapshot> SnapshotProvider { get; set; }
-            public void RequestUpdate() => Requests++;
-            public Task<DiscordStatusResult> PublishNowAsync() => throw new NotSupportedException();
+            /// <summary>Every refresh asked for: one per realm asked, and one for an ask of every realm.</summary>
+            public int Requests => Asked.Count + AskedAll;
+            public readonly List<string> Asked = new();
+            public int AskedAll { get; private set; }
+            public Func<string, DiscordStatusSnapshot> SnapshotProvider { get; set; }
+            public void RequestUpdate(string realm) => Asked.Add(realm);
+            public void RequestUpdateAll() => AskedAll++;
+            public Task<DiscordStatusResult> PublishNowAsync(string realm) => throw new NotSupportedException();
             public Task<DiscordStatusResult> ValidateWebhookAsync(string url) => throw new NotSupportedException();
-            public Task<DiscordStatusResult> RemoveStatusMessageAsync() => throw new NotSupportedException();
+            public Task<DiscordStatusResult> RemoveStatusMessageAsync(string realm) => throw new NotSupportedException();
         }
 
         private static ServerPreferences Realm(string name, string kind = null, string code = null) => new()
@@ -237,12 +241,18 @@ namespace ValheimBakaLoader.Tests.Tools
             ModProfileCode = code,
         };
 
-        /// <summary>The save as the handler runs it, minus the app settings it also carries.</summary>
-        private static (bool Moved, bool Refreshed) Save(JObject dto, string active, RealmStore store, CountingDiscord discord)
+        /// <summary>
+        /// The save as the handler runs it, minus the app settings it also carries: whether an
+        /// app-wide value moved and which realm's Herald block moved are worked out inside the
+        /// handler's gated write, and are handed in here as what that write found.
+        /// </summary>
+        private static (bool Moved, bool Refreshed) Save(JObject dto, string active, RealmStore store, CountingDiscord discord,
+            bool appWideMoved = false, string heraldRealmMoved = null)
         {
             var modCode = BlendWindow.ReadModProfileCode(dto, active, store);
             var moved = BlendWindow.WriteModProfileCode(modCode, store);
-            var refreshed = BlendWindow.RefreshDiscordPostAfterSave(dto, moved, discord);
+            var refreshed = BlendWindow.RefreshDiscordPostAfterSave(appWideMoved,
+                new[] { heraldRealmMoved, moved ? modCode.Realm : null }, discord);
             return (moved, refreshed);
         }
 
@@ -326,19 +336,26 @@ namespace ValheimBakaLoader.Tests.Tools
             Save(Dto("gale", ""), "Final Sunset", store, discord);
             Assert.Equal(3, discord.Requests);
 
-            // A save carrying a Discord switch AND a moved code still asks once.
-            var both = Dto("thunderstore", TsCode);
-            both["DiscordSharePassword"] = true;
-            Save(both, "Final Sunset", store, discord);
+            // A save that moved this realm's own Herald block AND its code still asks once, and
+            // asks for this realm's post only.
+            Save(Dto("thunderstore", TsCode), "Final Sunset", store, discord, heraldRealmMoved: "Final Sunset");
             Assert.Equal(4, discord.Requests);
+            Assert.Equal(new[] { "Final Sunset", "Final Sunset", "Final Sunset", "Final Sunset" }, discord.Asked);
 
-            // A Discord switch with no code keys at all still refreshes, as it did before 1.2.11.
-            var plain = Save(new JObject { ["DiscordShareAddress"] = false }, "Final Sunset", store, discord);
+            // An app-wide value that moved (the master switch, the app-wide webhook, the look, the
+            // join domain) shows on every realm's post, so every realm is asked, once, and the
+            // realm's own ask is folded into it.
+            var plain = Save(new JObject { ["DiscordBotName"] = "Ravenhold" }, "Final Sunset", store, discord,
+                appWideMoved: true, heraldRealmMoved: "Final Sunset");
             Assert.False(plain.Moved);
+            Assert.True(plain.Refreshed);
+            Assert.Equal(1, discord.AskedAll);
             Assert.Equal(5, discord.Requests);
 
-            // A save of something the post does not show asks nothing.
+            // A save of something the post does not show asks nothing, and so does a save that
+            // carried every Discord switch without moving any: the hall sends them all each time.
             Save(new JObject { ["Language"] = "en" }, "Final Sunset", store, discord);
+            Assert.False(Save(new JObject { ["DiscordSharingEnabled"] = true }, "Final Sunset", store, discord).Refreshed);
             Assert.Equal(5, discord.Requests);
         }
 
@@ -369,7 +386,7 @@ namespace ValheimBakaLoader.Tests.Tools
             var read = handler.IndexOf("ReadModProfileCode(dto, ActiveProfileName, ServerPrefsProvider)", StringComparison.Ordinal);
             var mutate = handler.IndexOf("UserPrefsProvider.Mutate(", StringComparison.Ordinal);
             var write = handler.IndexOf("var modCodeMoved = WriteModProfileCode(modCode, ServerPrefsProvider);", StringComparison.Ordinal);
-            var refresh = handler.IndexOf("RefreshDiscordPostAfterSave(dto, modCodeMoved, DiscordStatus);", StringComparison.Ordinal);
+            var refresh = handler.IndexOf("RefreshDiscordPostAfterSave(heraldAppMoved,", StringComparison.Ordinal);
             Assert.True(read > 0 && mutate > read && write > mutate && refresh > write,
                 "userprefs.save no longer reads the code first, then writes it, then refreshes the post");
         }

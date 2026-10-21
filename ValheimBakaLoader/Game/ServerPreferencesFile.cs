@@ -62,6 +62,21 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("modProfileCodeKind")] public string ModProfileCodeKind { get; set; }
         [JsonProperty("modProfileCode")] public string ModProfileCode { get; set; }
 
+        // -- The realm's own Herald post (1.2.16). Each realm keeps a post of its own, so the
+        //    switch, the webhook, the thread, what the post carries and the post itself live
+        //    here. Null keys read as a realm that does not share, with the app-wide webhook. --
+
+        [JsonProperty("heraldOn")] public bool? HeraldOn { get; set; }
+        [JsonProperty("heraldWebhookUrl")] public string HeraldWebhookUrl { get; set; }
+        [JsonProperty("heraldThreadId")] public string HeraldThreadId { get; set; }
+        [JsonProperty("heraldShareAddress")] public bool? HeraldShareAddress { get; set; }
+        [JsonProperty("heraldSharePassword")] public bool? HeraldSharePassword { get; set; }
+        [JsonProperty("heraldTitle")] public string HeraldTitle { get; set; }
+        [JsonProperty("heraldStatusLine")] public string HeraldStatusLine { get; set; }
+        [JsonProperty("heraldStatusMessageId")] public string HeraldStatusMessageId { get; set; }
+        [JsonProperty("heraldStatusMessageSignature")] public string HeraldStatusMessageSignature { get; set; }
+        [JsonProperty("heraldStatusThreadId")] public string HeraldStatusThreadId { get; set; }
+
         // -- RCON --
 
         [JsonProperty("rconEnabled")] public bool? RconEnabled { get; set; }

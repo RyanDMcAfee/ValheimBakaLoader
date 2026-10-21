@@ -809,6 +809,19 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.sharing.label",
                 "herald.sharing.toggle",
                 "herald.sharing.toggle.title",
+                // 1.2.16: the note that says the webhook below is every realm's unless it has its
+                // own, and the realm's own card: its caption, switch, webhook and thread. The line
+                // naming the realm and the line under its webhook are app.js's
+                // (heraldRenderRealmLines), and so is the pill in the head.
+                "herald.sharing.app.note",
+                "herald.realm.head",
+                "herald.realm.toggle",
+                "herald.realm.toggle.title",
+                "herald.realm.webhook",
+                "herald.realm.webhook.placeholder",
+                "herald.realm.webhook.title",
+                "herald.realm.thread",
+                "herald.realm.thread.placeholder",
                 "herald.field.webhook",
                 "herald.field.webhook.title",
                 "herald.field.thread",

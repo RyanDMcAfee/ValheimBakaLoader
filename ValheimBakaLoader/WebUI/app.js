@@ -203,6 +203,11 @@ const HOST_SENTENCES=[
   {named:"userprefs.save.modCodeNoRealm", textId:"herald.modcode.no_realm"},
   {named:"userprefs.save.badAvatarUrl",   textId:"herald.look.avatar.refused"},
   {named:"userprefs.save.badBotName",     textId:"herald.look.name.refused"},
+  /* A realm deleted between a press on the Discord hall and the write or the send. The hall
+     names the realm it was drawn for, so the host side refuses rather than act on another. */
+  {named:"userprefs.save.heraldNoRealm",  textId:"herald.realm.gone.save"},
+  {named:"discord.publish.noSuchRealm",   textId:"herald.realm.gone.send"},
+  {named:"discord.remove.noSuchRealm",    textId:"herald.realm.gone.send"},
 ];
 /* Every way a language pack download can end, as the pack service names it in the result,
    beside the catalog entry that words it. This is the same question HOST_SENTENCES answers
@@ -707,6 +712,7 @@ function repaintBootCopy(){
   try{heraldRenderUrlStat();}catch(_){}   /* and the line under the webhook box */
   try{heraldRenderModCodeLine();}catch(_){} /* and the line under the mod profile code */
   try{heraldRenderLookLine();}catch(_){}  /* and the line under the post's look */
+  try{heraldRenderRealmLines();}catch(_){} /* and the realm's own head and webhook line */
   try{renderTermStream();}catch(_){}      /* the Saga console's live or paused chip */
   try{renderMead();}catch(_){}            /* the horn of mead, embers and all */
   try{renderTermEmpty();}catch(_){}       /* the Saga console's empty state */
@@ -771,6 +777,7 @@ function applyLanguage(code){
   try{heraldRenderUrlStat();}catch(_){}     /* and the line under its webhook box */
   try{heraldRenderModCodeLine();}catch(_){} /* and the one under its mod profile code */
   try{heraldRenderLookLine();}catch(_){}    /* and the one under the post's look */
+  try{heraldRenderRealmLines();}catch(_){}  /* and the realm's own head and webhook line */
   try{renderTermStream();}catch(_){}        /* the Saga console's live/paused chip */
   try{renderAtlasSide();}catch(_){}         /* the Map hall's side panel */
   try{renderWeather();}catch(_){}           /* and the weather box inside it */
@@ -9479,9 +9486,11 @@ async function runConnectionTest(){
   }
 }
 
-/* ---------- HERALD (Discord sharing · one self-editing status post) ----------
-   The C# DiscordStatusService owns the post: it debounces edits and PATCHes the
-   same message forever. This hall only reads/writes prefs + the 3 discord.* RPCs. */
+/* ---------- HERALD (Discord sharing · one self-editing status post per realm) ----------
+   The C# DiscordStatusService owns the posts: it debounces edits per realm and PATCHes
+   each realm's own message forever. This hall only reads/writes prefs + the 3 discord.*
+   RPCs. The master switch, the app-wide webhook and the look are the app's; everything
+   about one post is the realm on screen's (HERALD-REALM below). */
 let HERALD_HAS_POST=false;
 const HERALD_URL_RE=/^https:\/\/((ptb|canary)\.)?discord(app)?\.com\/api\/(v\d+\/)?webhooks\/\d+\/[\w-]+/;
 /* The Discord hall's opening sentence. One entry with one named slot, and the bold
@@ -9499,17 +9508,18 @@ function heraldRenderPost(){
 }
 function heraldApply(up){
   setT("tHerald",up.DiscordSharingEnabled);
-  setT("tHeraldAddr",up.DiscordShareAddress);
-  setT("tHeraldPass",up.DiscordSharePassword);
   setT("tHeraldEvents",up.DiscordEventPosts);
   $("#heraldUrl").value=up.DiscordWebhookUrl||"";
   $("#heraldThread").value=up.DiscordWebhookThreadId||"";
-  try{heraldApplyLook(up);}catch(_){} /* the name, picture, title, status line and link */
-  HERALD_HAS_POST=!!up.HasDiscordStatusMessage;
+  try{heraldApplyLook(up);}catch(_){} /* the name, picture and link */
+  /* Each realm's own block, then the realm on screen painted from it: its switch, webhook,
+     thread, share switches, title, status line and whether its post is placed. */
+  try{heraldRealmsFrom(up);heraldRenderRealm();}catch(_){}
   heraldRenderPost();
 }
 async function refreshHerald(){
   try{heraldRenderModCode();}catch(_){} /* the active realm's code, from its own profile */
+  try{heraldRenderRealm();}catch(_){}   /* and its own post's settings, from the last read */
   try{heraldRenderLookLine();}catch(_){} /* what the post is signed and headed with */
   if(!Native.available) return; /* preview keeps whatever the user clicked */
   const up=await rpc("userprefs.get");
@@ -9520,23 +9530,32 @@ function heraldSave(extra){
      switch is part of that answer, so every save of the hall's switches repaints it. */
   try{heraldRenderModCodeLine();}catch(_){}
   try{heraldRenderLookLine();}catch(_){}
-  return rpc("userprefs.save",{prefs:Object.assign({
+  try{heraldRenderRealmLines();}catch(_){}
+  /* The realm block names the realm the hall was drawn for, so a realm switch that lands
+     before the write cannot put this realm's switches on the other one. */
+  const realm=heraldRealmValues();
+  return Promise.resolve(rpc("userprefs.save",{prefs:Object.assign({
     DiscordSharingEnabled:swOn("tHerald"),
-    DiscordShareAddress:swOn("tHeraldAddr"),
-    DiscordSharePassword:swOn("tHeraldPass"),
     DiscordEventPosts:swOn("tHeraldEvents"),
     DiscordWebhookUrl:$("#heraldUrl").value.trim(),
-    DiscordWebhookThreadId:$("#heraldThread").value.trim()
-  },heraldLookValues(),extra||{})});
+    DiscordWebhookThreadId:$("#heraldThread").value.trim(),
+    Herald:realm
+  },heraldLookValues(),extra||{})})).then(r=>{
+    /* Kept by name once it is saved, so a switch away and back shows it without a read. */
+    if(r!==FAIL) heraldRealmRemember(realm);
+    return r;
+  });
 }
-["tHerald","tHeraldAddr","tHeraldPass","tHeraldEvents","tHeraldLink"].forEach(id=>
+["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldEvents","tHeraldLink"].forEach(id=>
   $("#"+id).addEventListener("click",()=>heraldSave()));
 /* HERALD-LOOK-BEGIN
    The Herald's look: the name and picture every post is signed with, the status post's title,
    a line of the host's own at the top of it, and the switch for the small BakaLoader line that
-   links to the project page. All app wide, like the rest of the hall, and all saved through
-   heraldSave. Every box is blank by default and blank is a real choice: the webhook's own
-   name, the BakaLoader logo, the server name as the title, no line.
+   links to the project page. The name, the picture and the switch are app wide; the title and
+   the status line belong to the realm on screen, like the post they head, and ride in its
+   Herald block (heraldRealmValues). All are saved through heraldSave. Every box is blank by
+   default and blank is a real choice: the webhook's own name, the BakaLoader logo, the server
+   name as the title, no line.
    Two of them can be refused, and the host side holds the same rules (DiscordHeraldLook.cs):
    a picture link has to be https and either end in an image ending or sit on one of the hosts
    that only serve images, and a name has to be one Discord takes (80 characters at most, and
@@ -9570,13 +9589,11 @@ function heraldLookNameProblem(v){
   if(n.length>HERALD_LOOK_NAME_MAX||/discord|clyde/i.test(n)) return "herald.look.name.refused";
   return null;
 }
-/* What a save carries for the look. A value that would be refused is left out, so it is never
-   sent and the rest of the hall still saves around it. */
+/* What a save carries for the app-wide look. A value that would be refused is left out, so it
+   is never sent and the rest of the hall still saves around it. The title and the status line
+   are the realm's and go in its block. */
 function heraldLookValues(){
-  const out={
-    DiscordTitle:heraldLookBox("heraldTitle"),
-    DiscordStatusLine:heraldLookBox("heraldStatusLine"),
-  };
+  const out={};
   const sw=$("#tHeraldLink");
   if(sw) out.DiscordLinkToBakaLoader=sw.classList.contains("on");
   const name=heraldLookBox("heraldName"), avatar=heraldLookBox("heraldAvatar");
@@ -9592,6 +9609,9 @@ function heraldRenderLookLine(){
   if(HERALD_LOOK_REFUSED){el.className="wiz-stat bad";el.textContent="ᚦ "+T(HERALD_LOOK_REFUSED);return;}
   const sharing=$("#tHerald");
   if(sharing&&!sharing.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.look.preview.off");return;}
+  /* The master on and this realm off: the look is kept, and this realm's post is not made. */
+  const mine=$("#tHeraldRealm");
+  if(mine&&!mine.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.look.preview.realm_off");return;}
   const name=heraldLookBox("heraldName"), avatar=heraldLookBox("heraldAvatar");
   const title=heraldLookBox("heraldTitle"), status=heraldLookBox("heraldStatusLine");
   const link=$("#tHeraldLink");
@@ -9605,14 +9625,13 @@ function heraldRenderLookLine(){
   el.className="wiz-stat ok";
   el.textContent=T("herald.look.preview",{parts:parts.join(T("herald.look.part.join"))});
 }
-/* Paint the boxes and the switch from the saved preferences, and drop a standing refusal:
-   it was about text that is no longer in the box. */
+/* Paint the app-wide boxes and the switch from the saved preferences, and drop a standing
+   refusal: it was about text that is no longer in the box. The title and the status line are
+   painted with the rest of the realm, by heraldRenderRealm. */
 function heraldApplyLook(up){
   const set=(id,v)=>{const el=$("#"+id); if(el) el.value=v||"";};
   set("heraldName",up.DiscordBotName);
   set("heraldAvatar",up.DiscordAvatarUrl);
-  set("heraldTitle",up.DiscordTitle);
-  set("heraldStatusLine",up.DiscordStatusLine);
   const sw=$("#tHeraldLink");
   if(sw) sw.classList.toggle("on",up.DiscordLinkToBakaLoader!==false);
   HERALD_LOOK_REFUSED=null;
@@ -9646,10 +9665,11 @@ async function heraldLookCommit(){
 });
 /* HERALD-MODCODE-BEGIN
    The mod profile code: the share code a mod manager hands out, which a player pastes into
-   their own manager to get this realm's mods. It is the one thing on this hall that belongs
-   to a REALM rather than to the app, because realms carry different mod sets, so it is painted
-   from S.prefs (the active realm's profile) and redrawn on every realm switch, and its save
-   names the realm it was typed on. It still goes through heraldSave, the road every other
+   their own manager to get this realm's mods. It belongs to a REALM rather than to the app,
+   because realms carry different mod sets, so it is painted from S.prefs (the active realm's
+   profile) and redrawn on every realm switch, and its save names the realm it was typed on.
+   Each realm has a post of its own since 1.2.16, so the code always rides on this realm's post
+   and on no other. It still goes through heraldSave, the road every other
    field on the hall takes; the host side writes it to that realm's profile.
    The check is light and the host side holds the same two patterns (ModProfileCodes.cs):
    letters, digits and dashes for Thunderstore, and for Gale the six character code or the
@@ -9679,19 +9699,11 @@ function heraldModCodeProblem(kind,code){
 function heraldModCodeName(kind){
   return kind==="gale"?T("herald.modcode.kind.gale"):T("herald.modcode.kind.thunderstore");
 }
-/* The realm the post is about right now, by the host side's own rule (BuildDiscordSnapshot):
-   a realm whose server is up, this one winning a tie, and this one when none is up. */
-function heraldPostRealm(){
-  const mine=S.profileName||(S.prefs&&S.prefs.ProfileName)||null;
-  const same=(a,b)=>String(a||"").toLowerCase()===String(b||"").toLowerCase();
-  const live=(S.servers||[]).filter(s=>s&&s.running);
-  if(!live.length||live.some(s=>same(s.name,mine))) return mine;
-  return live[0].name;
-}
 /* The line under the box: the refusal when there is one standing, otherwise what the post
-   carries for this realm. It only promises the post when the post will keep it: with Discord
-   sharing off there is no post, and while another realm's server is up the post is about that
-   realm and carries its code, so the line says the code is saved and why it is not showing. */
+   carries for this realm. It only promises the post when there will be one: with Discord
+   sharing off there is no post at all, and with this realm's own switch off there is none for
+   this realm, so the line says the code is saved and why it is not showing. Another realm's
+   server being up changes nothing here: that realm has a post of its own. */
 function heraldRenderModCodeLine(){
   const el=$("#heraldModCodeStat"); if(!el) return;
   const box=$("#heraldModCode");
@@ -9701,11 +9713,8 @@ function heraldRenderModCodeLine(){
   if(!code){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.none");return;}
   const sw=$("#tHerald");
   if(sw&&!sw.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.off");return;}
-  const mine=S.profileName||(S.prefs&&S.prefs.ProfileName)||null;
-  const about=heraldPostRealm();
-  if(about&&mine&&String(about).toLowerCase()!==String(mine).toLowerCase()){
-    el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.other",{realm:about});return;
-  }
+  const mine=$("#tHeraldRealm");
+  if(mine&&!mine.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.realm_off");return;}
   el.className="wiz-stat ok";
   el.textContent=T("herald.modcode.preview",{name:heraldModCodeName(kind)});
 }
@@ -9749,6 +9758,157 @@ async function heraldModCodeCommit(){
   return true;
 }
 /* HERALD-MODCODE-END */
+/* HERALD-REALM-BEGIN
+   The realm's own post (1.2.16, issue 24). Each realm keeps a status post of its own, so the
+   hall edits the realm on screen: its switch, its webhook and thread (blank is the app-wide
+   pair), what its post carries, its title and status line, and Publish and Remove act on its
+   post alone. The master switch, the app-wide webhook and the look stay the app's.
+   The blocks come from userprefs.get (HeraldRealms, one per realm) and are kept here by name,
+   so a realm switch repaints the hall from that realm's last read at once, the way the mod code
+   above repaints from S.prefs; the switch then reads the host side again. HERALD_REALM is the
+   realm the hall was last drawn for, and every save and every press names it rather than
+   whichever realm is on screen by the time the reply lands. */
+let HERALD_REALM=null;
+let HERALD_REALMS={};
+/* A realm with nothing read yet is what a new realm starts as: off, the app-wide webhook, the
+   address shared and the password not. */
+function heraldRealmDefaults(name){
+  return {Realm:name,On:false,WebhookUrl:"",ThreadId:"",ShareAddress:true,SharePassword:false,
+          Title:"",StatusLine:"",HasPost:false};
+}
+function heraldRealmKey(name){return String(name||"").toLowerCase();}
+function heraldRealmsFrom(up){
+  const next={};
+  ((up&&up.HeraldRealms)||[]).forEach(b=>{ if(b&&b.Realm) next[heraldRealmKey(b.Realm)]=b; });
+  HERALD_REALMS=next;
+}
+function heraldRealmEntry(name){
+  return Object.assign(heraldRealmDefaults(name),HERALD_REALMS[heraldRealmKey(name)]||{});
+}
+function heraldRealmOnScreen(){return S.profileName||(S.prefs&&S.prefs.ProfileName)||null;}
+/* What a save carries for this realm, read off the controls. */
+function heraldRealmValues(){
+  const box=id=>{const el=$("#"+id);return el?String(el.value||"").trim():"";};
+  const on=id=>{const el=$("#"+id);return !!(el&&el.classList.contains("on"));};
+  return {
+    Realm:HERALD_REALM||heraldRealmOnScreen(),
+    On:on("tHeraldRealm"),
+    WebhookUrl:box("heraldRealmUrl"),
+    ThreadId:box("heraldRealmThread"),
+    ShareAddress:on("tHeraldAddr"),
+    SharePassword:on("tHeraldPass"),
+    Title:box("heraldTitle"),
+    StatusLine:box("heraldStatusLine"),
+  };
+}
+/* A save keeps the realm's block here as well, so a switch away and back shows what was saved
+   without waiting on a read. */
+function heraldRealmRemember(values){
+  if(!values||!values.Realm) return;
+  const k=heraldRealmKey(values.Realm);
+  HERALD_REALMS[k]=Object.assign(heraldRealmEntry(values.Realm),values);
+}
+/* Whether a realm's post is placed, kept on its block; the line under The post follows the
+   realm on screen. */
+function heraldRealmPost(name,has){
+  const k=heraldRealmKey(name);
+  HERALD_REALMS[k]=Object.assign(heraldRealmEntry(name),{HasPost:!!has});
+  if(heraldRealmKey(name)===heraldRealmKey(HERALD_REALM)){HERALD_HAS_POST=!!has;heraldRenderPost();}
+}
+/* The words on the realm's part of the hall that are not inputs: the head naming the realm, and
+   the line under its webhook box. Redrawn on a language switch. */
+let HERALD_REALM_URL_STAT=null;
+function heraldRenderRealmLines(){
+  const name=HERALD_REALM||heraldRealmOnScreen()||"";
+  const head=$("#heraldRealmName");
+  if(head) head.textContent=name?T("herald.realm.editing",{name}):"";
+  const pill=$("#heraldRealmPill");
+  if(pill){pill.textContent=name?T("herald.realm.editing",{name}):"";pill.style.display=name?"":"none";}
+  const stat=$("#heraldRealmUrlStat");
+  if(!stat) return;
+  const s=HERALD_REALM_URL_STAT;
+  if(s){
+    stat.className=s.cls||"wiz-stat dim";
+    stat.textContent=(s.mark?s.mark+" ":"")+(s.text!=null?s.text:T(s.wordId,s.params));
+    return;
+  }
+  const own=$("#heraldRealmUrl"), app=$("#heraldUrl");
+  const ownUrl=own?String(own.value||"").trim():"", appUrl=app?String(app.value||"").trim():"";
+  stat.className="wiz-stat dim";
+  stat.textContent=ownUrl?"":appUrl?T("herald.realm.hook.stat.app"):T("herald.realm.hook.stat.none");
+}
+/* Paint the realm's part of the hall from its block. A switch to another realm reads the host
+   side again, because a realm made since the last read starts with the webhook and switches of
+   the realm it was made from. */
+function heraldRenderRealm(){
+  const name=heraldRealmOnScreen();
+  const moved=heraldRealmKey(name)!==heraldRealmKey(HERALD_REALM);
+  HERALD_REALM=name;
+  const b=heraldRealmEntry(name);
+  setT("tHeraldRealm",!!b.On);
+  setT("tHeraldAddr",b.ShareAddress!==false);
+  setT("tHeraldPass",!!b.SharePassword);
+  const set=(id,v)=>{const el=$("#"+id); if(el) el.value=v||"";};
+  set("heraldRealmUrl",b.WebhookUrl);
+  set("heraldRealmThread",b.ThreadId);
+  set("heraldTitle",b.Title);
+  set("heraldStatusLine",b.StatusLine);
+  HERALD_HAS_POST=!!b.HasPost;
+  HERALD_REALM_URL_STAT=null;
+  heraldRenderRealmLines();
+  heraldRenderPost();
+  try{heraldRenderLookLine();}catch(_){}
+  try{heraldRenderModCodeLine();}catch(_){}
+  if(moved&&HERALD_REALM!==null&&Native.available) heraldReadAgain();
+}
+/* One read of the host side at a time; the hall repaints when it lands, for the realm on
+   screen by then. */
+let HERALD_READING=null;
+function heraldReadAgain(){
+  if(HERALD_READING) return HERALD_READING;
+  HERALD_READING=Promise.resolve(rpc("userprefs.get")).then(up=>{
+    if(up!==FAIL&&up){heraldRealmsFrom(up);heraldRenderRealm();}
+  }).catch(()=>{}).then(()=>{HERALD_READING=null;});
+  return HERALD_READING;
+}
+/* Publish: this realm's post, made or refreshed now. Publishing switches the master and this
+   realm on, because a host who presses it wants the post. */
+async function heraldPublish(){
+  const realm=HERALD_REALM||heraldRealmOnScreen();
+  const own=$("#heraldRealmUrl"), app=$("#heraldUrl");
+  const url=(own?String(own.value||"").trim():"")||(app?String(app.value||"").trim():"");
+  if(!url){toast("ᚦ "+T("herald.publish.no_url.toast"));return false;}
+  setT("tHerald",true);
+  setT("tHeraldRealm",true);
+  await heraldSave();
+  if(!Native.available){heraldRealmPost(realm,true);toast("ᚺ "+T("herald.publish.preview.toast"));return true;}
+  const r=await rpc("discord.publish",{profile:realm});
+  if(r===FAIL) return false;
+  if(r.ok){
+    heraldRealmPost(realm,true);
+    toast("ᚺ "+T("herald.publish.done.toast"));
+    logLine("ok","[Herald] Discord status post published",null,null);
+    return true;
+  }
+  toast("ᚦ "+(r.error||T("herald.publish.failed.toast")));
+  return false;
+}
+/* Remove: this realm's post taken down. Its settings stay, so it can be published again. */
+async function heraldRemove(){
+  const realm=HERALD_REALM||heraldRealmOnScreen();
+  if(!Native.available){heraldRealmPost(realm,false);toast("ᚺ "+T("herald.remove.preview.toast"));return true;}
+  const r=await rpc("discord.remove",{profile:realm});
+  if(r===FAIL) return false;
+  if(r.ok){
+    heraldRealmPost(realm,false);
+    toast("ᚺ "+T("herald.remove.done.toast"));
+    logLine("warn","[Herald] Discord status post removed",null,null);
+    return true;
+  }
+  toast("ᚦ "+(r.error||T("herald.remove.failed.toast")));
+  return false;
+}
+/* HERALD-REALM-END */
 $("#heraldModCode").addEventListener("change",()=>{heraldModCodeCommit();});
 $("#heraldModCode").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();e.target.blur();}});
 ["heraldModKindTs","heraldModKindGale"].forEach(id=>
@@ -9773,6 +9933,7 @@ function heraldRenderUrlStat(){
   inp.addEventListener("input",()=>{
     clearTimeout(t);
     const v=inp.value.trim();
+    try{heraldRenderRealmLines();}catch(_){}
     if(!v){
       HERALD_URL_STAT={cls:"wiz-stat dim",wordId:"herald.hook.stat.idle"};heraldRenderUrlStat();
       t=setTimeout(()=>heraldSave(),400);return;
@@ -9797,30 +9958,37 @@ function heraldRenderUrlStat(){
   });
   $("#heraldThread").addEventListener("change",()=>heraldSave());
 }
-$("#heraldPublish").addEventListener("click",async()=>{
-  const url=$("#heraldUrl").value.trim();
-  if(!url){toast("ᚦ "+T("herald.publish.no_url.toast"));return;}
-  setT("tHerald",true); /* publishing implies sharing is on */
-  await heraldSave();
-  if(!Native.available){HERALD_HAS_POST=true;heraldRenderPost();toast("ᚺ "+T("herald.publish.preview.toast"));return;}
-  const r=await rpc("discord.publish");
-  if(r===FAIL) return;
-  if(r.ok){
-    HERALD_HAS_POST=true;heraldRenderPost();
-    toast("ᚺ "+T("herald.publish.done.toast"));
-    logLine("ok","[Herald] Discord status post published",null,null);
-  }else toast("ᚦ "+(r.error||T("herald.publish.failed.toast")));
-});
-$("#heraldRemove").addEventListener("click",async()=>{
-  if(!Native.available){HERALD_HAS_POST=false;heraldRenderPost();toast("ᚺ "+T("herald.remove.preview.toast"));return;}
-  const r=await rpc("discord.remove");
-  if(r===FAIL) return;
-  if(r.ok){
-    HERALD_HAS_POST=false;heraldRenderPost();
-    toast("ᚺ "+T("herald.remove.done.toast"));
-    logLine("warn","[Herald] Discord status post removed",null,null);
-  }else toast("ᚦ "+(r.error||T("herald.remove.failed.toast")));
-});
+/* The realm's own webhook box: the same check as the app-wide one, and blank is a real choice
+   (the app-wide webhook), saved without asking Discord anything. */
+{
+  const inp=$("#heraldRealmUrl");
+  let t=null;
+  inp.addEventListener("input",()=>{
+    clearTimeout(t);
+    const v=inp.value.trim();
+    if(!v){
+      HERALD_REALM_URL_STAT=null;heraldRenderRealmLines();
+      t=setTimeout(()=>heraldSave(),400);return;
+    }
+    HERALD_REALM_URL_STAT={cls:"wiz-stat dim",wordId:"common.stat.checking"};heraldRenderRealmLines();
+    t=setTimeout(async()=>{
+      const r=Native.available?await rpc("discord.validate",{url:v})
+        :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:T("herald.hook.stat.malformed")};
+      if(r===FAIL) return;
+      HERALD_REALM_URL_STAT=r.ok
+        ?{cls:"wiz-stat ok",mark:"ᛉ",
+          wordId:r.name?"herald.hook.stat.answers":"herald.hook.stat.answers.unnamed",
+          params:r.name?{name:r.name}:null}
+        :(r.error?{cls:"wiz-stat bad",mark:"ᚦ",text:r.error}
+                 :{cls:"wiz-stat bad",mark:"ᚦ",wordId:"herald.hook.stat.no_answer"});
+      heraldRenderRealmLines();
+      if(r.ok) heraldSave();
+    },500);
+  });
+  $("#heraldRealmThread").addEventListener("change",()=>heraldSave());
+}
+$("#heraldPublish").addEventListener("click",()=>{heraldPublish();});
+$("#heraldRemove").addEventListener("click",()=>{heraldRemove();});
 $("#heraldWizBtn").addEventListener("click",()=>heraldWizard());
 
 /* ---------- CONTEXT MENU (live, JS-positioned) ---------- */
@@ -14687,6 +14855,8 @@ function renderAllFromPrefs(){
   /* The Discord hall's mod profile code is a field on this realm's profile, so a realm switch
      and a fresh read of the prefs both repaint it rather than leaving the last realm's code. */
   try{heraldRenderModCode();}catch(_){}
+  /* And so is the realm's own post: its switch, webhook, what it carries and Publish. */
+  try{heraldRenderRealm();}catch(_){}
 }
 /* The status bar's RCON word in the browser preview, which has no prefs behind it.
    renderAllFromPrefs owns that element in the app and never runs here, so the word
@@ -15000,33 +15170,56 @@ $("#btnSetupReset").addEventListener("click",()=>{
 /* ---------- HERALD SETUP WIZARD ----------
    Same shell as the first-launch wizard: numbered steps, per-step help,
    live webhook validation, and a first publish at the end. */
-const HWIZ={step:0,url:"",thread:"",valid:false,name:"",addr:true,pass:false,events:false};
+const HWIZ={step:0,realm:null,url:"",thread:"",valid:false,name:"",addr:true,pass:false,events:false};
+/* The wizard sets up the realm on screen. It opens on the webhook that realm posts through
+   now: its own, or the app-wide one. */
 function heraldWizard(){
+  const ownUrl=$("#heraldRealmUrl").value.trim(), ownThread=$("#heraldRealmThread").value.trim();
   Object.assign(HWIZ,{
     step:0,
-    url:$("#heraldUrl").value.trim(),
-    thread:$("#heraldThread").value.trim(),
+    realm:HERALD_REALM||heraldRealmOnScreen(),
+    url:ownUrl||$("#heraldUrl").value.trim(),
+    thread:ownUrl?ownThread:(ownThread||$("#heraldThread").value.trim()),
     valid:false,name:"",
     addr:swOn("tHeraldAddr"),pass:swOn("tHeraldPass"),events:swOn("tHeraldEvents")
   });
   heraldWizRender();
 }
+/* Where the wizard's webhook goes. The first one set up becomes the app-wide webhook, so the
+   next realm turned on needs only its switch; the app-wide one again leaves this realm on it;
+   any other is this realm's own, with its thread. */
+function heraldWizPlace(url,thread,appUrl,appThread){
+  url=String(url||"").trim();thread=String(thread||"").trim();
+  appUrl=String(appUrl||"").trim();appThread=String(appThread||"").trim();
+  if(!appUrl) return {appUrl:url,appThread:thread,url:"",thread:""};
+  if(url===appUrl) return {appUrl,appThread,url:"",thread:thread===appThread?"":thread};
+  return {appUrl,appThread,url,thread};
+}
 async function heraldWizFinish(){
-  /* persist choices + flip sharing on, then place (or refresh) the post */
+  /* persist choices + flip sharing and this realm on, then place (or refresh) its post */
+  if(HWIZ.realm&&heraldRealmKey(HWIZ.realm)!==heraldRealmKey(HERALD_REALM)){
+    /* The realm on screen moved while the wizard was open: nothing is set up on the wrong one. */
+    modalClose();toast("ᚦ "+T("herald.wiz.realm_moved.toast",{name:HWIZ.realm}));return;
+  }
+  const place=heraldWizPlace(HWIZ.url,HWIZ.thread,$("#heraldUrl").value,$("#heraldThread").value);
   setT("tHerald",true);
+  setT("tHeraldRealm",true);
   setT("tHeraldAddr",HWIZ.addr);setT("tHeraldPass",HWIZ.pass);setT("tHeraldEvents",HWIZ.events);
-  $("#heraldUrl").value=HWIZ.url.trim();
-  $("#heraldThread").value=HWIZ.thread.trim();
+  $("#heraldUrl").value=place.appUrl;
+  $("#heraldThread").value=place.appThread;
+  $("#heraldRealmUrl").value=place.url;
+  $("#heraldRealmThread").value=place.thread;
   modalClose();
   await heraldSave();
+  const realm=HERALD_REALM||heraldRealmOnScreen();
   if(!Native.available){
-    HERALD_HAS_POST=true;heraldRenderPost();
+    heraldRealmPost(realm,true);
     toast("ᚺ "+T("herald.wiz.preview.toast"));return;
   }
-  const r=await rpc("discord.publish");
+  const r=await rpc("discord.publish",{profile:realm});
   if(r===FAIL) return;
   if(r.ok){
-    HERALD_HAS_POST=true;heraldRenderPost();
+    heraldRealmPost(realm,true);
     $("#heraldUrlStat").className="wiz-stat ok";
     /* Two sentences rather than one with a gap in it: a webhook that answered without
        naming itself must not leave a trailing separator on screen. */
@@ -15086,6 +15279,7 @@ function heraldWizRender(){
     body=
       `<div class="mtitle">${T("herald.wiz.sum.title")}</div>`+
       `<div class="wiz-sum">`+
+      `<div class="row"><span class="k">${esc(T("herald.wiz.sum.realm"))}</span><span class="v">${esc(HWIZ.realm||"")}</span></div>`+
       `<div class="row"><span class="k">${esc(T("herald.wiz.sum.webhook"))}</span><span class="v">${esc(HWIZ.name?T("herald.wiz.sum.webhook.named",{name:HWIZ.name}):T("herald.wiz.sum.webhook.validated"))}</span></div>`+
       `<div class="row"><span class="k">${T("herald.wiz.sum.thread")}</span><span class="v">${esc(HWIZ.thread.trim()||T("herald.wiz.sum.thread.none"))}</span></div>`+
       `<div class="row"><span class="k">${T("herald.wiz.sum.address")}</span><span class="v">${esc(HWIZ.addr?T("common.state.shared"):T("common.state.hidden"))}</span></div>`+

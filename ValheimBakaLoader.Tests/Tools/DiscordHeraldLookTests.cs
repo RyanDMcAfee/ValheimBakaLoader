@@ -39,14 +39,28 @@ namespace ValheimBakaLoader.Tests.Tools
         private const string Status = "Ashlands opens Friday at eight.";
         private const string Hook = "https://discord.com/api/webhooks/123456789/abcDEF_ghi-jkl";
 
+        /// <summary>
+        /// The app-wide look and one realm, Final Sunset, switched on. Since 1.2.16 the title and
+        /// the status line are the realm's own, so they are set on the realm and not on the app.
+        /// </summary>
         private static UserPreferences Prefs(bool name, bool avatar, bool title, bool status, bool link) => new()
         {
             DiscordBotName = name ? Name : null,
             DiscordAvatarUrl = avatar ? Avatar : null,
-            DiscordTitle = title ? Title : null,
-            DiscordStatusLine = status ? Status : null,
             DiscordLinkToBakaLoader = link,
+            Servers = new List<ServerPreferences>
+            {
+                new()
+                {
+                    ProfileName = "Final Sunset",
+                    HeraldOn = true,
+                    HeraldTitle = title ? Title : null,
+                    HeraldStatusLine = status ? Status : null,
+                },
+            },
         };
+
+        private static ServerPreferences Realm(UserPreferences prefs) => prefs.Servers[0];
 
         private static DiscordStatusSnapshot Snapshot() => new()
         {
@@ -69,7 +83,8 @@ namespace ValheimBakaLoader.Tests.Tools
         [MemberData(nameof(EveryLook))]
         public void The_status_post_carries_exactly_what_was_chosen(bool name, bool avatar, bool title, bool status, bool link)
         {
-            var payload = JObject.Parse(DiscordStatusService.BuildEmbedPayload(Snapshot(), Prefs(name, avatar, title, status, link)));
+            var prefs = Prefs(name, avatar, title, status, link);
+            var payload = JObject.Parse(DiscordStatusService.BuildEmbedPayload(Snapshot(), prefs, Realm(prefs)));
             var embed = (JObject)payload["embeds"][0];
 
             // A blank name is no key at all: Discord refuses an empty username outright.
@@ -180,7 +195,7 @@ namespace ValheimBakaLoader.Tests.Tools
         public void A_stored_link_that_is_not_a_picture_is_never_sent()
         {
             var prefs = new UserPreferences { DiscordAvatarUrl = "http://tracker.example/x", DiscordBotName = "Discord Bot" };
-            var status = JObject.Parse(DiscordStatusService.BuildEmbedPayload(Snapshot(), prefs));
+            var status = JObject.Parse(DiscordStatusService.BuildEmbedPayload(Snapshot(), prefs, new ServerPreferences()));
             var ev = JObject.Parse(DiscordWebhookService.BuildEventPayload("t", "d", 1, prefs));
             foreach (var payload in new[] { status, ev })
             {
@@ -212,8 +227,8 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void A_long_title_or_status_line_is_cut_to_what_Discord_takes()
         {
-            var prefs = new UserPreferences { DiscordTitle = new string('t', 400), DiscordStatusLine = new string('s', 900) };
-            var embed = JObject.Parse(DiscordStatusService.BuildEmbedPayload(Snapshot(), prefs))["embeds"][0];
+            var realm = new ServerPreferences { HeraldTitle = new string('t', 400), HeraldStatusLine = new string('s', 900) };
+            var embed = JObject.Parse(DiscordStatusService.BuildEmbedPayload(Snapshot(), new UserPreferences(), realm))["embeds"][0];
             Assert.Equal(DiscordHeraldLook.TitleMax, ((string)embed["title"]).Length);
             Assert.Equal(DiscordHeraldLook.StatusLineMax, ((string)embed["description"]).Length);
         }
@@ -226,8 +241,8 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             // A hand edited settings file can hold an empty or all space title; the post still
             // carries the server name and never an empty title or an empty description.
-            var prefs = new UserPreferences { DiscordTitle = blank, DiscordStatusLine = blank };
-            var embed = (JObject)JObject.Parse(DiscordStatusService.BuildEmbedPayload(Snapshot(), prefs))["embeds"][0];
+            var realm = new ServerPreferences { HeraldTitle = blank, HeraldStatusLine = blank };
+            var embed = (JObject)JObject.Parse(DiscordStatusService.BuildEmbedPayload(Snapshot(), new UserPreferences(), realm))["embeds"][0];
             Assert.Equal("Final Sunset", (string)embed["title"]);
             Assert.False(embed.ContainsKey("description"), "a blank status line was sent as a description");
         }
@@ -342,7 +357,7 @@ namespace ValheimBakaLoader.Tests.Tools
             var store = new Store { Current = prefs };
             var service = new DiscordStatusService(store, new Over(wire), new Mock<IApplicationLogger>().Object)
             {
-                SnapshotProvider = Snapshot,
+                SnapshotProvider = _ => Snapshot(),
             };
             return (service, wire, store);
         }
@@ -359,9 +374,9 @@ namespace ValheimBakaLoader.Tests.Tools
             var (service, wire, _) = Herald(Prefs(true, true, true, true, true));
             wire.Answer = _ => Created("111");
             var seen = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            service.SnapshotProvider = () => { seen.TrySetResult(AppLog.CurrentRealm ?? "<none>"); return Snapshot(); };
+            service.SnapshotProvider = _ => { seen.TrySetResult(AppLog.CurrentRealm ?? "<none>"); return Snapshot(); };
 
-            using (AppLog.ForRealm("Alpha")) service.RequestUpdate();
+            using (AppLog.ForRealm("Alpha")) service.RequestUpdate("Final Sunset");
 
             var done = await Task.WhenAny(seen.Task, Task.Delay(TimeSpan.FromSeconds(20)));
             Assert.Same(seen.Task, done);
@@ -374,7 +389,7 @@ namespace ValheimBakaLoader.Tests.Tools
             var (service, wire, store) = Herald(Prefs(true, true, true, true, true));
             wire.Answer = _ => Created("111");
 
-            var result = await service.PublishNowAsync();
+            var result = await service.PublishNowAsync("Final Sunset");
 
             Assert.True(result.Ok, result.Error);
             var post = Assert.Single(wire.Seen);
@@ -382,19 +397,19 @@ namespace ValheimBakaLoader.Tests.Tools
             var body = JObject.Parse(post.Body);
             Assert.Equal(Name, (string)body["username"]);
             Assert.Equal(Avatar, (string)body["avatar_url"]);
-            Assert.Equal("111", store.Current.DiscordStatusMessageId);
-            Assert.Equal(DiscordHeraldLook.SignatureFor(store.Current), store.Current.DiscordStatusMessageSignature);
+            Assert.Equal("111", Realm(store.Current).HeraldStatusMessageId);
+            Assert.Equal(DiscordHeraldLook.SignatureFor(store.Current), Realm(store.Current).HeraldStatusMessageSignature);
         }
 
         [Fact]
         public async Task An_edit_of_a_post_signed_the_same_carries_no_name_or_picture()
         {
             var prefs = Prefs(true, true, true, true, true);
-            prefs.DiscordStatusMessageId = "111";
-            prefs.DiscordStatusMessageSignature = DiscordHeraldLook.SignatureFor(prefs);
+            Realm(prefs).HeraldStatusMessageId = "111";
+            Realm(prefs).HeraldStatusMessageSignature = DiscordHeraldLook.SignatureFor(prefs);
             var (service, wire, store) = Herald(prefs);
 
-            var result = await service.PublishNowAsync();
+            var result = await service.PublishNowAsync("Final Sunset");
 
             Assert.True(result.Ok, result.Error);
             var edit = Assert.Single(wire.Seen);
@@ -404,7 +419,7 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.False(body.ContainsKey("username"));
             Assert.False(body.ContainsKey("avatar_url"));
             Assert.Equal(Title, (string)body["embeds"][0]["title"]);
-            Assert.Equal("111", store.Current.DiscordStatusMessageId);
+            Assert.Equal("111", Realm(store.Current).HeraldStatusMessageId);
         }
 
         /// <summary>
@@ -416,39 +431,39 @@ namespace ValheimBakaLoader.Tests.Tools
         public async Task A_new_name_or_picture_takes_the_post_down_and_makes_it_again()
         {
             var prefs = Prefs(false, false, false, false, true);
-            prefs.DiscordStatusMessageId = "111";
-            prefs.DiscordStatusMessageSignature = DiscordHeraldLook.SignatureFor(prefs);
+            Realm(prefs).HeraldStatusMessageId = "111";
+            Realm(prefs).HeraldStatusMessageSignature = DiscordHeraldLook.SignatureFor(prefs);
             prefs.DiscordBotName = Name;
             var (service, wire, store) = Herald(prefs);
             wire.Answer = r => r.Method == HttpMethod.Post ? Created("222") : new HttpResponseMessage(HttpStatusCode.NoContent);
 
-            var result = await service.PublishNowAsync();
+            var result = await service.PublishNowAsync("Final Sunset");
 
             Assert.True(result.Ok, result.Error);
             Assert.Equal(new[] { "DELETE", "POST" }, wire.Seen.Select(s => s.Method).ToArray());
             Assert.EndsWith("/messages/111", wire.Seen[0].Url);
             Assert.Equal(Name, (string)JObject.Parse(wire.Seen[1].Body)["username"]);
-            Assert.Equal("222", store.Current.DiscordStatusMessageId);
-            Assert.Equal(DiscordHeraldLook.SignatureFor(store.Current), store.Current.DiscordStatusMessageSignature);
+            Assert.Equal("222", Realm(store.Current).HeraldStatusMessageId);
+            Assert.Equal(DiscordHeraldLook.SignatureFor(store.Current), Realm(store.Current).HeraldStatusMessageSignature);
         }
 
         [Fact]
         public async Task A_post_that_cannot_be_taken_down_is_edited_rather_than_doubled()
         {
             var prefs = Prefs(true, false, false, false, true);
-            prefs.DiscordStatusMessageId = "111";
-            prefs.DiscordStatusMessageSignature = "an older look";
+            Realm(prefs).HeraldStatusMessageId = "111";
+            Realm(prefs).HeraldStatusMessageSignature = "an older look";
             var (service, wire, store) = Herald(prefs);
             wire.Answer = r => r.Method == HttpMethod.Delete
                 ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
                 : new HttpResponseMessage(HttpStatusCode.OK);
 
-            var result = await service.PublishNowAsync();
+            var result = await service.PublishNowAsync("Final Sunset");
 
             Assert.True(result.Ok, result.Error);
             Assert.Equal(new[] { "DELETE", "PATCH" }, wire.Seen.Select(s => s.Method).ToArray());
             Assert.DoesNotContain(wire.Seen, s => s.Method == "POST");
-            Assert.Equal("111", store.Current.DiscordStatusMessageId);
+            Assert.Equal("111", Realm(store.Current).HeraldStatusMessageId);
         }
 
         [Fact]
@@ -456,6 +471,7 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             var prefs = Prefs(true, true, false, false, true);
             prefs.DiscordWebhookUrl = Hook;
+            prefs.DiscordSharingEnabled = true;
             var wire = new Wire();
             var events = new DiscordWebhookService(new Store { Current = prefs }, new Over(wire), new Mock<IApplicationLogger>().Object);
 

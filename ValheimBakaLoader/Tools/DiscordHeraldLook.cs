@@ -9,7 +9,8 @@ namespace ValheimBakaLoader.Tools
     /// The Herald's look: the name and picture a post is signed with, the title it is headed
     /// with, a line the host writes at the top, and a small BakaLoader line that links to the
     /// project page. The status post and the event posts both read it from here, so the two
-    /// cannot sign themselves differently.
+    /// cannot sign themselves differently. The name, the picture and the line are app wide; the
+    /// title and the status line are each realm's own, like the post they head.
     /// <para>
     /// Every one of these is blank by default, and blank is never "nothing": a blank name is
     /// the webhook's own name, a blank picture is BakaLoader's logo, a blank title is the server
@@ -122,17 +123,20 @@ namespace ValheimBakaLoader.Tools
             return IsImageUrl(a) ? a : LogoUrl;
         }
 
-        /// <summary>The status post's title: the host's own when set, otherwise the server name.</summary>
-        public static string TitleFor(UserPreferences prefs, string serverTitle)
+        /// <summary>
+        /// The status post's title: the realm's own when set, otherwise the server name. A title
+        /// belongs to the realm, since each realm keeps a post of its own (1.2.16).
+        /// </summary>
+        public static string TitleFor(ServerPreferences realm, string serverTitle)
         {
-            var t = prefs?.DiscordTitle?.Trim();
+            var t = realm?.HeraldTitle?.Trim();
             return Clip(string.IsNullOrEmpty(t) ? serverTitle : t, TitleMax);
         }
 
-        /// <summary>The line at the top of the status post, or null for none.</summary>
-        public static string StatusLineFor(UserPreferences prefs)
+        /// <summary>The line at the top of the realm's status post, or null for none.</summary>
+        public static string StatusLineFor(ServerPreferences realm)
         {
-            var s = prefs?.DiscordStatusLine?.Trim();
+            var s = realm?.HeraldStatusLine?.Trim();
             return string.IsNullOrEmpty(s) ? null : Clip(s, StatusLineMax);
         }
 

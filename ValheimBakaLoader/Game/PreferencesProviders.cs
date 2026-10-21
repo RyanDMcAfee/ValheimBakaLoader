@@ -191,6 +191,16 @@ namespace ValheimBakaLoader.Game
         /// <summary>The list within the root preferences that this section owns.</summary>
         protected abstract List<T> ListOf(UserPreferences prefs);
 
+        /// <summary>
+        /// Puts back, onto an entry about to replace the stored one, whatever only one writer
+        /// may change. Runs inside the gate with the stored entry read in the same breath as the
+        /// write, which is the only place a field written from a timer can be kept safe from a
+        /// caller that loaded the entry before that timer fired.
+        /// </summary>
+        protected virtual void KeepStoredState(T incoming, T stored)
+        {
+        }
+
         public IEnumerable<T> LoadPreferences() => ListOf(Root.LoadPreferences());
 
         public T LoadPreferences(string name)
@@ -219,6 +229,11 @@ namespace ValheimBakaLoader.Game
             {
                 var root = Root.LoadPreferences();
                 var list = ListOf(root);
+
+                var stored = list.Where(e => e.EntryName == preferences.EntryName)
+                    .OrderByDescending(e => e.LastSaved)
+                    .FirstOrDefault();
+                if (stored != null) KeepStoredState(preferences, stored);
 
                 list.RemoveAll(e => e.EntryName == preferences.EntryName);
                 list.Add(preferences);
@@ -255,6 +270,18 @@ namespace ValheimBakaLoader.Game
         }
 
         protected override List<ServerPreferences> ListOf(UserPreferences prefs) => prefs.Servers;
+
+        /// <summary>
+        /// A realm's Herald fields have two writers and neither is a profile save: the Discord
+        /// hall writes the settings and the status service writes the post, both through
+        /// IUserPreferencesProvider.Mutate. Every profile save keeps what is on disk for them, so
+        /// a save built on a read from before (a Start that saves the form, a launch record from
+        /// the server's own thread) can neither switch a realm back off nor forget its post and
+        /// have the next edit make a second one. A rename saves under a name with nothing stored,
+        /// so the post goes with the realm.
+        /// </summary>
+        protected override void KeepStoredState(ServerPreferences incoming, ServerPreferences stored)
+            => incoming.KeepHeraldFrom(stored);
     }
 
     public class WorldPreferencesProvider : PreferencesSection<WorldPreferences>, IWorldPreferencesProvider

@@ -27,8 +27,10 @@
  *   7. In the browser preview nothing is sent and the hall still answers.
  *   8. The wiring: where the controls sit, what is bound to them, the realm repaint, the refusal
  *      rows, the catalog and the host side's patterns.
- *   9. While another realm's server is up the post is about that realm, so the line says this
- *      realm's code is saved and names the realm the post carries instead of promising it.
+ *   9. Each realm has a post of its own since 1.2.16, so another realm's server being up changes
+ *      nothing here: the line promises this realm's post. With this realm's own switch off there
+ *      is no post for it, so the line says the code is saved and why it is not showing. (Until
+ *      1.2.16 the one post followed whichever realm was up, and this rule held the line to that.)
  *  10. With Discord sharing switched off there is no post, so the line says saved, post off.
  *
  * Prints one line per rule and exits non zero on any failure.
@@ -94,6 +96,7 @@ function hall(opts) {
     "#heraldModCode": { value: "", disabled: false },
     "#heraldModCodeStat": { className: "", textContent: "" },
     "#tHerald": switchEl(opts.sharing !== false),
+    "#tHeraldRealm": switchEl(opts.realm !== false),
   };
   const context = {
     S: { profileName: "Final Sunset", prefs: Object.assign({ ProfileName: "Final Sunset" }, opts.prefs || {}),
@@ -294,7 +297,7 @@ function choose(h, kind) {
     for (const id of ["herald.modcode.label", "herald.modcode.kinds.aria", "herald.modcode.kind.thunderstore",
                       "herald.modcode.kind.gale", "herald.modcode.placeholder", "herald.modcode.note",
                       "herald.modcode.preview", "herald.modcode.preview.none", "herald.modcode.refused",
-                      "herald.modcode.preview.other", "herald.modcode.preview.off",
+                      "herald.modcode.preview.realm_off", "herald.modcode.preview.off",
                       "herald.modcode.no_realm", "host.status.field.mod_code.thunderstore",
                       "host.status.field.mod_code.gale"])
       assert.ok(KEYS[id] && typeof KEYS[id].lore === "string", "the catalog has no " + id);
@@ -328,7 +331,7 @@ function choose(h, kind) {
     assert.ok(mods > 0 && code > mods && next > code, "the code field is not straight after Mods in the post");
   });
 
-  await test("9. another realm's server up: saved here, the post carries that realm's code", async () => {
+  await test("9. each realm its own post: another realm up changes nothing, this realm off says so", async () => {
     const servers = [
       { name: "Final Sunset", running: false },
       { name: "Ashlands Test", running: true },
@@ -338,25 +341,33 @@ function choose(h, kind) {
     assert.strictEqual(await h.context.heraldModCodeCommit(), true);
     assert.strictEqual(h.sent.length, 1, "the code was not saved for this realm");
     assert.strictEqual(h.sent[0].ModProfileCodeRealm, "Final Sunset");
-    assert.strictEqual(h.line().textContent, T("herald.modcode.preview.other", { realm: "Ashlands Test" }));
-    assert.notStrictEqual(h.line().className, "wiz-stat ok", "the line reads as a promise the post will not keep");
-
-    /* This realm up as well: it wins the tie, as the host side's snapshot has it. */
-    servers[0].running = true;
-    h.context.heraldRenderModCodeLine();
+    /* Another realm's server is up, and this realm's post still carries this realm's code. */
+    assert.strictEqual(h.line().className, "wiz-stat ok");
     assert.strictEqual(h.line().textContent, T("herald.modcode.preview", { name: T("herald.modcode.kind.thunderstore") }));
-    /* Only this realm up, any case. */
-    h.context.S.servers = [{ name: "final sunset", running: true }, { name: "Ashlands Test", running: false }];
-    h.context.heraldRenderModCodeLine();
-    assert.strictEqual(h.line().className, "wiz-stat ok");
-    /* Nothing up: the post is about the active realm, which is this one. */
-    h.context.S.servers = [{ name: "Ashlands Test", running: false }];
-    h.context.heraldRenderModCodeLine();
-    assert.strictEqual(h.line().className, "wiz-stat ok");
+    assert.ok(!/heraldPostRealm/.test(block()), "the block still picks one realm for the post");
 
-    /* And the line follows the list: a server starting repaints it. */
-    const chips = APP.slice(APP.indexOf("function renderServerChips(){"), APP.indexOf("\n}", APP.indexOf("function renderServerChips(){")));
-    assert.ok(chips.includes("heraldRenderModCodeLine()"), "a realm starting or stopping does not repaint the line");
+    /* This realm's own switch off: saved, and there is no post for it. */
+    h.el["#tHeraldRealm"].classList.toggle("on", false);
+    h.context.heraldRenderModCodeLine();
+    assert.strictEqual(h.line().className, "wiz-stat dim");
+    assert.strictEqual(h.line().textContent, T("herald.modcode.preview.realm_off"));
+    const off = hall({ realm: false });
+    off.el["#heraldModCode"].value = "AB12CD";
+    choose(off, "gale");
+    assert.strictEqual(await off.context.heraldModCodeCommit(), true);
+    assert.strictEqual(off.sent.length, 1, "the code was not saved while this realm is off");
+    assert.strictEqual(off.line().textContent, T("herald.modcode.preview.realm_off"));
+
+    /* The master off outranks this realm's switch: it is the one that holds every realm. */
+    const master = hall({ realm: false, sharing: false });
+    master.el["#heraldModCode"].value = "AB12CD";
+    choose(master, "gale");
+    master.context.heraldRenderModCodeLine();
+    assert.strictEqual(master.line().textContent, T("herald.modcode.preview.off"));
+
+    /* And the line follows the realm's switch: its repaint redraws the line. */
+    const realm = APP.slice(APP.indexOf("function heraldRenderRealm(){"), APP.indexOf("\n}", APP.indexOf("function heraldRenderRealm(){")));
+    assert.ok(realm.includes("heraldRenderModCodeLine()"), "a realm repaint does not redraw the line under the code");
   });
 
   await test("10. sharing switched off: saved, and the line says there is no post", async () => {

@@ -370,9 +370,12 @@ namespace ValheimBakaLoader.Forms
             // catalog they come out of is picked before anything can send one.
             RefreshHostCatalog();
 
-            // The Herald: single self-editing Discord status post (gated on prefs inside the service).
+            // The Herald: one self-editing Discord status post per realm (gated on prefs inside
+            // the service). Until the single post of the builds before 1.2.16 has been handed to
+            // its realm no realm is switched on, so this asks nothing of Discord on that first run;
+            // EnsureHeraldPerRealm makes the move once the realm on screen is known.
             DiscordStatus.SnapshotProvider = BuildDiscordSnapshot;
-            DiscordStatus.RequestUpdate();
+            DiscordStatus.RequestUpdateAll();
 
             // The Atlas world reader explains every file it turns down (wrong version, missing
             // generation, unreadable chunk). Those lines are worth having in the app log when a
@@ -526,7 +529,7 @@ namespace ValheimBakaLoader.Forms
                     Analytics.Record(new AnalyticsEvent { Kind = "stop", Server = profile });
                 }
 
-                DiscordStatus.RequestUpdate();
+                DiscordStatus.RequestUpdate(profile);
 
                 if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
                 {
@@ -590,7 +593,7 @@ namespace ValheimBakaLoader.Forms
                     network = server.NetworkVersion,
                     profile,
                 });
-                DiscordStatus.RequestUpdate();
+                DiscordStatus.RequestUpdate(profile);
             };
             server.ServerCrashed += (s, e) =>
             {
@@ -759,6 +762,10 @@ namespace ValheimBakaLoader.Forms
                 // Hand the splash-assigned profile to the JS boot sequence via app.info.
                 CurrentProfile ??= StartProfile;
             }
+
+            // The realm on screen is known now, which is what the one post of the builds before
+            // 1.2.16 described when nothing was running, so it can be handed over.
+            EnsureHeraldPerRealm();
 
             var proceed = true;
             try
@@ -1390,7 +1397,7 @@ namespace ValheimBakaLoader.Forms
                 RecordModUpdates(profile, results);
 
                 // Herald: mod count / last-update time changed.
-                DiscordStatus.RequestUpdate();
+                DiscordStatus.RequestUpdate(profile);
             };
         }
 
@@ -3530,8 +3537,10 @@ namespace ValheimBakaLoader.Forms
             {
                 PostEvent("servers.changed", BuildServersList());
 
-                // Herald: player counts changed - refresh the Discord status post.
-                DiscordStatus.RequestUpdate();
+                // Herald: player counts changed - refresh that realm's Discord status post.
+                // Legacy player records predating multi-server have no ServerKey; they are
+                // counted on the realm on screen, so that is the post they move.
+                DiscordStatus.RequestUpdate(player?.ServerKey ?? ActiveProfileName);
 
                 // Skald journal: record real join/leave transitions only. This event also
                 // fires on name-resolution updates with an unchanged status, so gate on a
@@ -3578,7 +3587,8 @@ namespace ValheimBakaLoader.Forms
             IpAddressProvider.ExternalIpChanged += (s, ip) =>
             {
                 PostEvent("ip.external", new { ip });
-                DiscordStatus.RequestUpdate();
+                // The address line of every realm's post.
+                DiscordStatus.RequestUpdateAll();
             };
             IpAddressProvider.InternalIpChanged += (s, ip) => PostEvent("ip.internal", new { ip });
 
@@ -4439,9 +4449,16 @@ namespace ValheimBakaLoader.Forms
                 // And whether it is a test copy, which the form has no box for either. A test
                 // copy is never listed, so its Public stays off whatever the form sent.
                 prefs = KeepTestCopyOf(prefs);
+                // And the realm's Discord post, which only the Discord hall and the status
+                // service write. The profile writer keeps what is on disk for a realm that is
+                // there; one that is not starts switched off with no post, so a profile saved
+                // under a new name never adopts the post of the realm it was copied from.
+                prefs = KeepHeraldOfNewName(prefs);
                 ServerPrefsProvider.SavePreferences(prefs);
                 CurrentProfile = prefs.ProfileName;
                 PostEvent("servers.changed", BuildServersList());
+                // The name, world, port and password the post shows are all on this form.
+                DiscordStatus.RequestUpdate(prefs.ProfileName);
                 // The armed cleanse rides on this document too, so a save is one of the ways
                 // its switch moves. The watch is read again rather than left holding whatever
                 // the last read said.
@@ -4464,13 +4481,15 @@ namespace ValheimBakaLoader.Forms
                 return Task.FromResult<object>(reply);
             });
 
-            RegisterRpc("profiles.remove", p =>
+            RegisterRpc("profiles.remove", async p =>
             {
                 var name = p.Value<string>("name");
                 if (Sessions.TryGetValue(name, out var session) && session.Server.Status != ServerStatus.Stopped)
                     throw new HostFacingException("profiles.remove.serverRunning",
                         $"Stop the server '{name}' before removing its profile.", ("name", name));
 
+                // Its Discord post first, while the realm still says which post is its own.
+                await RemoveRealmPostAsync(name);
                 ServerPrefsProvider.RemovePreferences(name);
                 MarkTestCopiesSourceGone(name);
                 if (CurrentProfile == name) CurrentProfile = null;
@@ -4479,7 +4498,7 @@ namespace ValheimBakaLoader.Forms
                 if (Sessions.TryRemove(name, out var removed)) { ForgetSession(removed); removed.Server.Dispose(); }
 
                 PostEvent("servers.changed", BuildServersList());
-                return Task.FromResult<object>(true);
+                return (object)true;
             });
 
             // Renames a profile in place (settings only; the isolated install folder keeps
@@ -4683,6 +4702,9 @@ namespace ValheimBakaLoader.Forms
                     }
                 }
 
+                // Its Discord post goes with it, taken down while the realm still names it. After
+                // the files, so a delete refused above keeps the realm and its post together.
+                await RemoveRealmPostAsync(name);
                 ServerPrefsProvider.RemovePreferences(name);
                 // Its test copies stay standing, marked so the name cannot hand them to the
                 // next realm that takes it.
@@ -5228,7 +5250,11 @@ namespace ValheimBakaLoader.Forms
             });
 
             // --- User preferences ---
-            RegisterRpc("userprefs.get", p => Task.FromResult<object>(BuildUserPrefsDto()));
+            RegisterRpc("userprefs.get", p =>
+            {
+                EnsureHeraldPerRealm();
+                return Task.FromResult<object>(BuildUserPrefsDto());
+            });
 
             // What this machine can and cannot reach, one step at a time. A host whose curl
             // works and whose BakaLoader does not has nothing to look at but "did not answer",
@@ -5301,9 +5327,21 @@ namespace ValheimBakaLoader.Forms
                 // sentence before anything is written, and so is never sent.
                 CheckHeraldLook(dto);
 
+                // The realm's own Herald block: the switch, webhook, thread, share switches, title
+                // and status line of the realm the hall was showing when the box was left. Named by
+                // the page for the same reason the code is, and refused by name when that realm is
+                // gone rather than landing on whichever realm is on screen now.
+                var heraldBlock = dto.TryGetValue("Herald", StringComparison.OrdinalIgnoreCase, out var heraldToken)
+                    ? heraldToken as JObject
+                    : null;
+                var heraldRealm = HeraldBlockRealm(heraldBlock, ActiveProfileName, ServerPrefsProvider);
+                var heraldAppMoved = false;
+                var heraldRealmMoved = false;
+
                 UserPrefsProvider.Mutate(current =>
                 {
                     prefs = current;
+                    var heraldAppBefore = HeraldAppWideKey(current);
 
                     // Only apply keys the client sent, so partial updates never clobber other settings.
                     void Apply(string key, Action<JToken> setter)
@@ -5373,17 +5411,18 @@ namespace ValheimBakaLoader.Forms
                     Apply("DiscordWebhookUrl", v => prefs.DiscordWebhookUrl = v.Value<string>());
                     Apply("DiscordWebhookThreadId", v => prefs.DiscordWebhookThreadId = v.Value<string>());
                     Apply("DiscordSharingEnabled", v => prefs.DiscordSharingEnabled = v.Value<bool>());
-                    Apply("DiscordShareAddress", v => prefs.DiscordShareAddress = v.Value<bool>());
-                    Apply("DiscordSharePassword", v => prefs.DiscordSharePassword = v.Value<bool>());
                     Apply("DiscordEventPosts", v => prefs.DiscordEventPosts = v.Value<bool>());
                     // The Herald's look. Blank is stored as nothing, because blank is the default
-                    // each of them falls back to (see DiscordHeraldLook).
+                    // each of them falls back to (see DiscordHeraldLook). The title and the status
+                    // line are each realm's own since 1.2.16 and ride in the Herald block.
                     Apply("DiscordBotName", v => prefs.DiscordBotName = Blank(v.Value<string>()));
                     Apply("DiscordAvatarUrl", v => prefs.DiscordAvatarUrl = Blank(v.Value<string>()));
-                    Apply("DiscordStatusLine", v => prefs.DiscordStatusLine = Blank(v.Value<string>()));
-                    Apply("DiscordTitle", v => prefs.DiscordTitle = Blank(v.Value<string>()));
                     Apply("DiscordLinkToBakaLoader", v => prefs.DiscordLinkToBakaLoader = v.Value<bool>());
                     Apply("CustomJoinDomain", v => prefs.CustomJoinDomain = v.Value<string>()?.Trim());
+                    // In the same write as the app settings: it is the same document, and the
+                    // realm entry inside it is changed in place.
+                    heraldRealmMoved = ApplyHeraldBlock(prefs, heraldBlock, heraldRealm);
+                    heraldAppMoved = !string.Equals(heraldAppBefore, HeraldAppWideKey(prefs), StringComparison.Ordinal);
 
                     // Both of these are spellings from a closed list, so a spelling nothing
                     // answers to leaves the preference where it was rather than saving a
@@ -5428,10 +5467,12 @@ namespace ValheimBakaLoader.Forms
                 // written after the app settings rather than inside their edit.
                 var modCodeMoved = WriteModProfileCode(modCode, ServerPrefsProvider);
 
-                // A Discord-affecting save should refresh the status post right away
+                // A Discord-affecting save should refresh the posts it changed right away
                 // (e.g. share-password toggled -> the field appears/disappears; the
-                // custom join domain changes the address line in the post).
-                RefreshDiscordPostAfterSave(dto, modCodeMoved, DiscordStatus);
+                // custom join domain changes the address line in every post).
+                RefreshDiscordPostAfterSave(heraldAppMoved,
+                    new[] { heraldRealmMoved ? heraldRealm : null, modCodeMoved ? modCode.Realm : null },
+                    DiscordStatus);
 
                 // A save that touched either language preference changes which catalog the
                 // countdown and the Discord post are written from.
@@ -5635,17 +5676,23 @@ namespace ValheimBakaLoader.Forms
                 return new { ok = result.Ok, error = result.Error, name = result.Detail };
             });
 
-            // Creates the status post if none exists yet, otherwise edits it in place.
+            // Creates the realm's status post if it has none yet, otherwise edits it in place.
+            // The page names the realm it is showing, so a realm switch that lands while the
+            // press is out cannot publish one realm's post with the other's settings.
             RegisterRpc("discord.publish", async p =>
             {
-                var result = await DiscordStatus.PublishNowAsync();
+                EnsureHeraldPerRealm();
+                var realm = HeraldRealmOf(p, publishing: true);
+                var result = await DiscordStatus.PublishNowAsync(realm);
                 return new { ok = result.Ok, error = result.Error, detail = result.Detail };
             });
 
-            // Deletes the status post from the channel and forgets its id.
+            // Deletes the realm's status post from the channel and forgets its id.
             RegisterRpc("discord.remove", async p =>
             {
-                var result = await DiscordStatus.RemoveStatusMessageAsync();
+                EnsureHeraldPerRealm();
+                var realm = HeraldRealmOf(p, publishing: false);
+                var result = await DiscordStatus.RemoveStatusMessageAsync(realm);
                 return new { ok = result.Ok, error = result.Error };
             });
 
@@ -10840,14 +10887,13 @@ namespace ValheimBakaLoader.Forms
                 prefs.DiscordWebhookUrl,
                 prefs.DiscordWebhookThreadId,
                 prefs.DiscordSharingEnabled,
-                prefs.DiscordShareAddress,
-                prefs.DiscordSharePassword,
                 prefs.DiscordEventPosts,
                 prefs.DiscordBotName,
                 prefs.DiscordAvatarUrl,
-                prefs.DiscordStatusLine,
-                prefs.DiscordTitle,
                 prefs.DiscordLinkToBakaLoader,
+                // Each realm's own Herald block, by profile name, so a realm switch repaints the
+                // hall from what is saved for that realm without asking again.
+                HeraldRealms = BuildHeraldRealmsDto(prefs),
                 prefs.CustomJoinDomain,
                 prefs.Language,
                 prefs.PlayerMessageLanguage,
@@ -10857,7 +10903,10 @@ namespace ValheimBakaLoader.Forms
                 // which the canvas is already transformed by. The factor used to ride along for
                 // a scaler on the page, and that scaler was double counting the zoom.
                 prefs.TextSize,
-                HasDiscordStatusMessage = !string.IsNullOrWhiteSpace(prefs.DiscordStatusMessageId),
+                // Whether the realm on screen has a post. Each realm's own answer is HasPost in
+                // its Herald block above; this one is kept for whatever still reads it.
+                HasDiscordStatusMessage = !string.IsNullOrWhiteSpace(
+                    HeraldRealms.Find(prefs, ActiveProfileName)?.HeraldStatusMessageId),
                 AppVersion = AssemblyHelper.GetApplicationVersion(),
             };
         }
@@ -10946,17 +10995,215 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
-        /// The status post is edited after a userprefs.save that changed something it shows: any
-        /// Discord field, the custom join domain, or a mod profile code that moved. Once per save,
-        /// however many of those it carried.
+        /// The posts are edited after a userprefs.save that changed something they show. An
+        /// app-wide value that moved (the master switch, the app-wide webhook or thread, the name,
+        /// the picture, the BakaLoader line, the custom join domain) shows on every realm's post,
+        /// so every realm that shares is asked once. Otherwise only the realms whose own block or
+        /// mod profile code moved are asked, each once. A save that moved nothing asks nothing,
+        /// which matters now that the hall sends every switch on every save and several realms
+        /// can share one webhook's rate limit.
         /// </summary>
-        public static bool RefreshDiscordPostAfterSave(JObject dto, bool modCodeMoved, IDiscordStatusService discord)
+        public static bool RefreshDiscordPostAfterSave(bool appWideMoved, IEnumerable<string> realmsMoved, IDiscordStatusService discord)
         {
-            var touches = modCodeMoved
-                || dto.Properties().Any(prop => prop.Name.StartsWith("Discord", StringComparison.OrdinalIgnoreCase)
-                    || prop.Name.Equals("CustomJoinDomain", StringComparison.OrdinalIgnoreCase));
-            if (touches) discord?.RequestUpdate();
-            return touches;
+            if (appWideMoved)
+            {
+                discord?.RequestUpdateAll();
+                return true;
+            }
+
+            var realms = (realmsMoved ?? Array.Empty<string>())
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foreach (var realm in realms) discord?.RequestUpdate(realm);
+            return realms.Count > 0;
+        }
+
+        /// <summary>
+        /// Everything app wide that shows on a status post, as one string, so a save can tell
+        /// whether it moved any of it. The event switch is not here: it shows on no status post.
+        /// </summary>
+        public static string HeraldAppWideKey(UserPreferences prefs) => prefs == null ? "" : string.Join("\n",
+            prefs.DiscordSharingEnabled ? "on" : "off",
+            prefs.DiscordWebhookUrl?.Trim() ?? "",
+            prefs.DiscordWebhookThreadId?.Trim() ?? "",
+            prefs.DiscordBotName ?? "",
+            prefs.DiscordAvatarUrl ?? "",
+            prefs.DiscordLinkToBakaLoader ? "link" : "nolink",
+            prefs.CustomJoinDomain ?? "");
+
+        /// <summary>One realm's Herald settings as one string, for the same question.</summary>
+        public static string HeraldRealmKey(ServerPreferences realm) => realm == null ? "" : string.Join("\n",
+            realm.HeraldOn ? "on" : "off",
+            realm.HeraldWebhookUrl ?? "",
+            realm.HeraldThreadId ?? "",
+            realm.HeraldShareAddress ? "addr" : "noaddr",
+            realm.HeraldSharePassword ? "pass" : "nopass",
+            realm.HeraldTitle ?? "",
+            realm.HeraldStatusLine ?? "");
+
+        /// <summary>
+        /// The realm a save's Herald block is for: the one it names, else the realm on screen, or
+        /// null when the save carries no block. A realm the block names that is gone is refused by
+        /// name, before anything is written. A block that names none while the realm on screen
+        /// has no profile yet is left out, so the app-wide switches beside it still save.
+        /// </summary>
+        public static string HeraldBlockRealm(JObject block, string activeRealm, IServerPreferencesProvider serverPrefs)
+        {
+            if (block == null) return null;
+            var realm = block.TryGetValue("Realm", StringComparison.OrdinalIgnoreCase, out var named)
+                ? named.Value<string>()?.Trim()
+                : null;
+            if (string.IsNullOrWhiteSpace(realm))
+            {
+                return string.IsNullOrWhiteSpace(activeRealm) || serverPrefs?.LoadPreferences(activeRealm) == null
+                    ? null
+                    : activeRealm;
+            }
+            if (serverPrefs?.LoadPreferences(realm) == null)
+                throw new HostFacingException("userprefs.save.heraldNoRealm",
+                    "The realm this was set for is gone, so it was not saved.");
+            return realm;
+        }
+
+        /// <summary>
+        /// Writes a Herald block onto its realm inside the document being saved: only the keys
+        /// the block carries, blanks stored as nothing. Never touches the post's id or signature,
+        /// which are the status service's. Answers whether anything the post shows moved.
+        /// </summary>
+        public static bool ApplyHeraldBlock(UserPreferences prefs, JObject block, string realmName)
+        {
+            if (block == null || realmName == null) return false;
+            var realm = HeraldRealms.Find(prefs, realmName);
+            if (realm == null) return false;
+
+            var before = HeraldRealmKey(realm);
+            // Only the keys the block carries, and a switch only when it is a switch: a null or
+            // a word where true or false belongs leaves the setting as it was.
+            void Text(string key, Action<string> set)
+            {
+                if (block.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out var v))
+                    set(Blank(v.Type == JTokenType.Null ? null : v.Value<string>()));
+            }
+            void Switch(string key, Action<bool> set)
+            {
+                if (block.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out var v) && v.Type == JTokenType.Boolean)
+                    set(v.Value<bool>());
+            }
+
+            Switch("On", v => realm.HeraldOn = v);
+            Text("WebhookUrl", v => realm.HeraldWebhookUrl = v);
+            Text("ThreadId", v => realm.HeraldThreadId = v);
+            Switch("ShareAddress", v => realm.HeraldShareAddress = v);
+            Switch("SharePassword", v => realm.HeraldSharePassword = v);
+            Text("Title", v => realm.HeraldTitle = v);
+            Text("StatusLine", v => realm.HeraldStatusLine = v);
+            return !string.Equals(before, HeraldRealmKey(realm), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Each realm's Herald block for the page: its switch, webhook, thread, share switches,
+        /// title and status line, and whether it has a post. Archived realms are left out with
+        /// the rest of what the hall cannot show.
+        /// </summary>
+        public static List<object> BuildHeraldRealmsDto(UserPreferences prefs) =>
+            (prefs?.Servers ?? new List<ServerPreferences>())
+                .Where(r => r != null && !string.IsNullOrWhiteSpace(r.ProfileName) && !r.Archived)
+                .Select(r => (object)new
+                {
+                    Realm = r.ProfileName,
+                    On = r.HeraldOn,
+                    WebhookUrl = r.HeraldWebhookUrl,
+                    ThreadId = r.HeraldThreadId,
+                    ShareAddress = r.HeraldShareAddress,
+                    SharePassword = r.HeraldSharePassword,
+                    Title = r.HeraldTitle,
+                    StatusLine = r.HeraldStatusLine,
+                    HasPost = !string.IsNullOrWhiteSpace(r.HeraldStatusMessageId),
+                })
+                .ToList();
+
+        /// <summary>The realm a discord.publish or discord.remove names, refused by name when it is gone.</summary>
+        private string HeraldRealmOf(JObject p, bool publishing)
+        {
+            var realm = p?.Value<string>("profile")?.Trim();
+            if (string.IsNullOrWhiteSpace(realm)) realm = ActiveProfileName;
+            if (ServerPrefsProvider.LoadPreferences(realm) != null) return realm;
+            throw publishing
+                ? new HostFacingException("discord.publish.noSuchRealm", "That realm is gone, so nothing was sent to Discord.", ("name", realm))
+                : new HostFacingException("discord.remove.noSuchRealm", "That realm is gone, so nothing was sent to Discord.", ("name", realm));
+        }
+
+        // Set once the move has been made or found made, so the RPCs that ask are one field read.
+        private volatile bool HeraldPerRealmChecked;
+
+        /// <summary>
+        /// Hands the one status post of the builds before 1.2.16 to the realm it described, once
+        /// (see HeraldRealms.Migrate), by the rule BuildDiscordSnapshot used: a realm whose server
+        /// is up, the realm on screen winning a tie, and the realm on screen when none is up.
+        /// Asked at startup and again by the Herald's RPCs, whichever comes first.
+        /// </summary>
+        private void EnsureHeraldPerRealm()
+        {
+            if (HeraldPerRealmChecked) return;
+            try
+            {
+                var live = Sessions.Values
+                    .Where(s => s.Server.Status != ServerStatus.Stopped)
+                    .Select(s => s.ProfileName)
+                    .ToList();
+                var described = HeraldRealms.PostRealm(live, ActiveProfileName);
+                var moved = UserPrefsProvider.Mutate((Func<UserPreferences, bool>)(prefs => HeraldRealms.Migrate(prefs, described)));
+                var after = UserPrefsProvider.LoadPreferences();
+                HeraldPerRealmChecked = after?.HeraldPerRealmMigrated == true;
+                if (moved && HeraldPerRealmChecked)
+                {
+                    Logger.Information("The Discord status post now belongs to {realm}; every other realm starts with its own switch off.",
+                        HeraldRealms.Find(after, described)?.ProfileName ?? described);
+                    DiscordStatus.RequestUpdateAll();
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Warning("Could not hand the Discord status post to its realm yet: {message}", e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Takes a realm's Discord post down before the realm goes. Best effort: Discord being
+        /// unreachable must not keep a host from deleting a realm, so a failure is a line in the
+        /// Saga and the delete goes on.
+        /// </summary>
+        private async Task RemoveRealmPostAsync(string realm)
+        {
+            try
+            {
+                var result = await DiscordStatus.RemoveStatusMessageAsync(realm);
+                if (result?.Ok != true)
+                    Logger.Warning("The Discord post of {realm} could not be taken down: {error}", realm, result?.Error);
+            }
+            catch (Exception e)
+            {
+                Logger.Warning("The Discord post of {realm} could not be taken down: {message}", realm, e.Message);
+            }
+        }
+
+        /// <summary>
+        /// A profile the settings form sent under a name with nothing saved yet starts with no
+        /// Discord post of its own. One that is saved keeps what is on disk (the profile writer
+        /// does that, see ServerPreferencesProvider.KeepStoredState).
+        /// </summary>
+        private ServerPreferences KeepHeraldOfNewName(ServerPreferences prefs)
+        {
+            if (prefs == null) return null;
+            ServerPreferences stored = null;
+            try
+            {
+                stored = ServerPrefsProvider.LoadPreferences(
+                    string.IsNullOrWhiteSpace(prefs.ProfileName) ? ActiveProfileName : prefs.ProfileName);
+            }
+            catch { /* an unreadable profile is treated as one with nothing saved */ }
+            return stored == null ? prefs.ForgetHeraldPost() : prefs;
         }
 
         /// <summary>
@@ -10983,22 +11230,23 @@ namespace ValheimBakaLoader.Forms
             // own, and servers.create marks a test copy itself.
             created.TestCopyOf = null;
             created.TestSourceGone = false;
+            // Nor the Discord post: a copy never adopts another realm's post, and it starts with
+            // its switch off so making a realm never posts anything by surprise. Its webhook,
+            // thread and share switches are kept, so turning it on is one switch.
+            created.ForgetHeraldPost();
             return created;
         }
 
         /// <summary>
-        /// Everything the Herald's Discord status post shows, built fresh at publish time.
-        /// Prefers a live (non-stopped) session - the active one wins ties - and falls back
-        /// to the active profile so a stopped server still reports "Offline" truthfully.
+        /// Everything one realm's Discord status post shows, built fresh at publish time. Each
+        /// realm has a post of its own (1.2.16), so this describes the realm it is asked about
+        /// and never picks one: a realm with no session is a stopped server, and says "Offline"
+        /// truthfully.
         /// </summary>
-        private DiscordStatusSnapshot BuildDiscordSnapshot()
+        private DiscordStatusSnapshot BuildDiscordSnapshot(string profile)
         {
-            var session = Sessions.Values
-                .Where(s => s.Server.Status != ServerStatus.Stopped)
-                .OrderByDescending(s => string.Equals(s.ProfileName, ActiveProfileName, StringComparison.OrdinalIgnoreCase))
-                .FirstOrDefault();
-
-            var profile = session?.ProfileName ?? ActiveProfileName;
+            if (string.IsNullOrWhiteSpace(profile)) profile = ActiveProfileName;
+            Sessions.TryGetValue(profile, out var session);
             var server = session?.Server;
             var prefs = ServerPrefsProvider.LoadPreferences(profile);
 
@@ -11058,8 +11306,8 @@ namespace ValheimBakaLoader.Forms
                 LastModUpdateUtc = lastModUpdate,
                 NextRestartUtc = server?.NextScheduledRestartUtc,
                 AppVersion = AssemblyHelper.GetApplicationVersion(),
-                // The code of the realm this post is ABOUT, which is the live one when a server
-                // is up and the active one otherwise, so it always matches the mod count above it.
+                // The code of the realm this post is about, the same realm the mod count above it
+                // was counted for.
                 ModProfileCodeKind = prefs?.ModProfileCodeKind,
                 ModProfileCode = prefs?.ModProfileCode,
             };

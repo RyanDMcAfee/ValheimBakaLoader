@@ -368,7 +368,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // of them in, some of them in, and nothing ticked. The walk's refusals carry no mark
             // of their own: one helper words them, and the toast that prints it leads with its
             // own rune.
-            Assert.Equal(256, marked.Count);
+            // 257 with 1.2.16's one for the Herald per realm: the wizard refusing to set up a realm
+            // that is no longer the one on screen.
+            Assert.Equal(257, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

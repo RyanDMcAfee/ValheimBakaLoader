@@ -179,6 +179,13 @@ namespace ValheimBakaLoader.Game
         // records when joining by name; the port must still be shared (no SRV support).
         public string CustomJoinDomain { get; set; }
 
+        // True once the one status post of the builds before 1.2.16 has been handed to the realm
+        // it described, with the webhook, thread, share switches, title and status line it was
+        // made with. Done once: a realm switched off afterwards must stay off. The app-wide
+        // fields it was copied from are left as they were written, so a build from before the
+        // move still finds the same post and edits it rather than making a second one.
+        public bool HeraldPerRealmMigrated { get; set; }
+
         public List<ServerPreferences> Servers { get; set; } = new();
 
         public List<WorldPreferences> Worlds { get; set; } = new();
@@ -247,6 +254,7 @@ namespace ValheimBakaLoader.Game
                 DiscordLinkToBakaLoader = file.DiscordLinkToBakaLoader ?? defaults.DiscordLinkToBakaLoader,
                 DiscordStatusMessageSignature = file.DiscordStatusMessageSignature ?? defaults.DiscordStatusMessageSignature,
                 CustomJoinDomain = file.CustomJoinDomain ?? defaults.CustomJoinDomain,
+                HeraldPerRealmMigrated = file.HeraldPerRealmMigrated ?? defaults.HeraldPerRealmMigrated,
 
                 Servers = (file.Servers ?? new())
                     .Where(s => s != null)
@@ -313,6 +321,7 @@ namespace ValheimBakaLoader.Game
             DiscordLinkToBakaLoader = DiscordLinkToBakaLoader,
             DiscordStatusMessageSignature = DiscordStatusMessageSignature,
             CustomJoinDomain = CustomJoinDomain,
+            HeraldPerRealmMigrated = HeraldPerRealmMigrated,
 
             Servers = (Servers ?? new())
                 .Select(s => s.ToFile())

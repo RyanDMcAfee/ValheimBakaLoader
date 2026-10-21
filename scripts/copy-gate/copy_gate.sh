@@ -943,5 +943,21 @@ else
   echo "  the mod deps selftest is missing: $DEPS_SELFTEST"; fail=1
 fi
 
+echo "== 59. the Herald per realm: the hall edits the realm on screen, Publish and Remove act on its post =="
+# 1.2.16, issue 24. Each realm keeps a Discord post of its own, so the hall edits the realm on
+# screen. The quiet ways that goes wrong are a realm switch leaving the last realm's settings on
+# screen for the next save to write onto this one, a press landing on whichever realm is on screen
+# when the reply comes back, and the master switch losing its place over every realm. The selftest
+# drives the real block out of app.js against the real catalog and holds the host side's RPCs.
+REALM_SELFTEST="$UI_DIR/herald_realm_selftest.js"
+if [ -f "$REALM_SELFTEST" ]; then
+  if out=$(node "$REALM_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the herald realm selftest is missing: $REALM_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

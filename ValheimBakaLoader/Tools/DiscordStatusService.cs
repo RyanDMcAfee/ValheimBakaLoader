@@ -1,7 +1,10 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -15,8 +18,8 @@ using ValheimBakaLoader.Tools.Logging;
 namespace ValheimBakaLoader.Tools
 {
     /// <summary>
-    /// Everything the Herald shares about the (single) server it is announcing.
-    /// Built fresh by the main window right before each Discord publish.
+    /// Everything the Herald shares about one realm's server. Built fresh by the main window
+    /// right before each Discord publish of that realm's post.
     /// </summary>
     public class DiscordStatusSnapshot
     {
@@ -50,33 +53,42 @@ namespace ValheimBakaLoader.Tools
 
     public interface IDiscordStatusService
     {
-        /// <summary>Set by the main window; produces the current server snapshot on demand.</summary>
-        Func<DiscordStatusSnapshot> SnapshotProvider { get; set; }
+        /// <summary>Set by the main window; produces the named realm's snapshot on demand.</summary>
+        Func<string, DiscordStatusSnapshot> SnapshotProvider { get; set; }
 
         /// <summary>
-        /// Debounced update request - safe to call from any event handler, any thread,
-        /// as often as you like. Coalesces bursts into at most one Discord edit per
-        /// cooldown window. No-ops when Discord sharing is disabled or unconfigured.
+        /// Debounced update of one realm's post - safe to call from any event handler, any
+        /// thread, as often as you like. Coalesces bursts into at most one Discord edit per
+        /// cooldown window for that realm. No-ops when the master switch or the realm's own
+        /// switch is off, or when the realm has nowhere to post.
         /// </summary>
-        void RequestUpdate();
+        void RequestUpdate(string realm);
 
-        /// <summary>Creates the status post if none exists, otherwise edits it in place.</summary>
-        Task<DiscordStatusResult> PublishNowAsync();
+        /// <summary>The same for every realm that shares: for a change that shows on every post.</summary>
+        void RequestUpdateAll();
+
+        /// <summary>Creates the realm's status post if it has none, otherwise edits it in place.</summary>
+        Task<DiscordStatusResult> PublishNowAsync(string realm);
 
         /// <summary>Checks a webhook URL is real by GETting its metadata. Sends nothing.</summary>
         Task<DiscordStatusResult> ValidateWebhookAsync(string url);
 
-        /// <summary>Deletes the status post from Discord (if one exists) and forgets its id.</summary>
-        Task<DiscordStatusResult> RemoveStatusMessageAsync();
+        /// <summary>Deletes the realm's status post from Discord (if one exists) and forgets its id.</summary>
+        Task<DiscordStatusResult> RemoveStatusMessageAsync(string realm);
     }
 
     /// <summary>
-    /// The Herald: maintains ONE Discord message - created once via the configured
+    /// The Herald: maintains ONE Discord message per realm - created once via that realm's
     /// webhook, then edited in place forever after (PATCH /webhooks/{id}/{token}/messages/{mid}).
-    /// It never spams a channel with new posts; the same message always shows the
-    /// current server status. "Next restart" and "last mod update" use Discord's
-    /// &lt;t:unix:R&gt; timestamp markdown, which renders as a live relative time on every
-    /// viewer's client - so the post stays truthful between edits without us re-posting.
+    /// It never spams a channel with new posts; the same message always shows the realm's
+    /// current status. "Next restart" and "last mod update" use Discord's &lt;t:unix:R&gt;
+    /// timestamp markdown, which renders as a live relative time on every viewer's client - so
+    /// the post stays truthful between edits without us re-posting.
+    /// <para>
+    /// Every realm has its own debounce timer, cooldown and lock (1.2.16, issue 24). Two realms
+    /// running side by side used to share one post, and whichever realm the snapshot happened to
+    /// pick won it; now each keeps its own and neither can hold the other's edit back.
+    /// </para>
     /// </summary>
     public class DiscordStatusService : IDiscordStatusService
     {
@@ -89,16 +101,33 @@ namespace ValheimBakaLoader.Tools
         private static readonly TimeSpan EditCooldown = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan CoalesceDelay = TimeSpan.FromSeconds(2);
 
+        // The longest a rate limit answer is waited out before the one retry. Discord's
+        // per-webhook limit asks for a second or two; an answer asking for longer than this is
+        // a limit the next scheduled edit will meet anyway.
+        private static readonly TimeSpan LongestRetryWait = TimeSpan.FromSeconds(30);
+
         private readonly IUserPreferencesProvider UserPrefsProvider;
         private readonly IHttpClientProvider HttpClientProvider;
         private readonly IApplicationLogger Logger;
 
-        private readonly SemaphoreSlim PublishLock = new(1, 1);
-        private readonly object TimerLock = new();
-        private Timer DebounceTimer;
-        private DateTime LastEditUtc = DateTime.MinValue;
+        /// <summary>One realm's post: its lock, its timer and when it was last edited.</summary>
+        private sealed class RealmPost
+        {
+            public readonly SemaphoreSlim Lock = new(1, 1);
+            public Timer Debounce;
+            public DateTime LastEditUtc = DateTime.MinValue;
+        }
 
-        public Func<DiscordStatusSnapshot> SnapshotProvider { get; set; }
+        private readonly ConcurrentDictionary<string, RealmPost> Posts = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object TimerLock = new();
+
+        public Func<string, DiscordStatusSnapshot> SnapshotProvider { get; set; }
+
+        /// <summary>
+        /// How a rate limit answer is waited out. Task.Delay in the app; a test hands in one that
+        /// records the wait and returns at once.
+        /// </summary>
+        internal Func<TimeSpan, Task> WaitOut { get; set; } = Task.Delay;
 
         public DiscordStatusService(
             IUserPreferencesProvider userPrefsProvider,
@@ -110,55 +139,103 @@ namespace ValheimBakaLoader.Tools
             Logger = logger;
         }
 
-        public void RequestUpdate()
+        private RealmPost PostOf(string realm) => Posts.GetOrAdd(realm, _ => new RealmPost());
+
+        public void RequestUpdate(string realm)
+        {
+            if (string.IsNullOrWhiteSpace(realm)) return;
+            var prefs = UserPrefsProvider.LoadPreferences();
+            if (!HeraldRealms.Shares(prefs, HeraldRealms.Find(prefs, realm))) return;
+            Schedule(realm);
+        }
+
+        public void RequestUpdateAll()
         {
             var prefs = UserPrefsProvider.LoadPreferences();
-            if (!prefs.DiscordSharingEnabled || string.IsNullOrWhiteSpace(prefs.DiscordWebhookUrl)) return;
+            if (prefs == null || !prefs.DiscordSharingEnabled) return;
+            foreach (var realm in (prefs.Servers ?? new List<ServerPreferences>())
+                         .Where(r => r != null && !r.Archived && HeraldRealms.Shares(prefs, r))
+                         .Select(r => r.ProfileName)
+                         .Distinct(StringComparer.OrdinalIgnoreCase)
+                         .ToList())
+                Schedule(realm);
+        }
 
+        private void Schedule(string realm)
+        {
+            var post = PostOf(realm);
             lock (TimerLock)
             {
-                if (DebounceTimer != null) return; // an update is already scheduled - it will pick up the latest snapshot
+                if (post.Debounce != null) return; // an update is already scheduled - it will pick up the latest snapshot
 
-                var sinceLast = DateTime.UtcNow - LastEditUtc;
+                var sinceLast = DateTime.UtcNow - post.LastEditUtc;
                 var wait = sinceLast >= EditCooldown ? CoalesceDelay : EditCooldown - sinceLast;
 
                 // A timer carries the caller's execution context, and with it the realm scope of
-                // whichever command asked for this update. The herald is the whole host's, so its
-                // lines must not land in that one realm's Saga: the timer starts with none.
+                // whichever command asked for this update. The herald's lines name the realm
+                // they are about in their own words and belong to no realm's Saga: the timer
+                // starts with none.
                 using (ExecutionContext.SuppressFlow())
                 {
-                    DebounceTimer = new Timer(_ =>
+                    post.Debounce = new Timer(_ =>
                     {
                         lock (TimerLock)
                         {
-                            DebounceTimer?.Dispose();
-                            DebounceTimer = null;
+                            post.Debounce?.Dispose();
+                            post.Debounce = null;
                         }
-                        _ = PublishNowAsync();
+                        _ = PublishAsync(realm, scheduled: true);
                     }, null, wait, Timeout.InfiniteTimeSpan);
                 }
             }
         }
 
-        public async Task<DiscordStatusResult> PublishNowAsync()
+        public Task<DiscordStatusResult> PublishNowAsync(string realm) => PublishAsync(realm, scheduled: false);
+
+        /// <summary>What a realm's debounce timer runs when it fires, for the tests to run without the wait.</summary>
+        internal Task<DiscordStatusResult> PublishScheduledAsync(string realm) => PublishAsync(realm, scheduled: true);
+
+        /// <summary>Whether an update of the realm's post is waiting on its timer.</summary>
+        internal bool HasPendingUpdate(string realm)
         {
-            await PublishLock.WaitAsync();
+            lock (TimerLock) return realm != null && Posts.TryGetValue(realm, out var post) && post.Debounce != null;
+        }
+
+        /// <summary>
+        /// One realm's publish. A scheduled one asks the switches again when its timer fires,
+        /// because the host can turn sharing off in the two seconds between the request and the
+        /// edit, and off means nothing is sent. A press of Publish turns both switches on before
+        /// it calls, so it does not ask.
+        /// </summary>
+        private async Task<DiscordStatusResult> PublishAsync(string realm, bool scheduled)
+        {
+            if (string.IsNullOrWhiteSpace(realm))
+                return new DiscordStatusResult { Error = "No realm was named for the post." };
+
+            var post = PostOf(realm);
+            await post.Lock.WaitAsync();
             try
             {
                 var prefs = UserPrefsProvider.LoadPreferences();
-                var webhookUrl = prefs?.DiscordWebhookUrl;
+                var server = HeraldRealms.Find(prefs, realm);
+                if (server == null)
+                    return new DiscordStatusResult { Error = "That realm is gone, so nothing was sent." };
+                if (scheduled && !HeraldRealms.Shares(prefs, server))
+                    return new DiscordStatusResult { Ok = true, Detail = "not shared" };
+
+                var webhookUrl = HeraldRealms.WebhookUrlFor(prefs, server);
                 if (string.IsNullOrWhiteSpace(webhookUrl))
                     return new DiscordStatusResult { Error = "No webhook URL is configured." };
                 if (!WebhookUrlPattern.IsMatch(webhookUrl.Trim()))
                     return new DiscordStatusResult { Error = "That does not look like a Discord webhook URL." };
                 webhookUrl = webhookUrl.Trim();
 
-                var snapshot = SnapshotProvider?.Invoke();
+                var snapshot = SnapshotProvider?.Invoke(server.ProfileName);
                 if (snapshot == null)
                     return new DiscordStatusResult { Error = "No server snapshot is available yet." };
 
-                var payload = BuildEmbedPayload(snapshot, prefs);
-                var threadQs = BuildThreadQuery(prefs);
+                var payload = BuildEmbedPayload(snapshot, prefs, server);
+                var threadQs = BuildThreadQuery(HeraldRealms.ThreadIdFor(prefs, server));
 
                 using var client = HttpClientProvider.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(15);
@@ -169,22 +246,22 @@ namespace ValheimBakaLoader.Tools
                 // again, signed as it should be; one that cannot be taken down is left alone and
                 // edited as before, because a second post beside it is the one thing this
                 // service must never do.
-                var messageId = prefs.DiscordStatusMessageId;
+                var messageId = server.HeraldStatusMessageId;
                 var signature = DiscordHeraldLook.SignatureFor(prefs);
                 if (!string.IsNullOrWhiteSpace(messageId)
-                    && !string.Equals(prefs.DiscordStatusMessageSignature, signature, StringComparison.Ordinal))
+                    && !string.Equals(server.HeraldStatusMessageSignature, signature, StringComparison.Ordinal))
                 {
                     var deleteUrl = $"{webhookUrl}/messages/{messageId}{threadQs}";
-                    using var deleteResponse = await client.DeleteAsync(deleteUrl);
+                    using var deleteResponse = await SendAsync(() => client.DeleteAsync(deleteUrl), realm);
                     if (deleteResponse.IsSuccessStatusCode || deleteResponse.StatusCode == HttpStatusCode.NotFound)
                     {
-                        Logger.Information("Discord status post signed with an older name or picture; making it again.");
-                        SaveMessageId(null, null);
+                        Logger.Information("Discord status post of {realm} signed with an older name or picture; making it again.", realm);
+                        SaveMessageId(realm, null, null);
                         messageId = null;
                     }
                     else
                     {
-                        Logger.Warning("Discord status post could not be taken down to change its name or picture: {status}", deleteResponse.StatusCode);
+                        Logger.Warning("Discord status post of {realm} could not be taken down to change its name or picture: {status}", realm, deleteResponse.StatusCode);
                     }
                 }
 
@@ -192,12 +269,13 @@ namespace ValheimBakaLoader.Tools
                 if (!string.IsNullOrWhiteSpace(messageId))
                 {
                     var editUrl = $"{webhookUrl}/messages/{messageId}{threadQs}";
-                    using var editContent = new StringContent(ForEdit(payload), Encoding.UTF8, "application/json");
-                    using var editResponse = await client.PatchAsync(editUrl, editContent);
+                    var editBody = ForEdit(payload);
+                    using var editResponse = await SendAsync(
+                        () => client.PatchAsync(editUrl, new StringContent(editBody, Encoding.UTF8, "application/json")), realm);
 
                     if (editResponse.IsSuccessStatusCode)
                     {
-                        LastEditUtc = DateTime.UtcNow;
+                        post.LastEditUtc = DateTime.UtcNow;
                         return new DiscordStatusResult { Ok = true, Detail = "updated" };
                     }
 
@@ -205,13 +283,13 @@ namespace ValheimBakaLoader.Tools
                     // channels) - forget it and fall through to create a fresh one.
                     if (editResponse.StatusCode == HttpStatusCode.NotFound)
                     {
-                        Logger.Information("Discord status post no longer exists; creating a new one.");
-                        SaveMessageId(null, null);
+                        Logger.Information("Discord status post of {realm} no longer exists; creating a new one.", realm);
+                        SaveMessageId(realm, null, null);
                     }
                     else
                     {
                         var body = await SafeReadAsync(editResponse);
-                        Logger.Warning("Discord status edit failed: {status} {body}", editResponse.StatusCode, body);
+                        Logger.Warning("Discord status edit of {realm} failed: {status} {body}", realm, editResponse.StatusCode, body);
                         return new DiscordStatusResult { Error = $"Discord rejected the edit ({(int)editResponse.StatusCode})." };
                     }
                 }
@@ -219,13 +297,13 @@ namespace ValheimBakaLoader.Tools
                 // ...otherwise create it. ?wait=true makes Discord return the created
                 // message (including its id) instead of a fire-and-forget 204.
                 var createQs = threadQs.Length > 0 ? threadQs + "&wait=true" : "?wait=true";
-                using var createContent = new StringContent(payload, Encoding.UTF8, "application/json");
-                using var createResponse = await client.PostAsync(webhookUrl + createQs, createContent);
+                using var createResponse = await SendAsync(
+                    () => client.PostAsync(webhookUrl + createQs, new StringContent(payload, Encoding.UTF8, "application/json")), realm);
 
                 if (!createResponse.IsSuccessStatusCode)
                 {
                     var body = await SafeReadAsync(createResponse);
-                    Logger.Warning("Discord status post failed: {status} {body}", createResponse.StatusCode, body);
+                    Logger.Warning("Discord status post of {realm} failed: {status} {body}", realm, createResponse.StatusCode, body);
                     return new DiscordStatusResult { Error = $"Discord rejected the post ({(int)createResponse.StatusCode})." };
                 }
 
@@ -234,19 +312,69 @@ namespace ValheimBakaLoader.Tools
                 if (string.IsNullOrWhiteSpace(newId))
                     return new DiscordStatusResult { Error = "Discord did not return the new post's id." };
 
-                SaveMessageId(newId, signature);
-                LastEditUtc = DateTime.UtcNow;
+                SaveMessageId(realm, newId, signature);
+                post.LastEditUtc = DateTime.UtcNow;
                 return new DiscordStatusResult { Ok = true, Detail = "created" };
             }
             catch (Exception e)
             {
-                Logger.Warning("Discord status publish error: {message}", e.Message);
+                Logger.Warning("Discord status publish error for {realm}: {message}", realm, e.Message);
                 return new DiscordStatusResult { Error = e.Message };
             }
             finally
             {
-                PublishLock.Release();
+                post.Lock.Release();
             }
+        }
+
+        /// <summary>
+        /// One request, with one retry when Discord answers 429. Several realms posting through
+        /// one webhook can meet its limit together, and Discord says in the answer how long to
+        /// wait. A second 429 is a line in the Saga and the answer as it came, so the caller
+        /// reports a refused edit rather than waiting on in silence.
+        /// </summary>
+        private async Task<HttpResponseMessage> SendAsync(Func<Task<HttpResponseMessage>> send, string realm)
+        {
+            var first = await send();
+            if ((int)first.StatusCode != 429) return first;
+
+            var wait = await RetryAfterAsync(first);
+            first.Dispose();
+            Logger.Information("Discord asked the status post of {realm} to wait {seconds}s; trying once more.",
+                realm, wait.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
+            await WaitOut(wait);
+
+            var second = await send();
+            if ((int)second.StatusCode == 429)
+                Logger.Warning("Discord is still rate limiting the status post of {realm} after one wait; this edit is left for the next one.", realm);
+            return second;
+        }
+
+        /// <summary>
+        /// How long a 429 asks for: the body's retry_after in seconds, else the Retry-After
+        /// header, else a second. Never less than nothing and never more than the longest wait.
+        /// </summary>
+        internal static async Task<TimeSpan> RetryAfterAsync(HttpResponseMessage response)
+        {
+            double? seconds = null;
+            try
+            {
+                var body = response.Content == null ? null : await response.Content.ReadAsStringAsync();
+                if (!string.IsNullOrWhiteSpace(body))
+                {
+                    var token = JObject.Parse(body)["retry_after"];
+                    if (token != null && token.Type is JTokenType.Float or JTokenType.Integer)
+                        seconds = token.Value<double>();
+                }
+            }
+            catch { /* a body that is not JSON leaves the header to say it */ }
+
+            if (seconds == null && response.Headers.RetryAfter?.Delta is TimeSpan delta)
+                seconds = delta.TotalSeconds;
+
+            var wait = TimeSpan.FromSeconds(seconds ?? 1);
+            if (wait < TimeSpan.Zero) wait = TimeSpan.Zero;
+            return wait > LongestRetryWait ? LongestRetryWait : wait;
         }
 
         public async Task<DiscordStatusResult> ValidateWebhookAsync(string url)
@@ -277,62 +405,73 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        public async Task<DiscordStatusResult> RemoveStatusMessageAsync()
+        public async Task<DiscordStatusResult> RemoveStatusMessageAsync(string realm)
         {
-            await PublishLock.WaitAsync();
+            if (string.IsNullOrWhiteSpace(realm))
+                return new DiscordStatusResult { Ok = true, Detail = "nothing to remove" };
+
+            var post = PostOf(realm);
+            await post.Lock.WaitAsync();
             try
             {
                 var prefs = UserPrefsProvider.LoadPreferences();
-                var messageId = prefs?.DiscordStatusMessageId;
-                var webhookUrl = prefs?.DiscordWebhookUrl?.Trim();
+                var server = HeraldRealms.Find(prefs, realm);
+                var messageId = server?.HeraldStatusMessageId;
+                var webhookUrl = HeraldRealms.WebhookUrlFor(prefs, server)?.Trim();
 
                 if (string.IsNullOrWhiteSpace(messageId))
                     return new DiscordStatusResult { Ok = true, Detail = "nothing to remove" };
 
+                var gone = false;
                 if (!string.IsNullOrWhiteSpace(webhookUrl) && WebhookUrlPattern.IsMatch(webhookUrl))
                 {
                     try
                     {
                         using var client = HttpClientProvider.CreateClient();
                         client.Timeout = TimeSpan.FromSeconds(15);
-                        var deleteUrl = $"{webhookUrl}/messages/{messageId}{BuildThreadQuery(prefs)}";
-                        using var response = await client.DeleteAsync(deleteUrl);
+                        var deleteUrl = $"{webhookUrl}/messages/{messageId}{BuildThreadQuery(HeraldRealms.ThreadIdFor(prefs, server))}";
+                        using var response = await SendAsync(() => client.DeleteAsync(deleteUrl), realm);
                         // 404 just means it is already gone - either way we forget the id below.
+                        gone = response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound;
+                        if (!gone)
+                            Logger.Warning("Discord status post of {realm} could not be taken down: {status}", realm, response.StatusCode);
                     }
                     catch (Exception e)
                     {
-                        Logger.Debug("Discord status delete skipped: {0}", e.Message);
+                        Logger.Warning("Discord status post of {realm} could not be taken down: {message}", realm, e.Message);
                     }
                 }
 
-                SaveMessageId(null, null);
-                return new DiscordStatusResult { Ok = true, Detail = "removed" };
+                SaveMessageId(realm, null, null);
+                return new DiscordStatusResult { Ok = true, Detail = gone ? "removed" : "forgotten" };
             }
             finally
             {
-                PublishLock.Release();
+                post.Lock.Release();
             }
         }
 
-        private void SaveMessageId(string id, string signature)
+        private void SaveMessageId(string realm, string id, string signature)
         {
             // This runs on the publish timer's thread while the server's own thread can be
             // recording a launched build into the same document. Both write the WHOLE of
             // userprefs.json, so the load and the write belong under the one gate: without it the
             // later of the two put the other's change back the way it was, and a profile that lost
-            // its launch history got asked about a build change that had already happened.
+            // its launch history got asked about a build change that had already happened. A
+            // profile save that loaded the realm before this landed keeps it as well: the section
+            // writer puts the stored post back onto any profile it replaces.
             UserPrefsProvider.Mutate(prefs =>
             {
-                prefs.DiscordStatusMessageId = id;
-                prefs.DiscordStatusMessageSignature = signature;
+                var server = HeraldRealms.Find(prefs, realm);
+                if (server == null) return false;
+                server.HeraldStatusMessageId = id;
+                server.HeraldStatusMessageSignature = signature;
+                return true;
             });
         }
 
-        private static string BuildThreadQuery(UserPreferences prefs)
-        {
-            var threadId = prefs?.DiscordWebhookThreadId;
-            return string.IsNullOrWhiteSpace(threadId) ? "" : $"?thread_id={Uri.EscapeDataString(threadId.Trim())}";
-        }
+        private static string BuildThreadQuery(string threadId)
+            => string.IsNullOrWhiteSpace(threadId) ? "" : $"?thread_id={Uri.EscapeDataString(threadId.Trim())}";
 
         /// <summary>
         /// The same post for an edit. Discord's edit takes neither a name nor a picture (both are
@@ -349,8 +488,14 @@ namespace ValheimBakaLoader.Tools
 
         private static long ToUnix(DateTime utc) => new DateTimeOffset(utc, TimeSpan.Zero).ToUnixTimeSeconds();
 
-        internal static string BuildEmbedPayload(DiscordStatusSnapshot s, UserPreferences prefs)
+        /// <summary>
+        /// One realm's post. The realm decides what it carries (the address, the password, its
+        /// title and its status line); the app decides how it is signed.
+        /// </summary>
+        internal static string BuildEmbedPayload(DiscordStatusSnapshot s, UserPreferences prefs, ServerPreferences realm)
         {
+            realm ??= new ServerPreferences();
+
             var color = s.ServerRunning ? 0x57F287       // green - up
                 : s.ServerStarting ? 0xF39C12            // orange - on the way up/down
                 : 0x95A5A6;                              // gray - down
@@ -381,7 +526,7 @@ namespace ValheimBakaLoader.Tools
                 },
             };
 
-            if (prefs.DiscordShareAddress)
+            if (realm.HeraldShareAddress)
             {
                 fields.Add(new
                 {
@@ -432,7 +577,7 @@ namespace ValheimBakaLoader.Tools
                 inline = true,
             });
 
-            if (prefs.DiscordSharePassword && !string.IsNullOrWhiteSpace(s.Password))
+            if (realm.HeraldSharePassword && !string.IsNullOrWhiteSpace(s.Password))
             {
                 fields.Add(new
                 {
@@ -451,9 +596,9 @@ namespace ValheimBakaLoader.Tools
                 : s.ServerName;
             var embed = new JObject
             {
-                ["title"] = DiscordHeraldLook.TitleFor(prefs, serverTitle),
+                ["title"] = DiscordHeraldLook.TitleFor(realm, serverTitle),
             };
-            var statusLine = DiscordHeraldLook.StatusLineFor(prefs);
+            var statusLine = DiscordHeraldLook.StatusLineFor(realm);
             if (statusLine != null) embed["description"] = statusLine;
             embed["color"] = color;
             embed["fields"] = JArray.FromObject(fields);

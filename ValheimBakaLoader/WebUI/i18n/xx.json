@@ -3508,7 +3508,7 @@
       "translation": "[Ẋ DISCORD Ẋ] ẊẊẊ"
     },
     "herald.head.sub": {
-      "translation": "[Ẋ one Discord post · edits itself · never floods the channel Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ one Discord post per realm · edits itself · never floods the channel Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.wiz.label": {
       "translation": "[Ẋ ᚺ  Setup wizard Ẋ] ẊẊẊẊẊ"
@@ -3520,25 +3520,70 @@
       "translation": "[Ẋ Discord sharing Ẋ] ẊẊẊẊẊ"
     },
     "herald.intro.body": {
-      "translation": "[Ẋ BakaLoader keeps {one} status post in your Discord channel and quietly edits it whenever the realm changes: players joining, mods updating, the next restart drawing near. One post, forever fresh. No spam. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ BakaLoader keeps {one} status post for each realm you share and quietly edits it whenever that realm changes: players joining, mods updating, the next restart drawing near. One post per realm, forever fresh. No spam. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.intro.one": {
       "translation": "[Ẋ one Ẋ] Ẋ"
     },
     "herald.sharing.toggle": {
-      "translation": "[Ẋ Share this server on Discord Ẋ] ẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Share on Discord, for every realm Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.sharing.toggle.title": {
-      "translation": "[Ẋ Master switch. On: the status post keeps itself up to date. Off: nothing is ever sent. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Master switch. On: each realm switched on below keeps its own post up to date. Off: nothing is ever sent, from any realm. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.sharing.app.note": {
+      "translation": "[Ẋ The webhook below is the one every realm posts through unless it has its own. The name, the picture and the BakaLoader line sign every post. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.head": {
+      "translation": "[Ẋ This realm Ẋ] ẊẊẊẊ"
+    },
+    "herald.realm.editing": {
+      "translation": "[Ẋ editing {name} Ẋ] ẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "herald.realm.toggle": {
+      "translation": "[Ẋ Share this realm on Discord Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.toggle.title": {
+      "translation": "[Ẋ On: this realm keeps a status post of its own up to date. Off: nothing is sent for this realm. Discord sharing beside it is the master over every realm. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.webhook": {
+      "translation": "[Ẋ Webhook URL for this realm Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.webhook.title": {
+      "translation": "[Ẋ Blank posts through the app-wide webhook. Paste a different webhook to put this realm's post in another channel. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.webhook.placeholder": {
+      "translation": "[Ẋ blank = the app-wide webhook Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.thread": {
+      "translation": "[Ẋ Thread ID for this realm Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.thread.placeholder": {
+      "translation": "[Ẋ blank = the app-wide thread, or the channel itself Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.hook.stat.app": {
+      "translation": "[Ẋ Posts through the app-wide webhook. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.hook.stat.none": {
+      "translation": "[Ẋ No webhook yet. Paste one here, or set the app-wide one. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.gone.save": {
+      "translation": "[Ẋ The realm this was set for is gone, so it was not saved. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.realm.gone.send": {
+      "translation": "[Ẋ That realm is gone, so nothing was sent to Discord. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.field.webhook": {
-      "translation": "[Ẋ Webhook URL  Ẋ] ẊẊẊẊ"
+      "translation": "[Ẋ App-wide webhook URL  Ẋ] ẊẊẊẊẊẊẊ"
     },
     "herald.field.webhook.title": {
       "translation": "[Ẋ In Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL. The setup wizard walks you through it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.field.thread": {
-      "translation": "[Ẋ Thread ID  Ẋ] ẊẊẊẊ"
+      "translation": "[Ẋ App-wide thread ID  Ẋ] ẊẊẊẊẊẊ"
     },
     "herald.field.thread.title": {
       "translation": "[Ẋ Optional. Only for posting inside a thread or forum post: right-click the thread → Copy Thread ID (needs Discord developer mode, under App Settings → Advanced). Blank = post directly in the channel. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
@@ -3574,7 +3619,7 @@
       "translation": "[Ẋ Also send one-off messages when the server starts, stops or crashes, and when vikings join or leave. These are separate messages, not edits of the status post. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.share.events.note": {
-      "translation": "[Ẋ one-off messages for start · stop · crash · join · leave Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ one-off messages for start · stop · crash · join · leave, from every realm Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.post.label": {
       "translation": "[Ẋ The post Ẋ] ẊẊẊ"
@@ -3583,13 +3628,13 @@
       "translation": "[Ẋ ᛒ  Publish now Ẋ] ẊẊẊẊẊ"
     },
     "herald.publish.title": {
-      "translation": "[Ẋ Create the status post now, or refresh it immediately if it already exists Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Create this realm's status post now, or refresh it immediately if it already exists Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.remove.label": {
       "translation": "[Ẋ ᛪ  Remove post Ẋ] ẊẊẊẊẊ"
     },
     "herald.remove.title": {
-      "translation": "[Ẋ Delete the status post from Discord. Settings stay, so you can publish again any time. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Delete this realm's status post from Discord. Settings stay, so you can publish again any time. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.modcode.label": {
       "translation": "[Ẋ Mod profile code Ẋ] ẊẊẊẊẊ"
@@ -3618,14 +3663,11 @@
     "herald.modcode.preview.none": {
       "translation": "[Ẋ No code in the post for this realm. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
     },
-    "herald.modcode.preview.other": {
-      "translation": "[Ẋ Saved for this realm. The post is about {realm} while it runs, so it carries that realm's code. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
-      "params": {
-        "realm": "text"
-      }
-    },
     "herald.modcode.preview.off": {
       "translation": "[Ẋ Saved for this realm. Discord sharing is switched off, so there is no post to carry it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.modcode.preview.realm_off": {
+      "translation": "[Ẋ Saved for this realm. Its own Discord switch is off, so there is no post to carry it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.modcode.refused": {
       "translation": "[Ẋ That does not look like a mod profile code; paste it exactly as your mod manager shows it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
@@ -3683,6 +3725,9 @@
     },
     "herald.look.preview.off": {
       "translation": "[Ẋ Discord sharing is off, so nothing is posted until it is on. These are kept for when it is. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.look.preview.realm_off": {
+      "translation": "[Ẋ This realm is not shared on Discord, so nothing is posted for it until its switch is on. These are kept for when it is. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.look.part.name": {
       "translation": "[Ẋ the name {name} Ẋ] ẊẊẊ",
@@ -6184,7 +6229,7 @@
       "translation": "[Ẋ Summon the Herald Ẋ] ẊẊẊẊẊẊ"
     },
     "herald.wiz.intro.body": {
-      "translation": "[Ẋ The Herald keeps <strong>one</strong> status post in a Discord channel of your choosing and quietly <strong>edits that same post</strong> whenever the realm changes. It never sends a stream of messages, so your channel stays clean. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "translation": "[Ẋ The Herald keeps <strong>one</strong> status post for this realm in a Discord channel of your choosing and quietly <strong>edits that same post</strong> whenever the realm changes. It never sends a stream of messages, so your channel stays clean. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "allowsHtml": true
     },
     "herald.wiz.intro.carries": {
@@ -6267,6 +6312,9 @@
     "herald.wiz.sum.thread": {
       "translation": "[Ẋ Thread Ẋ] ẊẊ"
     },
+    "herald.wiz.sum.realm": {
+      "translation": "[Ẋ Realm Ẋ] ẊẊ"
+    },
     "herald.wiz.sum.thread.none": {
       "translation": "[Ẋ none · posts in the channel itself Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
     },
@@ -6332,6 +6380,13 @@
     "herald.wiz.preview.toast": {
       "translation": "[Ẋ preview · the Herald is set up Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
       "mark": "ᚺ"
+    },
+    "herald.wiz.realm_moved.toast": {
+      "translation": "[Ẋ {name} is no longer the realm on screen, so the wizard set nothing up. Open it again on the realm you want. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      },
+      "mark": "ᚦ"
     },
     "herald.wiz.publish.failed.toast": {
       "translation": "[Ẋ {reason} · check the webhook in the HERALD hall Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ",

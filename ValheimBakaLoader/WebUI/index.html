@@ -914,7 +914,10 @@
           <div class="pagehead">
             <h1 data-i18n="herald.head.title"><span class="r">ᚺ</span>DISCORD</h1>
             <span class="hnorse" data-i18n="common.norse.herald">Herald</span>
-            <span class="sub" data-i18n="herald.head.sub">one Discord post · edits itself · never floods the channel</span>
+            <span class="sub" data-i18n="herald.head.sub">one Discord post per realm · edits itself · never floods the channel</span>
+            <!-- The realm the hall is editing. app.js writes it (heraldRenderRealmLines) and
+                 shows it once there is a realm to name, so the first frame has no empty pill. -->
+            <span class="pill" id="heraldRealmPill" style="display:none"></span>
             <div class="grow"></div>
             <button class="btn btn-ember btn-sm" id="heraldWizBtn" title="Guided setup: create a webhook in Discord, paste it here, choose what to share, publish the first post" data-i18n="herald.wiz.label" data-i18n-title="herald.wiz.title">ᚺ&nbsp; Setup wizard</button>
           </div>
@@ -930,34 +933,48 @@
                    is the seed a window with no catalog reads, and the render replaces it the
                    moment the words land. -->
               <div class="subval" id="heraldIntro" style="margin:2px 0 10px">BakaLoader keeps <strong>one</strong> status post in your Discord channel and quietly edits it whenever the realm changes: players joining, mods updating, the next restart drawing near. One post, forever fresh. No spam.</div>
-              <div class="togglerow"><span class="tl" data-i18n="herald.sharing.toggle">Share this server on Discord</span><span class="toggle" id="tHerald" data-t title="Master switch. On: the status post keeps itself up to date. Off: nothing is ever sent." data-i18n-title="herald.sharing.toggle.title"></span></div>
-              <div class="field" style="margin-top:10px"><label data-i18n="herald.field.webhook">Webhook URL <span class="r" title="In Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL. The setup wizard walks you through it." data-i18n-title="herald.field.webhook.title">ᛟ</span></label>
+              <div class="togglerow"><span class="tl" data-i18n="herald.sharing.toggle">Share on Discord, for every realm</span><span class="toggle" id="tHerald" data-t title="Master switch. On: each realm switched on below keeps its own post up to date. Off: nothing is ever sent, from any realm." data-i18n-title="herald.sharing.toggle.title"></span></div>
+              <div class="subval" style="margin:4px 0 0" data-i18n="herald.sharing.app.note">The webhook below is the one every realm posts through unless it has its own. The name, the picture and the BakaLoader line sign every post.</div>
+              <div class="field" style="margin-top:10px"><label data-i18n="herald.field.webhook">App-wide webhook URL <span class="r" title="In Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL. The setup wizard walks you through it." data-i18n-title="herald.field.webhook.title">ᛟ</span></label>
                 <input type="text" id="heraldUrl" spellcheck="false" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></div>
               <div class="wiz-stat dim" id="heraldUrlStat" style="margin-top:4px">paste a webhook URL, or run the setup wizard</div>
-              <div class="field" style="margin-top:8px"><label data-i18n="herald.field.thread">Thread ID <span class="r" title="Optional. Only for posting inside a thread or forum post: right-click the thread → Copy Thread ID (needs Discord developer mode, under App Settings → Advanced). Blank = post directly in the channel." data-i18n-title="herald.field.thread.title">ᛟ</span></label>
+              <div class="field" style="margin-top:8px"><label data-i18n="herald.field.thread">App-wide thread ID <span class="r" title="Optional. Only for posting inside a thread or forum post: right-click the thread → Copy Thread ID (needs Discord developer mode, under App Settings → Advanced). Blank = post directly in the channel." data-i18n-title="herald.field.thread.title">ᛟ</span></label>
                 <input type="text" id="heraldThread" spellcheck="false" autocomplete="off" placeholder="optional · blank = post in the channel itself" data-i18n-placeholder="herald.thread.placeholder"></div>
-              <!-- THE HERALD'S LOOK: the name and picture each post is signed with, the status
-                   post's title and a line of the host's own at its top, and the BakaLoader line.
-                   Every box is blank by default and blank is a real choice (the webhook's name,
-                   the logo, the server name, no line). Saved through heraldSave like everything
-                   else here; heraldLookCommit refuses a picture link or a name Discord would not
-                   take, says so in the line below, and sends nothing. -->
+              <!-- THE HERALD'S LOOK: the name and picture each post is signed with, and the
+                   BakaLoader line, app wide. The title and the status line are the realm's and
+                   sit with the rest of its post in the next card. Every box is blank by default
+                   and blank is a real choice (the webhook's name, the logo). Saved through
+                   heraldSave like everything else here; heraldLookCommit refuses a picture link
+                   or a name Discord would not take, says so in the line below, and sends
+                   nothing. -->
               <div class="microlabel" style="margin-top:14px" data-i18n="herald.look.label">How the post looks</div>
               <div class="field" style="margin-top:6px"><label for="heraldName" data-i18n="herald.look.name.label">Display name</label>
                 <input type="text" id="heraldName" spellcheck="false" autocomplete="off" maxlength="80" placeholder="blank = the webhook's own name" data-i18n-placeholder="herald.look.name.placeholder"></div>
               <div class="field" style="margin-top:8px"><label for="heraldAvatar" data-i18n="herald.look.avatar.label">Avatar image URL</label>
                 <input type="text" id="heraldAvatar" spellcheck="false" autocomplete="off" maxlength="2048" placeholder="blank = the BakaLoader logo" data-i18n-placeholder="herald.look.avatar.placeholder"></div>
               <div class="subval" style="margin:4px 0 0" data-i18n="herald.look.avatar.note">It has to be a public image link that starts with https, so Discord can fetch it.</div>
+              <div class="togglerow" style="margin-top:8px"><span class="tl" data-i18n="herald.look.link">Link to the BakaLoader page</span><span class="toggle on" id="tHeraldLink" data-t title="Puts a small BakaLoader line at the top of each post that opens the project page." data-i18n-title="herald.look.link.title"></span></div>
+              <div class="wiz-stat dim" id="heraldLookStat" style="margin:4px 0 0"></div>
+            </div>
+            <!-- THIS REALM: its own post (1.2.16). The switch, the webhook and thread (blank is
+                 the app-wide pair), what the post carries, its title and status line. app.js
+                 paints all of it from the realm on screen (heraldRenderRealm) and repaints on
+                 every realm switch; the name line and the webhook line are app.js's and carry no
+                 id of their own. -->
+            <div class="card b-heraldshare">
+              <div class="microlabel" data-i18n="herald.realm.head">This realm</div>
+              <div class="subval" id="heraldRealmName" style="margin:2px 0 8px"></div>
+              <div class="togglerow"><span class="tl" data-i18n="herald.realm.toggle">Share this realm on Discord</span><span class="toggle" id="tHeraldRealm" data-t title="On: this realm keeps a status post of its own up to date. Off: nothing is sent for this realm. Discord sharing beside it is the master over every realm." data-i18n-title="herald.realm.toggle.title"></span></div>
+              <div class="field" style="margin-top:10px"><label for="heraldRealmUrl" data-i18n="herald.realm.webhook">Webhook URL for this realm</label>
+                <input type="text" id="heraldRealmUrl" spellcheck="false" autocomplete="off" placeholder="blank = the app-wide webhook" data-i18n-placeholder="herald.realm.webhook.placeholder" title="Blank posts through the app-wide webhook. Paste a different webhook to put this realm's post in another channel." data-i18n-title="herald.realm.webhook.title"></div>
+              <div class="wiz-stat dim" id="heraldRealmUrlStat" style="margin-top:4px"></div>
+              <div class="field" style="margin-top:8px"><label for="heraldRealmThread" data-i18n="herald.realm.thread">Thread ID for this realm</label>
+                <input type="text" id="heraldRealmThread" spellcheck="false" autocomplete="off" placeholder="blank = the app-wide thread, or the channel itself" data-i18n-placeholder="herald.realm.thread.placeholder"></div>
               <div class="field" style="margin-top:8px"><label for="heraldTitle" data-i18n="herald.look.title.label">Title</label>
                 <input type="text" id="heraldTitle" spellcheck="false" autocomplete="off" maxlength="256" placeholder="blank = the server name" data-i18n-placeholder="herald.look.title.placeholder"></div>
               <div class="field" style="margin-top:8px"><label for="heraldStatusLine" data-i18n="herald.look.status.label">Status line</label>
                 <input type="text" id="heraldStatusLine" autocomplete="off" maxlength="300" placeholder="a line at the top of the post · blank = none" data-i18n-placeholder="herald.look.status.placeholder"></div>
-              <div class="togglerow" style="margin-top:8px"><span class="tl" data-i18n="herald.look.link">Link to the BakaLoader page</span><span class="toggle on" id="tHeraldLink" data-t title="Puts a small BakaLoader line at the top of each post that opens the project page." data-i18n-title="herald.look.link.title"></span></div>
-              <div class="wiz-stat dim" id="heraldLookStat" style="margin:4px 0 0"></div>
-            </div>
-            <!-- WHAT THE POST CARRIES -->
-            <div class="card b-heraldshare">
-              <div class="microlabel" data-i18n="herald.carries.label">What the post carries</div>
+              <div class="microlabel" style="margin-top:14px" data-i18n="herald.carries.label">What the post carries</div>
               <div class="subval" style="margin:2px 0 8px" data-i18n="herald.carries.note">Always: server name, status, players online, world, mod count, last mod update, next restart. Optional extras:</div>
               <div class="togglerow"><span class="tl" data-i18n="herald.share.address">Join address (IP:port)</span><span class="toggle" id="tHeraldAddr" data-t title="Include the server's public IP and port so friends copy it straight from Discord." data-i18n-title="herald.share.address.title"></span></div>
               <div class="togglerow"><span class="tl" data-i18n="herald.share.password">Server password</span><span class="toggle" id="tHeraldPass" data-t title="Include the password in the post. Anyone who can read the channel sees it, so use it only for private channels." data-i18n-title="herald.share.password.title"></span></div>
@@ -978,15 +995,15 @@
               <div class="subval" style="margin:4px 0 0" data-i18n="herald.modcode.note">Players paste this into their mod manager to get the same mods.</div>
               <div class="wiz-stat dim" id="heraldModCodeStat" style="margin:2px 0 6px"></div>
               <div class="togglerow"><span class="tl" data-i18n="herald.share.events">Event posts</span><span class="toggle" id="tHeraldEvents" data-t title="Also send one-off messages when the server starts, stops or crashes, and when vikings join or leave. These are separate messages, not edits of the status post." data-i18n-title="herald.share.events.title"></span></div>
-              <div class="subval" style="margin:2px 0 0" data-i18n="herald.share.events.note">one-off messages for start · stop · crash · join · leave</div>
+              <div class="subval" style="margin:2px 0 0" data-i18n="herald.share.events.note">one-off messages for start · stop · crash · join · leave, from every realm</div>
             </div>
             <!-- THE POST -->
             <div class="card b-heraldpost">
               <div class="microlabel" data-i18n="herald.post.label">The post</div>
               <div class="subval" id="heraldPostStat" style="margin:2px 0 12px">no post yet · publish to place the Herald in your channel</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn btn-ember btn-sm" id="heraldPublish" title="Create the status post now, or refresh it immediately if it already exists" data-i18n="herald.publish.label" data-i18n-title="herald.publish.title">ᛒ&nbsp; Publish now</button>
-                <button class="btn btn-ghost btn-sm" id="heraldRemove" title="Delete the status post from Discord. Settings stay, so you can publish again any time." data-i18n="herald.remove.label" data-i18n-title="herald.remove.title">ᛪ&nbsp; Remove post</button>
+                <button class="btn btn-ember btn-sm" id="heraldPublish" title="Create this realm's status post now, or refresh it immediately if it already exists" data-i18n="herald.publish.label" data-i18n-title="herald.publish.title">ᛒ&nbsp; Publish now</button>
+                <button class="btn btn-ghost btn-sm" id="heraldRemove" title="Delete this realm's status post from Discord. Settings stay, so you can publish again any time." data-i18n="herald.remove.label" data-i18n-title="herald.remove.title">ᛪ&nbsp; Remove post</button>
               </div>
             </div>
           </div>

@@ -119,6 +119,50 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public string ModProfileCode { get; set; }
 
+        // -- The realm's own Herald post --
+
+        /// <summary>
+        /// Whether this realm keeps a status post on Discord. Off by default, so a realm made
+        /// after the update never posts by surprise; the app-wide Discord switch is still the
+        /// master over every realm.
+        /// </summary>
+        public bool HeraldOn { get; set; }
+
+        /// <summary>The webhook this realm posts through. Blank is the app-wide webhook.</summary>
+        public string HeraldWebhookUrl { get; set; }
+
+        /// <summary>
+        /// The thread inside the webhook's channel. Blank with a webhook of the realm's own is
+        /// the channel itself; blank with the app-wide webhook is the app-wide thread, because a
+        /// thread belongs to one channel and the app-wide one is where that webhook posts.
+        /// </summary>
+        public string HeraldThreadId { get; set; }
+
+        /// <summary>Include this realm's public address in its post.</summary>
+        public bool HeraldShareAddress { get; set; } = true;
+
+        /// <summary>Include this realm's password in its post. Anyone in the channel can read it.</summary>
+        public bool HeraldSharePassword { get; set; }
+
+        /// <summary>The post's title. Blank is the server name.</summary>
+        public string HeraldTitle { get; set; }
+
+        /// <summary>One line of the host's own at the top of the post. Blank is no line.</summary>
+        public string HeraldStatusLine { get; set; }
+
+        /// <summary>
+        /// The Discord message id of this realm's post. State, not a setting: only the status
+        /// service writes it, through the gated whole-document write, and every other save of
+        /// the profile keeps what is on disk (see <see cref="KeepHeraldPostFrom"/>).
+        /// </summary>
+        public string HeraldStatusMessageId { get; set; }
+
+        /// <summary>The name and picture the post was made with; see DiscordHeraldLook.SignatureFor.</summary>
+        public string HeraldStatusMessageSignature { get; set; }
+
+        /// <summary>The thread the post opened in a forum channel, kept beside the id it belongs with.</summary>
+        public string HeraldStatusThreadId { get; set; }
+
         public bool RconEnabled { get; set; }
 
         public int RconPort { get; set; } = 25575;
@@ -269,6 +313,56 @@ namespace ValheimBakaLoader.Game
             return this;
         }
 
+        /// <summary>
+        /// Puts the post state stored on disk back onto a profile about to replace it. The post's
+        /// id is written by the status service from a timer while the server's own thread can be
+        /// recording a launched build into this same profile, and that writer loaded the profile
+        /// before the post was made: without this its save would put the id back to nothing and
+        /// the next edit would make a second post in the channel.
+        /// </summary>
+        public ServerPreferences KeepHeraldPostFrom(ServerPreferences stored)
+        {
+            if (stored == null) return this;
+            HeraldStatusMessageId = stored.HeraldStatusMessageId;
+            HeraldStatusMessageSignature = stored.HeraldStatusMessageSignature;
+            HeraldStatusThreadId = stored.HeraldStatusThreadId;
+            return this;
+        }
+
+        /// <summary>
+        /// Puts the Herald settings stored on disk back onto a profile the settings form sent. The
+        /// form has no Herald boxes (the Discord hall saves those through userprefs.save), so what
+        /// it carries is a copy of an older read at best. With nothing on disk, a first save under
+        /// a new name, the realm starts switched off and with no post: a copy never adopts the
+        /// post of the realm it was copied from.
+        /// </summary>
+        public ServerPreferences KeepHeraldFrom(ServerPreferences stored)
+        {
+            if (stored == null) return ForgetHeraldPost();
+            HeraldOn = stored.HeraldOn;
+            HeraldWebhookUrl = stored.HeraldWebhookUrl;
+            HeraldThreadId = stored.HeraldThreadId;
+            HeraldShareAddress = stored.HeraldShareAddress;
+            HeraldSharePassword = stored.HeraldSharePassword;
+            HeraldTitle = stored.HeraldTitle;
+            HeraldStatusLine = stored.HeraldStatusLine;
+            return KeepHeraldPostFrom(stored);
+        }
+
+        /// <summary>
+        /// A realm made from another one shares nothing yet: switched off, and no post, signature
+        /// or forum thread of its own. The webhook, the thread, the switches and the look are kept,
+        /// so turning the copy on posts where the host would expect.
+        /// </summary>
+        public ServerPreferences ForgetHeraldPost()
+        {
+            HeraldOn = false;
+            HeraldStatusMessageId = null;
+            HeraldStatusMessageSignature = null;
+            HeraldStatusThreadId = null;
+            return this;
+        }
+
         /// <summary>The unticked list as it is kept: trimmed, no blanks, each name once whatever its case.</summary>
         public static List<string> NormalizeUnticked(IEnumerable<string> names)
         {
@@ -287,6 +381,13 @@ namespace ValheimBakaLoader.Game
         {
             var check = Tools.GaleProfileId.Check(stored);
             return check.Ok ? check.Id : null;
+        }
+
+        /// <summary>A text setting as it is stored: trimmed, and null when blank.</summary>
+        public static string BlankAsNull(string value)
+        {
+            var v = value?.Trim();
+            return string.IsNullOrEmpty(v) ? null : v;
         }
 
         /// <summary>
@@ -336,6 +437,16 @@ namespace ValheimBakaLoader.Game
                 CleanseWhenEmpty = file.CleanseWhenEmpty ?? defaults.CleanseWhenEmpty,
                 ModProfileCodeKind = ModProfileCodes.NormalizeKind(file.ModProfileCodeKind ?? defaults.ModProfileCodeKind),
                 ModProfileCode = string.IsNullOrWhiteSpace(file.ModProfileCode) ? defaults.ModProfileCode : file.ModProfileCode.Trim(),
+                HeraldOn = file.HeraldOn ?? defaults.HeraldOn,
+                HeraldWebhookUrl = BlankAsNull(file.HeraldWebhookUrl),
+                HeraldThreadId = BlankAsNull(file.HeraldThreadId),
+                HeraldShareAddress = file.HeraldShareAddress ?? defaults.HeraldShareAddress,
+                HeraldSharePassword = file.HeraldSharePassword ?? defaults.HeraldSharePassword,
+                HeraldTitle = BlankAsNull(file.HeraldTitle),
+                HeraldStatusLine = BlankAsNull(file.HeraldStatusLine),
+                HeraldStatusMessageId = BlankAsNull(file.HeraldStatusMessageId),
+                HeraldStatusMessageSignature = file.HeraldStatusMessageSignature,
+                HeraldStatusThreadId = BlankAsNull(file.HeraldStatusThreadId),
                 RconEnabled = file.RconEnabled ?? defaults.RconEnabled,
                 RconPort = file.RconPort ?? defaults.RconPort,
                 RconPassword = file.RconPassword ?? defaults.RconPassword,
@@ -385,6 +496,17 @@ namespace ValheimBakaLoader.Game
             CleanseWhenEmpty = CleanseWhenEmpty,
             ModProfileCodeKind = ModProfileCodeKind,
             ModProfileCode = ModProfileCode,
+            HeraldOn = HeraldOn,
+            HeraldWebhookUrl = BlankAsNull(HeraldWebhookUrl),
+            HeraldThreadId = BlankAsNull(HeraldThreadId),
+            HeraldShareAddress = HeraldShareAddress,
+            HeraldSharePassword = HeraldSharePassword,
+            HeraldTitle = BlankAsNull(HeraldTitle),
+            HeraldStatusLine = BlankAsNull(HeraldStatusLine),
+            HeraldStatusMessageId = BlankAsNull(HeraldStatusMessageId),
+            // A signature means nothing without the post it belongs to.
+            HeraldStatusMessageSignature = BlankAsNull(HeraldStatusMessageId) == null ? null : HeraldStatusMessageSignature,
+            HeraldStatusThreadId = BlankAsNull(HeraldStatusThreadId),
             RconEnabled = RconEnabled,
             RconPort = RconPort,
             RconPassword = RconPassword,
