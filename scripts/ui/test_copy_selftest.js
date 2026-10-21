@@ -117,6 +117,9 @@ class El {
 function page() {
   const context = { T };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(APP.slice(APP.indexOf("/* REVEAL-BEGIN"), APP.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   const code = [
     line("const esc="),
     line("const WORLD_NAME_MAX="),

@@ -261,7 +261,7 @@ html.lang-pending body>*{visibility:hidden}
   background:var(--surface-3);border:1px solid var(--bronze);border-radius:var(--r2);
   box-shadow:0 18px 40px rgba(0,0,0,.55);padding:6px;
 }
-.langmenu.open{display:block;animation:pageIn .15s var(--ease)}
+.langmenu.open{display:block;animation:fadeIn .2s ease-out}
 .langmenu .lm-head{
   font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--bone-faint-text);
   padding:5px 10px 6px;
@@ -634,16 +634,16 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
   animation:emberW 4.8s ease-in-out infinite;
   transform:rotate(-90deg);transition:transform .18s ease}
 .b-upkeep.open .upkeep-head .r{transform:rotate(0deg)}
-.upkeep-body{display:none}
-.b-upkeep.open .upkeep-body{display:block;margin-top:4px}
+/* The bodies start hidden in the markup and roll open through reveal() in app.js; the class
+   only turns the chevron and spaces the open body. */
+.b-upkeep.open .upkeep-body{margin-top:4px}
 /* The Connection card wears the same head, the same chevron and the same fold. One set of
    rules for both would have needed a shared class name on two cards that are otherwise
    nothing alike, so the selectors are paired instead. */
 .conn-head .r{display:inline-block;color:var(--amber);transform:rotate(-90deg);
   transition:transform .18s var(--ease)}
 .b-conn.open .conn-head .r{transform:rotate(0deg)}
-.conn-body{display:none}
-.b-conn.open .conn-body{display:block;margin-top:4px}
+.b-conn.open .conn-body{margin-top:4px}
 .conn-head{min-height:28px;border-radius:7px;margin:2px -6px 0;padding:4px 6px;
   transition:background .15s var(--ease),color .15s var(--ease)}
 .conn-head:hover{background:rgba(255,255,255,.04);color:var(--bone)}
@@ -1103,8 +1103,7 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
   animation:emberW 4.8s ease-in-out infinite;
   transform:rotate(-90deg);transition:transform .18s ease}
 .formsec.collapsible.open .r{transform:rotate(0deg)}
-.formsec.collapsible+.formsec-body{display:none}
-.formsec.collapsible.open+.formsec-body{display:block}
+/* A folded section's body starts hidden in the markup and rolls through reveal() in app.js. */
 /* the Server glyph smoulders too, but that section always stays open */
 .microlabel .r.glowr{color:var(--amber);font-size:12px;animation:emberW 4.8s ease-in-out infinite}
 
@@ -1174,7 +1173,7 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 
 /* ============ COMMAND PALETTE ============ */
 .palette-bg{position:absolute;inset:0;z-index:80;background:rgba(8,9,11,.6);backdrop-filter:blur(3px);
-  display:none;align-items:flex-start;justify-content:center;padding-top:110px;animation:fadeIn .16s var(--ease)}
+  display:none;align-items:flex-start;justify-content:center;padding-top:110px;animation:fadeIn .2s ease-out}
 .palette-bg.open{display:flex}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 .palette{width:520px;background:linear-gradient(180deg,var(--surface-3),var(--surface-1));
@@ -1241,7 +1240,7 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 
 /* ============ LIVE CONTEXT MENU (fixed, JS-positioned) ============ */
 .ctxmenu.ctxfixed{position:fixed;top:0;left:0;right:auto;width:232px;z-index:95;display:none;animation:none}
-.ctxmenu.ctxfixed.open{display:block;animation:pageIn .15s var(--ease)}
+.ctxmenu.ctxfixed.open{display:block;animation:fadeIn .2s ease-out}
 .copychip.disabled{cursor:not-allowed}
 .ctxmenu .ci.disabled{opacity:.35;cursor:not-allowed}
 .ctxmenu .ci.disabled:hover{background:transparent;color:var(--bone)}
@@ -1251,18 +1250,20 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 
 /* ============ MODALS (teleport / spawn / confirm) ============ */
 .modal-bg{position:absolute;inset:0;z-index:85;background:rgba(8,9,11,.6);backdrop-filter:blur(3px);
-  display:none;align-items:center;justify-content:center;animation:fadeIn .16s var(--ease)}
+  display:none;align-items:center;justify-content:center;animation:fadeIn .2s ease-out}
 .modal-bg.open{display:flex}
-/* modalFadeOut's stand-in for a dialog that has just gone (1.2.17 follow-up): a copy that fades
-   in 0.2 s and takes no clicks, so the dialog leaves the way it came instead of vanishing. With
-   prefers-reduced-motion every dialog comes and goes as a plain fade, no movement. */
-.modal-bg.modal-ghost{display:flex;pointer-events:none;animation:revealOut .2s ease-out forwards}
-.modal-ghost .modal{animation:none}
+/* fadeGhost's stand-in for a dialog, a menu, the palette or the hover panel that has just gone
+   (1.2.17 follow-up, the sweep): a copy that fades in 0.2 s and takes no clicks, so the thing
+   leaves the way it came instead of vanishing. Nothing inside the copy moves on its own: an
+   entrance animation replayed on a copy that is leaving would be a dialog arriving twice. With
+   prefers-reduced-motion every one of these comes and goes as a plain fade, no movement. */
+.reveal-ghost{pointer-events:none!important;animation:revealOut .2s ease-out forwards!important}
+.reveal-ghost *{animation:none!important;transition:none!important}
+.modal-bg.reveal-ghost{display:flex}
 @keyframes revealOut{to{opacity:0}}
 @media (prefers-reduced-motion: reduce){
   .modal-bg,.modal{animation:fadeIn .2s ease-out}
-  .modal-bg.modal-ghost{animation:revealOut .2s ease-out forwards}
-  .modal-ghost .modal{animation:none}
+  .page,.palette-bg,.palette,.ctxmenu,.ctxmenu.ctxfixed.open,.langmenu.open,.wgtip.open{animation:fadeIn .2s ease-out}
 }
 .modal{width:460px;max-height:72vh;overflow:hidden;display:flex;flex-direction:column;gap:12px;
   background:linear-gradient(180deg,var(--surface-3),var(--surface-1));
@@ -1814,8 +1815,9 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
   .holdbar .hbprog i,.modprog .hbprog i{transition:none}
 }
 /* The bulk mod update carries the same measurable bar the server update uses, shown in the
-   Mods page while Update all runs. Hidden until the run starts (JS sets display:flex). */
-.modprog{display:none;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;
+   Mods page while Update all runs. Hidden in the markup until the run starts, when it rolls
+   in through reveal(). */
+.modprog{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;
   padding:8px 12px;border-radius:8px;background:var(--ember-dim);
   border:1px solid rgba(255,122,26,.3)}
 .modprog .hbmsg{flex:1 1 200px;min-width:0;font-size:12px;color:var(--bone-dim)}
@@ -2015,7 +2017,7 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
   background:linear-gradient(180deg,var(--surface-3),var(--surface-1));
   box-shadow:0 22px 52px rgba(0,0,0,.72),0 0 22px rgba(255,122,26,.08);
   font-size:11px;color:var(--bone-dim);line-height:1.5}
-.wgtip.open{display:block;animation:pageIn .14s var(--ease)}
+.wgtip.open{display:block;animation:fadeIn .2s ease-out}
 .wgtip .wgt-head{font-size:9.5px;letter-spacing:2.2px;text-transform:uppercase;font-weight:600;
   color:var(--bone);margin-bottom:4px}
 .wgtip .wgt-intro{color:var(--bone-dim);margin-bottom:9px}

@@ -71,6 +71,9 @@ function harness() {
     return Promise.resolve(params.world === "Final Sunset" ? damaged : null);
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   for (const opening of ["async function worldIntegrityCheck(world){",
     "async function worldIntegrityFor(world){",
     "function worldIntegritySubject(){",

@@ -219,7 +219,8 @@ test("3. Appearance lends its panel to the app's dialog, fades out, and however 
     const m = s.current();
     assert.ok(m.html.includes(s.context.esc(T(titleId))), which + " has the wrong title");
     assert.strictEqual(panel.parentNode, m.slot, which + "'s panel is not in the dialog");
-    assert.strictEqual(m.box.dataset.fadeOut, "1", which + " does not ask to fade out");
+    /* It no longer has to ask: since the sweep every dialog leaves through fadeGhost. */
+    assert.ok(!/dataset\.fadeOut/.test(APP), which + " still asks to fade out by hand");
     /* Close: the button closes the app's dialog; then whatever closed it, the dismissal puts the
        panel back home and saves what was typed. */
     m.done.listeners.click();

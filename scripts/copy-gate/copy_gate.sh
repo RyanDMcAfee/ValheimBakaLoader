@@ -1014,5 +1014,19 @@ else
   echo "  the reveal selftest is missing: $REVEAL_SELFTEST"; fail=1
 fi
 
+echo "== 64. the sweep: every show and hide a click can cause goes through the helper, the overlays fade =="
+# 1.2.18. The rule above, applied to the whole page: a style.display written by hand where a click
+# reaches it, a fold the stylesheet still hides by class (reveal cannot show it), a menu or dialog
+# that vanishes rather than fading, an entrance that moves under reduced motion, and the helper's
+# additions ({display}, {now}, {done}) coming undone are each caught here. docs/motion-sweep.md is
+# the record the selftest holds the allow list against.
+SWEEP_SELFTEST="$UI_DIR/motion_sweep_selftest.js"
+if [ -f "$SWEEP_SELFTEST" ]; then
+  if out=$(node "$SWEEP_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the motion sweep selftest is missing: $SWEEP_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

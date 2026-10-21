@@ -158,6 +158,9 @@ function hall() {
     parts: { server, app, save, band, page, tabServer, tabApp },
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn1("let WORLD_TAB="), context, { filename: "app.js#tab" });
   vm.runInContext(fn("function worldTab(name){"), context, { filename: "app.js#worldTab" });
   vm.runInContext(fn("function openAppTab(focusId){"), context, { filename: "app.js#openAppTab" });
@@ -170,7 +173,7 @@ test("the App tab shows its own panel and takes the pressed state with it", () =
   const h = hall();
   vm.runInContext('worldTab("app")', h);
 
-  assert.strictEqual(h.parts.app.style.display, "block", "the App tab's panel is not showing");
+  assert.strictEqual(h.parts.app.style.display, "", "the App tab's panel is not showing");
   assert.strictEqual(h.parts.server.style.display, "none", "the Server tab's panel is still showing");
   assert.ok(h.parts.tabApp.classList.contains("on"), "the App tab does not read as pressed");
   assert.ok(!h.parts.tabServer.classList.contains("on"), "the Server tab still reads as pressed");
@@ -261,7 +264,7 @@ test("openAppTab really opens the tab and scrolls what it was asked for", () => 
   const h = hall();
   vm.runInContext('openAppTab("selTextSize")', h);
   assert.ok(h.opened.indexOf("page:world") >= 0, "openAppTab does not walk to the Settings hall");
-  assert.strictEqual(h.parts.app.style.display, "block", "openAppTab did not open the App tab");
+  assert.strictEqual(h.parts.app.style.display, "", "openAppTab did not open the App tab");
   assert.strictEqual(vm.runInContext('$("#selTextSize").scrolled', h), 1,
     "openAppTab scrolled the tab rather than the control the palette named");
 
@@ -380,6 +383,9 @@ function switches() {
     el,
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn("function markSwitch(t){"), context, { filename: "app.js#aria" });
   vm.runInContext(fn1("let SWITCH_LABEL_SEQ="), context, { filename: "app.js#labelSeq" });
   vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
@@ -493,6 +499,9 @@ function named(one) {
   };
   const context = { Object, String, console, el, label, attrs };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn1("let SWITCH_LABEL_SEQ="), context, { filename: "app.js#labelSeq" });
   vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
   const answer = vm.runInContext("nameSwitch(el)", context);
@@ -608,6 +617,9 @@ function dialogSwitch(opts) {
     MutationObserver: Watcher,
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn1("let SWITCH_LABEL_SEQ="), context, { filename: "app.js#labelSeq" });
   vm.runInContext(fn("function markSwitch(t){"), context, { filename: "app.js#aria" });
   vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
@@ -749,6 +761,9 @@ test("the pass reaches every switch in a dialog with more than one", () => {
     root: { querySelectorAll: () => built },
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn1("let SWITCH_LABEL_SEQ="), context, { filename: "app.js#labelSeq" });
   vm.runInContext(fn("function markSwitch(t){"), context, { filename: "app.js#aria" });
   vm.runInContext(fn("function nameSwitch(t){"), context, { filename: "app.js#name" });
@@ -775,7 +790,7 @@ test("the realm band is not drawn on the App tab", () => {
   assert.ok(guard.indexOf('WORLD_TAB==="app"') > 0,
     "the band that says which realm is being edited still stands over a page where nothing belongs"
     + " to a realm: " + guard);
-  assert.ok(guard.indexOf('bar.style.display="none"') > 0, "the guard no longer takes the band down");
+  assert.ok(guard.indexOf("reveal(bar,false)") > 0, "the guard no longer takes the band down");
 
   // And the tab press repaints it, or the band would only change on the next walk into the hall.
   const tab = fn("function worldTab(name){");

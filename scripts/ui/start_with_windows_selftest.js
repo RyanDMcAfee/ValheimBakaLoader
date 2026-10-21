@@ -105,6 +105,9 @@ function reader() {
     },
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(SOURCE.slice(from, to + 2) + "\nthis.TABLE=START_WIN_NOTES;"
     + "\nthis.draw=renderStartWinNote;", context, { filename: "app.js#startWinNote" });
   return {

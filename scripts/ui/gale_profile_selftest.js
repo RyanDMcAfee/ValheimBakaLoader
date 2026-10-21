@@ -199,7 +199,7 @@ function page(opts) {
   const conditions = new Map();
   const modals = [];
   const switches = [];
-  const els = { "#galeId": el(), "#galeStatus": el(), "#galeCheckBtn": el(), "#galeForgetBtn": el(), "#galeReviewBtn": el() };
+  const els = { "#galeId": el(), "#galeStatus": el(), "#galeCheckBtn": el(), "#galeForgetBtn": el(), "#galeReviewBtn": Object.assign(el(), { style: { display: "none" } }) };
   const replies = opts.replies || {};
   const answer = (method, params) => {
     const r = replies[method];
@@ -237,6 +237,9 @@ function page(opts) {
   context.isActiveProfile = p => p == null || !context.S.profileName
     || String(p).toLowerCase() === String(context.S.profileName).toLowerCase();
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(APP.slice(APP.indexOf("/* REVEAL-BEGIN"), APP.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(block(), context, { filename: "app.js#gale" });
   for (const name of ["galeApply", "renderGaleBox", "conditionGale", "galeCheck", "galeCheckNow", "galeForget",
     "galeDialog", "galeDialogRows", "galeInstall", "galeStatusLine", "galeReviewable", "galeConfigsHtml", "galeConfigsLoad",

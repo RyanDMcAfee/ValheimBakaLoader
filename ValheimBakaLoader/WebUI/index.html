@@ -294,7 +294,7 @@
             <!-- UPKEEP (app self-update + start with Windows) -->
             <div class="card b-upkeep" id="upkeepCard">
               <div class="microlabel upkeep-head" id="upkeepHead" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse" data-i18n="hearth.upkeep.label" data-i18n-title="hearth.upkeep.head.title"><span class="r">ᛟ</span>Upkeep<span style="margin-left:auto" class="subval" id="blVersion" data-fs-anchor>v-</span></div>
-              <div class="upkeep-body" id="upkeepBody">
+              <div class="upkeep-body" id="upkeepBody" style="display:none">
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.check_updates">Check for BakaLoader updates</span><span class="toggle on" id="tCheckUpd" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.check_updates.note">Asks GitHub for a newer release at launch and before a scheduled restart. Nothing is installed unless the switch below is on.</div>
                 <div class="togglerow" id="rowAutoUpdApp"><span class="tl" data-i18n="hearth.upkeep.auto_update">Auto-update BakaLoader</span><span class="toggle" id="tAutoUpdApp" data-t></span></div>
@@ -319,7 +319,7 @@
                  carries no id; everything the walker owns here is static both ways. -->
             <div class="card b-conn" id="connCard">
               <div class="microlabel conn-head" id="connHead" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse" data-i18n="hearth.upkeep.connection.head" data-i18n-title="hearth.upkeep.head.title"><span class="r">ᛗ</span>Connection</div>
-              <div class="conn-body" id="connBody">
+              <div class="conn-body" id="connBody" style="display:none">
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.connection.note">How BakaLoader reaches Thunderstore, GitHub and the language packs. Leave both off unless the test below tells you otherwise.</div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.connection.no_proxy">Do not use the Windows proxy for Thunderstore</span><span class="toggle" id="tNoProxy" data-t></span></div>
                 <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.connection.no_proxy.note">BakaLoader follows the proxy settings Windows holds, including automatic detection. A proxy entry nothing is listening on makes every request sit and wait. With this on, BakaLoader goes straight out.</div>
@@ -414,7 +414,7 @@
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>
             <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
           </div>
-          <div class="modprog" id="modUpdProg" role="status" aria-live="polite"></div>
+          <div class="modprog" id="modUpdProg" role="status" aria-live="polite" style="display:none"></div>
           <div id="bepinexRow" class="beprow-wrap" style="display:none"></div>
           <!-- The followed Gale profile: one id per realm, opened from the Follow button above.
                Gale is asked only after the first frame, when this hall opens and on Check now,
@@ -558,7 +558,7 @@
             </div>
 
             <div class="formsec collapsible" id="secWorldMods" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse" data-i18n="world.sec.modifiers" data-i18n-title="hearth.upkeep.head.title"><span class="r">ᚷ</span> WORLD MODIFIERS</div>
-            <div class="formsec-body">
+            <div class="formsec-body" style="display:none">
             <div class="formgrid">
               <div class="field"><label data-i18n="world.mod.combat">Combat<button type="button" class="wginfo" id="iModCombat" aria-controls="wgTip" aria-label="What each Combat option does" data-i18n-aria="world.mod.combat.help.aria">?</button></label><select id="fModCombat"></select><div class="fieldnote wgnote" id="fModCombatNote"></div></div>
               <div class="field"><label data-i18n="world.mod.death">Death Penalty<button type="button" class="wginfo" id="iModDeath" aria-controls="wgTip" aria-label="What each Death Penalty option does" data-i18n-aria="world.mod.death.help.aria">?</button></label><select id="fModDeath"></select><div class="fieldnote wgnote" id="fModDeathNote"></div></div>
@@ -597,7 +597,7 @@
             </div>
 
             <div class="formsec collapsible" id="secRites" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse" data-i18n="world.sec.advanced" data-i18n-title="hearth.upkeep.head.title"><span class="r">ᚨ</span> ADVANCED<span class="cnorse" data-i18n="common.norse.rites">Rites</span></div>
-            <div class="formsec-body">
+            <div class="formsec-body" style="display:none">
             <div class="formgrid">
               <div class="field"><label data-i18n="world.field.empty_restart">Empty-Server Restart</label>
                 <div class="togglerow"><span class="tl" id="tEmptyLbl">Restart when empty for 5 min</span><span class="toggle on" id="tEmpty" data-t></span></div>
@@ -631,7 +631,7 @@
             </div>
 
             <div class="formsec collapsible" id="secDirs" role="button" tabindex="0" aria-expanded="false" title="Click to expand or collapse" data-i18n="world.sec.directories" data-i18n-title="hearth.upkeep.head.title"><span class="r">ᛞ</span> DIRECTORIES</div>
-            <div class="formsec-body">
+            <div class="formsec-body" style="display:none">
             <div class="formgrid">
               <!-- Each of the two path fields is three rows: the line saying what is in
                    force right now (with Open on it, because Open acts on that folder and

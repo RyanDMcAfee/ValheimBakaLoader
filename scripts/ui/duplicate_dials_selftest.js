@@ -170,6 +170,9 @@ function sandboxFor() {
     console,
   };
   vm.createContext(sandbox);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(APP.slice(APP.indexOf("/* REVEAL-BEGIN"), APP.indexOf("/* REVEAL-END */")), sandbox, { filename: "app.js#reveal" });
   vm.runInContext(code + "\nthis.api={dupSourceDials,dupReadSourceDials,dupDialsPayload,dupSetDials,dupPaintMarks,dupSyncCopyDials,dupEffectiveWorld,dupSameWorldProblem,DUP_NORMAL};", sandbox);
   return sandbox;
 }

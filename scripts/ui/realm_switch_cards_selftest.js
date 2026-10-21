@@ -77,6 +77,9 @@ test("a session that came up 31 minutes ago still reads 31 minutes after a switc
   const body = fn("function uptimeAnchor(");
   const context = { Date, console };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(body + "\n}\nthis.uptimeAnchor=uptimeAnchor;", context,
     { filename: "app.js#uptimeAnchor" });
 
@@ -101,6 +104,9 @@ test("a host too old to send the field still gets a clock, and a held one is kep
   const body = fn("function uptimeAnchor(");
   const context = { Date, console };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(body + "\n}\nthis.uptimeAnchor=uptimeAnchor;", context,
     { filename: "app.js#uptimeAnchor" });
 
@@ -172,6 +178,9 @@ test("the header and the body of the saves card give one answer", () => {
     console,
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(painter + "\n}\nthis.renderLastSave=renderLastSave;", context,
     { filename: "app.js#renderLastSave" });
   vm.runInContext(bars + "\n}\nthis.renderSaveBars=renderSaveBars;", context,
@@ -230,6 +239,9 @@ test("the empty chart gives up its rune when the row is too short to hold it", (
   };
   const context = { Number, String, console, $: () => box, box, held };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn1("const SAVE_EMPTY_FULL_PX="), context, { filename: "app.js#fullPx" });
   vm.runInContext(fn("function saveBarsEmptyFit(") + "\n}\nthis.fit=saveBarsEmptyFit;", context,
     { filename: "app.js#emptyFit" });
@@ -287,6 +299,9 @@ test("the ago line's clock goes through the same formatter every other clock use
     intl: () => null,
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn("function fmtT(d){") + "\n}", context, { filename: "app.js#fmtT" });
   vm.runInContext(fn("function agoAt(d){") + "\n}\nthis.agoAt=agoAt;", context,
     { filename: "app.js#agoAt" });
@@ -318,6 +333,9 @@ test("each realm keeps its own write times across a switch", () => {
   const load = fn("function saveTimesLoad(");
   const context = { S: { saveDur: [], lastSaveAt: null, lastSaveMs: null }, console };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext("const SAVE_TIMES={};\n" + stash + "\n}\n" + load + "\n}\n"
     + "this.saveTimesStash=saveTimesStash;this.saveTimesLoad=saveTimesLoad;"
     + "this.SAVE_TIMES=SAVE_TIMES;", context, { filename: "app.js#saveTimes" });

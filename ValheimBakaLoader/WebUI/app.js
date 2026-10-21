@@ -45,8 +45,12 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
    call while one runs starts from where the first one is on screen, so fast clicking never
    leaves a box half open. With prefers-reduced-motion it is a plain fade, no movement. A box
    whose page is not on screen is set at once: there is nothing to see move. {fade:true} fades
-   without rolling, for a box beside others in a row rather than above them. Answers whether
-   the box ends shown. Block boxes only: an inline box has no height to roll. */
+   without rolling, for a box beside others in a row rather than above them. {display:"flex"}
+   names what the box is shown as when the stylesheet's own value is not it (a bar laid out as
+   a row), and is remembered so the roll away starts from a box still laid out that way.
+   {now:true} sets the box with no roll, for the half of a tab swap that has to leave before
+   the other half can take its place. Answers whether the box ends shown. Block boxes only: an
+   inline box has no height to roll. */
 function revealReduced(){
   try{ return !!(window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches); }catch(_){ return false; }
 }
@@ -69,7 +73,7 @@ function revealSettle(el){
 function reveal(el,show,opts){
   if(!el) return false;
   show=!!show;
-  if(revealShown(el)===show) return show;
+  if(revealShown(el)===show){ if(opts&&typeof opts.done==="function") opts.done(); return show; }
   el._revealShow=show;
   const parent=el.parentElement;
   const onScreen=typeof el.animate==="function"&&!!parent&&parent.getClientRects().length>0;
@@ -77,9 +81,13 @@ function reveal(el,show,opts){
   const was=onScreen&&el.style.display!=="none"?revealFrame(el):null;
   if(el._revealAnim){ try{el._revealAnim.cancel();}catch(_){} el._revealAnim=null; }
   revealSettle(el);
-  el.style.display=show?"":"none";
-  if(!onScreen) return show;
-  if(!show) el.style.display="";
+  if(opts&&opts.display) el._revealDisplay=opts.display;
+  const shown=el._revealDisplay||"";
+  el.style.display=show?shown:"none";
+  /* {done} runs once the box is where it was asked to be: after the roll, or at once when
+     there is none. A later call that turns the roll around leaves it unrun. */
+  if(!onScreen||(opts&&opts.now)){ if(opts&&typeof opts.done==="function") opts.done(); return show; }
+  if(!show) el.style.display=shown;
   const fadeOnly=revealReduced()||!!(opts&&opts.fade);
   const zero={opacity:"0"}; if(!fadeOnly) REVEAL_ROLL.forEach(p=>{zero[p]="0px";});
   const full=revealFrame(el);
@@ -96,6 +104,7 @@ function reveal(el,show,opts){
     el._revealAnim=null;
     revealSettle(el);
     if(!show) el.style.display="none";
+    if(opts&&typeof opts.done==="function") opts.done();
   };
   return show;
 }
@@ -131,6 +140,26 @@ function revealText(el,text,cls){
   el.textContent=text;
   if(typeof el.animate==="function"&&el.getClientRects().length)
     el.animate([{opacity:"0"},{opacity:"1"}],{duration:200,easing:"ease-out"});
+}
+/* A box that has to go at once (a dialog, a menu, the palette, the hover panel: whatever runs
+   on its dismissal must see it gone) leaves a copy of itself behind that fades for 0.2 s and
+   takes no clicks, so it leaves the way it came instead of vanishing. The copy carries no ids,
+   names or label targets, so nothing can find it, and the boxes in it show what was typed
+   rather than what the markup said. Answers the copy, or null when there was nothing on screen
+   to copy. The stylesheet's .reveal-ghost rule does the fading. */
+function fadeGhost(el){
+  if(!el||!el.parentNode||typeof el.cloneNode!=="function"||!el.getClientRects||!el.getClientRects().length) return null;
+  const ghost=el.cloneNode(true);
+  ghost.removeAttribute("id");
+  ghost.querySelectorAll("[id],[name],[for]").forEach(n=>{n.removeAttribute("id");n.removeAttribute("name");n.removeAttribute("for");});
+  const src=el.querySelectorAll("input,textarea,select"), dst=ghost.querySelectorAll("input,textarea,select");
+  dst.forEach((n,i)=>{const o=src[i]; if(!o) return; n.value=o.value; n.checked=!!o.checked;});
+  ghost.classList.add("reveal-ghost");
+  ghost.setAttribute("aria-hidden","true");
+  ghost.setAttribute("inert","");
+  el.parentNode.insertBefore(ghost,el.nextSibling);
+  setTimeout(()=>ghost.remove(),220);
+  return ghost;
 }
 /* REVEAL-END */
 /* A name to stand out inside a sentence the catalog owns. The markup goes into the SLOT
@@ -1208,7 +1237,7 @@ function langPaintProgress(){
 function langMenuIsOpen(){return !!$("#langMenu")?.classList.contains("open");}
 function langMenuClose(){
   const menu=$("#langMenu"), btn=$("#langBtn");
-  if(menu) menu.classList.remove("open");
+  if(menu){fadeGhost(menu);menu.classList.remove("open");}
   if(btn) btn.setAttribute("aria-expanded","false");
   return false;
 }
@@ -1925,16 +1954,21 @@ function syncCollapsible(rec){
   /* One folded setting used to read "1 settings": the number was glued to the word
      before the lookup ever saw it, so no catalog could tell the two forms apart. */
   rec.hint.textContent=open?"":T("common.collapsible.folded",{count:rec.count});
-  /* An open Upkeep card is taller than a fixed bento row, so the last row is
-     told to take its content height while the card is unfolded. */
-  if(rec.target.id==="upkeepCard"||rec.target.id==="connCard"){
-    /* Either card being open is enough: the row has to take its content height while ANY
-       of the cards in it is unfolded, and reading only the one that just moved put the row
-       back to a fixed height while the other one was still open. */
-    const bento=document.querySelector(".bento");
-    const anyOpen=!!(document.querySelector("#upkeepCard.open")||document.querySelector("#connCard.open"));
-    if(bento) bento.classList.toggle("upkeep-open",anyOpen);
-  }
+  if(rec.target.id==="upkeepCard"||rec.target.id==="connCard") syncBentoRow();
+}
+/* An open Upkeep card is taller than a fixed bento row, so the last row is told to take its
+   content height while the card is unfolded. Either card being open is enough: the row has to
+   take its content height while ANY of the cards in it is unfolded, and reading only the one
+   that just moved put the row back to a fixed height while the other one was still open. A
+   card that is rolling shut still counts as open, so the row does not snap back to its fixed
+   height under a body that is still on its way up. */
+function syncBentoRow(){
+  const bento=document.querySelector(".bento"); if(!bento) return;
+  const anyOpen=["#upkeepCard","#connCard"].some(sel=>{
+    const card=document.querySelector(sel);
+    return !!card&&(card.classList.contains("open")||!!(card._rollingShut));
+  });
+  bento.classList.toggle("upkeep-open",anyOpen);
 }
 function syncCollapsibleTerms(){
   /* Spelled as a loop with a call of its own rather than forEach(syncCollapsible), because
@@ -1952,19 +1986,27 @@ function wireCollapsible(headId,body,targetEl){
   const chev=document.createElement("span"); chev.className="fs-chev"; chev.textContent="▸";
   head.insertBefore(hint,head.querySelector("[data-fs-anchor]"));
   head.appendChild(chev);
-  const rec={head,target,hint,count};
+  const rec={head,target,body,hint,count};
   COLLAPSIBLES.push(rec);
-  const toggle=()=>{
-    target.classList.toggle("open");
+  /* The class turns the chevron and says the state; the body itself rolls open and shut
+     through reveal (the owner's no-jump rule), so a fold never pops. */
+  const set=open=>{
+    open=!!open;
+    if(target.classList.contains("open")===open) return;
+    target.classList.toggle("open",open);
+    target._rollingShut=!open;
+    reveal(body,open,{done:()=>{target._rollingShut=false;if(!open) syncCollapsible(rec);rescanScrollCues();}});
     syncCollapsible(rec);
     rescanScrollCues();
     /* rows revealed below the fold are no use to anyone: bring them up, but
        only as far as it takes (block:"nearest" leaves a fitting card alone) */
-    if(target.classList.contains("open")) requestAnimationFrame(()=>{
+    if(open) requestAnimationFrame(()=>{
       try{target.scrollIntoView({block:"nearest"});}catch(_){}
       rescanScrollCues();
     });
   };
+  rec.set=set;
+  const toggle=()=>set(!target.classList.contains("open"));
   head.addEventListener("click",toggle);
   head.addEventListener("keydown",e=>{
     if(e.key==="Enter"||e.key===" "||e.key==="Spacebar"){e.preventDefault();toggle();}
@@ -2299,8 +2341,8 @@ async function testCopyServer(name){
 function renderTestCopyHead(){
   const el=$("#tbTest"); if(!el) return;
   const text=testCopyHead((S.servers||[]).find(v=>v&&v.active));
-  el.textContent=text;
-  el.style.display=text?"":"none";
+  if(text) el.textContent=text;
+  reveal(el,!!text,{fade:true});
 }
 async function archiveServer(name){
   const r=await rpc("profiles.archive",{name});
@@ -2669,8 +2711,8 @@ function dupSetDials(m,values,touched,force){
 function dupMark(field,note,changed,srcText){
   if(field) field.classList.toggle("field-dirty",!!changed);
   if(note){
-    note.textContent=changed?T("realm.duplicate.source",{value:srcText}):"";
-    note.style.display=changed?"":"none";
+    if(changed) note.textContent=T("realm.duplicate.source",{value:srcText});
+    reveal(note,!!changed,{done:()=>{if(!changed) note.textContent="";}});
   }
 }
 /* Every mark in the dialog, from what is on screen now. The dials are only marked while the
@@ -2788,7 +2830,7 @@ function testCopyLockPublic(pubT,note){
   pubT.title=T("realm.test.public.locked");
   gateDialogSwitch(pubT);
   markSwitch(pubT);
-  if(note){note.textContent=T("realm.test.public.locked");note.style.display="";}
+  if(note){note.textContent=T("realm.test.public.locked");reveal(note,true);}
   return true;
 }
 /* The character drop down's options from a characters.list answer. A character whose copy is
@@ -3024,7 +3066,7 @@ async function addServerProfile(source){
       if(copyNote){
         copyNote.textContent=hostSentence(r.reasonId,r.reasonParams)
           ||T("realm.new.copy.unavailable");
-        copyNote.style.display="";
+        reveal(copyNote,true);
       }
       paintWorldSection();
       syncCopyDials();
@@ -3057,7 +3099,7 @@ async function addServerProfile(source){
       srcDials=read;
       if(!read&&Native.available&&copyNote&&!copyNote.textContent){
         copyNote.textContent=T("realm.duplicate.dials.unread",{world:source.world});
-        copyNote.style.display="";
+        reveal(copyNote,true);
       }
       if(read&&copyingNow()) dupSetDials(m,read,touched,false);
       paintMarks();
@@ -3604,10 +3646,10 @@ function renderHearthVersion(){
     el.textContent=T("hearth.card.version.last",{version:last});
     el.title=T("hearth.card.version.last.title");
   }else{
-    el.style.display="none";
+    reveal(el,false,{fade:true});
     return;
   }
-  el.style.display="";
+  reveal(el,true,{fade:true});
 }
 /* Where the uptime clock is anchored, chosen rather than assumed.
    Uptime is the SESSION's, not this page's. The host answers with the moment its own
@@ -3953,12 +3995,12 @@ function renderSaveBars(){
     box.innerHTML=emptyState({compact:true,mark:"ᛉ",title:T("hearth.saves.empty.title"),
       reason:T("hearth.saves.empty.reason")});
     esWire(box);
-    if(cap) cap.style.display="none";
+    reveal(cap,false);
     saveBarsEmptyFit();
     return;
   }
   box.classList.remove("es-norune");
-  if(cap) cap.style.display="";
+  reveal(cap,true);
   const max=Math.max.apply(null,d.concat([1]));
   box.innerHTML=d.map((ms,i)=>
     `<i class="${i===d.length-1?"hot":""}" style="height:${Math.max(10,Math.round(ms/max*100))}%" title="${esc(T("hearth.saves.ms",{ms}))}"></i>`
@@ -4085,8 +4127,8 @@ $("#copyIp").addEventListener("click",e=>{
 function renderWaystone(){
   const line=$("#netDomainLine"); if(!line) return;
   const port=S.prefs?.Port??2456;
-  line.style.display=S.domain?"":"none";
   if(S.domain) $("#netDomain").textContent=S.domain+":"+port;
+  reveal(line,!!S.domain);
 }
 function renderNet(){
   if(!Native.available) return;
@@ -4101,14 +4143,14 @@ function renderNet(){
   $("#netLan").dataset.value=lan;
   $("#netLoc").textContent="127.0.0.1:"+port;
   const il=$("#netInviteLine");
-  il.style.display=S.invite?"":"none";
   if(S.invite){
     $("#netInvite").textContent=T("hearth.net.addr.invite.value",{code:S.invite});
     $("#netInvite").dataset.value=S.invite;
   }
+  reveal(il,!!S.invite);
   const rl=$("#netRconLine"), on=!!S.prefs?.RconEnabled;
-  rl.style.display=on?"":"none";
   if(on) $("#netRcon").textContent=T("hearth.net.addr.rcon.value",{addr:"127.0.0.1:"+(S.prefs.RconPort??25575)});
+  reveal(rl,on);
   $("#netPill").textContent=on?T("hearth.net.pill.on"):T("hearth.net.pill.off");
   $("#netPill").className="pill "+(on?"green":"blue");
 }
@@ -4251,8 +4293,8 @@ function renderSideVer(){
 function renderAppUpdatePill(){
   const el=$("#hAppUpdPill"); if(!el) return;
   const u=APP_UPD||{};
-  if(!u.updateAvailable||!u.latestVersion){el.style.display="none";return;}
-  el.style.display="";
+  if(!u.updateAvailable||!u.latestVersion){reveal(el,false,{fade:true});return;}
+  reveal(el,true,{fade:true});
   el.textContent=T("appupd.pill.label",{version:u.latestVersion});
   emberize(el);   /* AFTER the write, every time, or the pill sits there unlit */
   el.title=u.anyServerRunning
@@ -4304,7 +4346,7 @@ async function appUpdateModal(){
       `<button class="btn btn-ghost btn-sm" id="auLater">${esc(T("appupd.modal.later"))}</button>`+
     `</div>`,appUpdateModal);
   const why=m.querySelector("#auWhy");
-  const say=text=>{why.textContent=text;why.style.display="";};
+  const say=text=>{why.textContent=text;reveal(why,true);};
   /* The one way the button cannot work whatever the host clicks, said here rather than
      after a click that fails. */
   if(u.checkEnabled===false){
@@ -4624,9 +4666,10 @@ function renderRowStatus(st){
 let MOD_UPD=null;
 function renderModUpdateProgress(){
   const wrap=$("#modUpdProg"); if(!wrap) return;
-  if(!MOD_UPD){wrap.style.display="none";wrap.innerHTML="";return;}
+  /* The bar keeps its last words while it rolls away, and is emptied once it has gone. */
+  if(!MOD_UPD){reveal(wrap,false,{done:()=>{wrap.innerHTML="";}});return;}
   const u=MOD_UPD;
-  wrap.style.display="flex";
+  reveal(wrap,true);
   if(u.phase==="checking"){
     wrap.innerHTML=
       `<span class="hbmsg">${esc(T("mods.progress.checking"))}</span>`+
@@ -5412,7 +5455,7 @@ function renderBepInExRow(){
   renderBepInExConditions();
   /* Nothing has been read yet, or this host predates the answer. A strip that says
      nothing is worse than no strip at all. */
-  if(!state){el.style.display="none";el.innerHTML="";return;}
+  if(!state){reveal(el,false,{done:()=>{el.innerHTML="";}});return;}
   const busy=!!b.busy||BEP_WRITING;
   const up=bepInExRunning();
   /* Every button here writes the loader, and the host refuses every one of them while a
@@ -5473,8 +5516,8 @@ function renderBepInExRow(){
      `<span class="mono bepver" title="${esc(b.wrongLocationFolder)}">${esc(b.wrongLocationFolder)}</span>`+
      `<button class="btn btn-ghost btn-sm" id="bepRemove"${gate}>${esc(T("bepinex.row.action.remove"))}</button></div>`
     :"";
-  el.style.display="block";
-  el.innerHTML=
+  /* A row already on screen slides to the height of its new words; one that was not rolls in. */
+  revealSwap(el,()=>{el.innerHTML=
     `<div class="beprow" data-key="bepinex" data-state="${esc(state)}">`+
     `<span class="r bepmark" aria-hidden="true">ᛒ</span>`+
     `<span class="bepname">${esc(T("bepinex.row.title"))}</span>`+
@@ -5488,7 +5531,8 @@ function renderBepInExRow(){
       ?`<div class="bepnotes"><button class="btn btn-ghost btn-sm" id="bepUpkeep">`+
        `${esc(T("bepinex.notice.already_maintained.action"))}</button></div>`
       :"")+
-    wrong;
+    wrong;});
+  reveal(el,true);
   el.querySelector("#bepInstall")?.addEventListener("click",()=>bepInExInstallFlow(null));
   /* The Update beside a Repair is only ever drawn where the noted pack is gone, and there it
      IS the answer: without it the host side recomputes the same repair off the same install
@@ -7005,7 +7049,7 @@ function renderGaleBox(){
     btn.textContent=following?T("mods.gale.button.following"):T("mods.gale.box.label");
     btn.setAttribute("aria-expanded",following&&GALE_BOX_OPEN?"true":"false");
   }
-  if(box) box.style.display=following&&GALE_BOX_OPEN?"":"none";
+  reveal(box,following&&GALE_BOX_OPEN);
   /* The paste dialog's own line, while it is open: the refusal, or what following does. */
   const dlg=$("#galeDlgStat");
   if(dlg){
@@ -7022,7 +7066,7 @@ function renderGaleBox(){
   if(check) check.disabled=busy;
   if(forget) forget.disabled=busy||!(st&&st.following);
   if(review){
-    review.style.display=galeReviewable(st)?"":"none";
+    reveal(review,galeReviewable(st),{fade:true});
     review.disabled=busy;
   }
 }
@@ -7283,9 +7327,27 @@ async function galeConfigsLoad(refresh){
   /* The box's Review link reads what the configs part found, through the stored state. */
   await galeRefresh();
 }
+/* The preview under a config row rolls open and shut rather than popping with the redraw: on
+   the way in it is drawn hidden and rolled down, on the way out it rolls up and only then is
+   the part drawn again without it. */
+function galeCfgPre(path){
+  const box=typeof modalBg!=="undefined"&&modalBg&&modalBg.querySelectorAll?modalBg:null;
+  if(!box) return null;
+  for(const pre of box.querySelectorAll("[data-gale-cfg-pre]"))
+    if(pre.getAttribute("data-gale-cfg-pre")===path) return pre;
+  return null;
+}
 function galeCfgToggle(path){
-  GALE_CFG_SHOWN[path]=!GALE_CFG_SHOWN[path];
+  if(GALE_CFG_SHOWN[path]){
+    const pre=galeCfgPre(path);
+    const close=()=>{GALE_CFG_SHOWN[path]=false;galeCfgRedraw();};
+    if(pre) reveal(pre,false,{done:close}); else close();
+    return;
+  }
+  GALE_CFG_SHOWN[path]=true;
   galeCfgRedraw();
+  const pre=galeCfgPre(path);
+  if(pre){pre.style.display="none";reveal(pre,true);}
 }
 function galeCfgTick(path,on){
   GALE_CFG_TICKS[path]=!!on;
@@ -7556,7 +7618,7 @@ try{renderGaleBox();}catch(_){}
 const palBg=$("#paletteBg"), palIn=$("#palInput");
 let palOpen=false;
 function openPal(){palOpen=true;palBg.classList.add("open");palIn.value="";updatePalGating();filterPal("");setTimeout(()=>palIn.focus(),30);}
-function closePal(){palOpen=false;palBg.classList.remove("open");}
+function closePal(){palOpen=false;fadeGhost(palBg);palBg.classList.remove("open");}
 /* The words a row is showing right now, which is what palette search matches and
    what the preview echoes back. Its own text nodes only, so the rune in front and
    the hall badge behind it stay out of the haystack: typing "rite" should not
@@ -8367,8 +8429,7 @@ function killAllModal(){
     const hideNote=()=>{
       if(!problem.id) return;
       problem={id:"",scope:""};
-      const note=m.querySelector("#kaNote");
-      if(note) note.style.display="none";
+      reveal(m.querySelector("#kaNote"),false);
     };
     const who=m.querySelector("#kaWho");
     if(who) who.addEventListener("change",()=>{KILL_SCOPE.who=who.value;hideNote();});
@@ -8475,8 +8536,7 @@ function clearDropsModal(){
       CLEAR_DROPS.radius=rad.value;
       if(!problem) return;
       problem="";
-      const note=m.querySelector("#cdNote");
-      if(note) note.style.display="none";
+      reveal(m.querySelector("#cdNote"),false);
     });
 
     m.querySelector("#cdCancel").addEventListener("click",modalClose);
@@ -9024,8 +9084,8 @@ function renderCaps(){
       $("#capsList").innerHTML=missing.map(m=>
         `<div>ᛜ <b>${esc((m.Author?m.Author+"/":"")+(m.ModName||""))}</b>: ${esc(m.RequiredFor||m.Description||"")}</div>`
       ).join("");
-      banner.style.display="";
-    }else banner.style.display="none";
+      reveal(banner,true);
+    }else reveal(banner,false);
   }
   /* The banner's own button. It is written here rather than carried in the page so its
      words come out of the catalog, and it is left alone mid-install: a terminology
@@ -9254,7 +9314,7 @@ function syncDetailedLogGate(){
     row.classList.toggle("gated",DETAILED_LOG_FORCED);
     row.title=DETAILED_LOG_FORCED?T("hearth.upkeep.connection.detailed_log.forced"):"";
   }
-  if(note) note.style.display=DETAILED_LOG_FORCED?"":"none";
+  reveal(note,DETAILED_LOG_FORCED);
 }
 function syncUpkeepGates(){
   const row=$("#rowAutoUpdApp"), sw=$("#tCheckUpd");
@@ -9341,8 +9401,8 @@ function drawStartWinNote(sel,id,path){
   const k=Object.keys(START_WIN_NOTES).find(n=>START_WIN_NOTES[n].noticeId===id);
   /* The path goes in as a named slot, so the sentence around it is written once per language
      rather than assembled here out of pieces that do not join up in every one of them. */
-  el.textContent=k?T(START_WIN_NOTES[k].textId,{path:path}):"";
-  el.style.display=k?"":"none";
+  if(k) el.textContent=T(START_WIN_NOTES[k].textId,{path:path});
+  reveal(el,!!k,{done:()=>{if(!k) el.textContent="";}});
 }
 /* @param {object} given the userprefs answer, from the read on load or from a save. Left out
    entirely by a repaint, which has no answer to hand and draws what the last one said. */
@@ -10264,7 +10324,7 @@ $("#tHeraldModCode").addEventListener("change",()=>{
    and read by the saves like any other control, and a dialog closed by Escape or a click outside
    it still saves what was typed: the panel is put back first, then the save reads it. The Send
    these somewhere else dialog left in the 1.2.17 follow-up: each kind's boxes roll in under its
-   own tick. The dialog fades out as it goes (data-fade-out, read by modalClose). */
+   own tick. The dialog fades out as it goes, as every dialog does since the sweep. */
 const HERALD_PANELS={look:$("#heraldLookPanel")};
 const HERALD_DIALOGS={
   look:{titleId:"herald.look.label",commit:()=>heraldLookCommit()},
@@ -10283,7 +10343,6 @@ function heraldDialog(which){
   const m=modalOpen(`<div class="mtitle">${esc(T(d.titleId))}</div><div class="herald-one" data-herald-slot></div>`+
     `<div class="wiz-nav"><span class="grow"></span><button class="btn btn-ember btn-sm" data-herald-done>${esc(T("common.button.close"))}</button></div>`,
     ()=>heraldDialog(which));
-  m.dataset.fadeOut="1";
   m.querySelector("[data-herald-slot]").appendChild(panel);
   m.querySelector("[data-herald-done]").addEventListener("click",()=>modalClose());
   onModalDismissed(()=>{heraldPanelsHome();try{d.commit();}catch(_){}});
@@ -10326,7 +10385,8 @@ function redrawContextMenu(){
   again();
   return true;
 }
-function ctxClose(){ctxEl.classList.remove("open");ctxEl.style.display="none";ctxEl._items=null;CTX_REDRAW=null;}
+/* The menu goes at once and a copy fades where it stood, the way a dialog leaves. */
+function ctxClose(){fadeGhost(ctxEl);ctxEl.classList.remove("open");ctxEl.style.display="none";ctxEl._items=null;CTX_REDRAW=null;}
 /* What would open this menu again, at the same corner, in the words that are current
    now. Same reason as the dialog above: a menu is innerHTML written once. */
 let CTX_REDRAW=null;
@@ -10415,24 +10475,13 @@ function modalClose(){
   updateToastLift();
 }
 modalBg.addEventListener("mousedown",e=>{if(e.target===modalBg)modalClose();});
-/* A dialog that asked for it (data-fade-out on its .modal) fades out rather than vanishing
-   (1.2.17 follow-up, the owner's no-jump rule). The real dialog goes at once, as it always has,
-   so whatever runs on its dismissal sees it gone; a copy with no ids, names or clicks of its own
-   stands in its place for 0.2 s and fades. The later sweep turns this on for every dialog. */
+/* Every dialog fades out rather than vanishing (1.2.17 follow-up, the owner's no-jump rule;
+   the Appearance dialog asked for it first, the sweep gave it to all of them). The real dialog
+   goes at once, as it always has, so whatever runs on its dismissal sees it gone; fadeGhost
+   leaves the copy that fades in its place. */
 function modalFadeOut(){
-  const box=modalBg.firstElementChild;
-  if(!modalIsOpen()||!box||!box.dataset||!box.dataset.fadeOut||!modalBg.parentNode) return;
-  const ghost=modalBg.cloneNode(true);
-  ghost.removeAttribute("id");
-  ghost.querySelectorAll("[id],[name],[for]").forEach(n=>{n.removeAttribute("id");n.removeAttribute("name");n.removeAttribute("for");});
-  /* A copy carries what the markup says, not what was typed, so the boxes are copied over. */
-  const src=modalBg.querySelectorAll("input,textarea,select"), dst=ghost.querySelectorAll("input,textarea,select");
-  dst.forEach((n,i)=>{const o=src[i]; if(!o) return; n.value=o.value; n.checked=!!o.checked;});
-  ghost.classList.add("modal-ghost");
-  ghost.setAttribute("aria-hidden","true");
-  ghost.setAttribute("inert","");
-  modalBg.parentNode.insertBefore(ghost,modalBg.nextSibling);
-  setTimeout(()=>ghost.remove(),220);
+  if(!modalIsOpen()) return;
+  fadeGhost(modalBg);
 }
 /**
  * Puts one dialog on screen.
@@ -10511,7 +10560,7 @@ function promptModal(title,placeholder,onOk,check,note){
        press, not a running commentary. Hidden rather than redrawn, because redrawing
        the dialog on a keystroke would take the caret with it. */
     inp.addEventListener("input",()=>{typed=inp.value;
-      if(refused){refused=false;const note=m.querySelector("#mInNote");if(note)note.style.display="none";}});
+      if(refused){refused=false;reveal(m.querySelector("#mInNote"),false);}});
     const ok=()=>{
       const v=inp.value.trim(); if(!v)return;
       if(check&&String(check(v)||"")){typed=inp.value;refused=true;again();return;}
@@ -10696,14 +10745,16 @@ function refreshWorldIntegrity(){
 function renderWorldIntegrity(r){
   const el=$("#fWorldIntegrity"); if(!el) return;
   if(!r||!Array.isArray(r.shortfalls)||!r.shortfalls.length){
-    el.style.display="none"; el.innerHTML=""; return;
+    reveal(el,false,{done:()=>{el.innerHTML="";}}); return;
   }
-  el.innerHTML=`<div>⚠ ${esc(T("world.integrity.note",
-    {world:r.world||"",files:r.shortfalls.length,missing:r.missingTotal||0}))}</div>`+
-    `<div class="mono-list">${r.shortfalls.map(sf=>esc(T("world.integrity.row",
-      {file:sf.file,index:sf.index,found:sf.found}))).join("<br>")}</div>`+
-    `<div>${esc(T("world.integrity.backups"))}</div>`;
-  el.style.display="";
+  revealSwap(el,()=>{
+    el.innerHTML=`<div>⚠ ${esc(T("world.integrity.note",
+      {world:r.world||"",files:r.shortfalls.length,missing:r.missingTotal||0}))}</div>`+
+      `<div class="mono-list">${r.shortfalls.map(sf=>esc(T("world.integrity.row",
+        {file:sf.file,index:sf.index,found:sf.found}))).join("<br>")}</div>`+
+      `<div>${esc(T("world.integrity.backups"))}</div>`;
+  });
+  reveal(el,true);
 }
 /* Asked once per world per session, in front of every start. The note is acknowledged and
    the start carries on; nothing here can stop one. */
@@ -11259,13 +11310,13 @@ window.BakaPreview={
 function renderUpdatePill(){
   const el=$("#hUpdPill"); if(!el) return;
   const u=S.update||{};
-  if(!u.updatePending||u.running){el.style.display="none";return;}
+  if(!u.updatePending||u.running){reveal(el,false,{fade:true});return;}
   const st=S.state||{};
   /* Read the state, and fall back to the card's own cold class so the preview shows
      the same disabled pill the app does without a state DTO. */
   const card=document.getElementById("hearthCard");
   const live=st.status?st.status!=="Stopped":!!(card&&!card.classList.contains("cold"));
-  el.style.display="";
+  reveal(el,true,{fade:true});
   el.textContent=T("srvupd.pill.label");
   el.disabled=!!live||!updCanUpdate(null);
   el.title=live
@@ -11352,7 +11403,8 @@ function renderConditionBar(){
   let kind=null,c=null;
   for(const k of CONDITION_ORDER){const v=CONDITIONS.get(k); if(v){kind=k;c=v;break;}}
   if(!c){
-    bar.style.display="none"; bar.innerHTML="";
+    /* The bar keeps its words while it rolls away; they are dropped once it has gone. */
+    reveal(bar,false,{done:()=>{bar.innerHTML="";}});
     bar.removeAttribute("data-kind"); bar.removeAttribute("data-sev");
     return;
   }
@@ -11370,7 +11422,7 @@ function renderConditionBar(){
     `<span class="hbacts">${c.actionsHtml||""}`+
     `<button class="btn btn-ghost btn-sm" data-cond-dismiss>${esc(c.dismissLabel||T("cond.btn.dismiss"))}</button>`+
     `</span>`;
-  bar.style.display="flex";
+  reveal(bar,true);
   if(c.wire) c.wire(bar);
   bar.querySelector("[data-cond-dismiss]").addEventListener("click",()=>{
     if(c.onDismiss) c.onDismiss();
@@ -11639,11 +11691,11 @@ function pluginFailureSig(list){
 function renderModsPluginNote(fails){
   const el=$("#modsPluginNote"); if(!el) return;
   const names=(fails||[]).map(f=>String(f.plugin||"").trim()).filter(Boolean);
-  if(!names.length){el.style.display="none";el.textContent="";return;}
+  if(!names.length){reveal(el,false);return;}
   /* "A and B", "A, B and C": a bare comma list reads as a fragment, not a sentence. */
   const who=names.length===1?names[0]
     :T("common.list.and",{names:names.slice(0,-1).join(", "),last:names[names.length-1]});
-  el.style.display="";
+  reveal(el,true);
   el.textContent=names.length===1
     ?T("mods.plugin_note.one",{names:who})
     :T("mods.plugin_note.many",{names:who});
@@ -12880,12 +12932,12 @@ function renderSkald(){
   const u=d.uptime||{},t=d.totals||{};
   $("#skUptime").textContent=skDur(u.totalSec);
   const now=$("#skNowPill");
-  if(d.running&&(u.currentSec||0)>0){now.style.display="";now.textContent=T("skald.uptime.now",{span:skDur(u.currentSec)});}
-  else now.style.display="none";
+  if(d.running&&(u.currentSec||0)>0){reveal(now,true,{fade:true});now.textContent=T("skald.uptime.now",{span:skDur(u.currentSec)});}
+  else reveal(now,false,{fade:true});
   $("#skStarts").textContent=u.starts??0;
   const cp=$("#skCrashPill");
-  if((u.crashes||0)>0){cp.style.display="";cp.textContent=T("skald.starts.crashes.pill",{count:u.crashes});}
-  else cp.style.display="none";
+  if((u.crashes||0)>0){reveal(cp,true,{fade:true});cp.textContent=T("skald.starts.crashes.pill",{count:u.crashes});}
+  else reveal(cp,false,{fade:true});
   $("#skVikings").textContent=(d.players||[]).length;
   const vsub=T("skald.vikings.sub",{count:t.sessions??0});
   $("#skVikingsSub").textContent=vsub; $("#skVikingsSub").title=vsub;
@@ -13505,8 +13557,10 @@ function worldTab(name){
   const want=name==="app"?"app":"server";
   WORLD_TAB=want;
   const server=$("#worldTabServer"), app=$("#worldTabApp");
-  if(server) server.style.display=want==="server"?"block":"none";
-  if(app) app.style.display=want==="app"?"block":"none";
+  /* The tab that leaves goes at once and the one that comes fades in: both on screen for the
+     length of a roll would have stood one under the other and doubled the hall's height. */
+  const swap=(el,on)=>reveal(el,on,on?{fade:true}:{now:true});
+  swap(server,want==="server"); swap(app,want==="app");
   $$(".wtab").forEach(b=>{
     const on=b.getAttribute("data-wtab")===want;
     b.classList.toggle("on",on);
@@ -13515,7 +13569,7 @@ function worldTab(name){
   /* Save Config belongs to the Server tab. On the App tab there is nothing for it to
      write, and the unsaved band at the foot of the hall is about the Server tab too. */
   const save=document.querySelector("#page-world .savecfg");
-  if(save) save.style.display=want==="server"?"":"none";
+  reveal(save,want==="server",{fade:true});
   /* And the band itself. The comment above always said it, and the band went on standing
      there anyway: "Save Config writes them" over a tab whose Save Config is hidden and
      whose every row writes itself the moment it is moved. The tab goes on the hall, the
@@ -13808,7 +13862,7 @@ function renderWorldDirs(){
       !ownInstall&&!ownSaves?T("world.dir.shared_note"):
       (ownInstall?T("world.dir.install_note.own"):T("world.dir.install_note.shared"))+" "+
       (ownSaves?T("world.dir.save_note.own"):T("world.dir.save_note.shared"));
-    note.style.display=known?"block":"none";
+    reveal(note,known);
   }
   syncDirsSection();
 }
@@ -13823,20 +13877,20 @@ function renderPathNote(d){
   const typed=String($("#"+d.input)?.value||"").trim();
   const answer=S.pathChecks?S.pathChecks[d.kind]:null;
   if(!typed||!answer||answer.forPath!==typed){
-    el.style.display="none"; el.textContent=""; el.style.color="";
+    reveal(el,false);
     return;
   }
   const row=pathProblemRow(answer.problemId);
   if(answer.problemId&&!row){
     /* A refusal id this page has no sentence for. Saying nothing is right: the id is
        not copy, and a dotted name under a text box is worse than an empty line. */
-    el.style.display="none"; el.textContent=""; el.style.color="";
+    reveal(el,false);
     delete el.dataset.problem;
     return;
   }
   el.textContent=row?T(row.textId):T(d.okId);
   el.style.color=row?(row.bad?"var(--blood-text)":"var(--amber)"):"var(--moss-text)";
-  el.style.display="";
+  reveal(el,true);
   /* Which of the two kinds of line this is, so the section below knows whether it is
      worth unfolding for. A confirmation is not: a host who folded the section away is
      not owed a fold back to be told that the path they saved is still fine. */
@@ -13862,10 +13916,11 @@ function syncDirsSection(){
   const wanted=WORLD_DIRS.some(d=>{
     if(dirty.indexOf(d.input)>=0) return true;
     const note=$("#"+d.note);
-    return !!(note&&note.style.display!=="none"&&note.dataset.problem==="1");
+    return !!(note&&revealShown(note)&&note.dataset.problem==="1");
   });
   if(!wanted) return;
-  sec.classList.add("open");
+  const rec=COLLAPSIBLES.find(r=>r.target===sec);
+  if(rec) rec.set(true); else sec.classList.add("open");
   try{syncCollapsibleTerms();}catch(_){}
   try{rescanScrollCues();}catch(_){}
 }
@@ -14016,7 +14071,9 @@ function renderWorldDirty(){
   /* A class rather than a display, because this is only half of the answer: the notice
      lives outside the halls, so whether it is on screen is this AND which hall is
      showing, and that second half is the stylesheet's to know. */
-  const notice=$("#worldUnsaved"); if(notice) notice.classList.toggle("on",any);
+  /* The band slides in by its own rule in app.css; on the way out a copy of it fades. */
+  const notice=$("#worldUnsaved");
+  if(notice&&notice.classList.contains("on")!==any){if(!any) fadeGhost(notice); notice.classList.toggle("on",any);}
   /* The band the notice stands in. The hall gives up the foot of its scrolling area for
      as long as the notice is up, so the form ends above it instead of sliding behind it
      at every scroll position but the last one. Measured right here rather than left to
@@ -14206,22 +14263,22 @@ function worldNewProblem(){
 function syncWorldNew(){
   const sel=$("#fWorld"), box=$("#fWorldNew"), note=$("#fWorldNote");
   const typing=!!sel&&sel.value===WORLD_NEW_VALUE;
-  if(box) box.style.display=typing?"":"none";
+  reveal(box,typing);
   if(note){
-    if(!typing){note.style.display="none";note.textContent="";note.style.color="";}
+    if(!typing) reveal(note,false);
     else{
       const typed=!!(box&&box.value.trim());
       const problem=typed?worldNewProblem():"";
       note.textContent=problem||T("world.new.note");
       note.style.color=problem?"var(--blood-text)":"";
-      note.style.display="";
+      reveal(note,true);
     }
   }
   /* Copy as has nothing to act on while a new name is being typed, and the
      chip goes rather than greys: its tooltip is the walker's, filled from the
      markup, so a greyed one would be offering the wrong sentence on hover. */
   const chip=$("#copyWorldAs");
-  if(chip) chip.style.display=(!typing&&!!(sel&&sel.value))?"":"none";
+  reveal(chip,!typing&&!!(sel&&sel.value),{fade:true});
 }
 async function renderWorldSelect(){
   const cur=S.prefs?.WorldName??"";
@@ -14468,6 +14525,7 @@ function wgTipClose(){
   if(!wgTip||!wgTipOwner) return;
   wgTipDescribe(wgTipOwner,false);
   wgTipOwner=null;
+  fadeGhost(wgTip);
   wgTip.classList.remove("open");
   wgTip.setAttribute("aria-hidden","true");
 }
@@ -14662,8 +14720,8 @@ function renderWorldCarried(){
   const el=$("#wgCarried"); if(!el) return;
   const held=worldModsHeldFor(worldFieldValue())&&Array.isArray(S.worldMods.passThrough)
     ?S.worldMods.passThrough:[];
-  el.style.display=held.length?"block":"none";
-  el.textContent=held.length?T("world.wgs.carried",{keys:held.join(", ")}):"";
+  if(held.length) el.textContent=T("world.wgs.carried",{keys:held.join(", ")});
+  reveal(el,held.length>0);
 }
 /* ---------- WHAT A FIRST MEETING BROUGHT IN ----------
    A world made in the game client, or set from its console, carries its own starting keys
@@ -14685,14 +14743,14 @@ function showWorldImported(notice){
 function renderWorldImported(){
   const el=$("#wgImported"); if(!el) return;
   const n=WORLD_IMPORTED;
-  if(!n){el.style.display="none";el.innerHTML="";return;}
+  if(!n){reveal(el,false,{done:()=>{el.innerHTML="";}});return;}
   /* Only ever over the world it is about. The notice says the dials and switches BESIDE it
      were filled in off the world's own header, and the card under it always draws whichever
      world the field holds, so a notice left standing after the host picked another world
      would be a sentence pointing at controls it is not true of. It is kept rather than
      thrown away: picking that world again draws it, because the host side holds the notice
      until somebody presses Got it. */
-  if(n.world!==worldFieldValue()){el.style.display="none";el.innerHTML="";return;}
+  if(n.world!==worldFieldValue()){reveal(el,false,{done:()=>{el.innerHTML="";}});return;}
   /* Each half only speaks when it has something to say. A world that carried nothing but
      two switches has no dial line, and a sentence reading "dials: " would be worse than
      no sentence at all. */
@@ -14711,13 +14769,13 @@ function renderWorldImported(){
   if(on.length) lines.push(T("world.wgs.imported.switches",{list:on.join(sep)}));
   const carried=Array.isArray(n.passThrough)?n.passThrough:[];
   if(carried.length) lines.push(T("world.wgs.imported.carried",{list:carried.join(sep)}));
-  el.style.display="block";
   el.innerHTML=
     `<div class="capshead"><span class="r">ᚷ</span>${esc(T("world.wgs.imported.title"))}</div>`+
     `<div class="capslist">${esc(T("world.wgs.imported.body",{world:n.world}))}`+
     lines.map(line=>`<br>${esc(line)}`).join("")+`</div>`+
     `<div class="capsact"><button class="btn btn-ghost btn-sm" id="wgImportedSeen">`+
     `${esc(T("world.wgs.imported.action"))}</button></div>`;
+  reveal(el,true);
   el.querySelector("#wgImportedSeen").addEventListener("click",()=>{
     const world=WORLD_IMPORTED&&WORLD_IMPORTED.world;
     WORLD_IMPORTED=null;
@@ -15001,8 +15059,8 @@ function cfgServerIsUp(){
 function renderCfgRunningNote(){
   const el=$("#cfgRunningNote"); if(!el) return;
   const up=cfgServerIsUp();
-  el.style.display=up?"":"none";
-  el.textContent=up?T("world.running.note"):"";
+  if(up) el.textContent=T("world.running.note");
+  reveal(el,up);
 }
 renderCfgRunningNote();
 $("#saveCfgBtn").addEventListener("click",()=>{saveConfigPress();});
@@ -15243,7 +15301,7 @@ async function renderEditBar(){
   // again · port 2460 · RCON 25577" was still the first thing under the title bar there, over a
   // page where nothing on screen belongs to a realm. Same rule that already hides Save Config
   // and the unsaved band, read off the same WORLD_TAB.
-  if(currentPage!=="world"||WORLD_TAB==="app"||!S.prefs){bar.style.display="none";return;}
+  if(currentPage!=="world"||WORLD_TAB==="app"||!S.prefs){reveal(bar,false);return;}
   const v=editBarValues();
   const rconTxt=v.rconEnabled?T("world.editbar.rcon",{port:v.rconPort||"?"}):T("world.editbar.rcon.off");
   bar.innerHTML=
@@ -15251,7 +15309,7 @@ async function renderEditBar(){
     `<span class="ebname">${esc(v.name||v.profile||T("world.editbar.unnamed"))}</span>`+
     `<span class="ebmeta">${esc(T("world.editbar.world"))} <b>${esc(v.world||"-")}</b> · ${esc(T("world.editbar.port"))} <b>${v.port||"-"}</b> · <b>${esc(rconTxt)}</b></span>`+
     `<span class="ebwarn" id="ebWarn" style="display:none"></span>`;
-  bar.style.display="flex";
+  reveal(bar,true);
   if(!Native.available) return;
   const seq=++_editBarSeq;
   const warnings=await rpc("servers.checkCollision",{
@@ -15262,9 +15320,9 @@ async function renderEditBar(){
   if(Array.isArray(warnings)&&warnings.length){
     w.textContent="⚠ "+T("world.editbar.conflicts",{count:warnings.length});
     w.title=warnings.map(x=>x.message).join("  •  ");
-    w.style.display="";
+    reveal(w,true,{fade:true});
   }else{
-    w.style.display="none";
+    reveal(w,false,{fade:true});
   }
 }
 function scheduleEditBar(){clearTimeout(_ebT);_ebT=setTimeout(()=>{renderEditBar().catch(()=>{});},260);}
@@ -15662,11 +15720,11 @@ function heraldWizRender(){
     thr.addEventListener("input",()=>{HWIZ.thread=thr.value;});
     thrOn.addEventListener("change",()=>{
       HWIZ.threadOn=thrOn.checked;
-      m.querySelector("#hwThreadBox").style.display=HWIZ.threadOn?"":"none";
+      reveal(m.querySelector("#hwThreadBox"),HWIZ.threadOn);
     });
     /* Next is open when the other realm's channel is chosen, or when the pasted link answered. */
     const gate=()=>{next.disabled=!(HWIZ.same&&HWIZ.other)&&!HWIZ.valid;};
-    const pick=same=>{HWIZ.same=same;ownBox.style.display=same?"none":"";gate();if(!same)setTimeout(()=>inp.focus(),30);};
+    const pick=same=>{HWIZ.same=same;reveal(ownBox,!same);gate();if(!same)setTimeout(()=>inp.focus(),30);};
     const sameEl=m.querySelector("#hwSame"),ownEl=m.querySelector("#hwOwn");
     if(sameEl) sameEl.addEventListener("change",()=>{if(sameEl.checked)pick(true);});
     if(ownEl) ownEl.addEventListener("change",()=>{if(ownEl.checked)pick(false);});
@@ -15846,7 +15904,7 @@ function waystoneWizRender(){
     const stat=m.querySelector("#wwCheckStat"),sum=m.querySelector("#wwCheckSum");
     const runCheck=async()=>{
       stat.className="wiz-stat dim";stat.style.color="";stat.textContent=T("waystone.wiz.check.asking");
-      sum.style.display="none";
+      reveal(sum,false);
       const r=Native.available?await rpc("domain.check",{domain:WWIZ.domain})
         :await new Promise(res=>setTimeout(()=>res({ok:true,ips:[myIp],publicIp:myIp,match:true}),600));
       if(r===FAIL){stat.className="wiz-stat bad";stat.textContent="ᚦ "+T("waystone.wiz.check.stat.failed");return;}
@@ -15865,12 +15923,12 @@ function waystoneWizRender(){
           ?T("waystone.wiz.check.stat.error",{detail:r.error})
           :T("waystone.wiz.check.stat.unresolved"));
       }
-      sum.style.display="";
       sum.innerHTML=
         `<div class="row"><span class="k">${T("waystone.wiz.sum.name")}</span><span class="v mono">${esc(WWIZ.domain)}</span></div>`+
         `<div class="row"><span class="k">${T("waystone.wiz.sum.resolves")}</span><span class="v mono">${esc((r.ips&&r.ips.length?r.ips.join(" · "):"-"))}</span></div>`+
         `<div class="row"><span class="k">${T("waystone.wiz.sum.server")}</span><span class="v mono">${esc(r.publicIp||myIp)}</span></div>`+
         `<div class="row"><span class="k">${T("waystone.wiz.sum.join")}</span><span class="v mono">${esc(WWIZ.domain+":"+port)}</span></div>`;
+      reveal(sum,true);
     };
     on("#wwAgain",runCheck);
     runCheck();
@@ -16258,8 +16316,9 @@ async function atlasRenderMap(force){
   const warn=$("#atlasModWarn");
   if(warn){
     if(r.warnings&&r.warnings.length){
-      warn.style.display=""; warn.textContent="⚠ "+T("atlas.warn.worldgen_mods"); warn.title=r.warnings.join("\n");
-    }else warn.style.display="none";
+      warn.textContent="⚠ "+T("atlas.warn.worldgen_mods"); warn.title=r.warnings.join("\n");
+      reveal(warn,true,{fade:true});
+    }else reveal(warn,false,{fade:true});
   }
   const img=new Image();
   img.onload=()=>{
@@ -16425,14 +16484,14 @@ function renderAtlasSide(){
   const cn=$("#atlasChunkNote");
   if(cn){
     const skipped=info&&info.hasDb?(info.chunksSkipped||0):0;
-    cn.style.display=skipped>0?"":"none";
     if(skipped>0) cn.textContent=T("atlas.chunks.skipped",{count:skipped,total:info.chunksTotal||skipped});
+    reveal(cn,skipped>0);
   }
   /* The Ashlands caveat that used to sit here is gone: the atlas now draws that coast
      from the game's own height function, so the shape on screen is the shape in game.
      #atlasShapeNote stays as an empty, hidden slot for the next note that needs it. */
   const sn=$("#atlasShapeNote");
-  if(sn&&sn.textContent){sn.textContent="";sn.style.display="none";}
+  if(sn&&sn.textContent) reveal(sn,false,{done:()=>{sn.textContent="";}});
   /* roster: who's online (mod-free maps can't place them) */
   const roster=$("#atlasRoster");
   if(roster){
@@ -16642,8 +16701,8 @@ function wxClockLabel(t,relDay){
 function renderWeather(){
   const box=$("#wxBox"); if(!box) return;
   const nt=wxNetTimeNow();
-  if(!nt){box.style.display="none";return;}
-  box.style.display="";
+  if(!nt){reveal(box,false);return;}
+  reveal(box,true);
   const biome=ATLAS.wxBiome||"Meadows";
   const env=wxEnvAt(nt.t,biome);
   const wind=wxWindAt(nt.t,env);

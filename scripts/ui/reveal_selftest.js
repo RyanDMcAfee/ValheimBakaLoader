@@ -25,7 +25,8 @@
  *   5. A box whose page is not on screen is set at once, with no roll.
  *   6. revealText fades changed words in and leaves the same words alone; revealSwap slides a
  *      box whose contents change to its new height.
- *   7. The CSS: the blocks the Discord screen rolls, and the fade-out stand-in for a dialog.
+ *   7. The CSS: the blocks the Discord screen rolls, and the fade-out stand-in (fadeGhost) every
+ *      dialog, menu, palette and hover panel leaves behind.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -232,17 +233,30 @@ test("6. changed words fade in, the same words are left alone, and a box whose c
   assert.ok(ran, "a missing box skipped the change");
 });
 
-test("7. the CSS: the rolled blocks, and a dialog's fade-out stand-in that takes no clicks", () => {
+test("7. the CSS: the rolled blocks, and the fade-out stand-in that takes no clicks", () => {
   assert.ok(/\.herald-sub\{[^}]*\}/.test(CSS), "app.css has no style for the blocks under a tick");
-  assert.ok(/\.modal-bg\.modal-ghost\{[^}]*pointer-events:none[^}]*animation:revealOut \.2s ease-out forwards/.test(CSS), "the dialog's stand-in does not fade or takes clicks");
+  assert.ok(/\.reveal-ghost\{pointer-events:none!important;animation:revealOut \.2s ease-out forwards!important\}/.test(CSS), "the stand-in does not fade or takes clicks");
+  assert.ok(/\.reveal-ghost \*\{animation:none!important/.test(CSS), "an entrance animation replays on the copy that is leaving");
+  assert.ok(/\.modal-bg\.reveal-ghost\{display:flex\}/.test(CSS), "a dialog's stand-in is not laid out as the dialog was");
   assert.ok(/@keyframes revealOut\{to\{opacity:0\}\}/.test(CSS));
   const reduced = CSS.slice(CSS.indexOf("@media (prefers-reduced-motion: reduce){"));
   assert.ok(reduced.length > 0 && /\.modal-bg,\.modal\{animation:fadeIn \.2s ease-out\}/.test(reduced), "a dialog still moves under reduced motion");
-  /* The stand-in carries no ids or names, so nothing reads it for the real dialog. */
-  const fade = APP.slice(APP.indexOf("function modalFadeOut(){"), APP.indexOf("\n}", APP.indexOf("function modalFadeOut(){")));
+  assert.ok(/\.page,\.palette-bg,\.palette,\.ctxmenu,\.ctxmenu\.ctxfixed\.open,\.langmenu\.open,\.wgtip\.open\{animation:fadeIn \.2s ease-out\}/.test(reduced),
+    "a menu, the palette or the hover panel still moves under reduced motion");
+  /* The stand-in carries no ids or names, so nothing reads it for the real thing. */
+  const fade = block().slice(block().indexOf("function fadeGhost(el){"));
   assert.ok(fade.includes('n.removeAttribute("id");n.removeAttribute("name");'), "the stand-in keeps ids or radio names");
   assert.ok(fade.indexOf('removeAttribute("name")') < fade.indexOf("insertBefore("), "the stand-in joins a radio group before its names are gone");
-  assert.ok(/!box\.dataset\.fadeOut/.test(fade), "every dialog fades out, not only those that asked");
+  assert.ok(fade.includes('ghost.classList.add("reveal-ghost")'), "the stand-in does not wear the class the stylesheet fades");
+  /* Every dialog fades, not only those that asked; so do the menus, the palette and the panel. */
+  const modal = APP.slice(APP.indexOf("function modalFadeOut(){"), APP.indexOf("\n}", APP.indexOf("function modalFadeOut(){")));
+  assert.ok(modal.includes("fadeGhost(modalBg)") && !/fadeOut/.test(modal.replace("modalFadeOut", "")), "a dialog has to ask to fade out");
+  assert.ok(!/dataset\.fadeOut/.test(APP), "something still asks to fade out by hand");
+  for (const [name, head] of [["the row menu", "function ctxClose(){"], ["the globe menu", "function langMenuClose(){"],
+                              ["the palette", "function closePal(){"], ["the hover panel", "function wgTipClose(){"]]) {
+    const at = APP.indexOf(head);
+    assert.ok(at >= 0 && APP.slice(at, APP.indexOf("\n}", at) + 2).includes("fadeGhost("), name + " vanishes rather than fading");
+  }
 });
 
 console.log(failures.length === 0

@@ -280,7 +280,9 @@ async function probe() {
       const onServer = getComputedStyle(document.getElementById("editBar")).display;
       const saidServer = document.getElementById("editBar").textContent.trim().slice(0, 40);
       worldTab("app");
-      await new Promise(r => setTimeout(r, 200));
+      /* The band rolls away over 0.2 s since the sweep (reveal), so the read waits for the
+         roll to end rather than for the instant hide it used to be. */
+      await new Promise(r => setTimeout(r, 500));
       return { onServer, saidServer, onApp: getComputedStyle(document.getElementById("editBar")).display };
     });
     ok("the realm band stands on the Server tab and not on the App tab",

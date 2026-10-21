@@ -94,6 +94,9 @@ function chart() {
     wrap,
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn("function atlasWrapSize(){"), context, { filename: "app.js#wrapSize" });
   vm.runInContext(fn("function atlasFitPpm(){"), context, { filename: "app.js#fitPpm" });
   vm.runInContext(fn("function atlasPpmDev(ppm){"), context, { filename: "app.js#ppmDev" });
@@ -189,6 +192,9 @@ test("the threshold is named once and the cull reads it through the device helpe
 function pins() {
   const context = { Object, String, console, T: words };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(block("const ATLAS_PIN_TOKENS=[", "];"), context, { filename: "app.js#pinTable" });
   vm.runInContext(block("const ATLAS_PIN_BY_TOKEN=(()=>{", "})();"), context,
     { filename: "app.js#pinIndex" });
@@ -224,6 +230,9 @@ test("every token the game writes into a map-table pin resolves to its own name"
 function altars() {
   const context = { Object, String, console, T: words };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(block("const ATLAS_POI_NAMES=[", "];"), context, { filename: "app.js#poiTable" });
   vm.runInContext(block("const ATLAS_POI_BY_PREFAB=(()=>{", "})();"), context,
     { filename: "app.js#poiIndex" });
@@ -349,6 +358,9 @@ function side() {
     made,
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(block("const ATLAS_PIN_TOKENS=[", "];"), context, { filename: "app.js#pinTable" });
   vm.runInContext(block("const ATLAS_PIN_BY_TOKEN=(()=>{", "})();"), context,
     { filename: "app.js#pinIndex" });

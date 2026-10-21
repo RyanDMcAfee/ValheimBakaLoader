@@ -173,6 +173,9 @@ function harness() {
     called,
   };
   vm.createContext(context);
+  /* The page's one show/hide helper, loaded the way the Discord selftests load it: the code under
+     test reveals and hides through it since the sweep. */
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* REVEAL-BEGIN"), SOURCE.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(fn1("const esc=s=>"), context, { filename: "app.js#esc" });
   vm.runInContext(table("CONDITION_ORDER", "];"), context, { filename: "app.js#order" });
   vm.runInContext(fn1("const CONDITIONS=new Map();"), context, { filename: "app.js#conditions" });
@@ -224,7 +227,7 @@ function refused(changed) {
 test("a refusal the host has already closed raises nothing at all", () => {
   const h = harness();
   vm.runInContext("conditionBepInExLeftAlone(LAST)", Object.assign(h, { LAST: refused() }));
-  assert.strictEqual(h.bar.style.display, "flex", "the first time the fact arrives it must be shown");
+  assert.strictEqual(h.bar.style.display, "", "the first time the fact arrives it must be shown");
   assert.ok(body(h.bar).indexOf("not the framework") > 0, "the bar says nothing about the loader");
 
   h.LAST = refused({ seen: true });
@@ -247,7 +250,7 @@ test("a NEW fact is still said once, even after an older one was closed", () => 
     key: "refused|soak|5.4.2352|5.4.19.0|", eligibleUtc: "2026-10-02T00:00:00Z",
   });
   vm.runInContext("conditionBepInExLeftAlone(LAST)", h);
-  assert.strictEqual(h.bar.style.display, "flex", "a reason the host has never read was silenced");
+  assert.strictEqual(h.bar.style.display, "", "a reason the host has never read was silenced");
 });
 
 /* --------------------------------- rule 2: one action, one dismiss, and the link inline */
@@ -270,7 +273,7 @@ test("each of the four reasons a press cannot help with draws one button", () =>
     const h = harness();
     h.LAST = refused({ reason, key: "refused|" + reason + "|5.4.2351|5.4.19.0|" });
     vm.runInContext("conditionBepInExLeftAlone(LAST)", h);
-    assert.strictEqual(h.bar.style.display, "flex", reason + " raised no bar");
+    assert.strictEqual(h.bar.style.display, "", reason + " raised no bar");
     assert.strictEqual(buttons(h.bar), 1,
       reason + " draws " + buttons(h.bar) + " buttons rather than one");
     assert.ok(h.bar.innerHTML.indexOf("cbBepWikiLink") > 0, reason + " lost its wiki link");
@@ -318,7 +321,7 @@ test("a status event in that gap does not stand the bar back up", () => {
   h.LAST = refused();
   h.S.bepinex.lastUnattended = h.LAST;
   vm.runInContext("conditionBepInExLeftAlone(LAST)", h);
-  assert.strictEqual(h.bar.style.display, "flex");
+  assert.strictEqual(h.bar.style.display, "");
 
   press(h.bar, "[data-cond-dismiss]");
   assert.strictEqual(h.bar.style.display, "none", "the close did not take the bar down");
@@ -419,7 +422,7 @@ test("a write the host has closed does not come back, and a new one does", () =>
     key: "written||||2026-09-29T02:11:00.0000000Z", seen: false,
   };
   vm.runInContext("conditionBepInExWritten(LAST)", h);
-  assert.strictEqual(h.bar.style.display, "flex", "a write nobody watched was never reported");
+  assert.strictEqual(h.bar.style.display, "", "a write nobody watched was never reported");
   assert.strictEqual(buttons(h.bar), 1,
     "the written notice draws " + buttons(h.bar) + " buttons; one close is all it needs");
 
@@ -432,7 +435,7 @@ test("a write the host has closed does not come back, and a new one does", () =>
     key: "written||||2026-09-30T02:11:00.0000000Z",
   });
   vm.runInContext("conditionBepInExWritten(LAST)", h);
-  assert.strictEqual(h.bar.style.display, "flex", "the next restart's write was silenced");
+  assert.strictEqual(h.bar.style.display, "", "the next restart's write was silenced");
 });
 
 test("a heal the host has closed does not come back either", () => {
@@ -446,7 +449,7 @@ test("a heal the host has closed does not come back either", () => {
 
   h.LAST = Object.assign({}, h.LAST, { seen: false });
   vm.runInContext("conditionBepInExWritten(LAST)", h);
-  assert.strictEqual(h.bar.style.display, "flex", "a heal nobody has read was never reported");
+  assert.strictEqual(h.bar.style.display, "", "a heal nobody has read was never reported");
   assert.strictEqual(buttons(h.bar), 1,
     "the heal notice draws " + buttons(h.bar) + " buttons; one close is all it needs");
 });
