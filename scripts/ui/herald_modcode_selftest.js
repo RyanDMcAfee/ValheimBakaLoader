@@ -272,7 +272,7 @@ function choose(h, kind) {
     const at = id => share.indexOf('id="' + id + '"');
     for (const id of ["heraldModCode", "heraldModKindTs", "heraldModKindGale", "heraldModCodeStat"])
       assert.ok(at(id) > 0, id + " is not in the What the post carries group");
-    assert.ok(at("tHeraldPass") < at("heraldModCode") && at("heraldModCode") < at("tHeraldEvents"),
+    assert.ok(at("tHeraldPass") < at("heraldModCode") && at("heraldModCode") < at("tHeraldRoutine"),
       "the code is not below the address and password switches");
     assert.ok(/<input type="radio" name="heraldModKind" id="heraldModKindTs" value="thunderstore"/.test(share));
     assert.ok(/<input type="radio" name="heraldModKind" id="heraldModKindGale" value="gale"/.test(share));

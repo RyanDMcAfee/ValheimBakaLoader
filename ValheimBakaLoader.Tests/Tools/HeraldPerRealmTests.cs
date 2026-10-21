@@ -571,14 +571,18 @@ namespace ValheimBakaLoader.Tests.Tools
             var wire = new Wire();
             var landed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             wire.Answer = (r, n) => { landed.TrySetResult(true); return new HttpResponseMessage(HttpStatusCode.NoContent); };
-            var prefs = new UserPreferences { DiscordWebhookUrl = HookA, DiscordWebhookThreadId = "12 34&wait=false", DiscordSharingEnabled = false };
+            var prefs = new UserPreferences
+            {
+                DiscordWebhookUrl = HookA, DiscordWebhookThreadId = "12 34&wait=false", DiscordSharingEnabled = false,
+                Servers = new List<ServerPreferences> { new() { ProfileName = "Final Sunset", HeraldOn = true, HeraldRoutineOn = true } },
+            };
             var events = new DiscordWebhookService(new Store { Current = prefs }, new Over(wire), new Mock<IApplicationLogger>().Object);
 
-            events.SendServerStarted("Final Sunset");
+            events.SendServerStarted("Final Sunset", "Final Sunset");
             Assert.Empty(wire.Seen); // the master off returns before anything is queued
 
             prefs.DiscordSharingEnabled = true;
-            events.SendServerStarted("Final Sunset");
+            events.SendServerStarted("Final Sunset", "Final Sunset");
             Assert.Same(landed.Task, await Task.WhenAny(landed.Task, Task.Delay(TimeSpan.FromSeconds(10))));
             var post = Assert.Single(wire.Seen);
             Assert.Equal(HookA + "?thread_id=12%2034%26wait%3Dfalse", post.Url);

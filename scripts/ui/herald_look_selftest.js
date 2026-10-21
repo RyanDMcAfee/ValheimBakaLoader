@@ -334,9 +334,9 @@ function preview(parts) {
 
     const save = APP.slice(APP.indexOf("function heraldSave(extra){"), APP.indexOf("\n}", APP.indexOf("function heraldSave(extra){")));
     assert.ok(save.includes("},heraldLookValues(),extra||{})}))"), "heraldSave does not carry the look");
-    assert.ok(save.includes("Herald:realm") && save.includes("const realm=heraldRealmValues();"), "heraldSave does not carry the realm's block");
+    assert.ok(save.includes("Herald:realm") && save.includes("const realm=Object.assign(heraldRealmValues(),heraldEventValues());"), "heraldSave does not carry the realm's block");
     assert.ok(save.includes("heraldRenderLookLine()"), "a save does not repaint the line");
-    assert.ok(/\["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldEvents","tHeraldLink"\]\.forEach\(id=>\s*\$\("#"\+id\)\.addEventListener\("click",\(\)=>heraldSave\(\)\)\);/.test(APP),
+    assert.ok(/\["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldLink"\]\.forEach\(id=>\s*\$\("#"\+id\)\.addEventListener\("click",\(\)=>heraldSave\(\)\)\);/.test(APP),
       "the link switch does not save");
     assert.ok(APP.includes('["heraldName","heraldAvatar","heraldTitle","heraldStatusLine"].forEach(id=>{\n  $("#"+id).addEventListener("change",()=>{heraldLookCommit();});'),
       "leaving a box does not commit the look");

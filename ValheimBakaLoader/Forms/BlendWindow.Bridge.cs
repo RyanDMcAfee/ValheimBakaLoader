@@ -531,17 +531,16 @@ namespace ValheimBakaLoader.Forms
 
                 DiscordStatus.RequestUpdate(profile);
 
-                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                // The service decides whether a post goes out and where (the master, this realm,
+                // the kind of post); this only says what happened.
+                if (status == ServerStatus.Running)
                 {
-                    if (status == ServerStatus.Running)
-                    {
-                        crashAnnounced = false;
-                        DiscordWebhooks.SendServerStarted(DisplayName());
-                    }
-                    else if (status == ServerStatus.Stopped && !crashAnnounced)
-                    {
-                        DiscordWebhooks.SendServerStopped(DisplayName());
-                    }
+                    crashAnnounced = false;
+                    DiscordWebhooks.SendServerStarted(profile, DisplayName());
+                }
+                else if (status == ServerStatus.Stopped && !crashAnnounced)
+                {
+                    DiscordWebhooks.SendServerStopped(profile, DisplayName());
                 }
             };
             server.WorldSaved += (s, seconds) => PostEvent("server.worldSaved", new { seconds, profile });
@@ -573,15 +572,12 @@ namespace ValheimBakaLoader.Forms
                 // that is.
                 PostEvent("server.legacyWorld", new { world = named ?? "the world", profile });
 
-                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
-                {
-                    // The post is read in a channel by the people who play on the server, so
-                    // the stand-in comes out of their catalog rather than out of this line.
-                    // It used to be the same English string as above, dropped into the middle
-                    // of an otherwise translated sentence.
-                    DiscordWebhooks.SendLegacyWorldLoaded(
-                        DisplayName(), named ?? HostCatalog.T("host.discord.legacy_world.unnamed"));
-                }
+                // The post is read in a channel by the people who play on the server, so the
+                // stand-in comes out of their catalog rather than out of this line. It used to
+                // be the same English string as above, dropped into the middle of an otherwise
+                // translated sentence.
+                DiscordWebhooks.SendLegacyWorldLoaded(
+                    profile, DisplayName(), named ?? HostCatalog.T("host.discord.legacy_world.unnamed"));
             };
 
             // Both numbers come from the server's own banner, never from an assumption.
@@ -602,12 +598,11 @@ namespace ValheimBakaLoader.Forms
                 crashRecorded = true;
                 Analytics.Record(new AnalyticsEvent { Kind = "crash", Server = profile });
 
-                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
-                {
-                    crashAnnounced = true;
-                    var willRestart = server.Options?.AutoRestart == true;
-                    DiscordWebhooks.SendServerCrashed(DisplayName(), willRestart, server.Options?.AutoRestartDelay ?? 0);
-                }
+                // Set whether or not a crash post goes out: the stop that follows a crash is part
+                // of the crash, and a routine "stopped" after it would read as a second event.
+                crashAnnounced = true;
+                var willRestart = server.Options?.AutoRestart == true;
+                DiscordWebhooks.SendServerCrashed(profile, DisplayName(), willRestart, server.Options?.AutoRestartDelay ?? 0);
             };
             /* The chip's own tick. An id and a number, never a sentence: the page writes the
                words out of the interface catalog, which is the only place that knows which
@@ -1586,11 +1581,11 @@ namespace ValheimBakaLoader.Forms
                     // that fails cannot leave it armed with the work already done.
                     SetCleanseWhenEmpty(profile, false);
 
-                    if (said.Length > 0 && UserPrefsProvider.LoadPreferences().DiscordEventPosts)
+                    if (said.Length > 0)
                     {
                         var named = ServerPrefsProvider.LoadPreferences(profile)?.Name;
                         DiscordWebhooks.SendCheatMarksCleared(
-                            string.IsNullOrWhiteSpace(named) ? profile : named, said);
+                            profile, string.IsNullOrWhiteSpace(named) ? profile : named, said);
                     }
                 }
 
@@ -1953,11 +1948,12 @@ namespace ValheimBakaLoader.Forms
                 // on a launch the app decided to make on its own is exactly that; a hold on a
                 // start the host just pressed is not, and they are already looking at the
                 // banner this method put on screen. The in-app record above happens either way.
-                if (ShouldAnnounceHold(context.Automatic, UserPrefsProvider.LoadPreferences().DiscordEventPosts))
+                // Whether the realm's routine posts are on is the service's question.
+                if (ShouldAnnounceHold(context.Automatic))
                 {
                     var name = ServerPrefsProvider.LoadPreferences(profile)?.Name;
                     DiscordWebhooks.SendLaunchHeld(
-                        string.IsNullOrWhiteSpace(name) ? profile : name, reason);
+                        profile, string.IsNullOrWhiteSpace(name) ? profile : name, reason);
                 }
             }
             catch (Exception ex)
@@ -2049,9 +2045,12 @@ namespace ValheimBakaLoader.Forms
         /// Whether a held launch is worth a Discord post. The post exists to reach somebody who
         /// is not at the keyboard, so only a launch BakaLoader decided to make on its own earns
         /// one; a start the host just pressed is answered by the banner in front of them.
+        /// <para>
+        /// Whether the realm's routine posts are on is not asked here since 1.2.16: the webhook
+        /// service reads the master, the realm and the kind of post when it sends.
+        /// </para>
         /// </summary>
-        public static bool ShouldAnnounceHold(bool automatic, bool discordEventPosts)
-            => automatic && discordEventPosts;
+        public static bool ShouldAnnounceHold(bool automatic) => automatic;
 
         /// <summary>
         /// The other profile keeping its worlds in <paramref name="saveFolder"/>, or null when
@@ -3489,10 +3488,28 @@ namespace ValheimBakaLoader.Forms
             public bool OnlineNow;
         }
 
-        /// <summary>Writes each successful mod update into the Skald's journal.</summary>
+        /// <summary>
+        /// Writes each successful mod update into the Skald's journal, and tells the realm's
+        /// channel in one post when the run moved at least one mod. Every road that updates mods
+        /// comes through here: the mod hall's Update all, one row's Update, and a restart's auto
+        /// update.
+        /// </summary>
         private void RecordModUpdates(string profile, IEnumerable<ModUpdateResult> results)
         {
             if (results == null) return;
+            var moved = ModsMoved(results);
+            if (moved.Count > 0)
+            {
+                try
+                {
+                    var named = ServerPrefsProvider.LoadPreferences(profile)?.Name;
+                    DiscordWebhooks?.SendModsUpdated(profile, string.IsNullOrWhiteSpace(named) ? profile : named, moved);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Could not post the mod update to Discord");
+                }
+            }
             foreach (var r in results.Where(r => r != null && r.Updated))
             {
                 Analytics.Record(new AnalyticsEvent
@@ -3505,6 +3522,16 @@ namespace ValheimBakaLoader.Forms
                 });
             }
         }
+
+        /// <summary>
+        /// The mods a run actually moved, by name with the version each left and the one it is
+        /// on now. A skipped or failed mod is not news for the channel.
+        /// </summary>
+        public static List<ModVersionMove> ModsMoved(IEnumerable<ModUpdateResult> results) =>
+            (results ?? Enumerable.Empty<ModUpdateResult>())
+                .Where(r => r != null && r.Updated)
+                .Select(r => new ModVersionMove(r.Mod?.FullName ?? r.Mod?.ModName ?? "?", r.FromVersion, r.ToVersion))
+                .ToList();
 
         /// <summary>
         /// Scans a profile's plugins folder and resolves each mod's latest Thunderstore
@@ -3580,16 +3607,19 @@ namespace ValheimBakaLoader.Forms
                     }
                 }
 
-                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts
-                    && !string.IsNullOrWhiteSpace(player?.PlayerName))
+                // The realm the player is on decides whether its players posts go out and where.
+                // A record from before multi-server has no ServerKey; it is the realm on screen's,
+                // as the tally above reads it.
+                if (!string.IsNullOrWhiteSpace(player?.PlayerName))
                 {
-                    var serverName = ServerPrefsProvider.LoadPreferences(player.ServerKey)?.Name;
-                    if (string.IsNullOrWhiteSpace(serverName)) serverName = player.ServerKey ?? "server";
+                    var realm = player.ServerKey ?? ActiveProfileName;
+                    var serverName = ServerPrefsProvider.LoadPreferences(realm)?.Name;
+                    if (string.IsNullOrWhiteSpace(serverName)) serverName = realm ?? "server";
 
                     if (player.PlayerStatus == PlayerStatus.Online)
-                        DiscordWebhooks.SendPlayerJoined(player.PlayerName, serverName);
+                        DiscordWebhooks.SendPlayerJoined(realm, player.PlayerName, serverName);
                     else if (player.PlayerStatus == PlayerStatus.Offline)
-                        DiscordWebhooks.SendPlayerLeft(player.PlayerName, serverName);
+                        DiscordWebhooks.SendPlayerLeft(realm, player.PlayerName, serverName);
                 }
             };
 
@@ -4220,13 +4250,10 @@ namespace ValheimBakaLoader.Forms
             // Mirrors the launch-hold post: same gate, same best-effort try/catch.
             try
             {
-                if (UserPrefsProvider.LoadPreferences().DiscordEventPosts)
-                {
-                    if (result.Ok)
-                        DiscordWebhooks.SendServerUpdated(serverName, result.BuildId, result.StartAfter);
-                    else
-                        DiscordWebhooks.SendServerUpdateFailed(serverName, result.Reason);
-                }
+                if (result.Ok)
+                    DiscordWebhooks.SendServerUpdated(profile, serverName, result.BuildId, result.StartAfter);
+                else
+                    DiscordWebhooks.SendServerUpdateFailed(profile, serverName, result.Reason);
             }
             catch (Exception ex)
             {
@@ -5336,6 +5363,12 @@ namespace ValheimBakaLoader.Forms
                 // sentence before anything is written, and so is never sent.
                 CheckHeraldLook(dto);
 
+                // And the realm's event posts: a webhook that is not one, or a role id that is not
+                // one, refuses the save by name before anything is written.
+                CheckHeraldEvents(dto.TryGetValue("Herald", StringComparison.OrdinalIgnoreCase, out var eventsToken)
+                    ? eventsToken as JObject
+                    : null);
+
                 // The realm's own Herald block: the switch, webhook, thread, share switches, title
                 // and status line of the realm the hall was showing when the box was left. Named by
                 // the page for the same reason the code is, and refused by name when that realm is
@@ -5420,7 +5453,8 @@ namespace ValheimBakaLoader.Forms
                     Apply("DiscordWebhookUrl", v => prefs.DiscordWebhookUrl = v.Value<string>());
                     Apply("DiscordWebhookThreadId", v => prefs.DiscordWebhookThreadId = v.Value<string>());
                     Apply("DiscordSharingEnabled", v => prefs.DiscordSharingEnabled = v.Value<bool>());
-                    Apply("DiscordEventPosts", v => prefs.DiscordEventPosts = v.Value<bool>());
+                    // The old app-wide "Event posts" switch is not read from a save any more: each
+                    // realm's three kinds of event post ride in its Herald block (1.2.16).
                     // The Herald's look. Blank is stored as nothing, because blank is the default
                     // each of them falls back to (see DiscordHeraldLook). The title and the status
                     // line are each realm's own since 1.2.16 and ride in the Herald block.
@@ -10897,7 +10931,6 @@ namespace ValheimBakaLoader.Forms
                 prefs.DiscordWebhookUrl,
                 prefs.DiscordWebhookThreadId,
                 prefs.DiscordSharingEnabled,
-                prefs.DiscordEventPosts,
                 prefs.DiscordBotName,
                 prefs.DiscordAvatarUrl,
                 prefs.DiscordLinkToBakaLoader,
@@ -11108,7 +11141,45 @@ namespace ValheimBakaLoader.Forms
             Switch("SharePassword", v => realm.HeraldSharePassword = v);
             Text("Title", v => realm.HeraldTitle = v);
             Text("StatusLine", v => realm.HeraldStatusLine = v);
+
+            // Where the realm's event posts go. None of it shows on the status post, so it is
+            // written without counting as a move of the post.
+            Switch("RoutineOn", v => realm.HeraldRoutineOn = v);
+            Text("RoutineWebhookUrl", v => realm.HeraldRoutineWebhookUrl = v);
+            Text("RoutineThreadId", v => realm.HeraldRoutineThreadId = v);
+            Switch("CrashOn", v => realm.HeraldCrashOn = v);
+            Text("CrashWebhookUrl", v => realm.HeraldCrashWebhookUrl = v);
+            Text("CrashThreadId", v => realm.HeraldCrashThreadId = v);
+            Text("CrashRoleId", v => realm.HeraldCrashRoleId = HeraldRealms.TryReadRoleId(v, out var id) ? id : realm.HeraldCrashRoleId);
+            Switch("PlayersOn", v => realm.HeraldPlayersOn = v);
+            Text("PlayersWebhookUrl", v => realm.HeraldPlayersWebhookUrl = v);
+            Text("PlayersThreadId", v => realm.HeraldPlayersThreadId = v);
             return !string.Equals(before, HeraldRealmKey(realm), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Refuses a Herald block whose event posts could not go where it says: a webhook box
+        /// holding something that is not a Discord webhook, or a crash role that is not a role id.
+        /// Checked before anything is written; blank is always fine, it means the realm's own.
+        /// </summary>
+        public static void CheckHeraldEvents(JObject block)
+        {
+            if (block == null) return;
+            string Box(string key) => block.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out var v) && v.Type == JTokenType.String
+                ? v.Value<string>()?.Trim()
+                : null;
+
+            foreach (var key in new[] { "RoutineWebhookUrl", "CrashWebhookUrl", "PlayersWebhookUrl" })
+            {
+                var url = Box(key);
+                if (!string.IsNullOrEmpty(url) && !DiscordStatusService.LooksLikeWebhook(url))
+                    throw new HostFacingException("userprefs.save.badEventWebhook",
+                        "That is not a Discord webhook link, so the event posts were not saved. Paste the whole link Discord gives you, or leave the box blank for this realm's webhook.");
+            }
+
+            if (!HeraldRealms.TryReadRoleId(Box("CrashRoleId"), out _))
+                throw new HostFacingException("userprefs.save.badCrashRole",
+                    "That is not a role ID, so the event posts were not saved. In Discord, right-click the role under Server Settings, Roles, and choose Copy Role ID.");
         }
 
         /// <summary>
@@ -11130,6 +11201,16 @@ namespace ValheimBakaLoader.Forms
                     Title = r.HeraldTitle,
                     StatusLine = r.HeraldStatusLine,
                     HasPost = !string.IsNullOrWhiteSpace(r.HeraldStatusMessageId),
+                    RoutineOn = r.HeraldRoutineOn,
+                    RoutineWebhookUrl = r.HeraldRoutineWebhookUrl,
+                    RoutineThreadId = r.HeraldRoutineThreadId,
+                    CrashOn = r.HeraldCrashOn,
+                    CrashWebhookUrl = r.HeraldCrashWebhookUrl,
+                    CrashThreadId = r.HeraldCrashThreadId,
+                    CrashRoleId = r.HeraldCrashRoleId,
+                    PlayersOn = r.HeraldPlayersOn,
+                    PlayersWebhookUrl = r.HeraldPlayersWebhookUrl,
+                    PlayersThreadId = r.HeraldPlayersThreadId,
                 })
                 .ToList();
 

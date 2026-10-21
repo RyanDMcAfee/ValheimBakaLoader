@@ -254,8 +254,10 @@ test("the armed sweep runs the SAME sweep as the button, poll and ceiling and al
     "the armed sweep uses its own clocks rather than the button's");
   assert.ok(/AppLogger\.Information\("\{Line:l\}"/.test(run),
     "the counts never reach the log the Saga hall draws, and this fires while nobody is watching");
-  assert.ok(/DiscordEventPosts/.test(run),
-    "the counts go to Discord whether or not the herald is on");
+  /* Since 1.2.16 the call names the realm and the webhook service reads the master, the realm and
+     its routine posts, so the call site gates nothing itself and must name the realm. */
+  assert.ok(/SendCheatMarksCleared\(\s*profile,/.test(run) && !/DiscordEventPosts/.test(run),
+    "the counts go to Discord without naming the realm whose switches decide it");
   assert.ok(/SendCheatMarksCleared/.test(run), "nothing is posted to Discord");
   assert.ok(/SetCleanseWhenEmpty\(profile, false\)/.test(run), "the switch is never put down");
   assert.ok(/PostEvent\("players\.cleanseRan"/.test(run), "the page is never told the sweep ran");

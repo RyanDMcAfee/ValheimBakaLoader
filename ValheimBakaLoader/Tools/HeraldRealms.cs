@@ -6,6 +6,19 @@ using ValheimBakaLoader.Game;
 namespace ValheimBakaLoader.Tools
 {
     /// <summary>
+    /// The three kinds of event post a realm sends, each with its own switch and its own place.
+    /// </summary>
+    public enum HeraldEventClass
+    {
+        /// <summary>Started, stopped, updated, update failed, held, old world, cheat marks cleared, mods updated.</summary>
+        Routine,
+        /// <summary>The server crashed: the call to action, with an optional role ping.</summary>
+        Crash,
+        /// <summary>A player joined or left.</summary>
+        Players,
+    }
+
+    /// <summary>
     /// The Herald per realm (1.2.16, issue 24): each realm keeps a status post of its own, with
     /// its own switch, webhook and thread, and its own say in what the post carries. The rules
     /// that decide where a realm posts and whether it posts at all live here, so the status
@@ -54,6 +67,64 @@ namespace ValheimBakaLoader.Tools
             => app != null && app.DiscordSharingEnabled
                && realm != null && realm.HeraldOn
                && WebhookUrlFor(app, realm) != null;
+
+        /// <summary>The switch of one kind of event post on a realm.</summary>
+        public static bool ClassOn(ServerPreferences realm, HeraldEventClass kind) => realm != null && kind switch
+        {
+            HeraldEventClass.Routine => realm.HeraldRoutineOn,
+            HeraldEventClass.Crash => realm.HeraldCrashOn,
+            HeraldEventClass.Players => realm.HeraldPlayersOn,
+            _ => false,
+        };
+
+        private static (string Url, string Thread) ClassBoxes(ServerPreferences realm, HeraldEventClass kind) => kind switch
+        {
+            HeraldEventClass.Routine => (realm?.HeraldRoutineWebhookUrl, realm?.HeraldRoutineThreadId),
+            HeraldEventClass.Crash => (realm?.HeraldCrashWebhookUrl, realm?.HeraldCrashThreadId),
+            HeraldEventClass.Players => (realm?.HeraldPlayersWebhookUrl, realm?.HeraldPlayersThreadId),
+            _ => (null, null),
+        };
+
+        /// <summary>
+        /// Where one kind of event post from a realm goes: the kind's own webhook, or the realm's.
+        /// The thread follows the same rule a realm's thread does: the kind's own when it has one,
+        /// the realm's while the kind posts through the realm's webhook, and the channel itself
+        /// when the kind has a webhook of its own, because a thread lives in one channel.
+        /// </summary>
+        public static (string Url, string Thread) EventRouteFor(UserPreferences app, ServerPreferences realm, HeraldEventClass kind)
+        {
+            var (url, thread) = ClassBoxes(realm, kind);
+            var ownUrl = ServerPreferences.BlankAsNull(url);
+            var ownThread = ServerPreferences.BlankAsNull(thread);
+            if (ownUrl != null) return (ownUrl, ownThread);
+            return (WebhookUrlFor(app, realm), ownThread ?? ThreadIdFor(app, realm));
+        }
+
+        /// <summary>
+        /// Whether a realm sends one kind of event post: the master on, the realm on, the kind on,
+        /// and somewhere to send it. One rule for every event, read when the post is sent.
+        /// </summary>
+        public static bool SendsEvent(UserPreferences app, ServerPreferences realm, HeraldEventClass kind)
+            => app != null && app.DiscordSharingEnabled
+               && realm != null && realm.HeraldOn
+               && ClassOn(realm, kind)
+               && EventRouteFor(app, realm, kind).Url != null;
+
+        /// <summary>
+        /// A role id as Discord prints it, or nothing: digits only, and the mention form a host
+        /// may paste (&lt;@&amp;123&gt;) read as its digits. Anything else is not a role id.
+        /// </summary>
+        public static bool TryReadRoleId(string text, out string roleId)
+        {
+            roleId = null;
+            var t = text?.Trim() ?? "";
+            if (t.StartsWith("<@&", StringComparison.Ordinal) && t.EndsWith(">", StringComparison.Ordinal))
+                t = t.Substring(3, t.Length - 4).Trim();
+            if (t.Length == 0) return true;
+            if (t.Length < 5 || t.Length > 25 || !t.All(c => c >= '0' && c <= '9')) return false;
+            roleId = t;
+            return true;
+        }
 
         /// <summary>
         /// The realm the one post of the builds before this one described, by the rule they used:
@@ -111,6 +182,12 @@ namespace ValheimBakaLoader.Tools
             owner.HeraldStatusLine = ServerPreferences.BlankAsNull(prefs.DiscordStatusLine);
             owner.HeraldStatusMessageId = ServerPreferences.BlankAsNull(prefs.DiscordStatusMessageId);
             owner.HeraldStatusMessageSignature = owner.HeraldStatusMessageId == null ? null : prefs.DiscordStatusMessageSignature;
+
+            // The one "Event posts" switch becomes all three kinds on that realm, through the
+            // realm's own webhook and thread, which are the ones the events went through before.
+            owner.HeraldRoutineOn = prefs.DiscordEventPosts;
+            owner.HeraldCrashOn = prefs.DiscordEventPosts;
+            owner.HeraldPlayersOn = prefs.DiscordEventPosts;
 
             prefs.HeraldPerRealmMigrated = true;
             return true;

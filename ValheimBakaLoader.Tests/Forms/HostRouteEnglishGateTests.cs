@@ -53,8 +53,10 @@ namespace ValheimBakaLoader.Tests.Forms
             ("ValheimServer.cs", @"KickAsync\s*\("),
             ("BlendWindow.Bridge.cs", @"KickAsync\s*\("),
 
-            // Discord: the nine event posts, at the call and at the embed they build.
-            ("BlendWindow.Bridge.cs", @"DiscordWebhooks\.Send[A-Za-z]*\s*\("),
+            // Discord: the eleven event posts, at the call and at the embed they build. Since
+            // 1.2.16 every call names its realm first and SendEmbed takes the realm and the kind
+            // of post; the pattern reads the whole argument list, so neither hides a sentence.
+            ("BlendWindow.Bridge.cs", @"DiscordWebhooks\??\.Send[A-Za-z]*\s*\("),
             ("DiscordWebhookService.cs", @"SendEmbed\s*\("),
         };
 
@@ -67,6 +69,10 @@ namespace ValheimBakaLoader.Tests.Forms
             ("ValheimServer.cs", "BuildBroadcast"),
             ("ValheimServer.cs", "BuildKick"),
             ("DiscordStatusService.cs", "BuildEmbedPayload"),
+            // The mods updated post builds its body line by line, and the event payload adds the
+            // crash ping's content: both put text on the wire outside a SendEmbed call.
+            ("DiscordWebhookService.cs", "ModsUpdatedBody"),
+            ("DiscordWebhookService.cs", "BuildEventPayload"),
         };
 
         /// <summary>

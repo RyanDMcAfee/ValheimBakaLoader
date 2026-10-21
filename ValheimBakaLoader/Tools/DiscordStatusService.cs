@@ -98,6 +98,9 @@ namespace ValheimBakaLoader.Tools
             @"^https://((ptb|canary)\.)?discord(app)?\.com/api/(v\d+/)?webhooks/\d+/[A-Za-z0-9_\-]+$",
             RegexOptions.Compiled);
 
+        /// <summary>Whether a box holds a Discord webhook link, by the same pattern the checks use.</summary>
+        internal static bool LooksLikeWebhook(string url) => url != null && WebhookUrlPattern.IsMatch(url.Trim());
+
         private static readonly TimeSpan EditCooldown = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan CoalesceDelay = TimeSpan.FromSeconds(2);
 

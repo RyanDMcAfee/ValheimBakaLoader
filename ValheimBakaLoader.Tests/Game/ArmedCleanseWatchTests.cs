@@ -254,12 +254,17 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.DoesNotContain("{", body);
             Assert.DoesNotContain("host.discord", body);
 
-            // And it goes out on the herald's own switch, not on its own.
+            // And it goes out on the herald's own switches, not on its own: since 1.2.16 the call
+            // names the realm and the webhook service reads the master, the realm and its
+            // routine posts (HeraldEventRoutingTests), so the call site gates nothing itself.
             var bridge = AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindow.Bridge.cs");
             var at = bridge.IndexOf("session.Server.RunEmptyCleanse = async () =>", StringComparison.Ordinal);
             Assert.True(at > 0);
             var wiring = bridge.Substring(at, 2600);
-            Assert.Matches("DiscordEventPosts[\\s\\S]{0,240}SendCheatMarksCleared", wiring);
+            Assert.Matches("SendCheatMarksCleared\\(\\s*profile,", wiring);
+            Assert.DoesNotContain("DiscordEventPosts", wiring);
+            Assert.Matches("SendCheatMarksCleared\\(string realm[^)]*\\)\\s*\\{\\s*SendEmbed\\(\\s*realm, HeraldEventClass\\.Routine,",
+                AppSourceTree.Read("ValheimBakaLoader", "Tools", "DiscordWebhookService.cs"));
 
             // The realm's own display name when it has one, and the profile name when it does not.
             Assert.Contains("ServerPrefsProvider.LoadPreferences(profile)?.Name", wiring);

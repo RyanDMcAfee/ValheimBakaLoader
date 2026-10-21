@@ -452,6 +452,9 @@ RETIRED_IDS = {
     # 1.2.16: each realm keeps its own post, so "the post is about another realm while
     # it runs" is no longer true of any realm. Shipped since 1.2.11.
     "herald.modcode.preview.other": "1.2.16",
+    # 1.2.16: the event posts are each realm's own, in three kinds, so "from every realm" is no
+    # longer true. Shipped since the Herald's first event posts.
+    "herald.share.events.note": "1.2.16",
 }
 
 

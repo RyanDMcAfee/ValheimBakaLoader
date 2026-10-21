@@ -199,6 +199,8 @@ namespace ValheimBakaLoader.Tests.Forms
         [InlineData("host.discord.updated")]
         [InlineData("host.discord.update_failed")]
         [InlineData("host.discord.legacy_world")]
+        [InlineData("host.discord.cleanse")]
+        [InlineData("host.discord.mods_updated")]
         public void Every_discord_post_is_written_from_the_catalog(string prefix)
         {
             var webhooks = Webhooks();

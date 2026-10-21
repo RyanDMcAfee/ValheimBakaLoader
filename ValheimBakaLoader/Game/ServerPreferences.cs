@@ -163,6 +163,33 @@ namespace ValheimBakaLoader.Game
         /// <summary>The thread the post opened in a forum channel, kept beside the id it belongs with.</summary>
         public string HeraldStatusThreadId { get; set; }
 
+        // -- Where this realm's event posts go (1.2.16). Three kinds, because they are read by
+        //    different people: the routine news of the server, a crash somebody has to act on,
+        //    and players coming and going, which a busy server fills a channel with. Each kind
+        //    has its own switch, and a webhook and thread that are blank for the realm's own.
+        //    All off for a realm made after the update, like the realm's own switch. --
+
+        /// <summary>Started, stopped, updated, update failed, held, old world, cheat marks cleared, mods updated.</summary>
+        public bool HeraldRoutineOn { get; set; }
+        public string HeraldRoutineWebhookUrl { get; set; }
+        public string HeraldRoutineThreadId { get; set; }
+
+        /// <summary>The server crashed.</summary>
+        public bool HeraldCrashOn { get; set; }
+        public string HeraldCrashWebhookUrl { get; set; }
+        public string HeraldCrashThreadId { get; set; }
+
+        /// <summary>
+        /// A Discord role to ping when the server crashes, by its id. Only that role is ever
+        /// pinged: the post says so to Discord, so a name in the post can never reach everyone.
+        /// </summary>
+        public string HeraldCrashRoleId { get; set; }
+
+        /// <summary>A player joined or left.</summary>
+        public bool HeraldPlayersOn { get; set; }
+        public string HeraldPlayersWebhookUrl { get; set; }
+        public string HeraldPlayersThreadId { get; set; }
+
         public bool RconEnabled { get; set; }
 
         public int RconPort { get; set; } = 25575;
@@ -346,6 +373,16 @@ namespace ValheimBakaLoader.Game
             HeraldSharePassword = stored.HeraldSharePassword;
             HeraldTitle = stored.HeraldTitle;
             HeraldStatusLine = stored.HeraldStatusLine;
+            HeraldRoutineOn = stored.HeraldRoutineOn;
+            HeraldRoutineWebhookUrl = stored.HeraldRoutineWebhookUrl;
+            HeraldRoutineThreadId = stored.HeraldRoutineThreadId;
+            HeraldCrashOn = stored.HeraldCrashOn;
+            HeraldCrashWebhookUrl = stored.HeraldCrashWebhookUrl;
+            HeraldCrashThreadId = stored.HeraldCrashThreadId;
+            HeraldCrashRoleId = stored.HeraldCrashRoleId;
+            HeraldPlayersOn = stored.HeraldPlayersOn;
+            HeraldPlayersWebhookUrl = stored.HeraldPlayersWebhookUrl;
+            HeraldPlayersThreadId = stored.HeraldPlayersThreadId;
             return KeepHeraldPostFrom(stored);
         }
 
@@ -447,6 +484,16 @@ namespace ValheimBakaLoader.Game
                 HeraldStatusMessageId = BlankAsNull(file.HeraldStatusMessageId),
                 HeraldStatusMessageSignature = file.HeraldStatusMessageSignature,
                 HeraldStatusThreadId = BlankAsNull(file.HeraldStatusThreadId),
+                HeraldRoutineOn = file.HeraldRoutineOn ?? defaults.HeraldRoutineOn,
+                HeraldRoutineWebhookUrl = BlankAsNull(file.HeraldRoutineWebhookUrl),
+                HeraldRoutineThreadId = BlankAsNull(file.HeraldRoutineThreadId),
+                HeraldCrashOn = file.HeraldCrashOn ?? defaults.HeraldCrashOn,
+                HeraldCrashWebhookUrl = BlankAsNull(file.HeraldCrashWebhookUrl),
+                HeraldCrashThreadId = BlankAsNull(file.HeraldCrashThreadId),
+                HeraldCrashRoleId = BlankAsNull(file.HeraldCrashRoleId),
+                HeraldPlayersOn = file.HeraldPlayersOn ?? defaults.HeraldPlayersOn,
+                HeraldPlayersWebhookUrl = BlankAsNull(file.HeraldPlayersWebhookUrl),
+                HeraldPlayersThreadId = BlankAsNull(file.HeraldPlayersThreadId),
                 RconEnabled = file.RconEnabled ?? defaults.RconEnabled,
                 RconPort = file.RconPort ?? defaults.RconPort,
                 RconPassword = file.RconPassword ?? defaults.RconPassword,
@@ -507,6 +554,16 @@ namespace ValheimBakaLoader.Game
             // A signature means nothing without the post it belongs to.
             HeraldStatusMessageSignature = BlankAsNull(HeraldStatusMessageId) == null ? null : HeraldStatusMessageSignature,
             HeraldStatusThreadId = BlankAsNull(HeraldStatusThreadId),
+            HeraldRoutineOn = HeraldRoutineOn,
+            HeraldRoutineWebhookUrl = BlankAsNull(HeraldRoutineWebhookUrl),
+            HeraldRoutineThreadId = BlankAsNull(HeraldRoutineThreadId),
+            HeraldCrashOn = HeraldCrashOn,
+            HeraldCrashWebhookUrl = BlankAsNull(HeraldCrashWebhookUrl),
+            HeraldCrashThreadId = BlankAsNull(HeraldCrashThreadId),
+            HeraldCrashRoleId = BlankAsNull(HeraldCrashRoleId),
+            HeraldPlayersOn = HeraldPlayersOn,
+            HeraldPlayersWebhookUrl = BlankAsNull(HeraldPlayersWebhookUrl),
+            HeraldPlayersThreadId = BlankAsNull(HeraldPlayersThreadId),
             RconEnabled = RconEnabled,
             RconPort = RconPort,
             RconPassword = RconPassword,

@@ -957,5 +957,19 @@ else
   echo "  the herald realm selftest is missing: $REALM_SELFTEST"; fail=1
 fi
 
+echo "== 60. the Herald's event posts: three kinds per realm, each with its own switch and place =="
+# 1.2.16, issue 24. One "Event posts" switch became Server news, Crashes and players per realm, each
+# with its own webhook and thread, and a role to ping on a crash. The quiet ways that goes wrong are
+# a realm switch leaving the last realm's routing on screen for the next save, a box the page sends
+# that the host side never reads, and the wizard's one switch flattening a host's choice. The
+# selftest drives the real block out of app.js and holds every key to the host side's apply.
+EVENTS_SELFTEST="$UI_DIR/herald_events_selftest.js"
+if [ -f "$EVENTS_SELFTEST" ]; then
+  if out=$(node "$EVENTS_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the herald events selftest is missing: $EVENTS_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

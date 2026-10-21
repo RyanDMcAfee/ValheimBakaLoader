@@ -3624,6 +3624,45 @@
     "herald.share.events.note": {
       "translation": "[Ẋ one-off messages for start · stop · crash · join · leave, from every realm Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "herald.events.note": {
+      "translation": "[Ẋ One-off messages from this realm, in three kinds, each with its own switch. A blank webhook or thread box uses this realm's. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.routine": {
+      "translation": "[Ẋ Server news Ẋ] ẊẊẊẊ"
+    },
+    "herald.events.routine.title": {
+      "translation": "[Ẋ Started, stopped, updated, update failed, start held, old world format, cheat marks cleared, and mods updated. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.crash": {
+      "translation": "[Ẋ Crashes Ẋ] ẊẊẊ"
+    },
+    "herald.events.crash.title": {
+      "translation": "[Ẋ The server crashed. It can ping one role, so somebody comes to look. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.players": {
+      "translation": "[Ẋ Vikings joining and leaving Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.players.title": {
+      "translation": "[Ẋ A viking joined or left. A busy realm sends a lot of these, so they can go to a channel of their own. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.webhook.placeholder": {
+      "translation": "[Ẋ webhook · blank = this realm's Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.thread.placeholder": {
+      "translation": "[Ẋ thread ID · blank = this realm's Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.role.placeholder": {
+      "translation": "[Ẋ role ID to ping · blank = no ping Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.role.title": {
+      "translation": "[Ẋ The role pinged when the server crashes. In Discord: Server Settings, Roles, right-click the role, Copy Role ID. Only this role is pinged, never everyone. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.hook.refused": {
+      "translation": "[Ẋ That is not a Discord webhook link, so the event posts were not saved. Paste the whole link Discord gives you, or leave the box blank for this realm's webhook. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.role.refused": {
+      "translation": "[Ẋ That is not a role ID, so the event posts were not saved. In Discord, right-click the role under Server Settings, Roles, and choose Copy Role ID. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "herald.post.label": {
       "translation": "[Ẋ The post Ẋ] ẊẊẊ"
     },
@@ -8102,6 +8141,29 @@
       "params": {
         "server": "text",
         "counts": "text"
+      }
+    },
+    "host.discord.mods_updated.title": {
+      "translation": "[Ẋ Mods Updated Ẋ] ẊẊẊẊ"
+    },
+    "host.discord.mods_updated.body": {
+      "translation": "[Ẋ **{server}** has new mod versions. Update yours to match before you join: Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "server": "text"
+      }
+    },
+    "host.discord.mods_updated.line": {
+      "translation": "[Ẋ `{mod}` {from} → {to} Ẋ] ẊẊ",
+      "params": {
+        "mod": "text",
+        "from": "text",
+        "to": "text"
+      }
+    },
+    "host.discord.mods_updated.more": {
+      "translation": "[Ẋ and {count} more Ẋ] ẊẊẊ",
+      "params": {
+        "count": "number"
       }
     },
     "host.discord.author": {

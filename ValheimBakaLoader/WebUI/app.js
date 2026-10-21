@@ -211,6 +211,10 @@ const HOST_SENTENCES=[
   /* A publish that finds the master or this realm switched off. The hall switches both on and
      saves first, so this is a save that did not land; the press stops there on the page too. */
   {named:"discord.publish.off",           textId:"herald.realm.off.send"},
+  /* The realm's event posts: a webhook box holding something that is not a webhook, or a crash
+     role that is not a role id. Refused before anything is written. */
+  {named:"userprefs.save.badEventWebhook", textId:"herald.events.hook.refused"},
+  {named:"userprefs.save.badCrashRole",    textId:"herald.events.role.refused"},
 ];
 /* Every way a language pack download can end, as the pack service names it in the result,
    beside the catalog entry that words it. This is the same question HOST_SENTENCES answers
@@ -9511,7 +9515,6 @@ function heraldRenderPost(){
 }
 function heraldApply(up){
   setT("tHerald",up.DiscordSharingEnabled);
-  setT("tHeraldEvents",up.DiscordEventPosts);
   $("#heraldUrl").value=up.DiscordWebhookUrl||"";
   $("#heraldThread").value=up.DiscordWebhookThreadId||"";
   try{heraldApplyLook(up);}catch(_){} /* the name, picture and link */
@@ -9536,10 +9539,9 @@ function heraldSave(extra){
   try{heraldRenderRealmLines();}catch(_){}
   /* The realm block names the realm the hall was drawn for, so a realm switch that lands
      before the write cannot put this realm's switches on the other one. */
-  const realm=heraldRealmValues();
+  const realm=Object.assign(heraldRealmValues(),heraldEventValues());
   return Promise.resolve(rpc("userprefs.save",{prefs:Object.assign({
     DiscordSharingEnabled:swOn("tHerald"),
-    DiscordEventPosts:swOn("tHeraldEvents"),
     DiscordWebhookUrl:$("#heraldUrl").value.trim(),
     DiscordWebhookThreadId:$("#heraldThread").value.trim(),
     Herald:realm
@@ -9549,7 +9551,7 @@ function heraldSave(extra){
     return r;
   });
 }
-["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldEvents","tHeraldLink"].forEach(id=>
+["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldLink"].forEach(id=>
   $("#"+id).addEventListener("click",()=>heraldSave()));
 /* HERALD-LOOK-BEGIN
    The Herald's look: the name and picture every post is signed with, the status post's title,
@@ -9856,6 +9858,7 @@ function heraldRenderRealm(){
   set("heraldRealmThread",b.ThreadId);
   set("heraldTitle",b.Title);
   set("heraldStatusLine",b.StatusLine);
+  try{heraldRenderEvents(b);}catch(_){} /* the three kinds of event post (HERALD-EVENTS) */
   HERALD_HAS_POST=!!b.HasPost;
   HERALD_REALM_URL_STAT=null;
   heraldRenderRealmLines();
@@ -9914,6 +9917,67 @@ async function heraldRemove(){
   return false;
 }
 /* HERALD-REALM-END */
+/* HERALD-EVENTS-BEGIN
+   The realm's event posts (1.2.16, issue 24), three kinds read by different people: Server
+   news (started, stopped, updated, update failed, held, old world, cheat marks cleared, mods
+   updated), Crashes (the call to action, which can ping one role) and players coming and
+   going. Each kind has its own switch, and a webhook and thread box that are blank for the
+   realm's own. They ride in the realm's Herald block, so the host side decides whether a post
+   goes and where (the master, the realm, the kind) and this block only paints and reads them.
+   A realm with nothing read yet has every kind off, like a realm made after the update. */
+const HERALD_EVENT_KINDS=[
+  {kind:"Routine",sw:"tHeraldRoutine",url:"heraldRoutineUrl",thread:"heraldRoutineThread"},
+  {kind:"Crash",sw:"tHeraldCrash",url:"heraldCrashUrl",thread:"heraldCrashThread",role:"heraldCrashRole"},
+  {kind:"Players",sw:"tHeraldPlayers",url:"heraldPlayersUrl",thread:"heraldPlayersThread"},
+];
+/* Paint the three kinds from a realm's block. */
+function heraldRenderEvents(b){
+  b=b||{};
+  const set=(id,v)=>{const el=$("#"+id); if(el) el.value=v||"";};
+  HERALD_EVENT_KINDS.forEach(k=>{
+    setT(k.sw,!!b[k.kind+"On"]);
+    set(k.url,b[k.kind+"WebhookUrl"]);
+    set(k.thread,b[k.kind+"ThreadId"]);
+    if(k.role) set(k.role,b[k.kind+"RoleId"]);
+  });
+}
+/* What a save carries for the three kinds, read off the controls, merged into the realm's
+   Herald block by heraldSave. */
+function heraldEventValues(){
+  const box=id=>{const el=$("#"+id);return el?String(el.value||"").trim():"";};
+  const on=id=>{const el=$("#"+id);return !!(el&&el.classList.contains("on"));};
+  const out={};
+  HERALD_EVENT_KINDS.forEach(k=>{
+    out[k.kind+"On"]=on(k.sw);
+    out[k.kind+"WebhookUrl"]=box(k.url);
+    out[k.kind+"ThreadId"]=box(k.thread);
+    if(k.role) out[k.kind+"RoleId"]=box(k.role);
+  });
+  return out;
+}
+/* Whether every kind is on: the wizard's one "Event posts" switch opens on that answer. */
+function heraldEventsAllOn(){
+  const v=heraldEventValues();
+  return HERALD_EVENT_KINDS.every(k=>v[k.kind+"On"]);
+}
+/* The wizard's one switch, put on all three kinds, but only when the host moved it: a realm
+   with Crashes on and the rest off keeps that when the wizard is run again. */
+function heraldEventsFromWizard(was,now){
+  if(!!was===!!now) return false;
+  HERALD_EVENT_KINDS.forEach(k=>setT(k.sw,!!now));
+  return true;
+}
+/* A switch saves on its click, a box when it is left, like the realm's own boxes above. */
+function heraldWireEvents(){
+  HERALD_EVENT_KINDS.forEach(k=>{
+    const sw=$("#"+k.sw); if(sw) sw.addEventListener("click",()=>heraldSave());
+    [k.url,k.thread,k.role].forEach(id=>{
+      const el=id?$("#"+id):null; if(el) el.addEventListener("change",()=>heraldSave());
+    });
+  });
+}
+/* HERALD-EVENTS-END */
+heraldWireEvents();
 $("#heraldModCode").addEventListener("change",()=>{heraldModCodeCommit();});
 $("#heraldModCode").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();e.target.blur();}});
 ["heraldModKindTs","heraldModKindGale"].forEach(id=>
@@ -15175,7 +15239,7 @@ $("#btnSetupReset").addEventListener("click",()=>{
 /* ---------- HERALD SETUP WIZARD ----------
    Same shell as the first-launch wizard: numbered steps, per-step help,
    live webhook validation, and a first publish at the end. */
-const HWIZ={step:0,realm:null,url:"",thread:"",valid:false,name:"",addr:true,pass:false,events:false};
+const HWIZ={step:0,realm:null,url:"",thread:"",valid:false,name:"",addr:true,pass:false,events:false,eventsWas:false};
 /* The wizard sets up the realm on screen. It opens on the webhook that realm posts through
    now: its own, or the app-wide one. */
 function heraldWizard(){
@@ -15186,7 +15250,7 @@ function heraldWizard(){
     url:ownUrl||$("#heraldUrl").value.trim(),
     thread:ownUrl?ownThread:(ownThread||$("#heraldThread").value.trim()),
     valid:false,name:"",
-    addr:swOn("tHeraldAddr"),pass:swOn("tHeraldPass"),events:swOn("tHeraldEvents")
+    addr:swOn("tHeraldAddr"),pass:swOn("tHeraldPass"),events:heraldEventsAllOn(),eventsWas:heraldEventsAllOn()
   });
   heraldWizRender();
 }
@@ -15209,7 +15273,7 @@ async function heraldWizFinish(){
   const place=heraldWizPlace(HWIZ.url,HWIZ.thread,$("#heraldUrl").value,$("#heraldThread").value);
   setT("tHerald",true);
   setT("tHeraldRealm",true);
-  setT("tHeraldAddr",HWIZ.addr);setT("tHeraldPass",HWIZ.pass);setT("tHeraldEvents",HWIZ.events);
+  setT("tHeraldAddr",HWIZ.addr);setT("tHeraldPass",HWIZ.pass);heraldEventsFromWizard(HWIZ.eventsWas,HWIZ.events);
   $("#heraldUrl").value=place.appUrl;
   $("#heraldThread").value=place.appThread;
   $("#heraldRealmUrl").value=place.url;

@@ -1,6 +1,8 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -11,19 +13,29 @@ using ValheimBakaLoader.Tools.Logging;
 
 namespace ValheimBakaLoader.Tools
 {
+    /// <summary>
+    /// The one-off event posts. Every one names the realm it is about, and the service decides
+    /// whether it goes out and where (see HeraldRealms.SendsEvent and EventRouteFor): the master
+    /// switch on, the realm on, the kind of post on, read when the post is sent. The call sites
+    /// only say what happened.
+    /// </summary>
     public interface IDiscordWebhookService
     {
-        void SendServerStarted(string serverName);
-        void SendServerStopped(string serverName);
-        void SendServerCrashed(string serverName, bool willRestart, int restartDelay);
-        void SendPlayerJoined(string playerName, string serverName);
-        void SendPlayerLeft(string playerName, string serverName);
-        void SendLaunchHeld(string serverName, string reason);
-        void SendServerUpdated(string serverName, string buildId, bool starting);
-        void SendServerUpdateFailed(string serverName, string reason);
-        void SendLegacyWorldLoaded(string serverName, string worldName);
-        void SendCheatMarksCleared(string serverName, string counts);
+        void SendServerStarted(string realm, string serverName);
+        void SendServerStopped(string realm, string serverName);
+        void SendServerCrashed(string realm, string serverName, bool willRestart, int restartDelay);
+        void SendPlayerJoined(string realm, string playerName, string serverName);
+        void SendPlayerLeft(string realm, string playerName, string serverName);
+        void SendLaunchHeld(string realm, string serverName, string reason);
+        void SendServerUpdated(string realm, string serverName, string buildId, bool starting);
+        void SendServerUpdateFailed(string realm, string serverName, string reason);
+        void SendLegacyWorldLoaded(string realm, string serverName, string worldName);
+        void SendCheatMarksCleared(string realm, string serverName, string counts);
+        void SendModsUpdated(string realm, string serverName, IReadOnlyList<ModVersionMove> mods);
     }
+
+    /// <summary>One mod a mod update moved, for the mods updated post.</summary>
+    public sealed record ModVersionMove(string Mod, string FromVersion, string ToVersion);
 
     public class DiscordWebhookService : IDiscordWebhookService
     {
@@ -58,42 +70,48 @@ namespace ValheimBakaLoader.Tools
             Logger = appLogger;
         }
 
-        public void SendServerStarted(string serverName)
+        public void SendServerStarted(string realm, string serverName)
         {
             SendEmbed(
+                realm, HeraldEventClass.Routine,
                 HostCatalog.T("host.discord.started.title"),
                 HostCatalog.T("host.discord.started.body", ("server", serverName)),
                 0x57F287); // Green
         }
 
-        public void SendServerStopped(string serverName)
+        public void SendServerStopped(string realm, string serverName)
         {
             SendEmbed(
+                realm, HeraldEventClass.Routine,
                 HostCatalog.T("host.discord.stopped.title"),
                 HostCatalog.T("host.discord.stopped.body", ("server", serverName)),
                 0x95A5A6); // Gray
         }
 
-        public void SendServerCrashed(string serverName, bool willRestart, int restartDelay)
+        public void SendServerCrashed(string realm, string serverName, bool willRestart, int restartDelay)
         {
             var description = willRestart
                 ? HostCatalog.T(
                     "host.discord.crashed.body_restarting", ("server", serverName), ("seconds", restartDelay))
                 : HostCatalog.T("host.discord.crashed.body", ("server", serverName));
-            SendEmbed(HostCatalog.T("host.discord.crashed.title"), description, 0xED4245); // Red
+            // The one post that asks somebody to do something, so it is the one that can ping
+            // the role the host named (see Route).
+            SendEmbed(realm, HeraldEventClass.Crash, HostCatalog.T("host.discord.crashed.title"), description, 0xED4245); // Red
         }
 
-        public void SendPlayerJoined(string playerName, string serverName)
+        public void SendPlayerJoined(string realm, string playerName, string serverName)
         {
             SendEmbed(
+                realm, HeraldEventClass.Players,
                 HostCatalog.T("host.discord.joined.title"),
                 HostCatalog.T("host.discord.joined.body", ("player", playerName), ("server", serverName)),
                 0x3498DB); // Blue
         }
 
-        public void SendPlayerLeft(string playerName, string serverName)
+        public void SendPlayerLeft(string realm, string playerName, string serverName)
         {
             SendEmbed(
+                realm, HeraldEventClass.Players,
                 HostCatalog.T("host.discord.left.title"),
                 HostCatalog.T("host.discord.left.body", ("player", playerName), ("server", serverName)),
                 0xF39C12); // Orange
@@ -103,9 +121,10 @@ namespace ValheimBakaLoader.Tools
         /// The server did NOT come back up because the build on disk is not the one it last
         /// ran, or a Steam update is waiting. Someone has to make that call, so say so.
         /// </summary>
-        public void SendLaunchHeld(string serverName, string reason)
+        public void SendLaunchHeld(string realm, string serverName, string reason)
         {
             SendEmbed(
+                realm, HeraldEventClass.Routine,
                 HostCatalog.T("host.discord.held.title"),
                 HostCatalog.T("host.discord.held.body", ("server", serverName), ("reason", reason)),
                 0xE0A35C); // Amber
@@ -115,7 +134,7 @@ namespace ValheimBakaLoader.Tools
         /// The dedicated server was updated from inside BakaLoader. Mirrors
         /// <see cref="SendLaunchHeld"/>: same gating, same shape, one post per outcome.
         /// </summary>
-        public void SendServerUpdated(string serverName, string buildId, bool starting)
+        public void SendServerUpdated(string realm, string serverName, string buildId, bool starting)
         {
             var build = string.IsNullOrWhiteSpace(buildId)
                 ? ""
@@ -124,23 +143,26 @@ namespace ValheimBakaLoader.Tools
                 ? HostCatalog.T("host.discord.updated.starting")
                 : HostCatalog.T("host.discord.updated.when_ready"));
             SendEmbed(
+                realm, HeraldEventClass.Routine,
                 HostCatalog.T("host.discord.updated.title"),
                 HostCatalog.T("host.discord.updated.body", ("server", serverName)) + build + next,
                 0x57F287); // Green
         }
 
         /// <summary>The update did not finish, so the server is still on the old build.</summary>
-        public void SendServerUpdateFailed(string serverName, string reason)
+        public void SendServerUpdateFailed(string realm, string serverName, string reason)
         {
             SendEmbed(
+                realm, HeraldEventClass.Routine,
                 HostCatalog.T("host.discord.update_failed.title"),
                 HostCatalog.T("host.discord.update_failed.body", ("server", serverName), ("reason", reason)),
                 0xED4245); // Red
         }
 
-        public void SendLegacyWorldLoaded(string serverName, string worldName)
+        public void SendLegacyWorldLoaded(string realm, string serverName, string worldName)
         {
             SendEmbed(
+                realm, HeraldEventClass.Routine,
                 HostCatalog.T("host.discord.legacy_world.title"),
                 HostCatalog.T("host.discord.legacy_world.body", ("server", serverName), ("world", worldName)),
                 0xE0A35C); // Amber
@@ -152,12 +174,49 @@ namespace ValheimBakaLoader.Tools
         /// own reply line, the same words the Players hall shows, so there is one reading of
         /// this sweep and not two.
         /// </summary>
-        public void SendCheatMarksCleared(string serverName, string counts)
+        public void SendCheatMarksCleared(string realm, string serverName, string counts)
         {
             SendEmbed(
+                realm, HeraldEventClass.Routine,
                 HostCatalog.T("host.discord.cleanse.title"),
                 HostCatalog.T("host.discord.cleanse.body", ("server", serverName), ("counts", counts)),
                 0x8C6D3F); // Bronze
+        }
+
+        /// <summary>
+        /// A mod update, from the mod hall or a restart's auto update, moved at least one mod. One
+        /// post for the whole run, each mod with the version it left and the one it is on now,
+        /// so a player knows what to update before joining. A long run is cut with a count of the
+        /// rest, because an embed holds 4096 characters.
+        /// </summary>
+        public void SendModsUpdated(string realm, string serverName, IReadOnlyList<ModVersionMove> mods)
+        {
+            var moved = (mods ?? Array.Empty<ModVersionMove>()).Where(m => m != null && !string.IsNullOrWhiteSpace(m.Mod)).ToList();
+            if (moved.Count == 0) return;
+            SendEmbed(
+                realm, HeraldEventClass.Routine,
+                HostCatalog.T("host.discord.mods_updated.title"),
+                ModsUpdatedBody(serverName, moved),
+                0x5865F2); // Blurple
+        }
+
+        // Twenty lines is a screenful in a channel; past that the post says how many more.
+        internal const int ModsUpdatedLines = 20;
+
+        internal static string ModsUpdatedBody(string serverName, IReadOnlyList<ModVersionMove> moved)
+        {
+            var body = new StringBuilder(HostCatalog.T("host.discord.mods_updated.body", ("server", serverName)));
+            foreach (var m in moved.Take(ModsUpdatedLines))
+            {
+                body.Append('\n').Append(HostCatalog.T("host.discord.mods_updated.line",
+                    ("mod", m.Mod),
+                    ("from", string.IsNullOrWhiteSpace(m.FromVersion) ? "?" : m.FromVersion),
+                    ("to", string.IsNullOrWhiteSpace(m.ToVersion) ? "?" : m.ToVersion)));
+            }
+            var rest = Math.Max(0, moved.Count - ModsUpdatedLines);
+            if (rest > 0)
+                body.Append('\n').Append(HostCatalog.T("host.discord.mods_updated.more", ("count", rest)));
+            return body.ToString();
         }
 
         /// <summary>
@@ -166,7 +225,12 @@ namespace ValheimBakaLoader.Tools
         /// status post; an event post keeps the title that says what happened, because a channel
         /// of posts all headed with the same custom title would say nothing.
         /// </summary>
-        internal static string BuildEventPayload(string title, string description, int color, UserPreferences prefs)
+        /// <para>
+        /// A crash post with a role names the role in the content, the only place a mention
+        /// pings, and tells Discord that role is the only mention it may act on, so nothing
+        /// else in the post can ever reach everyone.
+        /// </para>
+        internal static string BuildEventPayload(string title, string description, int color, UserPreferences prefs, string roleId = null)
         {
             var embed = new JObject
             {
@@ -177,29 +241,54 @@ namespace ValheimBakaLoader.Tools
                 ["footer"] = new JObject { ["text"] = "ValheimBakaLoader" },
             };
             var payload = new JObject { ["embeds"] = new JArray(embed) };
+            if (!string.IsNullOrEmpty(roleId))
+            {
+                payload["content"] = "<@&" + roleId + ">";
+                payload["allowed_mentions"] = new JObject
+                {
+                    ["parse"] = new JArray(),
+                    ["roles"] = new JArray(roleId),
+                };
+            }
             DiscordHeraldLook.Sign(payload, embed, prefs);
             return payload.ToString(Formatting.None);
         }
 
-        private void SendEmbed(string title, string description, int color)
+        /// <summary>
+        /// Whether one event post goes out and where, decided here and nowhere else: the master
+        /// on, the realm on, the kind on (HeraldRealms.SendsEvent), read when the post is sent,
+        /// so a switch turned off a second ago is honoured. Null when it does not go.
+        /// </summary>
+        internal static (string Url, string Json)? Route(UserPreferences prefs, string realm, HeraldEventClass kind,
+            string title, string description, int color)
         {
-            var prefs = UserPrefsProvider.LoadPreferences();
-            // The app-wide Discord switch is the master over everything the Herald sends: off
-            // means nothing from any realm, the event posts included.
-            if (prefs == null || !prefs.DiscordSharingEnabled) return;
-            var webhookUrl = prefs.DiscordWebhookUrl?.Trim();
-            if (string.IsNullOrWhiteSpace(webhookUrl)) return;
+            var server = HeraldRealms.Find(prefs, realm);
+            if (!HeraldRealms.SendsEvent(prefs, server, kind)) return null;
+            var (webhookUrl, threadId) = HeraldRealms.EventRouteFor(prefs, server, kind);
+            webhookUrl = webhookUrl.Trim();
 
             // Escaped the way the status service escapes it. The box takes whatever is pasted,
             // and a stray character in a thread id must not become a second query parameter.
-            var threadId = prefs.DiscordWebhookThreadId?.Trim();
             if (!string.IsNullOrWhiteSpace(threadId))
             {
                 var separator = webhookUrl.Contains("?") ? "&" : "?";
-                webhookUrl = $"{webhookUrl}{separator}thread_id={Uri.EscapeDataString(threadId)}";
+                webhookUrl = $"{webhookUrl}{separator}thread_id={Uri.EscapeDataString(threadId.Trim())}";
             }
 
-            var json = BuildEventPayload(title, description, color, prefs);
+            // A role id that is not one is left out rather than sent: the hall refuses it on
+            // save, so this only meets a file edited by hand.
+            string roleId = null;
+            if (kind == HeraldEventClass.Crash && HeraldRealms.TryReadRoleId(server.HeraldCrashRoleId, out var read))
+                roleId = read;
+
+            return (webhookUrl, BuildEventPayload(title, description, color, prefs, roleId));
+        }
+
+        private void SendEmbed(string realm, HeraldEventClass kind, string title, string description, int color)
+        {
+            var routed = Route(UserPrefsProvider.LoadPreferences(), realm, kind, title, description, color);
+            if (routed == null) return;
+            var (webhookUrl, json) = routed.Value;
 
             Task.Run(async () =>
             {

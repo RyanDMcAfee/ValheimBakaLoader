@@ -359,7 +359,7 @@ const settle = () => new Promise(res => setImmediate(res));
     assert.strictEqual(KEYS["herald.realm.webhook.placeholder"].lore, "blank = the app-wide webhook");
 
     /* Every press of either switch saves, and the save carries the master and the realm's block. */
-    assert.ok(/\["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldEvents","tHeraldLink"\]\.forEach\(id=>\s*\$\("#"\+id\)\.addEventListener\("click",\(\)=>heraldSave\(\)\)\);/.test(APP),
+    assert.ok(/\["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldLink"\]\.forEach\(id=>\s*\$\("#"\+id\)\.addEventListener\("click",\(\)=>heraldSave\(\)\)\);/.test(APP),
       "a switch on the hall does not save");
     const save = fn("function heraldSave(extra){");
     assert.ok(save.includes('DiscordSharingEnabled:swOn("tHerald")'), "the save does not carry the master switch");

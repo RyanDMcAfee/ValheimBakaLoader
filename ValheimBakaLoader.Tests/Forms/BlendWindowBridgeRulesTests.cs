@@ -131,14 +131,14 @@ namespace ValheimBakaLoader.Tests.Forms
 
         // ---------------------------------------------------------------- LG-11
 
+        // Whether the realm's routine posts are on is the webhook service's question since 1.2.16
+        // (HeraldEventRoutingTests holds that a realm with them off sends nothing).
         [Theory]
-        [InlineData(true, true, true)]    // BakaLoader started it: nobody may be watching
-        [InlineData(false, true, false)]  // the host pressed Start and is looking at the banner
-        [InlineData(true, false, false)]  // event posts are off
-        [InlineData(false, false, false)]
-        public void Only_an_unattended_hold_is_worth_a_Discord_post(bool automatic, bool posts, bool expected)
+        [InlineData(true, true)]    // BakaLoader started it: nobody may be watching
+        [InlineData(false, false)]  // the host pressed Start and is looking at the banner
+        public void Only_an_unattended_hold_is_worth_a_Discord_post(bool automatic, bool expected)
         {
-            Assert.Equal(expected, BlendWindow.ShouldAnnounceHold(automatic, posts));
+            Assert.Equal(expected, BlendWindow.ShouldAnnounceHold(automatic));
         }
 
         // ---------------------------------------------------------------- W-12

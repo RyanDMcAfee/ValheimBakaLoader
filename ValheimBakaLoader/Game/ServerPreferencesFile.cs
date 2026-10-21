@@ -77,6 +77,20 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("heraldStatusMessageSignature")] public string HeraldStatusMessageSignature { get; set; }
         [JsonProperty("heraldStatusThreadId")] public string HeraldStatusThreadId { get; set; }
 
+        // -- Where the realm's event posts go (1.2.16): three kinds, each with its own switch,
+        //    webhook and thread. Null switches read as off; blank boxes as the realm's own. --
+
+        [JsonProperty("heraldRoutineOn")] public bool? HeraldRoutineOn { get; set; }
+        [JsonProperty("heraldRoutineWebhookUrl")] public string HeraldRoutineWebhookUrl { get; set; }
+        [JsonProperty("heraldRoutineThreadId")] public string HeraldRoutineThreadId { get; set; }
+        [JsonProperty("heraldCrashOn")] public bool? HeraldCrashOn { get; set; }
+        [JsonProperty("heraldCrashWebhookUrl")] public string HeraldCrashWebhookUrl { get; set; }
+        [JsonProperty("heraldCrashThreadId")] public string HeraldCrashThreadId { get; set; }
+        [JsonProperty("heraldCrashRoleId")] public string HeraldCrashRoleId { get; set; }
+        [JsonProperty("heraldPlayersOn")] public bool? HeraldPlayersOn { get; set; }
+        [JsonProperty("heraldPlayersWebhookUrl")] public string HeraldPlayersWebhookUrl { get; set; }
+        [JsonProperty("heraldPlayersThreadId")] public string HeraldPlayersThreadId { get; set; }
+
         // -- RCON --
 
         [JsonProperty("rconEnabled")] public bool? RconEnabled { get; set; }

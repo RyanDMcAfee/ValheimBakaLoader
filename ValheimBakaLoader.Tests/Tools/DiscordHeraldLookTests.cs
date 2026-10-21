@@ -472,10 +472,11 @@ namespace ValheimBakaLoader.Tests.Tools
             var prefs = Prefs(true, true, false, false, true);
             prefs.DiscordWebhookUrl = Hook;
             prefs.DiscordSharingEnabled = true;
+            Realm(prefs).HeraldRoutineOn = true; // since 1.2.16 the realm's routine posts are a switch of their own
             var wire = new Wire();
             var events = new DiscordWebhookService(new Store { Current = prefs }, new Over(wire), new Mock<IApplicationLogger>().Object);
 
-            events.SendServerStarted("Final Sunset");
+            events.SendServerStarted("Final Sunset", "Final Sunset");
             var landed = await Task.WhenAny(wire.First.Task, Task.Delay(TimeSpan.FromSeconds(10)));
 
             Assert.Same(wire.First.Task, landed);

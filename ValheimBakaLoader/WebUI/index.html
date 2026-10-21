@@ -994,8 +994,25 @@
               </div>
               <div class="subval" style="margin:4px 0 0" data-i18n="herald.modcode.note">Players paste this into their mod manager to get the same mods.</div>
               <div class="wiz-stat dim" id="heraldModCodeStat" style="margin:2px 0 6px"></div>
-              <div class="togglerow"><span class="tl" data-i18n="herald.share.events">Event posts</span><span class="toggle" id="tHeraldEvents" data-t title="Also send one-off messages when the server starts, stops or crashes, and when vikings join or leave. These are separate messages, not edits of the status post." data-i18n-title="herald.share.events.title"></span></div>
-              <div class="subval" style="margin:2px 0 0" data-i18n="herald.share.events.note">one-off messages for start · stop · crash · join · leave, from every realm</div>
+              <!-- THE REALM'S EVENT POSTS (1.2.16): three kinds, each with its own switch, and a
+                   webhook and thread that are blank for the realm's own. The crash kind can ping
+                   one role. app.js paints them from the realm's block (heraldRenderEvents) and
+                   saves them inside it (heraldEventValues). -->
+              <div class="microlabel" style="margin-top:14px" data-i18n="herald.share.events" title="Also send one-off messages when the server starts, stops or crashes, and when vikings join or leave. These are separate messages, not edits of the status post." data-i18n-title="herald.share.events.title">Event posts</div>
+              <div class="subval" style="margin:2px 0 8px" data-i18n="herald.events.note">One-off messages from this realm, in three kinds, each with its own switch. A blank webhook or thread box uses this realm's.</div>
+              <div class="togglerow"><span class="tl" data-i18n="herald.events.routine">Server news</span><span class="toggle" id="tHeraldRoutine" data-t title="Started, stopped, updated, update failed, start held, old world format, cheat marks cleared, and mods updated." data-i18n-title="herald.events.routine.title"></span></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px">
+                <input type="text" id="heraldRoutineUrl" style="flex:2 1 220px" spellcheck="false" autocomplete="off" aria-label="Server news" data-i18n-aria="herald.events.routine" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
+                <input type="text" id="heraldRoutineThread" style="flex:1 1 140px" spellcheck="false" autocomplete="off" aria-label="Server news" data-i18n-aria="herald.events.routine" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder"></div>
+              <div class="togglerow"><span class="tl" data-i18n="herald.events.crash">Crashes</span><span class="toggle" id="tHeraldCrash" data-t title="The server crashed. It can ping one role, so somebody comes to look." data-i18n-title="herald.events.crash.title"></span></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 8px">
+                <input type="text" id="heraldCrashUrl" style="flex:2 1 220px" spellcheck="false" autocomplete="off" aria-label="Crashes" data-i18n-aria="herald.events.crash" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
+                <input type="text" id="heraldCrashThread" style="flex:1 1 140px" spellcheck="false" autocomplete="off" aria-label="Crashes" data-i18n-aria="herald.events.crash" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder">
+                <input type="text" id="heraldCrashRole" style="flex:1 1 140px" spellcheck="false" autocomplete="off" maxlength="32" aria-label="Crashes" data-i18n-aria="herald.events.crash" placeholder="role ID to ping · blank = no ping" data-i18n-placeholder="herald.events.role.placeholder" title="The role pinged when the server crashes. In Discord: Server Settings, Roles, right-click the role, Copy Role ID. Only this role is pinged, never everyone." data-i18n-title="herald.events.role.title"></div>
+              <div class="togglerow"><span class="tl" data-i18n="herald.events.players">Vikings joining and leaving</span><span class="toggle" id="tHeraldPlayers" data-t title="A viking joined or left. A busy realm sends a lot of these, so they can go to a channel of their own." data-i18n-title="herald.events.players.title"></span></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 0">
+                <input type="text" id="heraldPlayersUrl" style="flex:2 1 220px" spellcheck="false" autocomplete="off" aria-label="Vikings joining and leaving" data-i18n-aria="herald.events.players" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
+                <input type="text" id="heraldPlayersThread" style="flex:1 1 140px" spellcheck="false" autocomplete="off" aria-label="Vikings joining and leaving" data-i18n-aria="herald.events.players" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder"></div>
             </div>
             <!-- THE POST -->
             <div class="card b-heraldpost">
