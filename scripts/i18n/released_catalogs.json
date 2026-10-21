@@ -97,6 +97,11 @@
       "version": "1.2.15",
       "catalog": 15,
       "fingerprint": "b3c4a7f32841df32155666a2379655ba5026cca32cc3c5df3e4c80b14a510a3f"
+    },
+    {
+      "version": "1.2.16",
+      "catalog": 16,
+      "fingerprint": "e466b5bf80671464938d4899dd71c7a7a485d292db5b0776a1cade0c5064f708"
     }
   ]
 }
