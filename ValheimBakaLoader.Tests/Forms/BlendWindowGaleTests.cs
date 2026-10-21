@@ -382,7 +382,7 @@ namespace ValheimBakaLoader.Tests.Forms
 
         // ------------------------------------------------------------------ 1.2.16: what the mod needs
 
-        private const string ForgeUrl = "https://thunderstore.io/c/valheim/p/MySix/MySix_ForgeOfPotential/";
+        private const string ForgeUrl = "https://thunderstore.io/c/valheim/p/Someone/Someone_ModA/";
 
         /// <summary>A plugin folder with a manifest that lists these dependencies.</summary>
         private void InstallNeeding(string fullName, string version, params string[] needs)
@@ -422,25 +422,25 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public async Task A_link_install_hands_back_the_missing_dependency_and_the_one_behind_it()
         {
-            InstallAnswers("denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2");
-            Thunderstore.Setup(t => t.LookupLiveAsync("MySix", "MySix_Core"))
-                .ReturnsAsync(LatestNeeding("MySix", "MySix_Core", "denikson-BepInExPack_Valheim-5.4.2350", "ValheimModding-Jotunn-2.25.0"));
+            InstallAnswers("denikson-BepInExPack_Valheim-5.4.2350", "Someone-Someone_CoreLib-1.0.2");
+            Thunderstore.Setup(t => t.LookupLiveAsync("Someone", "Someone_CoreLib"))
+                .ReturnsAsync(LatestNeeding("Someone", "Someone_CoreLib", "denikson-BepInExPack_Valheim-5.4.2350", "ValheimModding-Jotunn-2.25.0"));
 
             var a = await Call("mods.addFromUrl", new { url = ForgeUrl });
 
             Assert.True(a.Value<bool>("Installed"));
             var needs = (JArray)a["missingDependencies"]!;
             Assert.Equal(2, needs.Count);
-            Assert.Equal("MySix-MySix_Core", needs[0]!.Value<string>("fullName"));
-            Assert.Equal("MySix_Core", needs[0]!.Value<string>("name"));
+            Assert.Equal("Someone-Someone_CoreLib", needs[0]!.Value<string>("fullName"));
+            Assert.Equal("Someone_CoreLib", needs[0]!.Value<string>("name"));
             Assert.Equal("missing", needs[0]!.Value<string>("state"));
             Assert.Equal("1.0.2", needs[0]!.Value<string>("minVersion"));
-            Assert.Equal("MySix-MySix_ForgeOfPotential", needs[0]!.Value<string>("requiredBy"));
+            Assert.Equal("Someone-Someone_ModA", needs[0]!.Value<string>("requiredBy"));
             // Jotunn is on the server at 2.20.1, and the core asks for 2.25.0.
             Assert.Equal("ValheimModding-Jotunn", needs[1]!.Value<string>("fullName"));
             Assert.Equal("older", needs[1]!.Value<string>("state"));
             Assert.Equal("2.20.1", needs[1]!.Value<string>("installedVersion"));
-            Assert.Equal("MySix-MySix_Core", needs[1]!.Value<string>("requiredBy"));
+            Assert.Equal("Someone-Someone_CoreLib", needs[1]!.Value<string>("requiredBy"));
             // One install, the pasted one: the host side offers, it never fetches on its own.
             ModUpdates.Verify(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()), Times.Once);
         }
@@ -448,8 +448,8 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public async Task A_link_install_with_everything_there_carries_an_empty_list()
         {
-            InstallNeeding("MySix-MySix_Core", "1.0.5");
-            InstallAnswers("MySix-MySix_Core-1.0.2", "ValheimModding-Jotunn-2.20.0");
+            InstallNeeding("Someone-Someone_CoreLib", "1.0.5");
+            InstallAnswers("Someone-Someone_CoreLib-1.0.2", "ValheimModding-Jotunn-2.20.0");
 
             var a = await Call("mods.addFromUrl", new { url = ForgeUrl });
 
@@ -485,7 +485,7 @@ namespace ValheimBakaLoader.Tests.Forms
         public async Task The_Gale_walks_add_is_one_install_whatever_the_mod_needs()
         {
             // The page's Gale walk ignores the field; the host side must not act on it either.
-            InstallAnswers("MySix-MySix_Core-1.0.2");
+            InstallAnswers("Someone-Someone_CoreLib-1.0.2");
 
             var a = await Call("mods.addFromUrl", new { url = PinnedUrl, profile = Profile, requireStopped = true });
 
@@ -493,13 +493,13 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Single(a["missingDependencies"]!);
             ModUpdates.Verify(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()), Times.Once);
             ModUpdates.Verify(m => m.InstallFromThunderstoreAsync(
-                It.Is<ThunderstoreModReference>(r => r.Owner == "MySix"), It.IsAny<string>()), Times.Never);
+                It.Is<ThunderstoreModReference>(r => r.Owner == "Someone"), It.IsAny<string>()), Times.Never);
         }
 
         [Fact]
         public void The_scan_row_says_what_it_needs_from_the_disk_alone()
         {
-            InstallNeeding("MySix-MySix_ForgeOfPotential", "1.0.0", "denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2");
+            InstallNeeding("Someone-Someone_ModA", "1.0.0", "denikson-BepInExPack_Valheim-5.4.2350", "Someone-Someone_CoreLib-1.0.2");
             Directory.CreateDirectory(Path.Combine(Plugins, "Someone-HandCopy"));
             File.WriteAllText(Path.Combine(Plugins, "Someone-HandCopy", "HandCopy.dll"), "MZ");
 
@@ -510,9 +510,9 @@ namespace ValheimBakaLoader.Tests.Forms
             typeof(BlendWindow).GetMethod("MarkMissingDependencies", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(Window, new object[] { mods, Plugins });
             var rows = JArray.Parse(JsonConvert.SerializeObject(mods.Select(m => BlendWindow.BuildModDto(m)).ToList()));
-            var forge = rows.Single(r => r.Value<string>("FullName") == "MySix-MySix_ForgeOfPotential");
+            var forge = rows.Single(r => r.Value<string>("FullName") == "Someone-Someone_ModA");
             var need = Assert.Single((JArray)forge["missingDependencies"]!);
-            Assert.Equal("MySix-MySix_Core", need!.Value<string>("fullName"));
+            Assert.Equal("Someone-Someone_CoreLib", need!.Value<string>("fullName"));
             Assert.Equal("missing", need.Value<string>("state"));
             Assert.Empty(rows.Single(r => r.Value<string>("FullName") == "Someone-HandCopy")["missingDependencies"]!);
             Assert.Empty(rows.Single(r => r.Value<string>("FullName") == "ValheimModding-Jotunn")["missingDependencies"]!);
@@ -553,7 +553,7 @@ namespace ValheimBakaLoader.Tests.Forms
                             DownloadUrl = "https://hexium.gg/download/1",
                             Dependencies = new List<string>
                             {
-                                "denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2",
+                                "denikson-BepInExPack_Valheim-5.4.2350", "Someone-Someone_CoreLib-1.0.2",
                                 "ValheimModding-Jotunn-2.25.0", "Azumatt-AzuCraftyBoxes-1.8.0",
                             },
                         },
@@ -568,7 +568,7 @@ namespace ValheimBakaLoader.Tests.Forms
             var marks = ((JArray)r["DependencyMarks"]!).Select(m => (m!.Value<string>("fullName"), m.Value<string>("state"))).ToArray();
             Assert.Equal(new[]
             {
-                ("MySix-MySix_Core", "missing"),
+                ("Someone-Someone_CoreLib", "missing"),
                 ("ValheimModding-Jotunn", "older"),
                 ("Azumatt-AzuCraftyBoxes", "off"),
             }, marks);

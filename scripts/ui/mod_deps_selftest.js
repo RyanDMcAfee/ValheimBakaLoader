@@ -170,12 +170,12 @@ function page(opts) {
 
 const settle = async () => { for (let i = 0; i < 30; i++) await new Promise(r => setImmediate(r)); };
 
-const CORE = { fullName: "MySix-MySix_Core", name: "MySix_Core", minVersion: "1.0.2", state: "missing", requiredBy: "MySix-MySix_ForgeOfPotential" };
-const JOTUNN = { fullName: "ValheimModding-Jotunn", name: "Jotunn", minVersion: "2.20.0", state: "older", installedVersion: "2.19.1", requiredBy: "MySix-MySix_Core" };
-const OFF = { fullName: "Azumatt-AzuCraftyBoxes", name: "AzuCraftyBoxes", minVersion: "1.8.0", state: "off", installedVersion: "1.8.4", requiredBy: "MySix-MySix_ForgeOfPotential" };
+const CORE = { fullName: "Someone-Someone_CoreLib", name: "Someone_CoreLib", minVersion: "1.0.2", state: "missing", requiredBy: "Someone-Someone_ModA" };
+const JOTUNN = { fullName: "ValheimModding-Jotunn", name: "Jotunn", minVersion: "2.20.0", state: "older", installedVersion: "2.19.1", requiredBy: "Someone-Someone_CoreLib" };
+const OFF = { fullName: "Azumatt-AzuCraftyBoxes", name: "AzuCraftyBoxes", minVersion: "1.8.0", state: "off", installedVersion: "1.8.4", requiredBy: "Someone-Someone_ModA" };
 const ROW = {
-  ModName: "MySix_ForgeOfPotential", Author: "MySix", FullName: "MySix-MySix_ForgeOfPotential",
-  InstalledVersion: "1.0.0", LatestVersion: "1.0.0", thunderstoreNamespace: "MySix", thunderstoreName: "MySix_ForgeOfPotential",
+  ModName: "Someone_ModA", Author: "Someone", FullName: "Someone-Someone_ModA",
+  InstalledVersion: "1.0.0", LatestVersion: "1.0.0", thunderstoreNamespace: "Someone", thunderstoreName: "Someone_ModA",
   installedSource: "thunderstore", installedUtc: "2026-10-20T10:10:00Z", modUpdatedUtc: "2026-10-01T00:00:00Z",
   disabled: false, layout: "managed", missingDependencies: [],
 };
@@ -190,13 +190,13 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
     assert.strictEqual(p.context.modNeedsPill(hand), "", "a row from a scan with no field has a pill");
     const one = p.context.modNeedsPill(mod({ missingDependencies: [CORE] }));
     assert.ok(one.includes('class="pill amber modneeds"'), one);
-    assert.ok(one.includes(">" + T("mods.deps.pill.one", { name: "MySix_Core" }) + "</span>"), one);
-    assert.strictEqual(T("mods.deps.pill.one", { name: "MySix_Core" }), "Needs MySix_Core");
+    assert.ok(one.includes(">" + T("mods.deps.pill.one", { name: "Someone_CoreLib" }) + "</span>"), one);
+    assert.strictEqual(T("mods.deps.pill.one", { name: "Someone_CoreLib" }), "Needs Someone_CoreLib");
     const two = p.context.modNeedsPill(mod({ missingDependencies: [CORE, JOTUNN] }));
     assert.ok(two.includes(">Needs 2 mods</span>"), two);
     const tip = (two.match(/title="([^"]*)"/) || [])[1];
     assert.strictEqual(tip, p.context.esc([T("mods.deps.pill.tip"),
-      T("mods.deps.line.missing.version", { name: "MySix_Core", version: "1.0.2" }),
+      T("mods.deps.line.missing.version", { name: "Someone_CoreLib", version: "1.0.2" }),
       T("mods.deps.line.older", { name: "Jotunn", installed: "2.19.1", version: "2.20.0" })].join("\n")), "the tooltip does not list them");
     const bad = p.context.modNeedsPill(mod({ missingDependencies: [{ fullName: "a-<b>", name: "<b>", state: "missing" }] }));
     assert.ok(!bad.includes("<b>") && bad.includes("&lt;b&gt;"), "the name is not escaped: " + bad);
@@ -218,16 +218,16 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
     assert.ok(l.indexOf(T("mods.menu.install_needs")) < l.indexOf(T("mods.menu.disable")), "the entry is not with the install entries");
     it.fn();
     assert.strictEqual(p.dialogs.length, 1);
-    assert.strictEqual(p.dialogs[0].who, "MySix_ForgeOfPotential");
-    assert.deepStrictEqual(p.dialogs[0].needs.map(n => n.fullName), ["MySix-MySix_Core", "Azumatt-AzuCraftyBoxes"]);
+    assert.strictEqual(p.dialogs[0].who, "Someone_ModA");
+    assert.deepStrictEqual(p.dialogs[0].needs.map(n => n.fullName), ["Someone-Someone_CoreLib", "Azumatt-AzuCraftyBoxes"]);
   });
 
   await test("3. the dialog: title, ticks, Switch on for an off row, Not now, nothing ticked, held while running", async () => {
     const p = page({ native: false });
     let walked = null;
-    const m = p.context.modDepsDialog("MySix_ForgeOfPotential", [CORE, JOTUNN, OFF]);
+    const m = p.context.modDepsDialog("Someone_ModA", [CORE, JOTUNN, OFF]);
     p.context.modDepsInstall = list => { walked = list; };
-    assert.ok(m.html.includes(p.context.esc(T("mods.deps.dialog.title", { mod: "MySix_ForgeOfPotential" }))), "no title");
+    assert.ok(m.html.includes(p.context.esc(T("mods.deps.dialog.title", { mod: "Someone_ModA" }))), "no title");
     assert.strictEqual(T("mods.deps.dialog.title", { mod: "X" }), "X needs these to load");
     assert.deepStrictEqual(m.boxes.map(b => [b.dataset.dep, b.checked]), [["0", true], ["1", true]], "missing and older are not both ticked");
     assert.strictEqual(m.ons.length, 1, "the off row has no Switch on");
@@ -240,7 +240,7 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
     assert.strictEqual(m.ons[0].disabled, true, "Switch on can be pressed twice");
     m.boxes[1].checked = false;
     m.byId["#mOk"].click();
-    assert.deepStrictEqual(Array.from(walked, n => n.fullName), ["MySix-MySix_Core"], "Install did not take the ticked rows only");
+    assert.deepStrictEqual(Array.from(walked, n => n.fullName), ["Someone-Someone_CoreLib"], "Install did not take the ticked rows only");
     /* Not now closes and fetches nothing. */
     const q = page();
     let walkedQ = 0;
@@ -268,7 +268,7 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
     const p = page({ reply: (method, params) => (method === "mods.addFromUrl" ? { Installed: true, Version: "9.9.9" } : { ok: true }) });
     await p.context.modDepsInstall([CORE, JOTUNN]);
     assert.deepStrictEqual(p.sent.map(s => s.method), ["mods.addFromUrl", "mods.addFromUrl"]);
-    assert.deepStrictEqual(p.sent[0].params, { url: "https://thunderstore.io/c/valheim/p/MySix/MySix_Core/", profile: "Final Sunset", requireStopped: true });
+    assert.deepStrictEqual(p.sent[0].params, { url: "https://thunderstore.io/c/valheim/p/Someone/Someone_CoreLib/", profile: "Final Sunset", requireStopped: true });
     assert.strictEqual(p.sent[1].params.url, "https://thunderstore.io/c/valheim/p/ValheimModding/Jotunn/");
     assert.strictEqual(p.scans.length, 1, "the table was not scanned once after the walk");
     assert.strictEqual(p.context.S.modsUpdating, false, "the walk left the hall busy");
@@ -291,20 +291,20 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
   });
 
   await test("5. doAddMod: a pasted link offers after its scan; a Reinstall and a satisfied add never do", async () => {
-    const answer = { Installed: true, Owner: "MySix", Name: "MySix_ForgeOfPotential", Version: "1.0.0", missingDependencies: [CORE] };
+    const answer = { Installed: true, Owner: "Someone", Name: "Someone_ModA", Version: "1.0.0", missingDependencies: [CORE] };
     const p = page({ spyDialog: true, reply: () => answer });
-    await p.context.doAddMod("https://thunderstore.io/c/valheim/p/MySix/MySix_ForgeOfPotential/", undefined, { offerDeps: true });
+    await p.context.doAddMod("https://thunderstore.io/c/valheim/p/Someone/Someone_ModA/", undefined, { offerDeps: true });
     assert.strictEqual(p.scans.length, 1);
     assert.strictEqual(p.dialogs.length, 1, "the pasted link did not offer what it needs");
-    assert.strictEqual(p.dialogs[0].who, "MySix_ForgeOfPotential");
+    assert.strictEqual(p.dialogs[0].who, "Someone_ModA");
     assert.deepStrictEqual(p.dialogs[0].needs, [CORE]);
-    assert.ok(p.logs.some(l => /needs: MySix-MySix_Core \(missing\)/.test(l)), "the Saga does not say what it needs");
+    assert.ok(p.logs.some(l => /needs: Someone-Someone_CoreLib \(missing\)/.test(l)), "the Saga does not say what it needs");
     const re = page({ spyDialog: true, reply: () => answer });
-    await re.context.doAddMod("https://thunderstore.io/c/valheim/p/MySix/MySix_ForgeOfPotential/v/1.0.0/", { profile: "Final Sunset", requireStopped: true });
+    await re.context.doAddMod("https://thunderstore.io/c/valheim/p/Someone/Someone_ModA/v/1.0.0/", { profile: "Final Sunset", requireStopped: true });
     assert.strictEqual(re.dialogs.length, 0, "a Reinstall offered the dependencies");
     assert.deepStrictEqual(re.sent.map(s => s.method), ["mods.addFromUrl"], "a Reinstall made another call");
     const ok = page({ spyDialog: true, reply: () => Object.assign({}, answer, { missingDependencies: [] }) });
-    await ok.context.doAddMod("https://thunderstore.io/c/valheim/p/MySix/MySix_ForgeOfPotential/", undefined, { offerDeps: true });
+    await ok.context.doAddMod("https://thunderstore.io/c/valheim/p/Someone/Someone_ModA/", undefined, { offerDeps: true });
     assert.strictEqual(ok.dialogs.length, 0, "an add that needs nothing opened the dialog");
     const old = page({ spyDialog: true, reply: () => ({ Installed: true, Owner: "A", Name: "B" }) });
     await old.context.doAddMod("https://thunderstore.io/c/valheim/p/A/B/", undefined, { offerDeps: true });
@@ -319,9 +319,9 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
 
   await test("6. Hexium's consent list: missing, older and off marked, a good line left alone", () => {
     const p = page();
-    const marks = [{ fullName: "MySix-MySix_Core", state: "missing" }, { fullName: "valheimmodding-jotunn", state: "older" }, OFF];
+    const marks = [{ fullName: "Someone-Someone_CoreLib", state: "missing" }, { fullName: "valheimmodding-jotunn", state: "older" }, OFF];
     const mark = d => p.context.hexiumDepMark(d, marks);
-    assert.strictEqual(mark("MySix-MySix_Core-1.0.2"), ' <span class="moddep-mark">' + T("mods.deps.mark.missing") + "</span>");
+    assert.strictEqual(mark("Someone-Someone_CoreLib-1.0.2"), ' <span class="moddep-mark">' + T("mods.deps.mark.missing") + "</span>");
     assert.ok(mark("ValheimModding-Jotunn-2.20.0").includes(T("mods.deps.mark.older")), "the name is matched with its case");
     assert.ok(mark("Azumatt-AzuCraftyBoxes-1.8.0").includes(T("mods.deps.mark.off")));
     assert.strictEqual(mark("denikson-BepInExPack_Valheim-5.4.2350"), "", "a line that is there is marked");

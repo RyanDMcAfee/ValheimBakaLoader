@@ -218,7 +218,7 @@ namespace ValheimBakaLoader.Forms
         /// </para>
         /// <para>
         /// The names are only a guess, and the guess misses whenever the GUID reads nothing like
-        /// the package ("MySix_ForgeOfPotential" writes "com.mysix.forgeofpotential.cfg"). So when
+        /// the package ("Someone_ModA" writes "com.someone.moda.cfg"). So when
         /// the GUIDs the mod's DLLs declare are known (<paramref name="pluginGuids"/>), a file
         /// named "guid.cfg" or "guid.anything.cfg", or one whose first folder is named after the
         /// GUID, belongs to the mod too, ignoring case. The names stay as the fallback for a mod

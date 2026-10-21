@@ -537,7 +537,7 @@ function fnBody(source, head) {
     /* From 1.2.16 every successful add hands back missingDependencies. The walk is unattended
        by design, so it must read nothing of it: no dependency dialog, no extra call, the same
        recorded order as a mod that needs nothing. */
-    const needs = [{ fullName: "MySix-MySix_Core", name: "MySix_Core", minVersion: "1.0.0", state: "missing" }];
+    const needs = [{ fullName: "Someone-Someone_CoreLib", name: "Someone_CoreLib", minVersion: "1.0.0", state: "missing" }];
     const p = page({ replies: {
       "gale.untick": { ok: true, state: state() },
       "mods.addFromUrl": params => ({ Installed: true, Version: params.url.split("/v/")[1].replace("/", ""), missingDependencies: needs }),

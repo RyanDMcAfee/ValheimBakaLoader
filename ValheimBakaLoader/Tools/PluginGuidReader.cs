@@ -11,7 +11,7 @@ namespace ValheimBakaLoader.Tools
     /// <summary>
     /// The GUIDs a mod's DLL gives its plugins in <c>[BepInPlugin("guid", "name", "version")]</c>.
     /// BepInEx names a plugin's config file after that GUID, and the GUID often looks nothing
-    /// like the package's name ("MySix_ForgeOfPotential" writes "com.mysix.forgeofpotential.cfg"),
+    /// like the package's name ("Someone_ModA" writes "com.someone.moda.cfg"),
     /// so this is the only reliable way to tie a config file back to its mod.
     /// <para>
     /// The DLL is read as metadata and never loaded: loading a mod into the host would run its

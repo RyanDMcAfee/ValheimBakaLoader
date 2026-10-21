@@ -19,8 +19,8 @@ namespace ValheimBakaLoader.Tests.Tools
     /// <summary>
     /// What a mod needs that a realm does not give it, from 1.2.16.
     /// <para>
-    /// The trigger: MySix_ForgeOfPotential was installed by link without MySix_Core, BepInEx
-    /// logged "Could not load ... missing dependencies: com.mysix.core", and nothing in
+    /// The trigger: Someone_ModA was installed by link without Someone_CoreLib, BepInEx
+    /// logged "Could not load ... missing dependencies: com.someone.corelib", and nothing in
     /// BakaLoader said so. These hold the resolver to its rules (the minimum version kept, the
     /// BepInEx pack, older and switched off told apart from missing, the chain walked once
     /// through a cycle), the client to reading the dependency lists the site publishes, and the
@@ -69,7 +69,7 @@ namespace ValheimBakaLoader.Tests.Tools
         // ------------------------------------------------------------------ parsing
 
         [Theory]
-        [InlineData("MySix-MySix_Core-1.0.2", "MySix-MySix_Core", "1.0.2")]
+        [InlineData("Someone-Someone_CoreLib-1.0.2", "Someone-Someone_CoreLib", "1.0.2")]
         [InlineData("  denikson-BepInExPack_Valheim-5.4.2350 ", "denikson-BepInExPack_Valheim", "5.4.2350")]
         [InlineData("ValheimModding-Jotunn", "ValheimModding-Jotunn", null)]
         public void An_entry_keeps_its_minimum_version(string entry, string fullName, string min)
@@ -104,8 +104,8 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void A_dependency_that_is_there_on_and_new_enough_is_not_reported()
         {
-            var installed = new[] { Mod("MySix-MySix_Core", "1.0.5") };
-            Assert.Empty(ModDependencies.Check(new[] { "MySix-MySix_Core-1.0.2" }, installed, true));
+            var installed = new[] { Mod("Someone-Someone_CoreLib", "1.0.5") };
+            Assert.Empty(ModDependencies.Check(new[] { "Someone-Someone_CoreLib-1.0.2" }, installed, true));
         }
 
         [Fact]
@@ -118,24 +118,24 @@ namespace ValheimBakaLoader.Tests.Tools
             };
 
             var needs = ModDependencies.Check(
-                new[] { "MySix-MySix_Core-1.0.2", "ValheimModding-Jotunn-2.20.0", "Azumatt-AzuCraftyBoxes-1.8.0" },
-                installed, true, "MySix-MySix_ForgeOfPotential");
+                new[] { "Someone-Someone_CoreLib-1.0.2", "ValheimModding-Jotunn-2.20.0", "Azumatt-AzuCraftyBoxes-1.8.0" },
+                installed, true, "Someone-Someone_ModA");
 
             Assert.Equal(new[] { "missing", "older", "off" }, needs.Select(n => n.State));
-            Assert.Equal("MySix_Core", needs[0].Name);
+            Assert.Equal("Someone_CoreLib", needs[0].Name);
             Assert.Equal("1.0.2", needs[0].MinVersion);
             Assert.Null(needs[0].InstalledVersion);
             Assert.Equal("2.19.1", needs[1].InstalledVersion);
             Assert.Equal("2.20.0", needs[1].MinVersion);
             Assert.Equal("1.8.4", needs[2].InstalledVersion);
-            Assert.All(needs, n => Assert.Equal("MySix-MySix_ForgeOfPotential", n.RequiredBy));
+            Assert.All(needs, n => Assert.Equal("Someone-Someone_ModA", n.RequiredBy));
         }
 
         [Fact]
         public void A_match_ignores_case_and_a_copy_with_no_version_is_good_enough()
         {
-            var installed = new[] { Mod("mysix-mysix_core", "unknown") };
-            Assert.Empty(ModDependencies.Check(new[] { "MySix-MySix_Core-9.0.0" }, installed, true));
+            var installed = new[] { Mod("someone-someone_corelib", "unknown") };
+            Assert.Empty(ModDependencies.Check(new[] { "Someone-Someone_CoreLib-9.0.0" }, installed, true));
         }
 
         [Fact]
@@ -171,29 +171,29 @@ namespace ValheimBakaLoader.Tests.Tools
         public async Task The_chain_is_followed_through_the_site_for_what_is_not_on_disk()
         {
             var asked = new List<string>();
-            var needs = await ModDependencies.ResolveAsync("MySix-MySix_ForgeOfPotential",
-                new[] { "denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2" },
+            var needs = await ModDependencies.ResolveAsync("Someone-Someone_ModA",
+                new[] { "denikson-BepInExPack_Valheim-5.4.2350", "Someone-Someone_CoreLib-1.0.2" },
                 Array.Empty<InstalledMod>(), true,
                 Site(new Dictionary<string, string[]>
                 {
-                    ["MySix-MySix_Core"] = new[] { "denikson-BepInExPack_Valheim-5.4.2350", "ValheimModding-Jotunn-2.20.0" },
+                    ["Someone-Someone_CoreLib"] = new[] { "denikson-BepInExPack_Valheim-5.4.2350", "ValheimModding-Jotunn-2.20.0" },
                     ["ValheimModding-Jotunn"] = new[] { "denikson-BepInExPack_Valheim-5.4.2202" },
                 }, asked));
 
-            Assert.Equal(new[] { "MySix-MySix_Core", "ValheimModding-Jotunn" }, needs.Select(n => n.FullName));
-            Assert.Equal("MySix-MySix_Core", needs[1].RequiredBy);
+            Assert.Equal(new[] { "Someone-Someone_CoreLib", "ValheimModding-Jotunn" }, needs.Select(n => n.FullName));
+            Assert.Equal("Someone-Someone_CoreLib", needs[1].RequiredBy);
             // The pack is never asked about: it is not a mod, and BepInEx is there.
-            Assert.Equal(new[] { "MySix-MySix_Core", "ValheimModding-Jotunn" }, asked);
+            Assert.Equal(new[] { "Someone-Someone_CoreLib", "ValheimModding-Jotunn" }, asked);
         }
 
         [Fact]
         public async Task A_dependency_on_disk_is_followed_through_its_own_manifest_not_the_site()
         {
             var asked = new List<string>();
-            var installed = new[] { Mod("MySix-MySix_Core", "1.0.2", false, "ValheimModding-Jotunn-2.20.0") };
+            var installed = new[] { Mod("Someone-Someone_CoreLib", "1.0.2", false, "ValheimModding-Jotunn-2.20.0") };
 
-            var needs = await ModDependencies.ResolveAsync("MySix-MySix_ForgeOfPotential",
-                new[] { "MySix-MySix_Core-1.0.2" }, installed, true,
+            var needs = await ModDependencies.ResolveAsync("Someone-Someone_ModA",
+                new[] { "Someone-Someone_CoreLib-1.0.2" }, installed, true,
                 Site(new Dictionary<string, string[]>(), asked));
 
             Assert.Equal("ValheimModding-Jotunn", Assert.Single(needs).FullName);
@@ -284,17 +284,17 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void The_scan_reads_the_manifest_list_with_its_versions_and_a_hand_copy_has_none()
         {
-            var withManifest = Path.Combine(Plugins, "MySix-MySix_ForgeOfPotential");
+            var withManifest = Path.Combine(Plugins, "Someone-Someone_ModA");
             Directory.CreateDirectory(withManifest);
             File.WriteAllText(Path.Combine(withManifest, "manifest.json"),
-                "{\"name\":\"MySix_ForgeOfPotential\",\"version_number\":\"1.0.0\",\"dependencies\":[\"MySix-MySix_Core-1.0.2\",\" \"]}");
+                "{\"name\":\"Someone_ModA\",\"version_number\":\"1.0.0\",\"dependencies\":[\"Someone-Someone_CoreLib-1.0.2\",\" \"]}");
             var hand = Path.Combine(Plugins, "Someone-HandCopy");
             Directory.CreateDirectory(hand);
             File.WriteAllText(Path.Combine(hand, "HandCopy.dll"), "MZ");
 
             var mods = new ModScanner(Mock.Of<IApplicationLogger>()).ScanPlugins(Plugins);
 
-            Assert.Equal(new[] { "MySix-MySix_Core-1.0.2" }, mods.Single(m => m.ModName == "MySix_ForgeOfPotential").DeclaredDependencies);
+            Assert.Equal(new[] { "Someone-Someone_CoreLib-1.0.2" }, mods.Single(m => m.ModName == "Someone_ModA").DeclaredDependencies);
             Assert.Empty(mods.Single(m => m.ModName == "HandCopy").DeclaredDependencies);
         }
 
@@ -315,14 +315,14 @@ namespace ValheimBakaLoader.Tests.Tools
         {
             // The shape the live package page answered with on 2026-10-20, trimmed.
             var (client, handler) = Client(_ => Json(
-                "{\"namespace\":\"MySix\",\"name\":\"MySix_ForgeOfPotential\",\"is_deprecated\":false,\"latest\":{"
-                + "\"namespace\":\"MySix\",\"name\":\"MySix_ForgeOfPotential\",\"version_number\":\"1.0.0\","
-                + "\"full_name\":\"MySix-MySix_ForgeOfPotential-1.0.0\",\"dependencies\":[\"denikson-BepInExPack_Valheim-5.4.2350\",\"MySix-MySix_Core-1.0.2\"],"
-                + "\"download_url\":\"https://thunderstore.io/package/download/MySix/MySix_ForgeOfPotential/1.0.0/\",\"is_active\":true}}"));
+                "{\"namespace\":\"Someone\",\"name\":\"Someone_ModA\",\"is_deprecated\":false,\"latest\":{"
+                + "\"namespace\":\"Someone\",\"name\":\"Someone_ModA\",\"version_number\":\"1.0.0\","
+                + "\"full_name\":\"Someone-Someone_ModA-1.0.0\",\"dependencies\":[\"denikson-BepInExPack_Valheim-5.4.2350\",\"Someone-Someone_CoreLib-1.0.2\"],"
+                + "\"download_url\":\"https://thunderstore.io/package/download/Someone/Someone_ModA/1.0.0/\",\"is_active\":true}}"));
 
-            var lookup = await client.LookupLiveAsync("MySix", "MySix_ForgeOfPotential");
+            var lookup = await client.LookupLiveAsync("Someone", "Someone_ModA");
 
-            Assert.Equal(new[] { "denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2" }, lookup.Package.Latest.Dependencies);
+            Assert.Equal(new[] { "denikson-BepInExPack_Valheim-5.4.2350", "Someone-Someone_CoreLib-1.0.2" }, lookup.Package.Latest.Dependencies);
             Assert.Single(handler.Requests);
         }
 
@@ -330,32 +330,32 @@ namespace ValheimBakaLoader.Tests.Tools
         public async Task A_pinned_version_is_asked_of_its_own_page_once()
         {
             var (client, handler) = Client(request =>
-                request.RequestUri!.ToString() == "https://thunderstore.io/api/experimental/package/MySix/MySix_ForgeOfPotential/1.0.0/"
-                    ? Json("{\"namespace\":\"MySix\",\"name\":\"MySix_ForgeOfPotential\",\"version_number\":\"1.0.0\","
-                        + "\"dependencies\":[\"MySix-MySix_Core-1.0.2\"],\"is_active\":true}")
+                request.RequestUri!.ToString() == "https://thunderstore.io/api/experimental/package/Someone/Someone_ModA/1.0.0/"
+                    ? Json("{\"namespace\":\"Someone\",\"name\":\"Someone_ModA\",\"version_number\":\"1.0.0\","
+                        + "\"dependencies\":[\"Someone-Someone_CoreLib-1.0.2\"],\"is_active\":true}")
                     : new HttpResponseMessage(HttpStatusCode.NotFound));
 
-            var version = await client.LookupVersionAsync("MySix", "MySix_ForgeOfPotential", "1.0.0");
+            var version = await client.LookupVersionAsync("Someone", "Someone_ModA", "1.0.0");
 
             Assert.Equal("1.0.0", version.VersionNumber);
-            Assert.Equal(new[] { "MySix-MySix_Core-1.0.2" }, version.Dependencies);
-            Assert.Equal(new[] { "https://thunderstore.io/api/experimental/package/MySix/MySix_ForgeOfPotential/1.0.0/" }, handler.Requests);
+            Assert.Equal(new[] { "Someone-Someone_CoreLib-1.0.2" }, version.Dependencies);
+            Assert.Equal(new[] { "https://thunderstore.io/api/experimental/package/Someone/Someone_ModA/1.0.0/" }, handler.Requests);
         }
 
         [Fact]
         public async Task A_pinned_version_the_site_does_not_have_is_null_and_never_a_throw()
         {
             var (missing, _) = Client(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
-            Assert.Null(await missing.LookupVersionAsync("MySix", "MySix_ForgeOfPotential", "9.9.9"));
+            Assert.Null(await missing.LookupVersionAsync("Someone", "Someone_ModA", "9.9.9"));
 
             var (broken, _) = Client(_ => Json("not json"));
-            Assert.Null(await broken.LookupVersionAsync("MySix", "MySix_ForgeOfPotential", "1.0.0"));
+            Assert.Null(await broken.LookupVersionAsync("Someone", "Someone_ModA", "1.0.0"));
 
             var (down, handler) = Client(_ => throw new HttpRequestException("no route"));
-            Assert.Null(await down.LookupVersionAsync("MySix", "MySix_ForgeOfPotential", "1.0.0"));
+            Assert.Null(await down.LookupVersionAsync("Someone", "Someone_ModA", "1.0.0"));
 
             var (blank, blankHandler) = Client(_ => Json("{}"));
-            Assert.Null(await blank.LookupVersionAsync("MySix", "MySix_ForgeOfPotential", " "));
+            Assert.Null(await blank.LookupVersionAsync("Someone", "Someone_ModA", " "));
             Assert.Empty(blankHandler.Requests);
         }
 
@@ -370,7 +370,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
         // ------------------------------------------------------------------ the install hands them back
 
-        private const string LatestUrl = "https://thunderstore.io/package/download/MySix/MySix_ForgeOfPotential/1.0.0/";
+        private const string LatestUrl = "https://thunderstore.io/package/download/Someone/Someone_ModA/1.0.0/";
 
         private static byte[] PackageZip()
         {
@@ -378,7 +378,7 @@ namespace ValheimBakaLoader.Tests.Tools
             using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
             {
                 using var manifest = new StreamWriter(archive.CreateEntry("manifest.json").Open());
-                manifest.Write("{\"name\":\"MySix_ForgeOfPotential\",\"version_number\":\"1.0.0\"}");
+                manifest.Write("{\"name\":\"Someone_ModA\",\"version_number\":\"1.0.0\"}");
             }
             return buffer.ToArray();
         }
@@ -393,13 +393,13 @@ namespace ValheimBakaLoader.Tests.Tools
             Answered = true,
             Package = new ThunderstorePackage
             {
-                Namespace = "MySix",
-                Name = "MySix_ForgeOfPotential",
+                Namespace = "Someone",
+                Name = "Someone_ModA",
                 Latest = new ThunderstorePackageVersion
                 {
                     VersionNumber = "1.0.0",
                     DownloadUrl = LatestUrl,
-                    FullName = "MySix-MySix_ForgeOfPotential-1.0.0",
+                    FullName = "Someone-Someone_ModA-1.0.0",
                     Dependencies = needs.ToList(),
                 },
             },
@@ -409,15 +409,15 @@ namespace ValheimBakaLoader.Tests.Tools
         public async Task A_latest_install_hands_back_what_the_page_listed_and_asks_no_more()
         {
             var site = new Mock<IThunderstoreClient>();
-            site.Setup(c => c.LookupLiveAsync("MySix", "MySix_ForgeOfPotential"))
-                .ReturnsAsync(Live("denikson-BepInExPack_Valheim-5.4.2350", " MySix-MySix_Core-1.0.2 ", ""));
+            site.Setup(c => c.LookupLiveAsync("Someone", "Someone_ModA"))
+                .ReturnsAsync(Live("denikson-BepInExPack_Valheim-5.4.2350", " Someone-Someone_CoreLib-1.0.2 ", ""));
             var service = new ModUpdateService(site.Object, Downloads(), Mock.Of<IApplicationLogger>());
 
             var result = await service.InstallFromThunderstoreAsync(
-                new ThunderstoreModReference { Owner = "MySix", Name = "MySix_ForgeOfPotential" }, Plugins);
+                new ThunderstoreModReference { Owner = "Someone", Name = "Someone_ModA" }, Plugins);
 
             Assert.True(result.Installed);
-            Assert.Equal(new[] { "denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2" }, result.Dependencies);
+            Assert.Equal(new[] { "denikson-BepInExPack_Valheim-5.4.2350", "Someone-Someone_CoreLib-1.0.2" }, result.Dependencies);
             site.Verify(c => c.LookupVersionAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
 
@@ -425,16 +425,16 @@ namespace ValheimBakaLoader.Tests.Tools
         public async Task A_pinned_install_asks_its_version_page_after_the_files_are_in()
         {
             var site = new Mock<IThunderstoreClient>(MockBehavior.Strict);
-            site.Setup(c => c.LookupVersionAsync("MySix", "MySix_ForgeOfPotential", "1.0.0"))
-                .ReturnsAsync(new ThunderstorePackageVersion { VersionNumber = "1.0.0", Dependencies = new List<string> { "MySix-MySix_Core-1.0.2" } });
+            site.Setup(c => c.LookupVersionAsync("Someone", "Someone_ModA", "1.0.0"))
+                .ReturnsAsync(new ThunderstorePackageVersion { VersionNumber = "1.0.0", Dependencies = new List<string> { "Someone-Someone_CoreLib-1.0.2" } });
             var service = new ModUpdateService(site.Object, Downloads(), Mock.Of<IApplicationLogger>());
 
             var result = await service.InstallFromThunderstoreAsync(
-                new ThunderstoreModReference { Owner = "MySix", Name = "MySix_ForgeOfPotential", Version = "1.0.0" }, Plugins);
+                new ThunderstoreModReference { Owner = "Someone", Name = "Someone_ModA", Version = "1.0.0" }, Plugins);
 
             Assert.True(result.Installed);
-            Assert.Equal(new[] { "MySix-MySix_Core-1.0.2" }, result.Dependencies);
-            site.Verify(c => c.LookupVersionAsync("MySix", "MySix_ForgeOfPotential", "1.0.0"), Times.Once);
+            Assert.Equal(new[] { "Someone-Someone_CoreLib-1.0.2" }, result.Dependencies);
+            site.Verify(c => c.LookupVersionAsync("Someone", "Someone_ModA", "1.0.0"), Times.Once);
         }
 
         [Fact]
@@ -446,7 +446,7 @@ namespace ValheimBakaLoader.Tests.Tools
             var service = new ModUpdateService(site.Object, Downloads(), Mock.Of<IApplicationLogger>());
 
             var result = await service.InstallFromThunderstoreAsync(
-                new ThunderstoreModReference { Owner = "MySix", Name = "MySix_ForgeOfPotential", Version = "1.0.0" }, Plugins);
+                new ThunderstoreModReference { Owner = "Someone", Name = "Someone_ModA", Version = "1.0.0" }, Plugins);
 
             Assert.True(result.Installed);
             Assert.NotNull(result.Dependencies);
@@ -460,7 +460,7 @@ namespace ValheimBakaLoader.Tests.Tools
             var service = new ModUpdateService(site.Object, Downloads(), Mock.Of<IApplicationLogger>());
 
             var result = await service.InstallFromThunderstoreAsync(
-                new ThunderstoreModReference { Owner = "MySix", Name = "MySix_ForgeOfPotential", Version = "1.0.0" },
+                new ThunderstoreModReference { Owner = "Someone", Name = "Someone_ModA", Version = "1.0.0" },
                 Path.Combine(Root, "no-such-folder"));
 
             Assert.False(result.Installed);

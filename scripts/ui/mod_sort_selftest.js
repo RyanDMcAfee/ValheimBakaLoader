@@ -196,8 +196,8 @@ test("6. the search still reaches the author", () => {
   const off = p.modSearchText(Object.assign({}, MODS[1], { disabled: true }));
   assert.ok(off.includes(T("mods.status.off")), "a switched-off mod's Off pill is not searchable");
   /* 1.2.16: a row that needs a mod is found by the pill's word and by the missing mod's name. */
-  const needs = p.modSearchText(Object.assign({}, MODS[0], { missingDependencies: [{ fullName: "MySix-MySix_Core", name: "MySix_Core", state: "missing" }] }));
-  assert.ok(needs.includes("Needs MySix_Core"), "the Needs pill is not searchable: " + needs);
+  const needs = p.modSearchText(Object.assign({}, MODS[0], { missingDependencies: [{ fullName: "Someone-Someone_CoreLib", name: "Someone_CoreLib", state: "missing" }] }));
+  assert.ok(needs.includes("Needs Someone_CoreLib"), "the Needs pill is not searchable: " + needs);
   const two = p.modSearchText(Object.assign({}, MODS[0], { missingDependencies: [{ fullName: "A-One", name: "One" }, { fullName: "B-Two", name: "Two" }] }));
   assert.ok(two.includes("Needs 2 mods") && two.includes("One") && two.includes("Two"), "two needs are not searchable: " + two);
   assert.ok(!p.modSearchText(MODS[0]).includes("Needs"), "a row that needs nothing reads as needing something");

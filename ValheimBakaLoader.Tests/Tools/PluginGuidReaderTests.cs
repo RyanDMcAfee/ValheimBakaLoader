@@ -13,13 +13,13 @@ namespace ValheimBakaLoader.Tests.Tools
     /// <summary>
     /// <see cref="PluginGuidReader"/> and the GUID half of <see cref="ConfigFiles.MatchForMod"/>.
     /// The Mods page paired a mod with its configs by name alone, and missed every mod whose
-    /// BepInPlugin GUID reads nothing like its package (MySix_ForgeOfPotential writes
-    /// com.mysix.forgeofpotential.cfg). The DLLs here are real ones, built in memory, so the
+    /// BepInPlugin GUID reads nothing like its package (Someone_ModA writes
+    /// com.someone.moda.cfg). The DLLs here are real ones, built in memory, so the
     /// reader is proved against the same metadata a compiler writes.
     /// </summary>
     public class PluginGuidReaderTests
     {
-        private const string Guid = "com.mysix.forgeofpotential";
+        private const string Guid = "com.someone.moda";
 
         // ------------------------------------------------------------------ the reader
 
@@ -33,8 +33,8 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void Every_plugin_in_one_dll_is_read()
         {
-            var dll = BuildAssembly(attributeInSameAssembly: false, (Guid, "ForgePlugin"), ("com.mysix.other", "OtherPlugin"));
-            Assert.Equal(new[] { Guid, "com.mysix.other" }, PluginGuidReader.Read(dll));
+            var dll = BuildAssembly(attributeInSameAssembly: false, (Guid, "ForgePlugin"), ("com.someone.other", "OtherPlugin"));
+            Assert.Equal(new[] { Guid, "com.someone.other" }, PluginGuidReader.Read(dll));
         }
 
         [Fact]
@@ -74,9 +74,9 @@ namespace ValheimBakaLoader.Tests.Tools
                 Assert.Equal(new[] { Guid }, PluginGuidReader.ReadFolders(dir, null, Path.Combine(dir, "missing")));
 
                 var path = Path.Combine(dir, "sub", "Forge.dll.old");
-                File.WriteAllBytes(path, BuildAssembly(false, ("com.mysix.renamed", "ForgePlugin"), ("com.mysix.second", "Second")));
+                File.WriteAllBytes(path, BuildAssembly(false, ("com.someone.renamed", "ForgePlugin"), ("com.someone.second", "Second")));
                 File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(1));
-                Assert.Equal(new[] { "com.mysix.renamed", "com.mysix.second" }, PluginGuidReader.ReadFolders(dir));
+                Assert.Equal(new[] { "com.someone.renamed", "com.someone.second" }, PluginGuidReader.ReadFolders(dir));
             }
             finally
             {
@@ -88,25 +88,25 @@ namespace ValheimBakaLoader.Tests.Tools
 
         private static readonly string[] Files =
         {
-            "com.mysix.forgeofpotential.cfg",
-            "COM.MySix.ForgeOfPotential.extra.cfg",
-            "com.mysix.forgeofpotential/recipes.yaml",
-            "com.mysix.forgeofpotentialplus.cfg",
-            "com.mysix.forgeofpotential.yaml",
+            "com.someone.moda.cfg",
+            "COM.Someone.ModA.extra.cfg",
+            "com.someone.moda/recipes.yaml",
+            "com.someone.modaplus.cfg",
+            "com.someone.moda.yaml",
             "unrelated.cfg",
-            "elsewhere/com.mysix.forgeofpotential.json",
+            "elsewhere/com.someone.moda.json",
         };
 
         [Fact]
         public void A_guid_pairs_its_cfg_its_extra_cfgs_and_its_folder()
         {
-            var files = ConfigFiles.MatchForMod(Files, "MySix_ForgeOfPotential", "MysixValheimMods", null,
-                new[] { "MysixValheimMods-MySix_ForgeOfPotential" }, new[] { Guid });
+            var files = ConfigFiles.MatchForMod(Files, "Someone_ModA", "SomeoneValheimMods", null,
+                new[] { "SomeoneValheimMods-Someone_ModA" }, new[] { Guid });
             Assert.Equal(new[]
             {
-                "com.mysix.forgeofpotential/recipes.yaml",
-                "com.mysix.forgeofpotential.cfg",
-                "COM.MySix.ForgeOfPotential.extra.cfg",
+                "com.someone.moda/recipes.yaml",
+                "com.someone.moda.cfg",
+                "COM.Someone.ModA.extra.cfg",
             }, files);
         }
 
@@ -114,8 +114,8 @@ namespace ValheimBakaLoader.Tests.Tools
         public void Without_the_guid_the_names_alone_miss_that_mod()
         {
             // The bug itself: the dots in the GUID keep the squashed name from ever matching.
-            Assert.Empty(ConfigFiles.MatchForMod(Files, "MySix_ForgeOfPotential", "MysixValheimMods", null,
-                new[] { "MysixValheimMods-MySix_ForgeOfPotential" }));
+            Assert.Empty(ConfigFiles.MatchForMod(Files, "Someone_ModA", "SomeoneValheimMods", null,
+                new[] { "SomeoneValheimMods-Someone_ModA" }));
         }
 
         [Fact]
