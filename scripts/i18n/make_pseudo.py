@@ -17,8 +17,8 @@ and the copy gate asks whether the file on disk is still the one en.json makes:
 
     python scripts/i18n/make_pseudo.py --check
 
-which builds it into a temporary file, compares the bytes, and says to re-run the
-line above when they differ. It never writes into the tree, so a gate cannot be the
+which builds it into a temporary file, compares it with the file on disk line ending
+blind, and says to re-run the line above when they differ. It never writes into the tree, so a gate cannot be the
 thing that quietly updates the file it is supposed to be holding.
 
 What it keeps, exactly: every id, every named slot, every plural category, the rune a
@@ -167,7 +167,11 @@ def main(argv):
                 on_disk = reading.read()
         except IOError:
             on_disk = None
-        if on_disk == fresh:
+        # The comparison is of the text, not of its line endings. A Windows checkout under
+        # autocrlf writes the file with CRLF, which is what render() makes, but the index
+        # holds LF and a Linux checkout (CI) writes LF, so a byte compare called every LF
+        # tree stale with not one sentence different.
+        if on_disk is not None and on_disk.replace(b"\r\n", b"\n") == fresh.replace(b"\r\n", b"\n"):
             print("%s: up to date, %d keys from %s"
                   % (os.path.basename(target), len(made["keys"]), os.path.basename(source)))
             return 0

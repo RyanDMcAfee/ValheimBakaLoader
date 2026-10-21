@@ -26,3 +26,58 @@ jobs:
       run: dotnet build --no-restore
     - name: Test
       run: dotnet test --no-build --verbosity normal
+
+  # The page's own tests. Every selftest lifts the real functions out of app.js and runs them
+  # under node against the real catalog, and the copy gate holds the strings, the dashes, the
+  # catalogs and the BOMs. Until 1.2.16 none of it ran here, so a page change could go green on
+  # the build above with every one of them failing. Linux rather than Windows on purpose: the
+  # checkout is LF, the opposite of a Windows working tree under autocrlf, so a test that only
+  # passes on CRLF fails here instead of in a contributor's clone.
+  ui-selftests:
+
+    runs-on: ubuntu-latest
+
+    env:
+      # The selftests compare and sort strings, and one of them formats numbers. A fixed
+      # locale means a runner image changing its default cannot change an answer.
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+
+    steps:
+    # Pinned to the commit, with the tag it was beside, so a moved tag cannot change what runs.
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 22
+    - name: Setup Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: 3.x
+    - name: Page selftests
+      shell: bash
+      # A glob and not a list, so a new selftest runs here the day it is added, whether or not
+      # anyone remembered to name it in the copy gate. Every file runs even after one fails, so
+      # one run shows every failure, and a glob that matched nothing fails loudly rather than
+      # passing with nothing tested.
+      run: |
+        fail=0
+        ran=0
+        for f in scripts/ui/*_selftest.js scripts/i18n/*_selftest.js scripts/ui/contrast_gate_proofs.js; do
+          if [ ! -f "$f" ]; then echo "no such file: $f"; fail=1; continue; fi
+          echo "== $f"
+          ran=$((ran+1))
+          node "$f" || { echo "FAILED: $f"; fail=1; }
+        done
+        echo "$ran selftests run"
+        [ "$ran" -gt 0 ] || fail=1
+        exit $fail
+    - name: Copy gate
+      shell: bash
+      # The browser probes (checks 40 and 55) need playwright and its chromium, which this job
+      # does not install, so the gate reports them NOT RUN here, the same as on a box without
+      # them. They stay a local step before a release. The wiki pages live outside this
+      # repository until release day, so the placement check (36) is skipped out loud.
+      env:
+        BAKA_WIKI_SKIP: "1"
+      run: bash scripts/copy-gate/copy_gate.sh

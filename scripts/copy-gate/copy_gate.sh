@@ -916,5 +916,18 @@ else
   echo "  the test copy selftest is missing: $TESTCOPY_SELFTEST"; fail=1
 fi
 
+echo "== 57. the hearth fire's gate, its frame cap, and the idle pause on every endless animation =="
+# 1.2.10 wrote this selftest and nothing ever ran it: it was in no list here and CI ran no node at
+# all, so a new endless animation without its body.idle twin, or a loop that ran on behind the
+# game, would have gone out green. It lifts flameShouldRun, the frame cap and the window.active
+# handler out of app.js and reads app.css for the idle twins.
+FLAME_SELFTEST="$UI_DIR/flame_gate_selftest.js"
+if [ -f "$FLAME_SELFTEST" ]; then
+  if out=$(node "$FLAME_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the flame gate selftest is missing: $FLAME_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail
