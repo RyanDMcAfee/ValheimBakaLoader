@@ -210,6 +210,81 @@ namespace ValheimBakaLoader.Forms
         private const int WM_NCLBUTTONDOWN = 0x00A1;
         private const int HTCAPTION = 2;
 
+        // Snapping (Tools/WindowSnap.cs says why each of these is here).
+        [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
+        private static extern int GetWindowStyle(IntPtr hWnd, int index);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
+        private static extern int SetWindowStyle(IntPtr hWnd, int index, int value);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsZoomed(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowPlacement(IntPtr hWnd, ref WindowPlacement placement);
+
+        [DllImport("user32.dll")]
+        private static extern bool TrackMouseEvent(ref TrackMouse track);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeRect
+        {
+            public int Left, Top, Right, Bottom;
+            public Rectangle ToRectangle() => Rectangle.FromLTRB(Left, Top, Right, Bottom);
+            public static NativeRect From(Rectangle r) => new() { Left = r.Left, Top = r.Top, Right = r.Right, Bottom = r.Bottom };
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct MonitorInfo
+        {
+            public int Size;
+            public NativeRect Monitor;
+            public NativeRect Work;
+            public uint Flags;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WindowPlacement
+        {
+            public int Length;
+            public int Flags;
+            public int ShowCmd;
+            public Point MinPosition;
+            public Point MaxPosition;
+            public NativeRect NormalPosition;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct TrackMouse
+        {
+            public int Size;
+            public uint Flags;
+            public IntPtr Window;
+            public uint HoverTime;
+        }
+
+        private const int GWL_STYLE = -16;
+        private const int WM_STYLECHANGING = 0x007C;
+        private const int WM_NCCALCSIZE = 0x0083;
+        private const int WM_NCHITTEST = 0x0084;
+        private const int WM_NCMOUSEMOVE = 0x00A0;
+        private const int WM_NCLBUTTONUP = 0x00A2;
+        private const int WM_NCLBUTTONDBLCLK = 0x00A3;
+        private const int WM_NCMOUSELEAVE = 0x02A2;
+        private const uint SWP_FRAMECHANGED = 0x0020, SWP_NOMOVE = 0x0002, SWP_NOSIZE = 0x0001,
+            SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
+        private const uint MONITOR_DEFAULTTONEAREST = 2;
+        private const uint TME_LEAVE = 0x0002, TME_NONCLIENT = 0x0010;
+
         private static readonly Dictionary<string, int> ResizeHitTests = new()
         {
             ["left"] = 10,        // HTLEFT
@@ -363,6 +438,9 @@ namespace ValheimBakaLoader.Forms
             // back to whichever of the other two it left, which raises this again.
             if (WindowState == FormWindowState.Minimized) return;
             PostWindowState();
+            // The button keeps its distance from the right edge, so the cut follows the size
+            // at once rather than waiting for the page to measure it again.
+            ApplyMaxButtonCut();
         }
 
         /// <summary>
@@ -392,6 +470,210 @@ namespace ValheimBakaLoader.Forms
         private void PostWindowActive(bool active)
         {
             PostEvent("window.active", new { active });
+        }
+
+        // ---------------------------------------------------------------- snapping
+        // The maximize button as the page last reported it, in device pixels, with the page
+        // width it was measured against; WindowSnap.MaxButton keeps it on the right edge.
+        private Rectangle MaxButtonReported;
+        private int MaxButtonPageWidth;
+        private int TitlebarTop, TitlebarHeight;
+        private bool MaxButtonHover, MaxButtonPressed;
+
+        // The page's own colours for the bar and the button (app.css .titlebar and .winbtn),
+        // so the square the host paints is the square the page would have painted.
+        private static readonly Color TitlebarTopColor = Color.FromArgb(0x1E, 0x21, 0x26);
+        private static readonly Color TitlebarBottomColor = Color.FromArgb(0x18, 0x1B, 0x1F);
+        private static readonly Color WinButtonHoverBack = Color.FromArgb(0x26, 0x2A, 0x30);
+        private static readonly Color WinButtonGlyph = Color.FromArgb(0xAB, 0xA3, 0x91);
+        private static readonly Color WinButtonGlyphHover = Color.FromArgb(0xFF, 0xB3, 0x5C);
+
+        private Rectangle MaxButtonBounds() =>
+            WindowSnap.MaxButton(MaxButtonReported, MaxButtonPageWidth, ClientSize);
+
+        /// <summary>
+        /// The styles go on once the handle exists rather than through CreateParams. WinForms
+        /// sizes a window from its CreateParams, so a caption and a thick frame there would
+        /// make every ClientSize the host sets (the DPI sizing, the remembered size) a frame
+        /// larger than the window it then claims as client. Kept out of CreateParams, the
+        /// arithmetic stays borderless and the window is still one Windows will snap.
+        /// </summary>
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            SetWindowStyle(Handle, GWL_STYLE, WindowSnap.WithSnapStyles(GetWindowStyle(Handle, GWL_STYLE)));
+            SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            switch (m.Msg)
+            {
+                // WinForms writes the style back from its CreateParams now and then; the
+                // snap styles go back on every time it does.
+                case WM_STYLECHANGING when m.WParam.ToInt64() == GWL_STYLE:
+                {
+                    // STYLESTRUCT is { old, new }: the new style is the second int.
+                    var next = Marshal.ReadInt32(m.LParam, 4);
+                    Marshal.WriteInt32(m.LParam, 4, WindowSnap.WithSnapStyles(next));
+                    break;
+                }
+
+                // No frame is drawn: the whole window is client, and a maximized one is held
+                // to its display's work area.
+                case WM_NCCALCSIZE when m.WParam != IntPtr.Zero:
+                {
+                    var proposed = Marshal.PtrToStructure<NativeRect>(m.LParam).ToRectangle();
+                    var maximized = IsZoomed(Handle);
+                    var client = WindowSnap.ClientRect(proposed, maximized, maximized ? WorkAreaOf(Handle) : Rectangle.Empty);
+                    Marshal.StructureToPtr(NativeRect.From(client), m.LParam, false);
+                    m.Result = IntPtr.Zero;
+                    return;
+                }
+
+                case WM_NCCALCSIZE:
+                    m.Result = IntPtr.Zero;
+                    return;
+
+                case WM_NCHITTEST:
+                {
+                    var packed = m.LParam.ToInt64();
+                    var screen = new Point((short)(packed & 0xFFFF), (short)((packed >> 16) & 0xFFFF));
+                    if (WindowSnap.HitTest(PointToClient(screen), MaxButtonBounds()) == WindowSnap.HTMAXBUTTON)
+                    {
+                        m.Result = (IntPtr)WindowSnap.HTMAXBUTTON;
+                        return;
+                    }
+                    break;
+                }
+
+                case WM_NCMOUSEMOVE:
+                {
+                    var over = m.WParam.ToInt64() == WindowSnap.HTMAXBUTTON;
+                    if (over && !MaxButtonHover)
+                    {
+                        var track = new TrackMouse
+                        {
+                            Size = Marshal.SizeOf<TrackMouse>(), Flags = TME_LEAVE | TME_NONCLIENT, Window = Handle,
+                        };
+                        TrackMouseEvent(ref track);
+                    }
+                    SetMaxButtonHover(over);
+                    break;
+                }
+
+                case WM_NCMOUSELEAVE:
+                    MaxButtonPressed = false;
+                    SetMaxButtonHover(false);
+                    break;
+
+                // The button is clicked here rather than by DefWindowProc, which would track it
+                // as a classic caption button and paint one over the page's look.
+                case WM_NCLBUTTONDOWN when m.WParam.ToInt64() == WindowSnap.HTMAXBUTTON:
+                case WM_NCLBUTTONDBLCLK when m.WParam.ToInt64() == WindowSnap.HTMAXBUTTON:
+                    MaxButtonPressed = true;
+                    m.Result = IntPtr.Zero;
+                    return;
+
+                case WM_NCLBUTTONUP when m.WParam.ToInt64() == WindowSnap.HTMAXBUTTON:
+                    if (MaxButtonPressed)
+                    {
+                        MaxButtonPressed = false;
+                        LastTitlebarPressTicks = 0;
+                        WindowState = WindowState == FormWindowState.Maximized
+                            ? FormWindowState.Normal
+                            : FormWindowState.Maximized;
+                    }
+                    m.Result = IntPtr.Zero;
+                    return;
+            }
+
+            base.WndProc(ref m);
+        }
+
+        private static Rectangle WorkAreaOf(IntPtr window)
+        {
+            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            var monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+            return monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info) ? info.Work.ToRectangle() : Rectangle.Empty;
+        }
+
+        private void SetMaxButtonHover(bool hover)
+        {
+            if (MaxButtonHover == hover) return;
+            MaxButtonHover = hover;
+            var hole = MaxButtonBounds();
+            if (!hole.IsEmpty) Invalidate(hole);
+        }
+
+        /// <summary>
+        /// Cuts the maximize button's square out of the WebView, so the hit test there reaches
+        /// the window and the button there is the one Windows knows about. Run when the page
+        /// says where the button is and whenever the window changes size.
+        /// </summary>
+        private void ApplyMaxButtonCut()
+        {
+            if (WebView == null || WebView.IsDisposed) return;
+            var hole = MaxButtonBounds();
+            if (hole.IsEmpty)
+            {
+                if (WebView.Region != null) WebView.Region = null;
+                return;
+            }
+            var region = new Region(new Rectangle(Point.Empty, WebView.Size));
+            region.Exclude(hole);
+            WebView.Region = region;
+            Invalidate(hole);
+        }
+
+        /// <summary>
+        /// Paints the button in the square the WebView gave up: the bar's gradient, the hover
+        /// plate and the glyph, in the page's colours and at the page's size.
+        /// </summary>
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            var hole = MaxButtonBounds();
+            if (hole.IsEmpty) return;
+
+            var g = e.Graphics;
+            var band = new Rectangle(hole.X, TitlebarTop, hole.Width, Math.Max(1, TitlebarHeight));
+            using (var bar = new System.Drawing.Drawing2D.LinearGradientBrush(
+                band, TitlebarTopColor, TitlebarBottomColor, System.Drawing.Drawing2D.LinearGradientMode.Vertical))
+            {
+                g.FillRectangle(bar, hole);
+            }
+
+            // The page's button is 30 px tall, so its height is the scale the page drew at.
+            var k = hole.Height / 30f;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            if (MaxButtonHover)
+            {
+                using var plate = new System.Drawing.Drawing2D.GraphicsPath();
+                var d = 12f * k;
+                plate.AddArc(hole.X, hole.Y, d, d, 180, 90);
+                plate.AddArc(hole.Right - d, hole.Y, d, d, 270, 90);
+                plate.AddArc(hole.Right - d, hole.Bottom - d, d, d, 0, 90);
+                plate.AddArc(hole.X, hole.Bottom - d, d, d, 90, 90);
+                plate.CloseFigure();
+                using var fill = new SolidBrush(WinButtonHoverBack);
+                g.FillPath(fill, plate);
+            }
+
+            var unit = 11f * k;
+            var x = hole.X + (hole.Width - unit) / 2f;
+            var y = hole.Y + (hole.Height - unit) / 2f;
+            using var pen = new Pen(MaxButtonHover ? WinButtonGlyphHover : WinButtonGlyph, 1.3f * k);
+            if (WindowState == FormWindowState.Maximized)
+            {
+                g.DrawRectangle(pen, x + 1.2f * k, y + 3.2f * k, 6.6f * k, 6.6f * k);
+                g.DrawRectangle(pen, x + 3.4f * k, y + 1.2f * k, 6.6f * k, 6.6f * k);
+            }
+            else
+            {
+                g.DrawRectangle(pen, x + 1.7f * k, y + 1.7f * k, 7.6f * k, 7.6f * k);
+            }
         }
 
         /// <summary>Whether the page has already been told the window is maximized.</summary>
@@ -489,8 +771,13 @@ namespace ValheimBakaLoader.Forms
                 if (WindowState == FormWindowState.Normal)
                 {
                     var scale = DpiScale <= 0 ? 1f : DpiScale;
-                    var width = (int)Math.Round(ClientSize.Width / scale);
-                    var height = (int)Math.Round(ClientSize.Height / scale);
+                    // A window snapped to half the screen is Normal too; the size to keep is
+                    // the one Windows will give back when it comes off the edge.
+                    var placement = new WindowPlacement { Length = Marshal.SizeOf<WindowPlacement>() };
+                    var normal = GetWindowPlacement(Handle, ref placement) ? placement.NormalPosition.ToRectangle().Size : Size.Empty;
+                    var size = WindowSnap.SizeToRemember(ClientSize, normal);
+                    var width = (int)Math.Round(size.Width / scale);
+                    var height = (int)Math.Round(size.Height / scale);
                     if (width < 320 || height < 240) return;
 
                     bounds = width + "x" + height;
@@ -927,6 +1214,19 @@ namespace ValheimBakaLoader.Forms
 
                     ReleaseCapture();
                     SendMessage(Handle, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                    break;
+                }
+
+                // Where the page drew the maximize button, in device pixels, so the host can
+                // answer for it (see WindowSnap). Said again whenever the bar changes size.
+                case "win.chrome":
+                {
+                    int Read(string key) => parameters.Value<int?>(key) ?? 0;
+                    MaxButtonReported = new Rectangle(Read("x"), Read("y"), Read("w"), Read("h"));
+                    MaxButtonPageWidth = Read("width");
+                    TitlebarTop = Read("barTop");
+                    TitlebarHeight = Read("barHeight");
+                    ApplyMaxButtonCut();
                     break;
                 }
 

@@ -630,6 +630,28 @@ Native.on("win.state",d=>{
   document.body.dataset.win=d&&d.maximized?"max":"normal";
   renderWinState();
 });
+/* ---------- THE MAXIMIZE BUTTON WINDOWS KNOWS ABOUT ----------
+   Windows 11 offers its snap layouts when the pointer rests on a window's maximize button,
+   and it asks the window where that button is, never the page. So the page says where it
+   drew it, in device pixels, and the host cuts that square out of the page, answers for it
+   and paints the same button there. Said again whenever the bar or the button changes size
+   (a wider window, a text size, another display's scale). */
+function postWinChrome(){
+  if(!Native.available||!TB_MAXBTN) return;
+  const bar=$("#titlebar"); if(!bar) return;
+  const r=TB_MAXBTN.getBoundingClientRect(), b=bar.getBoundingClientRect(), k=window.devicePixelRatio||1;
+  if(!r.width||!r.height) return;
+  Native.post("win.chrome",{x:Math.round(r.left*k),y:Math.round(r.top*k),w:Math.round(r.width*k),h:Math.round(r.height*k),
+    barTop:Math.round(b.top*k),barHeight:Math.round(b.height*k),width:Math.round(document.documentElement.clientWidth*k)});
+}
+if(typeof ResizeObserver!=="undefined"){
+  try{
+    const ro=new ResizeObserver(()=>postWinChrome());
+    if($("#titlebar")) ro.observe($("#titlebar"));
+    if(TB_MAXBTN) ro.observe(TB_MAXBTN);
+  }catch(_){}
+}
+window.addEventListener("resize",postWinChrome);
 /* The window behind the game. document.hidden stays false there, so this is the only word
    the page gets that nobody is looking: the fire parks, and body.idle pauses the endless
    CSS animations (the runes, the sweeps, the caret, the Save Config breath) where they
