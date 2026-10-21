@@ -10434,16 +10434,19 @@ function heraldPanelsHome(){
     if(p&&p.parentNode!==home) home.appendChild(p);
   });
 }
-function heraldDialog(which){
+/* again is the language switch drawing the open dialog over: the same dialog, so the watch on
+   its dismissal set the first time still stands and is not set a second time. Until 1.2.18 each
+   redraw set another, and a dialog closed after a language switch saved twice. */
+function heraldDialog(which,again){
   const panel=HERALD_PANELS[which], d=HERALD_DIALOGS[which];
   if(!panel||!d) return null;
   heraldPanelsHome();
   const m=modalOpen(`<div class="mtitle">${esc(T(d.titleId))}</div><div class="herald-one" data-herald-slot></div>`+
     `<div class="wiz-nav"><span class="grow"></span><button class="btn btn-ember btn-sm" data-herald-done>${esc(T("common.button.close"))}</button></div>`,
-    ()=>heraldDialog(which));
+    ()=>heraldDialog(which,true));
   m.querySelector("[data-herald-slot]").appendChild(panel);
   m.querySelector("[data-herald-done]").addEventListener("click",()=>modalClose());
-  onModalDismissed(()=>{heraldPanelsHome();try{d.commit();}catch(_){}});
+  if(!again) onModalDismissed(()=>{heraldPanelsHome();try{d.commit();}catch(_){}});
   return m;
 }
 /* The (?) beside each heading and the role box: the shared hover panel, which a keyboard host
@@ -15751,7 +15754,7 @@ function heraldWizRender(){
     /* The other realm's channel first, when there is one: one click and this realm posts
        beside it. */
     const choice=HWIZ.other
-      ?`<label class="mchk"><input type="radio" name="hwPlace" id="hwSame"${HWIZ.same?" checked":""}> ${esc(T("herald.wiz.same",{name:HWIZ.other.realm}))}</label>`+
+      ?`<label class="mchk"><input type="radio" name="hwPlace" id="hwSame"${HWIZ.same?" checked":""}> ${esc(T("herald.wiz.same.thread",{name:HWIZ.other.realm}))}</label>`+
        `<label class="mchk"><input type="radio" name="hwPlace" id="hwOwn"${HWIZ.same?"":" checked"}> ${esc(T("herald.wiz.own"))}</label>`
       :"";
     body=
@@ -15784,7 +15787,7 @@ function heraldWizRender(){
         `<button class="btn btn-ember btn-sm" id="hwNext">${esc(T("common.button.next"))}</button>`;
   }else{
     const place=heraldWizPlace();
-    const hook=HWIZ.same&&HWIZ.other?T("herald.wiz.sum.webhook.same",{name:HWIZ.other.realm})
+    const hook=HWIZ.same&&HWIZ.other?T("herald.wiz.sum.webhook.same.thread",{name:HWIZ.other.realm})
       :place.name?T("herald.wiz.sum.webhook.named",{name:place.name}):T("herald.wiz.sum.webhook.validated");
     body=
       `<div class="mtitle">${T("herald.wiz.sum.title")}</div>`+

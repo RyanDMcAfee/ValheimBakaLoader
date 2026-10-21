@@ -456,6 +456,11 @@ RETIRED_IDS = {
     "side.nav.saga.label": "1.2.18",
     "side.nav.herald.label": "1.2.18",
     "side.nav.skald.label": "1.2.18",
+    # 1.2.18: the wizard's "Use the same channel as X" always copied X's thread as well as its
+    # webhook, so the choice and the summary line now say "channel and thread". Shipped in
+    # 1.2.16 or before.
+    "herald.wiz.same": "1.2.18",
+    "herald.wiz.sum.webhook.same": "1.2.18",
     # 1.2.16: each realm keeps its own post, so "the post is about another realm while
     # it runs" is no longer true of any realm. Shipped since 1.2.11.
     "herald.modcode.preview.other": "1.2.16",

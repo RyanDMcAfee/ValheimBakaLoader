@@ -3627,6 +3627,12 @@
         "name": "text"
       }
     },
+    "herald.wiz.same.thread": {
+      "translation": "[Ẋ Use the same channel and thread as {name} Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
     "herald.wiz.own": {
       "translation": "[Ẋ Paste a webhook link Ẋ] ẊẊẊẊẊẊẊ"
     },
@@ -3635,6 +3641,12 @@
     },
     "herald.wiz.sum.webhook.same": {
       "translation": "[Ẋ the same channel as {name} Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "herald.wiz.sum.webhook.same.thread": {
+      "translation": "[Ẋ the same channel and thread as {name} Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
       "params": {
         "name": "text"
       }

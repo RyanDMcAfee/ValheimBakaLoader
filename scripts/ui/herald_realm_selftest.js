@@ -447,7 +447,11 @@ const settle = () => new Promise(res => setImmediate(res));
     const render = fn("function heraldWizRender(){");
     assert.ok(render.indexOf('id="hwSame"') > 0 && render.indexOf('id="hwSame"') < render.indexOf('id="hwOwn"'),
       "Use the same channel is not the first choice");
-    assert.ok(render.includes('T("herald.wiz.same",{name:HWIZ.other.realm})'));
+    /* The choice copies the other realm's thread as well as its webhook, and says so (1.2.18). */
+    assert.ok(render.includes('T("herald.wiz.same.thread",{name:HWIZ.other.realm})'));
+    assert.ok(fn("function heraldWizPlace(w){").includes("return {url:w.other.url,thread:w.other.thread,name:w.other.name};"),
+      "the choice no longer copies the thread the label promises");
+    assert.ok(fn("function heraldWizRender(){").includes('T("herald.wiz.sum.webhook.same.thread",{name:HWIZ.other.realm})'), "the summary line does not say the thread comes too");
     assert.ok(render.includes('id="hwThreadOn"') && render.includes('T("herald.wiz.thread.toggle")'), "the thread is not behind its own tick");
 
     const wiz = fn("async function heraldWizFinish(){");
@@ -493,7 +497,7 @@ const settle = () => new Promise(res => setImmediate(res));
                       "herald.hook.line.named", "herald.hook.line.unnamed", "herald.hook.line.none",
                       "herald.hook.change", "herald.hook.setup", "herald.hook.change.title", "herald.look.preview.realm_off",
                       "herald.modcode.preview.realm_off", "herald.wiz.sum.realm", "herald.wiz.realm_moved.toast",
-                      "herald.wiz.same", "herald.wiz.own", "herald.wiz.thread.toggle", "herald.wiz.sum.webhook.same"])
+                      "herald.wiz.same.thread", "herald.wiz.own", "herald.wiz.thread.toggle", "herald.wiz.sum.webhook.same.thread"])
       assert.ok(KEYS[id] && typeof KEYS[id].lore === "string", "the catalog has no " + id);
     /* A sentence that says realm says server in the plain register. */
     for (const [id, entry] of Object.entries(KEYS))

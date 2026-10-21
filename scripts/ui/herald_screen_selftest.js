@@ -244,6 +244,9 @@ test("3. Appearance lends its panel to the app's dialog, fades out, and however 
     u.current().again();
     assert.strictEqual(u[which].parentNode, u.current().slot, "a redraw left " + which + "'s panel behind");
     assert.strictEqual(u.log.modals.length, 2);
+    /* And watches the dismissal once: a second watch from the redraw saved twice (1.2.18). */
+    assert.strictEqual(u.log.dismissed.length, 1, "a language switch set a second watch on " + which + "'s dismissal");
+    assert.ok(/\(\)=>heraldDialog\(which,true\)/.test(APP) && /if\(!again\) onModalDismissed\(/.test(APP), "the redraw is not told it is one");
   }
   assert.ok(/\$\("#heraldLookBtn"\)\.addEventListener\("click",\(\)=>heraldDialog\("look"\)\);/.test(APP), "Appearance does not open its dialog");
   assert.ok(!/heraldDialog\("elsewhere"\)/.test(APP), "Send these somewhere else still opens a dialog");
