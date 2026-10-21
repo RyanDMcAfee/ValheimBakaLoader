@@ -443,6 +443,18 @@ def table_english_drift(keys, app_path, findings):
                 % (field, entry_id, english, entry.get("lore"))))
 
 
+# Ids a release has shipped and nothing asks for any more. A released id is never
+# deleted: a pack out there holds it, and an id that came back later meaning something
+# else would show that pack's old sentence for the new one. So the id stays in en.json
+# and this list is what tells the orphan rule the sentence is kept on purpose. Keep it
+# short; an id goes on it only when no reworded sentence under the same id could be true.
+RETIRED_IDS = {
+    # 1.2.16: each realm keeps its own post, so "the post is about another realm while
+    # it runs" is no longer true of any realm. Shipped since 1.2.11.
+    "herald.modcode.preview.other": "1.2.16",
+}
+
+
 def completeness(keys, app_path, html_path, i18n_path, findings, host=None):
     """The catalog and the interface, checked against each other BOTH ways."""
     asked = set(host or ())
@@ -470,8 +482,14 @@ def completeness(keys, app_path, html_path, i18n_path, findings, host=None):
     # be used - an English sentence the TT() bridge still spelled out - and that bridge
     # is gone, so being asked for by id is the only way.
     asked_ids = {entry_id for entry_id, _ in asked}
+    # A retired id that something asks for again is either a slip or a revival, and a
+    # revival needs the id taken off the list on purpose.
+    for entry_id, where in sorted(asked):
+        if entry_id in RETIRED_IDS:
+            findings.append((where, "asks for an id retired in %s: %s"
+                             % (RETIRED_IDS[entry_id], entry_id)))
     for entry_id in sorted(keys):
-        if entry_id in asked_ids:
+        if entry_id in asked_ids or entry_id in RETIRED_IDS:
             continue
         findings.append(("en.json", "orphan key: nothing asks for %s" % entry_id))
 

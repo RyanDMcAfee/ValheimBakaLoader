@@ -951,10 +951,8 @@ echo "== 59. the Herald per realm: the hall edits the realm on screen, Publish a
 # drives the real block out of app.js against the real catalog and holds the host side's RPCs.
 REALM_SELFTEST="$UI_DIR/herald_realm_selftest.js"
 if [ -f "$REALM_SELFTEST" ]; then
-  if out=$(node "$REALM_SELFTEST"); then printf '%s
-' "$out" | tail -1 | sed 's/^/  /'
-  else printf '%s
-' "$out" | sed 's/^/  /'; fail=1; fi
+  if out=$(node "$REALM_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 else
   echo "  the herald realm selftest is missing: $REALM_SELFTEST"; fail=1
 fi

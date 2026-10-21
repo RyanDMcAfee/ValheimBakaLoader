@@ -143,7 +143,7 @@ function hall(opts) {
     heraldRenderModCodeLine: () => { context.codeLines = (context.codeLines || 0) + 1; },
     heraldSave: () => {
       saves.push(JSON.parse(JSON.stringify(context.heraldRealmValues())));
-      return Promise.resolve({});
+      return Promise.resolve(opts.saveFails ? FAIL : {});
     },
     rpc: (method, args) => {
       calls.push({ method, args: args ? JSON.parse(JSON.stringify(args)) : null });
@@ -296,6 +296,19 @@ const settle = () => new Promise(res => setImmediate(res));
     assert.strictEqual(await refused.context.heraldPublish(), false);
     assert.strictEqual(refused.context.postShown, false);
     assert.strictEqual(refused.toasts[0], "ᚦ Discord rejected the post (403).");
+
+    /* The save that switches the realm on failed: nothing is published after it. */
+    const unsaved = hall({ saveFails: true });
+    unsaved.context.S.profileName = "Ashlands Test";
+    unsaved.context.heraldRealmsFrom(prefs());
+    unsaved.context.heraldRenderRealm();
+    await settle();
+    unsaved.calls.length = 0;
+    assert.strictEqual(await unsaved.context.heraldPublish(), false);
+    assert.strictEqual(unsaved.saves.length, 1, "Publish did not try to save first");
+    assert.strictEqual(unsaved.calls.filter(c => c.method === "discord.publish").length, 0,
+      "Publish went on to the host side after the save that switches the realm on failed");
+    assert.strictEqual(unsaved.context.postShown, false);
   });
 
   await test("5. Remove acts on this realm alone", async () => {
@@ -396,13 +409,15 @@ const settle = () => new Promise(res => setImmediate(res));
     const table = APP.slice(APP.indexOf("const HOST_SENTENCES=["), APP.indexOf("];", APP.indexOf("const HOST_SENTENCES=[")));
     for (const [named, textId] of [["userprefs.save.heraldNoRealm", "herald.realm.gone.save"],
                                    ["discord.publish.noSuchRealm", "herald.realm.gone.send"],
-                                   ["discord.remove.noSuchRealm", "herald.realm.gone.send"]]) {
+                                   ["discord.remove.noSuchRealm", "herald.realm.gone.send"],
+                                   ["discord.publish.off", "herald.realm.off.send"]]) {
       assert.ok(new RegExp('\\{named:"' + named.replace(/\./g, "\\.") + '",\\s*textId:"' + textId.replace(/\./g, "\\.") + '"\\}').test(table),
         named + " has no sentence");
       assert.ok(BRIDGE.includes('"' + named + '"'), "the host side never throws " + named);
     }
     assert.ok(BRIDGE.includes('"' + KEYS["herald.realm.gone.save"].lore + '"'), "the host side's English drifted from herald.realm.gone.save");
     assert.ok(BRIDGE.includes('"' + KEYS["herald.realm.gone.send"].lore + '"'), "the host side's English drifted from herald.realm.gone.send");
+    assert.ok(BRIDGE.includes('"' + KEYS["herald.realm.off.send"].lore + '"'), "the host side's English drifted from herald.realm.off.send");
 
     for (const id of ["herald.realm.head", "herald.realm.editing", "herald.realm.toggle", "herald.realm.toggle.title",
                       "herald.realm.webhook", "herald.realm.webhook.title", "herald.realm.webhook.placeholder",

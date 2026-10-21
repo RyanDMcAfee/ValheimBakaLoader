@@ -3576,6 +3576,9 @@
     "herald.realm.gone.send": {
       "translation": "[Ẋ That realm is gone, so nothing was sent to Discord. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "herald.realm.off.send": {
+      "translation": "[Ẋ Discord sharing is switched off for this realm, so nothing was sent. Switch it on and publish again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "herald.field.webhook": {
       "translation": "[Ẋ App-wide webhook URL  Ẋ] ẊẊẊẊẊẊẊ"
     },
@@ -3662,6 +3665,12 @@
     },
     "herald.modcode.preview.none": {
       "translation": "[Ẋ No code in the post for this realm. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.modcode.preview.other": {
+      "translation": "[Ẋ Saved for this realm. The post is about {realm} while it runs, so it carries that realm's code. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "realm": "text"
+      }
     },
     "herald.modcode.preview.off": {
       "translation": "[Ẋ Saved for this realm. Discord sharing is switched off, so there is no post to carry it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"

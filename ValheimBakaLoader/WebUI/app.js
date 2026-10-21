@@ -208,6 +208,9 @@ const HOST_SENTENCES=[
   {named:"userprefs.save.heraldNoRealm",  textId:"herald.realm.gone.save"},
   {named:"discord.publish.noSuchRealm",   textId:"herald.realm.gone.send"},
   {named:"discord.remove.noSuchRealm",    textId:"herald.realm.gone.send"},
+  /* A publish that finds the master or this realm switched off. The hall switches both on and
+     saves first, so this is a save that did not land; the press stops there on the page too. */
+  {named:"discord.publish.off",           textId:"herald.realm.off.send"},
 ];
 /* Every way a language pack download can end, as the pack service names it in the result,
    beside the catalog entry that words it. This is the same question HOST_SENTENCES answers
@@ -9880,7 +9883,9 @@ async function heraldPublish(){
   if(!url){toast("ᚦ "+T("herald.publish.no_url.toast"));return false;}
   setT("tHerald",true);
   setT("tHeraldRealm",true);
-  await heraldSave();
+  /* The save is what switches them on. One that failed has already said why, and publishing
+     after it would post for a realm whose switch is still off on the host side. */
+  if(await heraldSave()===FAIL) return false;
   if(!Native.available){heraldRealmPost(realm,true);toast("ᚺ "+T("herald.publish.preview.toast"));return true;}
   const r=await rpc("discord.publish",{profile:realm});
   if(r===FAIL) return false;

@@ -862,6 +862,57 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         [Fact]
+        public async Task A_publish_with_the_master_or_the_realm_off_is_refused_and_sends_nothing()
+        {
+            var prefs = TwoRealms();
+            prefs.DiscordSharingEnabled = true;
+            prefs.DiscordWebhookUrl = HookA;
+            using var hall = new Hall(prefs, "Alpha");
+
+            // The realm's own switch off, with the master on.
+            Change(hall, p => HeraldRealms.Find(p, "Alpha").HeraldOn = false);
+            var realmOff = await Assert.ThrowsAsync<HostFacingException>(() => hall.Call("discord.publish", new { profile = "Alpha" }));
+            Assert.Equal("discord.publish.off", realmOff.MessageId);
+            Assert.Equal(English("herald.realm.off.send"), realmOff.Message);
+
+            // The realm on, the master off.
+            Change(hall, p => { HeraldRealms.Find(p, "Alpha").HeraldOn = true; p.DiscordSharingEnabled = false; });
+            var masterOff = await Assert.ThrowsAsync<HostFacingException>(() => hall.Call("discord.publish", new { profile = "Alpha" }));
+            Assert.Equal("discord.publish.off", masterOff.MessageId);
+            Assert.Empty(hall.Wire.Seen);
+            Assert.Null(hall.Realm("Alpha").HeraldStatusMessageId);
+
+            // Both on: the same press goes out.
+            Change(hall, p => p.DiscordSharingEnabled = true);
+            var sent = await hall.Call("discord.publish", new { profile = "Alpha" });
+            Assert.True((bool)sent["ok"], (string)sent["error"]);
+            Assert.Single(hall.Wire.Seen);
+        }
+
+        private static void Change(Hall hall, Action<UserPreferences> change)
+        {
+            var prefs = hall.UserPrefs.LoadPreferences();
+            change(prefs);
+            hall.UserPrefs.SavePreferences(prefs);
+        }
+
+        [Fact]
+        public async Task A_hall_that_asks_while_startup_checks_for_a_running_server_leaves_the_move_to_startup()
+        {
+            using var hall = new Hall(ReadOld(), "Beta");
+            var held = typeof(BlendWindow).GetField("HeraldMoveHeldForStartup", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+            held.SetValue(hall.Window, true);
+            await hall.Call("userprefs.get", new { });
+            Assert.False(hall.UserPrefs.LoadPreferences().HeraldPerRealmMigrated);
+
+            held.SetValue(hall.Window, false);
+            await hall.Call("userprefs.get", new { });
+            Assert.True(hall.UserPrefs.LoadPreferences().HeraldPerRealmMigrated);
+            Assert.Equal("5550001", hall.Realm("Beta").HeraldStatusMessageId);
+        }
+
+        [Fact]
         public async Task Deleting_or_removing_a_realm_takes_its_post_down_first_and_a_rename_carries_it()
         {
             var prefs = TwoRealms();

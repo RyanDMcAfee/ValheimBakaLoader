@@ -763,10 +763,11 @@ namespace ValheimBakaLoader.Forms
                 CurrentProfile ??= StartProfile;
             }
 
-            // The realm on screen is known now, which is what the one post of the builds before
-            // 1.2.16 described when nothing was running, so it can be handed over.
-            EnsureHeraldPerRealm();
-
+            // The one post of the builds before 1.2.16 is handed to the realm it described, and
+            // a server left running by the last BakaLoader is part of that answer. So the move
+            // waits for the orphan check: the dialog it may raise pumps messages, and a hall that
+            // asks in the meantime must not make the move before the adopted server is a session.
+            HeraldMoveHeldForStartup = true;
             var proceed = true;
             try
             {
@@ -776,6 +777,14 @@ namespace ValheimBakaLoader.Forms
             {
                 Logger.Warning(ex, "Orphaned-server check failed");
             }
+            finally
+            {
+                HeraldMoveHeldForStartup = false;
+            }
+
+            // An instance that bows out to another BakaLoader writes nothing; the one in charge
+            // makes the move. Otherwise the realm on screen and any adopted server are known now.
+            if (proceed) EnsureHeraldPerRealm();
 
             if (!proceed)
             {
@@ -5683,6 +5692,7 @@ namespace ValheimBakaLoader.Forms
             {
                 EnsureHeraldPerRealm();
                 var realm = HeraldRealmOf(p, publishing: true);
+                HeraldSwitchedOn(realm);
                 var result = await DiscordStatus.PublishNowAsync(realm);
                 return new { ok = result.Ok, error = result.Error, detail = result.Detail };
             });
@@ -11134,8 +11144,26 @@ namespace ValheimBakaLoader.Forms
                 : new HostFacingException("discord.remove.noSuchRealm", "That realm is gone, so nothing was sent to Discord.", ("name", realm));
         }
 
+        /// <summary>
+        /// Off means nothing from any realm, a press of Publish included. The hall switches the
+        /// master and the realm on and saves before it publishes, so a publish that finds either
+        /// one off came from a save that did not land or from something other than the hall, and
+        /// sending it would post for a realm the host has kept off Discord.
+        /// </summary>
+        private void HeraldSwitchedOn(string realm)
+        {
+            var prefs = UserPrefsProvider.LoadPreferences();
+            var server = HeraldRealms.Find(prefs, realm);
+            if (prefs?.DiscordSharingEnabled == true && (server == null || server.HeraldOn)) return;
+            throw new HostFacingException("discord.publish.off", "Discord sharing is switched off for this realm, so nothing was sent. Switch it on and publish again.", ("name", realm));
+        }
+
         // Set once the move has been made or found made, so the RPCs that ask are one field read.
         private volatile bool HeraldPerRealmChecked;
+
+        // Up while startup asks about a server left running, so a hall that asks during that
+        // dialog leaves the move to startup, which knows by then which realm is running.
+        private volatile bool HeraldMoveHeldForStartup;
 
         /// <summary>
         /// Hands the one status post of the builds before 1.2.16 to the realm it described, once
@@ -11145,7 +11173,7 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private void EnsureHeraldPerRealm()
         {
-            if (HeraldPerRealmChecked) return;
+            if (HeraldPerRealmChecked || HeraldMoveHeldForStartup) return;
             try
             {
                 var live = Sessions.Values

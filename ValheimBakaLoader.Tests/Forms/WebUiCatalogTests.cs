@@ -375,6 +375,63 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("orphan key: nothing asks for hall.title", said.Output);
         }
 
+        private const string EnglishWithRetired = @"{
+  ""_meta"": { ""language"": ""en"", ""appVersion"": ""1.2.0"", ""catalog"": 1 },
+  ""keys"": {
+    ""hall.greet"": { ""lore"": ""Welcome back, {name}"", ""params"": { ""name"": ""text"" } },
+    ""herald.modcode.preview.other"": { ""lore"": ""About {realm}."", ""plain"": ""About {realm}."", ""params"": { ""realm"": ""text"" } }
+  }
+}";
+
+        /// <summary>
+        /// A released id is never deleted, so one whose sentence stopped being true stays in
+        /// the catalog and goes on check_catalog's retired list. That list is the only thing
+        /// that lets it sit there unasked; it is not a general escape from the orphan rule.
+        /// </summary>
+        [Fact]
+        public void A_retired_id_is_kept_without_counting_as_an_orphan()
+        {
+            var folder = Scratch();
+            Write(folder, "en.json", EnglishWithRetired);
+            Write(folder, "fake-app.js", "function paint(){ return T(\"hall.greet\",{name:\"x\"}); }\n");
+            Write(folder, "fake.html", "<div>nothing here carries an id</div>\n");
+
+            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
+                "--dir", folder,
+                "--app", Path.Combine(folder, "fake-app.js"),
+                "--html", Path.Combine(folder, "fake.html"));
+
+            Assert.True(said.Ok, "a retired id was called an orphan:\n" + said);
+            Assert.DoesNotContain("orphan key", said.Output);
+        }
+
+        /// <summary>And asking for a retired id again is refused, so a revival is a choice.</summary>
+        [Fact]
+        public void Asking_for_a_retired_id_again_is_refused()
+        {
+            var folder = Scratch();
+            Write(folder, "en.json", EnglishWithRetired);
+            Write(folder, "fake-app.js",
+                "function paint(){ return T(\"hall.greet\",{name:\"x\"})+T(\"herald.modcode.preview.other\",{realm:\"y\"}); }\n");
+            Write(folder, "fake.html", "<div>nothing here carries an id</div>\n");
+
+            var said = RepoScript.Run(RepoScript.Python(), CheckCatalog,
+                "--dir", folder,
+                "--app", Path.Combine(folder, "fake-app.js"),
+                "--html", Path.Combine(folder, "fake.html"));
+
+            Assert.False(said.Ok, "a retired id was asked for and passed:\n" + said);
+            Assert.Contains("asks for an id retired in 1.2.16: herald.modcode.preview.other", said.Output);
+        }
+
+        /// <summary>The shipped catalog still carries every id the retired list names.</summary>
+        [Fact]
+        public void The_shipped_catalog_keeps_the_retired_id()
+        {
+            var english = File.ReadAllText(RepoScript.At("ValheimBakaLoader", "WebUI", "i18n", "en.json"));
+            Assert.Contains("\"herald.modcode.preview.other\":", english);
+        }
+
         // -------------------------- C2. the Norse register, which is what is left to guard
 
         /// <summary>
