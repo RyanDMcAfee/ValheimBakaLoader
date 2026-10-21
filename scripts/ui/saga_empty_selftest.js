@@ -13,6 +13,12 @@
  * over a small stand-in for the console element, so the rule is held where it broke: at the
  * seam between "the host narrowed the view" and "another line arrived".
  *
+ * 1.2.16 adds the realms. With two realms running, every application line arrived untagged
+ * and both realms' Saga showed both realms' starts, stops and sweeps. A line now carries the
+ * realm it was written for (dataset.p) and lnVisible hides another realm's lines; a line that
+ * belongs to no realm shows on every realm. Rules 6 to 12 drive the real logLine, logRaw,
+ * lnVisible, applyTermVis, the replay and the Hearth card over two realms interleaved.
+ *
  *     node scripts/ui/saga_empty_selftest.js [app.js]
  */
 
@@ -102,7 +108,8 @@ function harness() {
   };
   context.$$ = selector => term.querySelectorAll(selector);
   vm.createContext(context);
-  for (const opening of ["function lnVisible(el){", "function applyTermVis(){",
+  context.S = { profileName: null };
+  for (const opening of ["function sagaRealmShown(p){", "function lnVisible(el){", "function applyTermVis(){",
     "function renderTermEmpty(){", "function termAppend(d){"]) {
     vm.runInContext(fn(opening), context, { filename: "app.js#" + opening });
   }
@@ -194,6 +201,210 @@ test("termAppend asks renderTermEmpty rather than assuming", () => {
     "termAppend no longer repaints the empty state, so the next line blanks the console");
   assert.ok(body.indexOf('querySelector(".empty-state"); if(es) es.remove();') < 0,
     "termAppend is tearing the empty state out again and nothing puts it back");
+});
+
+/* ------------------------------------------------------------- the realms (1.2.16, F17) */
+
+/** One top level const line out of app.js, run as it is written. */
+function constLine(opening) {
+  const from = SOURCE.indexOf("\n" + opening);
+  assert.ok(from >= 0, "app.js no longer holds " + JSON.stringify(opening));
+  const to = SOURCE.indexOf("\n", from + 1);
+  return SOURCE.slice(from + 1, to);
+}
+
+/* The console plus everything logLine and the Hearth card touch, with two realms in it. */
+function realmHarness() {
+  const h = harness();
+  const card = { innerHTML: "" };
+  Object.assign(h, {
+    currentPage: "hearth",
+    hlogDirty: false,
+    hlogRaf: 0,
+    HLOG_MAX: 30,
+    clock: () => "12:00",
+    requestAnimationFrame: cb => { cb(); return 0; },
+    $: selector => (selector === "#hearthLog" ? card : null),
+    document: {
+      createElement: () => ({
+        className: "",
+        get cls() { return this.className; },
+        style: { display: "" },
+        dataset: {},
+        innerHTML: "",
+        parent: null,
+        remove() {
+          if (this.parent) {
+            this.parent.children = this.parent.children.filter(c => c !== this);
+            this.parent = null;
+          }
+        },
+      }),
+    },
+  });
+  for (const opening of ["const NET_RE=", "const LOG_TS_RE=", "const LOG_TAG_RE=", "const LOG_TAG_KIND=",
+    "const HLOG_BUF="]) {
+    vm.runInContext(constLine(opening), h, { filename: "app.js#" + opening });
+  }
+  vm.runInContext("var hlogBuf=[];", h);
+  /* logRaw is written on one line, so it is taken as the line it is */
+  vm.runInContext(constLine("function logRaw(line,profile){"), h, { filename: "app.js#logRaw" });
+  for (const opening of ["function sagaLineRealm(profile){", "function logLine(kind,text,time,profile){",
+    "function logDivider(text){", "function classifyLog(line){",
+    "function sagaReplayUnseen(rows){", "function sagaRenameRealm(from,to){",
+    "function hlogPush(kind,text,time,p){", "function renderHearthLog(){"]) {
+    vm.runInContext(fn(opening), h, { filename: "app.js#" + opening });
+  }
+  h.card = card;
+  h.run = code => vm.runInContext(code, h);
+  h.on = name => { h.S.profileName = name; };
+  /* the text of every line the host can see right now, in order */
+  h.shown = () => h.term.children
+    .filter(c => (c.cls || "").split(" ").indexOf("ln") >= 0 && c.dataset.k !== "div" && c.style.display !== "none")
+    .map(c => c.dataset.s);
+  h.dividersShown = () => h.term.children
+    .filter(c => c.dataset && c.dataset.k === "div" && c.style.display !== "none").length;
+  /* Alpha and Beta both running, their lines interleaved with lines that belong to neither */
+  h.interleave = () => {
+    h.run('logRaw("[12:00:01.000] alpha starting",  "Alpha")');
+    h.run('logRaw("[12:00:02.000] beta starting",   "Beta")');
+    h.run('logRaw("[12:00:03.000] [WRN] a language pack is out of date", null)');
+    h.run('logRaw("[12:00:04.000] [ERR] alpha sweep failed", "Alpha")');
+    h.run('logRaw("[12:00:05.000] [ERR] beta sweep failed",  "BETA")');
+  };
+  return h;
+}
+
+test("two realms interleaved: the realm on screen and the lines of no realm, nothing else", () => {
+  const h = realmHarness();
+  h.on("Alpha");
+  h.interleave();
+  assert.deepStrictEqual(h.shown(),
+    ["alpha starting", "a language pack is out of date", "alpha sweep failed"],
+    "the Saga of Alpha is showing Beta's lines, or hiding its own or the app's");
+});
+
+test("a switch shows the other realm's lines it already holds, and the divider stays", () => {
+  const h = realmHarness();
+  h.on("Alpha");
+  h.interleave();
+  h.run('logDivider("switched to Beta")');
+  h.on("Beta");
+  h.run("applyTermVis()");
+  assert.deepStrictEqual(h.shown(),
+    ["beta starting", "a language pack is out of date", "beta sweep failed"],
+    "a switch to Beta did not show Beta's own lines (case aside) or still shows Alpha's");
+  assert.strictEqual(h.dividersShown(), 1, "the switch divider was hidden by the realm rule");
+  assert.strictEqual(h.term.querySelectorAll(".ln").filter(c => c.dataset.k !== "div").length, 5,
+    "a switch cleared or replayed the console instead of showing what it holds");
+
+  h.on("Alpha");
+  h.run("applyTermVis()");
+  assert.deepStrictEqual(h.shown(),
+    ["alpha starting", "a language pack is out of date", "alpha sweep failed"],
+    "switching back did not bring Alpha's lines back");
+});
+
+test("a line of no realm shows on both, and with no realm chosen everything shows", () => {
+  const h = realmHarness();
+  h.interleave();
+  assert.strictEqual(h.shown().length, 5, "with no realm on screen a tagged line was hidden");
+  for (const realm of ["Alpha", "Beta"]) {
+    h.on(realm);
+    h.run("applyTermVis()");
+    assert.ok(h.shown().indexOf("a language pack is out of date") >= 0,
+      "the line that belongs to no realm is missing on " + realm);
+  }
+});
+
+test("search and the kind pills still combine with the realm", () => {
+  const h = realmHarness();
+  h.on("Alpha");
+  h.interleave();
+  h.filter = "err";
+  h.run("applyTermVis()");
+  assert.deepStrictEqual(h.shown(), ["alpha sweep failed"],
+    "the Errors pill on Alpha showed another realm's error, or lost Alpha's");
+  h.filter = "all";
+  h.termQ = "sweep";
+  h.run("applyTermVis()");
+  assert.deepStrictEqual(h.shown(), ["alpha sweep failed"], "a search reached into Beta's lines");
+  h.termQ = "beta";
+  h.run("applyTermVis()");
+  assert.deepStrictEqual(h.shown(), [], "a search on Alpha found Beta's lines");
+  assert.strictEqual(h.noteKind(), "narrowed",
+    "a search that only matches another realm left a black console instead of the note");
+});
+
+test("a page line defaults to the realm on screen, null means none, and the text stays verbatim", () => {
+  const h = realmHarness();
+  h.on("Alpha");
+  h.run('logLine("ok","[BakaLoader] start requested")');
+  h.run('logLine("info","[BakaLoader] the interface text size is now 3.",null,null)');
+  const [action, global] = h.term.children.filter(c => c.dataset.k !== "div");
+  assert.strictEqual(action.dataset.p, "alpha", "a realm action was not tagged with the realm on screen");
+  assert.strictEqual(global.dataset.p, undefined, "a line passed null was tagged with a realm");
+  assert.ok(action.innerHTML.indexOf("Alpha") < 0 && action.innerHTML.indexOf("alpha") < 0,
+    "the realm was written into the line's text: the Saga is the verbatim log");
+  h.on("Beta");
+  h.run("applyTermVis()");
+  assert.deepStrictEqual(h.shown(), ["[bakaloader] the interface text size is now 3."]);
+});
+
+test("the replay prints only what the console never saw", () => {
+  const h = realmHarness();
+  h.on("Beta");
+  h.run('logRaw("10/20/2026 12:00:01: Game server connected", "Beta")');
+  h.run('logRaw("10/20/2026 12:00:09: Connections 1 ZDOS:10 sent:0 recv:0", "Beta")');
+  h.pendingRows = [
+    { line: "10/20/2026 11:59:58: Loading world", profile: "Beta" },
+    { line: "10/20/2026 12:00:01: Game server connected", profile: "Beta" },
+    { line: "10/20/2026 12:00:09: Connections 1 ZDOS:10 sent:0 recv:0", profile: "Beta" },
+    { line: "10/20/2026 12:00:09: Connections 1 ZDOS:10 sent:0 recv:0", profile: "Beta" },
+  ];
+  h.run("sagaReplayUnseen(pendingRows)");
+  const lines = h.shown();
+  assert.strictEqual(lines.filter(l => l.indexOf("game server connected") >= 0).length, 1,
+    "a line the console already held was printed a second time on the replay");
+  assert.strictEqual(lines.filter(l => l.indexOf("connections 1") >= 0).length, 2,
+    "a line that really came twice lost its second copy to the dedupe");
+  assert.ok(lines.some(l => l.indexOf("loading world") >= 0), "a line the page never saw was not replayed");
+});
+
+test("the Hearth card shows the realm on screen and the lines of no realm", () => {
+  const h = realmHarness();
+  h.on("Alpha");
+  h.interleave();
+  assert.ok(h.card.innerHTML.indexOf("alpha sweep failed") >= 0, "the card lost Alpha's own line");
+  assert.ok(h.card.innerHTML.indexOf("a language pack is out of date") >= 0, "the card lost the app's line");
+  assert.ok(h.card.innerHTML.indexOf("beta") < 0, "the Hearth card on Alpha shows Beta's lines");
+  h.on("Beta");
+  h.run("renderHearthLog()");
+  assert.ok(h.card.innerHTML.indexOf("beta sweep failed") >= 0, "after a switch the card does not show Beta's line");
+  assert.ok(h.card.innerHTML.indexOf("alpha") < 0, "after a switch the card still shows Alpha's lines");
+});
+
+test("a renamed realm keeps its lines", () => {
+  const h = realmHarness();
+  h.on("Alpha");
+  h.interleave();
+  h.on("Hearthstone");
+  h.run('sagaRenameRealm("Alpha","Hearthstone")');
+  assert.deepStrictEqual(h.shown(),
+    ["alpha starting", "a language pack is out of date", "alpha sweep failed"],
+    "a rename left the realm's lines under the old name, hidden for good");
+  assert.ok(h.card.innerHTML.indexOf("alpha sweep failed") >= 0, "a rename lost the card's lines");
+});
+
+test("the realm switch reapplies visibility and replays only through the dedupe", () => {
+  const from = SOURCE.indexOf("async function switchServer(name,opts){");
+  assert.ok(from > 0, "switchServer is gone");
+  const body = SOURCE.slice(from, SOURCE.indexOf("\n}", from));
+  assert.ok(body.indexOf("applyTermVis()") > 0, "a switch no longer reapplies the realm rule to the console");
+  assert.ok(body.indexOf("sagaReplayUnseen(") > 0, "a switch no longer replays only the unseen lines");
+  assert.ok(!/serverBuffer[\s\S]*forEach\(logRaw\)/.test(body),
+    "a switch replays the whole server tail again, printing every line the console holds twice");
+  assert.ok(/Native\.on\("log\.app",d=>\{[^\n]*d\.profile/.test(SOURCE), "log.app no longer reads the line's realm");
 });
 
 console.log("");

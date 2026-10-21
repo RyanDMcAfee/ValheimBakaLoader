@@ -1434,6 +1434,68 @@ namespace ValheimBakaLoader.Forms
         /// it is a mod. A key built over a world name would be a second key for one realm.
         /// </para>
         /// </summary>
+        /// <summary>One replayed log line and the realm it belongs to, or null for none.</summary>
+        internal sealed class LogRow
+        {
+            public string line { get; set; }
+            public string profile { get; set; }
+        }
+
+        /// <summary>The application tail as the page replays it: each line with its realm.</summary>
+        internal static List<LogRow> AppLogBufferRows(IBufferedLogger logger)
+        {
+            if (logger is IRealmTaggedLog tagged)
+                return tagged.TaggedBuffer.Select(l => new LogRow { line = l.Line, profile = l.Profile }).ToList();
+            return (logger?.LogBuffer ?? Enumerable.Empty<string>())
+                .Select(line => new LogRow { line = line, profile = null }).ToList();
+        }
+
+        /// <summary>
+        /// The commands whose work is the realm on screen's even when the call does not name it:
+        /// the server, its players, its mods and loader, its config files and its worlds. A
+        /// command outside these (app settings, language, setup, Discord, paths) belongs to no
+        /// realm unless it names one.
+        /// </summary>
+        private static readonly string[] RealmCommandFamilies =
+        {
+            "server.", "players.", "mods.", "bepinex.", "caps.", "config.", "gale.", "maxplayers.",
+            "worldgen.", "world.", "worlds.", "backups.", "atlas.",
+        };
+
+        /// <summary>
+        /// Commands that name a realm which is going away. A line tagged with it would never be
+        /// shown again, because no realm on screen carries that name after the call, so their
+        /// lines belong to no realm and stay readable on every realm.
+        /// </summary>
+        private static readonly string[] RealmLeavingCommands =
+        {
+            "profiles.delete", "profiles.remove", "profiles.rename", "profiles.archive",
+        };
+
+        /// <summary>
+        /// The realm a command's application lines belong to: the one the call names, else the
+        /// one on screen for a realm command, else none.
+        /// </summary>
+        internal static string RealmOfCall(string method, JObject parameters, string activeProfile)
+        {
+            if (string.IsNullOrEmpty(method)) return null;
+            if (RealmLeavingCommands.Contains(method, StringComparer.Ordinal)) return null;
+
+            var named = CountedProfileName(parameters);
+            if (named != null) return named;
+
+            return RealmCommandFamilies.Any(f => method.StartsWith(f, StringComparison.Ordinal))
+                && !string.IsNullOrWhiteSpace(activeProfile)
+                ? activeProfile.Trim()
+                : null;
+        }
+
+        private string RealmOfCall(string method, JObject parameters)
+        {
+            try { return RealmOfCall(method, parameters, ActiveProfileName); }
+            catch { return null; }
+        }
+
         private static string CountedProfileName(JObject parameters)
         {
             if (parameters == null) return null;
@@ -1474,6 +1536,10 @@ namespace ValheimBakaLoader.Forms
 
             session.Server.RunEmptyCleanse = async () =>
             {
+                // This fires off the server's own timer, outside any command, so it names its
+                // realm itself: the sweep and its counts are this realm's lines.
+                using var realmScope = AppLog.ForRealm(profile);
+
                 AppLogger.Information(
                     "{Line:l}", "[RCON] " + profile + " has been empty for "
                     + (int)ValheimServer.EmptyCleanseDelay.TotalSeconds
@@ -3554,7 +3620,12 @@ namespace ValheimBakaLoader.Forms
 
             ServerUpdates.Completed += (s, result) => OnServerUpdateCompleted(result);
 
-            AppLogger.LogReceived += line => PostEvent("log.app", new { line });
+            // The line travels with the realm it was written for, or null when it belongs to no
+            // realm; the page hides a line whose realm is not the one on screen.
+            if (AppLogger is IRealmTaggedLog tagged)
+                tagged.LineReceived += held => PostEvent("log.app", new { line = held.Line, profile = held.Profile });
+            else
+                AppLogger.LogReceived += line => PostEvent("log.app", new { line, profile = (string)null });
         }
 
         /// <summary>
@@ -4445,6 +4516,10 @@ namespace ValheimBakaLoader.Forms
                 // A test copy names its source by profile name, so the copies of this realm
                 // follow it to the new name rather than reading "source gone".
                 MoveTestCopiesOf(name, newName);
+
+                // The lines held for the old name go to the new one, so a page that loads after
+                // this still shows them on the realm they were written for.
+                (AppLogger as IRealmTaggedLog)?.RenameRealm(name, newName);
 
                 // Retire any (stopped) session under the old key so the registry stays consistent.
                 if (Sessions.TryRemove(name, out var removed)) { ForgetSession(removed); removed.Server.Dispose(); }
@@ -8250,12 +8325,19 @@ namespace ValheimBakaLoader.Forms
             });
 
             // --- Logs ---
-            RegisterRpc("logs.appBuffer", p => Task.FromResult<object>(AppLogger.LogBuffer.ToList()));
+            // Each line with the realm it belongs to (null for none), the same shape log.app
+            // carries, so a replay is filtered by the same rule as the live lines.
+            RegisterRpc("logs.appBuffer", p => Task.FromResult<object>(AppLogBufferRows(AppLogger)));
 
             // In-memory tail of the ACTIVE profile's current server session (empty
-            // when the server has never been started this app run).
-            RegisterRpc("logs.serverBuffer", p => Task.FromResult<object>(
-                Server?.Logger?.LogBuffer?.ToList() ?? new List<string>()));
+            // when the server has never been started this app run). Every line is the active
+            // realm's, and says so, so the page can tell it apart from another realm's lines.
+            RegisterRpc("logs.serverBuffer", p =>
+            {
+                var realm = ActiveProfileName;
+                var lines = Server?.Logger?.LogBuffer?.ToList() ?? new List<string>();
+                return Task.FromResult<object>(lines.Select(line => new LogRow { line = line, profile = realm }).ToList());
+            });
 
             // --- Network / IP ---
             RegisterRpc("ip.get", p => Task.FromResult<object>(new
@@ -9837,7 +9919,7 @@ namespace ValheimBakaLoader.Forms
             }
             catch (Exception e)
             {
-                AppLogger.Error(e, "Failed to record the mod manifest for profile '{0}'.", profileName);
+                AppLogger.ForRealm(profileName).Error(e, "Failed to record the mod manifest for profile '{0}'.", profileName);
             }
         }
 

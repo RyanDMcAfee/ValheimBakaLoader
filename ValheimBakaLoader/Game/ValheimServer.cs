@@ -843,7 +843,10 @@ namespace ValheimBakaLoader.Game
             IMaxPlayersInstaller maxPlayersInstaller,
             PlayerListService playerListService)
         {
-            ApplicationLogger = appLogger;
+            // Every line this server writes to the application log is its realm's, and so is
+            // every line the work it starts writes (AppLog.ForRealm at each entry point below).
+            // The name is asked per line: ServerKey is set after the server is built.
+            ApplicationLogger = appLogger.ForRealm(() => ServerKey);
             ProcessProvider = processProvider;
             RconClient = rconClient;
             PlayerDataRepository = playerDataRepository;
@@ -1256,6 +1259,8 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public void AdoptProcess(Process existingProcess, IValheimServerOptions options)
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             if (!CanStart) return;
 
             var pid = "unknown";
@@ -1404,6 +1409,8 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         private void BeginLaunch(IValheimServerOptions options, string reason, bool automatic)
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             if (options == null) return;
             if (ProcessKey != null || Status != ServerStatus.Stopped) return;
 
@@ -1580,6 +1587,8 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public async Task<bool> ConfirmAutomaticRestartAsync(string reason)
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             var guard = ConfirmLaunchAsync;
             var options = Options;
             if (guard == null || options == null) return true;
@@ -1913,6 +1922,8 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         private void HandleProcessExit(int exitCode, bool allowAutoRestart)
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             var crashed = exitCode != 0 && Status != ServerStatus.Stopping;
 
             // A stop that was being watched for its save: decide now, before the status lands
@@ -1946,6 +1957,8 @@ namespace ValheimBakaLoader.Game
         /// <summary>Asks the server process to shut down gracefully (world save included).</summary>
         public void Stop()
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             if (!CanStop) return;
             CancelCountdown();
             BeginShutdown(restartAfter: false);
@@ -1959,6 +1972,8 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public void Restart(IValheimServerOptions options = null, string reason = null)
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             if (!CanRestart) return;
 
             // The save is asked of the server that is up, over the RCON port and password it
@@ -2213,6 +2228,8 @@ namespace ValheimBakaLoader.Game
 
         public async Task RestartWithCountdown(int[] countdownSeconds = null, bool applyModUpdates = false, string reason = null)
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             if (!CanRestart) return;
             if (IsCountdownActive) return;
 
@@ -2399,6 +2416,8 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public async Task<string> RequestSmartRestart()
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             if (IsCountdownActive)
             {
                 BypassCountdown();
@@ -3302,6 +3321,8 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         private void OnServerLogLine(string line)
         {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
             foreach (var rule in LogLineRules)
             {
                 var match = rule.Pattern.Match(line);

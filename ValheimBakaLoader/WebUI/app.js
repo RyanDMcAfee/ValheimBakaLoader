@@ -1762,13 +1762,16 @@ function setToastLift(){updateToastLift();}
 /* HLOG_ROW mirrors the fixed line-height on .b-log .hlog, so the row count is
    exact arithmetic rather than an estimate - the card renders only lines that
    fit and never hides any behind its own edge. */
-const HLOG_BUF=30, HLOG_MIN=4, HLOG_ROW=16;
+/* HLOG_KEEP is more than the card can show because the card shows the realm on screen: with
+   two realms running, a busy one would otherwise push every line of the quiet one out of a
+   30 line tail, and the quiet realm's card would come up empty after a switch. */
+const HLOG_BUF=30, HLOG_MIN=4, HLOG_ROW=16, HLOG_KEEP=240;
 let HLOG_MAX=HLOG_MIN;
 const hlogBuf=[];
 let hlogDirty=false, hlogRaf=0;
-function hlogPush(kind,text,time){
-  hlogBuf.push({kind,text,time});
-  if(hlogBuf.length>HLOG_BUF) hlogBuf.shift();
+function hlogPush(kind,text,time,p){
+  hlogBuf.push({kind,text,time,p:p||""});
+  if(hlogBuf.length>HLOG_KEEP) hlogBuf.shift();
   if(currentPage!=="hearth"){hlogDirty=true;return;}
   if(hlogRaf) return;
   hlogRaf=requestAnimationFrame(()=>{hlogRaf=0;renderHearthLog();});
@@ -1776,7 +1779,8 @@ function hlogPush(kind,text,time){
 function renderHearthLog(){
   const el=$("#hearthLog"); if(!el) return;
   hlogDirty=false;
-  const rows=hlogBuf.slice(-HLOG_MAX);
+  /* the same realm rule as the Saga: another realm's lines wait for that realm */
+  const rows=hlogBuf.filter(l=>sagaRealmShown(l.p)).slice(-HLOG_MAX);
   el.innerHTML=rows.length
     ?rows.map(l=>`<div class="ln ${l.kind}" title="${esc(l.time+"  "+l.text)}"><span class="t">${esc(l.time)}</span>  <span class="${l.kind}">${esc(l.text)}</span></div>`).join("")
     :emptyState({compact:true,mark:"ᛋ",title:T("hearth.saga.empty.title"),
@@ -2149,6 +2153,7 @@ async function renameServer(name){
     const r=await rpc("profiles.rename",{name,newName:v});
     if(r===FAIL) return;
     if(S.profileName===name){S.profileName=v;if(S.prefs)S.prefs.ProfileName=v;}
+    sagaRenameRealm(name,v);
     await refreshServers(); toast("ᚱ "+T("realm.renamed.toast",{name:v}));
   });
 }
@@ -2444,9 +2449,13 @@ async function switchServer(name,opts){
   try{renderMaxPlayers();}catch{}
   refreshServers();
   logDivider(T("realm.switched.divider",{name:prefs.ProfileName}));
-  // replay this server's in-memory session tail so the saga isn't blank after a switch
+  /* The lines this realm already wrote are in the console, hidden while another realm was on
+     screen, so they are shown again rather than printed twice. Only what the page never saw
+     (lines from before it loaded, or pushed out of the scrollback) is replayed. */
+  applyTermVis();
+  renderHearthLog();
   const sbuf=await rpc("logs.serverBuffer");
-  if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length) sbuf.slice(-200).forEach(logRaw);
+  if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length) sagaReplayUnseen(sbuf.slice(-200));
   logLine("info","[BakaLoader] switched to profile '"+name+"'");
   /* This realm's own stored save folder, asked fresh. The row was cleared above with the
      rest of the previous realm's conditions. */
@@ -7371,7 +7380,7 @@ async function followSweep(f,realm){
       /* No toast: the host is looking at another realm now, and the result is that realm's
          news. Its server still prints the line, and the page toasts it from there when the
          host is back on it. */
-      logLine("warn","[RCON] the server on screen changed, so BakaLoader stopped waiting for the "+f.verb+" sweep on "+realm+". That server still prints the result line when the sweep lands.");
+      logLine("warn","[RCON] the server on screen changed, so BakaLoader stopped waiting for the "+f.verb+" sweep on "+realm+". That server still prints the result line when the sweep lands.",null,realm);
       return;
     case "done":
       SWEEP_TOLD_AT[key]=Date.now();
@@ -8372,10 +8381,26 @@ const term=$("#term"); let filter="all", termQ="";
 const TERM_CAP=1200;                      // scrollback (lines kept in the DOM)
 let termPin=true, termUnseen=0;           // pinned-to-bottom = live tail; scrolled up = paused
 
-/* one visibility rule for pills + search (dividers ride every pill, hide under search) */
+/* A line written for a realm (dataset.p, lowercased) shows only while that realm is on
+   screen. A line that belongs to no realm, the app's own news or a setting, shows on every
+   realm, and so does every line while no realm is chosen. */
+function sagaRealmShown(p){
+  if(!p) return true;
+  const on=String(S.profileName||"").trim().toLowerCase();
+  return !on||p===on;
+}
+/* The realm a new line is tagged with. Left out, it is the realm on screen, which is who a
+   page action is for; null says the line belongs to no realm. */
+function sagaLineRealm(profile){
+  const r=profile===undefined?S.profileName:profile;
+  return r?String(r).trim().toLowerCase():"";
+}
+/* one visibility rule for pills + search + realm (dividers ride every pill and every realm,
+   hide under search) */
 function lnVisible(el){
   const k=el.dataset.k;
   if(k==="div") return !termQ;
+  if(!sagaRealmShown(el.dataset.p)) return false;
   const passK=(filter==="all"||filter===k||(filter==="info"&&k==="ok"));
   return passK&&(!termQ||(el.dataset.s||"").includes(termQ));
 }
@@ -8451,15 +8476,48 @@ function termAppend(d){
   if(termPin) term.scrollTop=term.scrollHeight;
   else if(d.style.display!=="none"&&d.dataset.k!=="div"){termUnseen++;renderTermStream();}
 }
-function logLine(kind,text,time){
+/* profile: the realm the line belongs to. Left out it is the realm on screen; null means
+   none. The realm is stored on the element and never written into the text: the Saga stays
+   the verbatim log. */
+function logLine(kind,text,time,profile){
   const d=document.createElement("div");
   d.className="ln "+kind; d.dataset.k=kind;
   d.dataset.s=(text||"").toLowerCase();
+  const p=sagaLineRealm(profile);
+  if(p) d.dataset.p=p;
   const t=time||clock()+":"+String(new Date().getSeconds()).padStart(2,"0");
   d.innerHTML=`<span class="t">${esc(t)}</span>  <span class="${kind}">${esc(text)}</span>`;
   d.style.display=lnVisible(d)?"":"none";
   termAppend(d);
-  hlogPush(kind,text,t);   // Hearth hall keeps a mirror of the last few lines
+  hlogPush(kind,text,t,p);   // Hearth hall keeps a mirror of the last few lines
+}
+/* Replays host rows ({line, profile} or a bare string) that the console does not already
+   hold. Counted, not just looked up, so a line that really did come twice still shows twice. */
+function sagaReplayUnseen(rows){
+  const have=new Map();
+  $$("#term .ln").forEach(l=>{
+    if(l.dataset.k==="div") return;
+    const key=(l.dataset.p||"")+"\n"+(l.dataset.s||"");
+    have.set(key,(have.get(key)||0)+1);
+  });
+  (rows||[]).forEach(r=>{
+    const row=typeof r==="string"?{line:r}:r;
+    if(!row||row.line==null) return;
+    const profile=row.profile==null?undefined:row.profile;
+    const key=sagaLineRealm(profile)+"\n"+String(classifyLog(row.line).text||"").toLowerCase();
+    const n=have.get(key)||0;
+    if(n>0){have.set(key,n-1);return;}
+    logRaw(row.line,profile);
+  });
+}
+/* A renamed realm keeps its lines: they move to the new name in the console and the card. */
+function sagaRenameRealm(from,to){
+  const a=String(from||"").trim().toLowerCase(), b=String(to||"").trim().toLowerCase();
+  if(!a||!b||a===b) return;
+  $$("#term .ln").forEach(l=>{if(l.dataset.p===a) l.dataset.p=b;});
+  hlogBuf.forEach(l=>{if(l.p===a) l.p=b;});
+  applyTermVis();
+  renderHearthLog();
 }
 /* horizontal rule with a label - marks session starts and helm turns */
 function logDivider(text){
@@ -8492,7 +8550,7 @@ function classifyLog(line){
   }
   return {kind,time,text};
 }
-function logRaw(line){const c=classifyLog(line);logLine(c.kind,c.text,c.time);}
+function logRaw(line,profile){const c=classifyLog(line);logLine(c.kind,c.text,c.time,profile);}
 
 renderTermEmpty();
 
@@ -9154,7 +9212,7 @@ async function onTextSizeChosen(){
      Atlas wrap's own CSS size with them, so the ResizeObserver on that wrap is what resizes
      the chart's backing store and repaints it at the new devicePixelRatio. */
   toast("ᛖ "+T("app.textsize.saved.toast",{size:textSizeName(r.TextSize)}));
-  logLine("info","[BakaLoader] the interface text size is now "+r.TextSize+".");
+  logLine("info","[BakaLoader] the interface text size is now "+r.TextSize+".",null,null);
 }
 
 /* ---------- THE CONNECTION TEST ----------
@@ -9213,7 +9271,7 @@ async function runConnectionTest(){
     lines.push("");
     lines.push(T(verdict.lineId));
     out.textContent=lines.join("\n");
-    logLine("ok","[BakaLoader] connection test: "+String(r.verdict||"none"));
+    logLine("ok","[BakaLoader] connection test: "+String(r.verdict||"none"),null,null);
   }catch(_){
     out.textContent=T("hearth.upkeep.connection.failed");
   }finally{
@@ -9551,7 +9609,7 @@ $("#heraldPublish").addEventListener("click",async()=>{
   if(r.ok){
     HERALD_HAS_POST=true;heraldRenderPost();
     toast("ᚺ "+T("herald.publish.done.toast"));
-    logLine("ok","[Herald] Discord status post published");
+    logLine("ok","[Herald] Discord status post published",null,null);
   }else toast("ᚦ "+(r.error||T("herald.publish.failed.toast")));
 });
 $("#heraldRemove").addEventListener("click",async()=>{
@@ -9561,7 +9619,7 @@ $("#heraldRemove").addEventListener("click",async()=>{
   if(r.ok){
     HERALD_HAS_POST=false;heraldRenderPost();
     toast("ᚺ "+T("herald.remove.done.toast"));
-    logLine("warn","[Herald] Discord status post removed");
+    logLine("warn","[Herald] Discord status post removed",null,null);
   }else toast("ᚦ "+(r.error||T("herald.remove.failed.toast")));
 });
 $("#heraldWizBtn").addEventListener("click",()=>heraldWizard());
@@ -14555,7 +14613,7 @@ async function wizFinish(skip){
     }
   }
   toast("ᛉ "+(skip?T("setup.wiz.skipped.toast"):T("setup.wiz.done.toast")));
-  logLine("ok","[BakaLoader] first-time setup "+(skip?"skipped":"completed"));
+  logLine("ok","[BakaLoader] first-time setup "+(skip?"skipped":"completed"),null,null);
 }
 
 function wizardRender(){
@@ -14731,7 +14789,7 @@ $("#btnSetupReset").addEventListener("click",()=>{
         const st=await rpc("setup.reset");
         if(st===FAIL) return;
         toast("ᛉ "+T("setup.reset.done.toast"));
-        logLine("warn","[BakaLoader] first-time setup was reset");
+        logLine("warn","[BakaLoader] first-time setup was reset",null,null);
         const cur=await rpc("profiles.get",{name:S.profileName||S.prefs?.ProfileName||"Default"});
         if(cur!==FAIL&&cur){S.prefs=cur;renderAllFromPrefs();}
         setTimeout(()=>wizardOpen(st),60);
@@ -14777,7 +14835,7 @@ async function heraldWizFinish(){
       ?T("herald.hook.stat.answers",{name:HWIZ.name})
       :T("herald.hook.stat.answers.unnamed"));
     toast("ᚺ "+T("herald.publish.done.toast"));
-    logLine("ok","[Herald] Discord sharing configured · status post published");
+    logLine("ok","[Herald] Discord sharing configured · status post published",null,null);
   }else{
     toast("ᚦ "+T("herald.wiz.publish.failed.toast",{reason:r.error||T("herald.publish.failed.toast")}));
   }
@@ -14922,7 +14980,7 @@ async function waystoneWizFinish(){
   modalClose();
   if(await waystoneSave(WWIZ.domain)){
     toast("ᛦ "+T("waystone.raised.toast",{domain:WWIZ.domain}));
-    logLine("ok","[Waystone] custom join domain set · "+WWIZ.domain);
+    logLine("ok","[Waystone] custom join domain set · "+WWIZ.domain,null,null);
   }
 }
 function waystoneWizRender(){
@@ -14993,7 +15051,7 @@ function waystoneWizRender(){
     modalClose();
     if(await waystoneSave("")){
       toast("ᛦ "+T("waystone.removed.toast"));
-      logLine("warn","[Waystone] custom join domain removed");
+      logLine("warn","[Waystone] custom join domain removed",null,null);
     }
   });
   on("#wwNext",()=>{
@@ -16395,6 +16453,9 @@ if(Native.available){
       conditionCrashed();
       renderHearthNative();
       logLine("err","[BakaLoader] server process crashed");
+    }else if(d?.profile){
+      /* a background realm's crash waits in its own Saga for when the host switches to it */
+      logLine("err","[BakaLoader] server process crashed",null,d.profile);
     }
   });
   /* The host posts this when a check has found a newer BakaLoader release. The check runs
@@ -16456,11 +16517,15 @@ if(Native.available){
   Native.on("player.updated",p=>{
     if(currentPage==="skald"&&isActiveProfile(p?.serverKey))skaldRefresh();
   });
-  Native.on("log.app",d=>{if(d?.line!=null)logRaw(d.line);});
+  /* An app line names its realm, or null when it belongs to none and shows on every realm. */
+  Native.on("log.app",d=>{if(d?.line!=null)logRaw(d.line,d.profile==null?null:d.profile);});
+  /* Every realm's server lines are kept, tagged with their realm, and the console shows the
+     ones of the realm on screen. A switch then shows the other realm's lines it already holds
+     instead of replaying them. Net telemetry is still read for the realm on screen only. */
   Native.on("log.server",d=>{
-    if(d?.line==null||!isActiveProfile(d?.profile)) return;
-    logRaw(d.line);
-    parseNetLine(d.line); // net telemetry rides the server log
+    if(d?.line==null) return;
+    logRaw(d.line,d.profile==null?undefined:d.profile);
+    if(isActiveProfile(d?.profile)) parseNetLine(d.line); // net telemetry rides the server log
   });
 
   /* --- boot sequence --- */
@@ -16539,13 +16604,17 @@ if(Native.available){
     rpc("ip.refresh").then(r=>{
       if(r!==FAIL&&r){S.extIp=r.external;S.intIp=r.internal;renderNet();}
     });
+    /* rows are {line, profile}; a null profile is a line that belongs to no realm */
     const buf=await rpc("logs.appBuffer");
-    if(buf!==FAIL&&Array.isArray(buf)) buf.forEach(logRaw);
+    if(buf!==FAIL&&Array.isArray(buf)) buf.forEach(r=>{
+      if(typeof r==="string") logRaw(r,null);
+      else if(r&&r.line!=null) logRaw(r.line,r.profile==null?null:r.profile);
+    });
     // a server may already be mid-session (auto-start / adopted) - replay its tail too
     const sbuf=await rpc("logs.serverBuffer");
     if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length){
       logDivider(T("saga.divider.earlier"));
-      sbuf.slice(-200).forEach(logRaw);
+      sagaReplayUnseen(sbuf.slice(-200));
     }
     await refreshPlayers();
     renderAllFromPrefs();

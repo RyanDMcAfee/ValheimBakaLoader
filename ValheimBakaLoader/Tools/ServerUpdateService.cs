@@ -272,6 +272,10 @@ namespace ValheimBakaLoader.Tools
         public async Task<ServerUpdateResult> UpdateAsync(
             ServerUpdateRequest req, Func<Task<bool>> backupWorlds, CancellationToken ct)
         {
+            // An update is asked for by one realm, so every line it writes (steamcmd's own
+            // included) is that realm's in the Saga, however the request reached here.
+            using var realmScope = AppLog.ForRealm(req?.ProfileName);
+
             var result = new ServerUpdateResult
             {
                 ProfileName = req?.ProfileName,

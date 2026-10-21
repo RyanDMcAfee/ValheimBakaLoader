@@ -806,6 +806,11 @@ namespace ValheimBakaLoader.Forms
             try { CountCommand(method, parameters); }
             catch { /* a count is never worth a command */ }
 
+            // A command for one realm writes its application lines as that realm's, so with two
+            // realms running the Saga of the other one does not read them. The scope follows the
+            // handler through its awaits and into the work it starts.
+            using var realmScope = AppLog.ForRealm(RealmOfCall(method, parameters));
+
             try
             {
                 var result = await handler(parameters);

@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using ValheimBakaLoader.Properties;
@@ -73,15 +74,30 @@ namespace ValheimBakaLoader.Tools.Logging
     /// in-memory tail, live subscribers, and (optionally) a daily rolling
     /// file under the app's logs folder.
     /// </summary>
-    public abstract class PipelineLogger : IBufferedLogger
+    public abstract class PipelineLogger : IBufferedLogger, IRealmTaggedLog
     {
-        private readonly RingBuffer<string> History = new(1000);
+        // Each line is held with the realm it was written for (AppLog), so a replay can say
+        // which realm a line belongs to. The plain tail is read off the same ring.
+        private readonly RingBuffer<AppLogLine> History = new(1000);
         private readonly List<LogStep> Steps = new();
         private ILogger Sink;
 
         public event Action<string> LogReceived;
 
-        public IEnumerable<string> LogBuffer => History;
+        public event Action<AppLogLine> LineReceived;
+
+        public IEnumerable<string> LogBuffer => History.Select(l => l.Line);
+
+        public IEnumerable<AppLogLine> TaggedBuffer => History;
+
+        public void RenameRealm(string from, string to)
+        {
+            if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to)) return;
+            foreach (var held in History)
+            {
+                if (string.Equals(held.Profile, from, StringComparison.OrdinalIgnoreCase)) held.Profile = to.Trim();
+            }
+        }
 
         /// <summary>Appends a stage to the pipeline. Stages run in the order added.</summary>
         protected void Use(LogStep step)
@@ -193,6 +209,9 @@ namespace ValheimBakaLoader.Tools.Logging
             // level check on the sink alone would have let every Verbose line through to both.
             if (logEvent == null || !IsEnabled(logEvent.Level)) return;
 
+            // Read before any step or sink runs, while this is still the writer's own flow.
+            var realm = AppLog.CurrentRealm;
+
             // Built lazily on first write so DI has finished wiring by then.
             Sink ??= BuildSink();
 
@@ -219,8 +238,10 @@ namespace ValheimBakaLoader.Tools.Logging
             // report. The file gets the whole stack through the template below.
             if (logEvent.Exception != null) line += " [" + Summarise(logEvent.Exception) + "]";
 
-            History.Add(line);
+            var held = new AppLogLine(line, realm);
+            History.Add(held);
             LogReceived?.Invoke(line);
+            LineReceived?.Invoke(held);
         }
 
         /// <summary>The exception in one bracket: its type, and the message at the bottom of it.</summary>
