@@ -8379,6 +8379,9 @@ function toast(msg,opts){
 /* ---------- SAGA TERMINAL ---------- */
 const term=$("#term"); let filter="all", termQ="";
 const TERM_CAP=1200;                      // scrollback (lines kept in the DOM)
+/* Lines held per realm ("" is the lines of no realm, dividers among them), kept beside the DOM
+   so the cap does not count twelve hundred nodes on every line. null means count again. */
+let termRealmCount=null, termRealmTotal=0;
 let termPin=true, termUnseen=0;           // pinned-to-bottom = live tail; scrolled up = paused
 
 /* A line written for a realm (dataset.p, lowercased) shows only while that realm is on
@@ -8471,10 +8474,47 @@ Object.assign(ES_ACTIONS,{clearSagaNarrowing});
 function termAppend(d){
   const es=term.querySelector(".empty-state");
   if(es) term.insertBefore(d,es); else term.appendChild(d);
-  while(term.children.length>TERM_CAP) term.firstChild.remove();
+  termCount(d,1);
+  termEvict();
   renderTermEmpty();
   if(termPin) term.scrollTop=term.scrollHeight;
   else if(d.style.display!=="none"&&d.dataset.k!=="div"){termUnseen++;renderTermStream();}
+}
+function termLineRealm(el){
+  return el&&el.dataset&&el.dataset.k?(el.dataset.p||""):null;
+}
+function termCount(el,by){
+  const k=termLineRealm(el);
+  if(k===null||!termRealmCount) return;
+  termRealmCount.set(k,(termRealmCount.get(k)||0)+by);
+  termRealmTotal+=by;
+}
+/* The scrollback cap, shared out by realm. Every realm's lines are kept now, hidden or not, and
+   the old rule dropped the oldest line whoever it was: a background realm booting a modded
+   server prints thousands of lines and pushed the history of the realm on screen out of the
+   console the host was reading. The line that goes now is the oldest one of whichever realm
+   holds the most, a hidden realm before the one on screen on a tie, so a loud realm pays for
+   its own noise and a quiet one keeps what it said. */
+function termEvict(){
+  const kids=term.children;
+  const es=term.querySelector(".empty-state");
+  const held=kids.length-(es?1:0);
+  if(!termRealmCount||termRealmTotal!==held){
+    termRealmCount=new Map(); termRealmTotal=0;
+    for(let i=0;i<kids.length;i++) termCount(kids[i],1);
+  }
+  const on=String(S.profileName||"").trim().toLowerCase();
+  while(termRealmTotal>TERM_CAP){
+    let worst=null, most=-1;
+    termRealmCount.forEach((n,k)=>{
+      if(n>most||(n===most&&worst===on&&k!==on)){worst=k;most=n;}
+    });
+    let gone=null;
+    for(let i=0;i<kids.length;i++){ if(termLineRealm(kids[i])===worst){gone=kids[i];break;} }
+    if(!gone) break;
+    termCount(gone,-1);
+    gone.remove();
+  }
 }
 /* profile: the realm the line belongs to. Left out it is the realm on screen; null means
    none. The realm is stored on the element and never written into the text: the Saga stays
@@ -8485,6 +8525,7 @@ function logLine(kind,text,time,profile){
   d.dataset.s=(text||"").toLowerCase();
   const p=sagaLineRealm(profile);
   if(p) d.dataset.p=p;
+  if(time) d.dataset.t=time;  // the line's own clock, so the replay can tell two sessions apart
   const t=time||clock()+":"+String(new Date().getSeconds()).padStart(2,"0");
   d.innerHTML=`<span class="t">${esc(t)}</span>  <span class="${kind}">${esc(text)}</span>`;
   d.style.display=lnVisible(d)?"":"none";
@@ -8492,19 +8533,23 @@ function logLine(kind,text,time,profile){
   hlogPush(kind,text,t,p);   // Hearth hall keeps a mirror of the last few lines
 }
 /* Replays host rows ({line, profile} or a bare string) that the console does not already
-   hold. Counted, not just looked up, so a line that really did come twice still shows twice. */
+   hold. Counted, not just looked up, so a line that really did come twice still shows twice.
+   The key is the realm, the line's own time and its text: an earlier session of the same realm
+   that said the same sentence is not this session's line. A replayed row goes at the end, after
+   the divider, since the console cannot know where it would have sat. */
 function sagaReplayUnseen(rows){
   const have=new Map();
   $$("#term .ln").forEach(l=>{
     if(l.dataset.k==="div") return;
-    const key=(l.dataset.p||"")+"\n"+(l.dataset.s||"");
+    const key=(l.dataset.p||"")+"\n"+(l.dataset.t||"")+"\n"+(l.dataset.s||"");
     have.set(key,(have.get(key)||0)+1);
   });
   (rows||[]).forEach(r=>{
     const row=typeof r==="string"?{line:r}:r;
     if(!row||row.line==null) return;
     const profile=row.profile==null?undefined:row.profile;
-    const key=sagaLineRealm(profile)+"\n"+String(classifyLog(row.line).text||"").toLowerCase();
+    const c=classifyLog(row.line);
+    const key=sagaLineRealm(profile)+"\n"+(c.time||"")+"\n"+String(c.text||"").toLowerCase();
     const n=have.get(key)||0;
     if(n>0){have.set(key,n-1);return;}
     logRaw(row.line,profile);
@@ -8515,6 +8560,7 @@ function sagaRenameRealm(from,to){
   const a=String(from||"").trim().toLowerCase(), b=String(to||"").trim().toLowerCase();
   if(!a||!b||a===b) return;
   $$("#term .ln").forEach(l=>{if(l.dataset.p===a) l.dataset.p=b;});
+  termRealmCount=null;   // the counts are keyed by the old name
   hlogBuf.forEach(l=>{if(l.p===a) l.p=b;});
   applyTermVis();
   renderHearthLog();

@@ -122,15 +122,21 @@ namespace ValheimBakaLoader.Tools
                 var sinceLast = DateTime.UtcNow - LastEditUtc;
                 var wait = sinceLast >= EditCooldown ? CoalesceDelay : EditCooldown - sinceLast;
 
-                DebounceTimer = new Timer(_ =>
+                // A timer carries the caller's execution context, and with it the realm scope of
+                // whichever command asked for this update. The herald is the whole host's, so its
+                // lines must not land in that one realm's Saga: the timer starts with none.
+                using (ExecutionContext.SuppressFlow())
                 {
-                    lock (TimerLock)
+                    DebounceTimer = new Timer(_ =>
                     {
-                        DebounceTimer?.Dispose();
-                        DebounceTimer = null;
-                    }
-                    _ = PublishNowAsync();
-                }, null, wait, Timeout.InfiniteTimeSpan);
+                        lock (TimerLock)
+                        {
+                            DebounceTimer?.Dispose();
+                            DebounceTimer = null;
+                        }
+                        _ = PublishNowAsync();
+                    }, null, wait, Timeout.InfiniteTimeSpan);
+                }
             }
         }
 

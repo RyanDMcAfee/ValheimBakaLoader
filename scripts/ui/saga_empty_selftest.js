@@ -19,6 +19,11 @@
  * belongs to no realm shows on every realm. Rules 6 to 12 drive the real logLine, logRaw,
  * lnVisible, applyTermVis, the replay and the Hearth card over two realms interleaved.
  *
+ * Keeping every realm's lines meant the scrollback cap, which dropped the oldest line whoever
+ * it was, let a background realm booting a modded server push the on-screen realm's history out
+ * of the console. The last rules hold the cap realm by realm, and the replay's dedupe by the
+ * line's own time, so an earlier session's identical sentence does not hide this one's.
+ *
  *     node scripts/ui/saga_empty_selftest.js [app.js]
  */
 
@@ -109,8 +114,10 @@ function harness() {
   context.$$ = selector => term.querySelectorAll(selector);
   vm.createContext(context);
   context.S = { profileName: null };
+  vm.runInContext("var termRealmCount=null, termRealmTotal=0;", context);
   for (const opening of ["function sagaRealmShown(p){", "function lnVisible(el){", "function applyTermVis(){",
-    "function renderTermEmpty(){", "function termAppend(d){"]) {
+    "function renderTermEmpty(){", "function termAppend(d){", "function termLineRealm(el){",
+    "function termCount(el,by){", "function termEvict(){"]) {
     vm.runInContext(fn(opening), context, { filename: "app.js#" + opening });
   }
   context.line = kind => {
@@ -394,6 +401,49 @@ test("a renamed realm keeps its lines", () => {
     ["alpha starting", "a language pack is out of date", "alpha sweep failed"],
     "a rename left the realm's lines under the old name, hidden for good");
   assert.ok(h.card.innerHTML.indexOf("alpha sweep failed") >= 0, "a rename lost the card's lines");
+});
+
+test("a loud background realm cannot push the realm on screen out of the scrollback", () => {
+  const h = realmHarness();
+  h.on("Alpha");
+  for (let i = 0; i < 50; i++) h.run('logRaw("[12:00:00.000] alpha line ' + i + '", "Alpha")');
+  for (let i = 0; i < 1300; i++) h.run('logRaw("[12:01:00.000] beta boot line ' + i + '", "Beta")');
+  const held = h.term.children.filter(c => c.dataset && c.dataset.k);
+  assert.ok(held.length <= h.TERM_CAP, "the console holds " + held.length + " lines, over the cap");
+  const alpha = h.shown().filter(s => s.indexOf("alpha line ") === 0);
+  assert.strictEqual(alpha.length, 50,
+    "Beta's boot pushed " + (50 - alpha.length) + " of Alpha's lines out of the console Alpha's host is reading");
+  const beta = held.filter(c => c.dataset.p === "beta");
+  assert.ok(beta.length > 0 && beta[beta.length - 1].dataset.s === "beta boot line 1299",
+    "the background realm lost its newest lines instead of its oldest");
+});
+
+test("the realm on screen, when it is the loud one, pays for its own noise", () => {
+  const h = realmHarness();
+  h.on("Alpha");
+  for (let i = 0; i < 50; i++) h.run('logRaw("[12:00:00.000] beta line ' + i + '", "Beta")');
+  h.run('logRaw("[12:00:00.000] a language pack is out of date", null)');
+  for (let i = 0; i < 1300; i++) h.run('logRaw("[12:01:00.000] alpha boot line ' + i + '", "Alpha")');
+  const held = h.term.children.filter(c => c.dataset && c.dataset.k);
+  assert.ok(held.length <= h.TERM_CAP, "the console holds " + held.length + " lines, over the cap");
+  assert.strictEqual(held.filter(c => c.dataset.p === "beta").length, 50, "Alpha's noise evicted Beta's quiet history");
+  assert.ok(h.shown().indexOf("a language pack is out of date") >= 0, "Alpha's noise evicted the line of no realm");
+  h.on("Beta");
+  h.run("applyTermVis()");
+  assert.strictEqual(h.shown().filter(s => s.indexOf("beta line ") === 0).length, 50);
+});
+
+test("an earlier session's identical line does not hide this session's from the replay", () => {
+  const h = realmHarness();
+  h.on("Beta");
+  h.run('logRaw("[11:00:00.000] Game server connected", "Beta")');
+  h.pendingRows = [
+    { line: "[11:00:00.000] Game server connected", profile: "Beta" },
+    { line: "[12:00:00.000] Game server connected", profile: "Beta" },
+  ];
+  h.run("sagaReplayUnseen(pendingRows)");
+  assert.strictEqual(h.shown().filter(l => l === "game server connected").length, 2,
+    "the replay took this session's line for the earlier session's and dropped it, or printed the held one twice");
 });
 
 test("the realm switch reapplies visibility and replays only through the dedupe", () => {

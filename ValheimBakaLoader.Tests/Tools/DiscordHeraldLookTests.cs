@@ -347,6 +347,27 @@ namespace ValheimBakaLoader.Tests.Tools
             return (service, wire, store);
         }
 
+        /// <summary>
+        /// The herald is the whole host's, not a realm's. Its debounce timer used to carry the
+        /// realm scope of whichever command asked for the update, so the post's own lines (a post
+        /// made again, a webhook that failed) landed in that one realm's Saga and were hidden on
+        /// every other realm.
+        /// </summary>
+        [Fact]
+        public async Task A_scheduled_update_belongs_to_no_realm_whoever_asked_for_it()
+        {
+            var (service, wire, _) = Herald(Prefs(true, true, true, true, true));
+            wire.Answer = _ => Created("111");
+            var seen = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            service.SnapshotProvider = () => { seen.TrySetResult(AppLog.CurrentRealm ?? "<none>"); return Snapshot(); };
+
+            using (AppLog.ForRealm("Alpha")) service.RequestUpdate();
+
+            var done = await Task.WhenAny(seen.Task, Task.Delay(TimeSpan.FromSeconds(20)));
+            Assert.Same(seen.Task, done);
+            Assert.Equal("<none>", await seen.Task);
+        }
+
         [Fact]
         public async Task A_new_post_is_signed_and_its_signature_is_kept_beside_its_id()
         {

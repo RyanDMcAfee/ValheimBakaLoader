@@ -1417,23 +1417,6 @@ namespace ValheimBakaLoader.Forms
             CommandCounts.Count(method, CountedProfileName(parameters) ?? ActiveProfileName, line);
         }
 
-        /// <summary>
-        /// The realm a command was issued AGAINST, when the call says which, or null when it
-        /// did not and the window's own realm is the answer.
-        /// <para>
-        /// Several calls carry their own realm: a config write names the realm the buffer was
-        /// read from, a start and a save carry the whole profile document, and an update cancel
-        /// names the one it is cancelling. Every one of those can be issued while the window is
-        /// showing a DIFFERENT realm, and counting them all against the active one booked a
-        /// press on realm B to realm A. Nothing about the count is wrong, only which of the
-        /// two one-way keys it landed under, and nothing in the payload can show that.
-        /// </para>
-        /// <para>
-        /// Only the two shapes that really mean a profile are read. A <c>name</c> is not one of
-        /// them: on servers.adoptWorld it is a world, and on the second mod site's install call
-        /// it is a mod. A key built over a world name would be a second key for one realm.
-        /// </para>
-        /// </summary>
         /// <summary>One replayed log line and the realm it belongs to, or null for none.</summary>
         internal sealed class LogRow
         {
@@ -1496,6 +1479,23 @@ namespace ValheimBakaLoader.Forms
             catch { return null; }
         }
 
+        /// <summary>
+        /// The realm a command was issued AGAINST, when the call says which, or null when it
+        /// did not and the window's own realm is the answer.
+        /// <para>
+        /// Several calls carry their own realm: a config write names the realm the buffer was
+        /// read from, a start and a save carry the whole profile document, and an update cancel
+        /// names the one it is cancelling. Every one of those can be issued while the window is
+        /// showing a DIFFERENT realm, and counting them all against the active one booked a
+        /// press on realm B to realm A. Nothing about the count is wrong, only which of the
+        /// two one-way keys it landed under, and nothing in the payload can show that.
+        /// </para>
+        /// <para>
+        /// Only the two shapes that really mean a profile are read. A <c>name</c> is not one of
+        /// them: on servers.adoptWorld it is a world, and on the second mod site's install call
+        /// it is a mod. A key built over a world name would be a second key for one realm.
+        /// </para>
+        /// </summary>
         private static string CountedProfileName(JObject parameters)
         {
             if (parameters == null) return null;
@@ -4759,6 +4759,11 @@ namespace ValheimBakaLoader.Forms
                     throw new HostFacingException("servers.create.nameTaken",
                         $"A server named '{name}' already exists. Pick a different name.", ("name", name));
 
+                // The call names its realm in "name", which the dispatch does not read (on
+                // adoptWorld a name can be a world), so the new realm's own lines are scoped
+                // here: "Created isolated server" belongs in the Saga of the realm it made.
+                using var realmScope = AppLog.ForRealm(name);
+
                 // Make a test copy names the realm it is a copy of. That realm has to be there
                 // now: its BepInEx is what the copy's install is seeded from, and its settings are
                 // what the copy starts from.
@@ -5121,6 +5126,10 @@ namespace ValheimBakaLoader.Forms
                         .Any(x => string.Equals(x.ProfileName, name, StringComparison.OrdinalIgnoreCase)))
                     throw new HostFacingException("servers.adoptWorld.nameTaken",
                         $"A server named '{name}' already exists. Pick a different name.", ("name", name));
+
+                // The realm being made is named here and nowhere the dispatch reads, so its
+                // copy lines are scoped to it by hand.
+                using var realmScope = AppLog.ForRealm(name);
 
                 var seedMods = p.Value<bool?>("seedMods") ?? true;
                 var (suggestedGame, suggestedRcon) = SuggestFreePorts();
