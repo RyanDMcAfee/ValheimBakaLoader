@@ -9530,6 +9530,7 @@ async function refreshHerald(){
   if(!Native.available) return; /* preview keeps whatever the user clicked */
   const up=await rpc("userprefs.get");
   if(up!==FAIL&&up) heraldApply(up);
+  try{heraldPreviewRefresh();}catch(_){} /* the server may have moved since the hall was last open */
 }
 function heraldSave(extra){
   /* The line under the mod profile code says whether the post carries it, and the sharing
@@ -9548,6 +9549,8 @@ function heraldSave(extra){
   },heraldLookValues(),extra||{})})).then(r=>{
     /* Kept by name once it is saved, so a switch away and back shows it without a read. */
     if(r!==FAIL) heraldRealmRemember(realm);
+    /* Every edit in the hall lands here, so the preview is drawn again from what was saved. */
+    if(r!==FAIL) try{heraldPreviewRefresh();}catch(_){}
     return r;
   });
 }
@@ -9865,6 +9868,7 @@ function heraldRenderRealm(){
   heraldRenderPost();
   try{heraldRenderLookLine();}catch(_){}
   try{heraldRenderModCodeLine();}catch(_){}
+  try{if(moved) heraldPreviewRefresh();}catch(_){} /* the post of the realm now on screen */
   if(moved&&HERALD_REALM!==null&&Native.available) heraldReadAgain();
 }
 /* One read of the host side at a time; the hall repaints when it lands, for the realm on
@@ -9894,6 +9898,7 @@ async function heraldPublish(){
   if(r===FAIL) return false;
   if(r.ok){
     heraldRealmPost(realm,true);
+    try{heraldPreviewRefresh();}catch(_){} /* a first post in a forum can add the news line */
     toast("ᚺ "+T("herald.publish.done.toast"));
     logLine("ok","[Herald] Discord status post published",null,null);
     return true;
@@ -9909,7 +9914,9 @@ async function heraldRemove(){
   if(r===FAIL) return false;
   if(r.ok){
     heraldRealmPost(realm,false);
-    toast("ᚺ "+T("herald.remove.done.toast"));
+    /* Discord keeps a forum post when its first message goes, and the host should know it is
+       still there with the news in it. */
+    toast("ᚺ "+(r.forum?T("herald.remove.done.forum.toast"):T("herald.remove.done.toast")));
     logLine("warn","[Herald] Discord status post removed",null,null);
     return true;
   }
@@ -9978,6 +9985,76 @@ function heraldWireEvents(){
 }
 /* HERALD-EVENTS-END */
 heraldWireEvents();
+/* HERALD-PREVIEW-BEGIN
+   The realm's post as Discord shows it (1.2.16, issue 24). discord.preview hands back the JSON
+   a publish of this realm would send now, from the same code, and a sample of each kind of
+   event post; this block draws them as Discord would: the name and an avatar, the colour bar,
+   the title, the fields and the footer. It asks again after every save in the hall and on a
+   realm switch, and a reply that lands for a realm no longer on screen is dropped. Everything
+   the host or Discord wrote is escaped before the few bits of Discord's markdown the posts use
+   are put back. No picture is fetched: the avatar is the first letter of the name. */
+let HERALD_PREVIEW_ASK=0;
+function heraldPreviewText(s){
+  let h=esc(s);
+  h=h.replace(/`([^`]+)`/g,"<code>$1</code>");
+  h=h.replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
+  h=h.replace(/&lt;t:(\d{1,12})(?::[a-zA-Z])?&gt;/g,(m,u)=>esc(new Date(Number(u)*1000).toLocaleString(LOC())));
+  h=h.replace(/&lt;#(\d{5,25})&gt;/g,'<span class="dc-mention">#$1</span>');
+  h=h.replace(/&lt;@&amp;(\d{5,25})&gt;/g,'<span class="dc-mention">@$1</span>');
+  return h.replace(/\n/g,"<br>");
+}
+function heraldPreviewCard(p){
+  p=p||{};
+  const e=(Array.isArray(p.embeds)&&p.embeds[0])||{};
+  const name=p.username||T("herald.preview.name.default");
+  const color=typeof e.color==="number"?"#"+(e.color>>>0).toString(16).padStart(6,"0").slice(-6):"#95a5a6";
+  let h='<div class="dc-msg"><div class="dc-ava">'+esc(String(name).trim().charAt(0).toUpperCase()||"?")+'</div><div class="dc-body">';
+  h+='<div class="dc-head"><span class="dc-name">'+esc(name)+'</span><span class="dc-tag">'+esc(T("herald.preview.tag"))+'</span></div>';
+  if(p.content) h+='<div class="dc-content">'+heraldPreviewText(p.content)+'</div>';
+  h+='<div class="dc-embed" style="border-left-color:'+color+'">';
+  if(e.author&&e.author.name) h+='<div class="dc-author">'+esc(e.author.name)+'</div>';
+  if(e.title) h+='<div class="dc-title">'+heraldPreviewText(e.title)+'</div>';
+  if(e.description) h+='<div class="dc-desc">'+heraldPreviewText(e.description)+'</div>';
+  if(Array.isArray(e.fields)&&e.fields.length){
+    h+='<div class="dc-fields">';
+    e.fields.forEach(f=>{
+      h+='<div class="dc-field'+(f&&f.inline?'':' full')+'"><div class="dc-fname">'+heraldPreviewText(f&&f.name)+
+         '</div><div class="dc-fval">'+heraldPreviewText(f&&f.value)+'</div></div>';
+    });
+    h+='</div>';
+  }
+  if(e.footer&&e.footer.text) h+='<div class="dc-foot">'+esc(e.footer.text)+'</div>';
+  return h+'</div></div></div>';
+}
+const HERALD_PREVIEW_KINDS={Routine:"herald.events.routine",Crash:"herald.events.crash",Players:"herald.events.players"};
+function heraldPreviewPaint(r){
+  const post=$("#heraldPreviewPost"), events=$("#heraldPreviewEvents");
+  if(!post||!events) return;
+  if(!r||!r.ok){post.innerHTML="";events.innerHTML="";return;}
+  post.innerHTML=heraldPreviewCard(r.payload);
+  events.innerHTML=(Array.isArray(r.events)?r.events:[]).map(ev=>{
+    const label=HERALD_PREVIEW_KINDS[ev.kind]?T(HERALD_PREVIEW_KINDS[ev.kind]):String(ev.kind||"");
+    const where=!ev.on?T("herald.preview.off"):ev.thread?T("herald.preview.into_thread",{thread:String(ev.thread)}):T("herald.preview.into_channel");
+    return '<div class="dc-kind">'+esc(label)+esc(T("herald.look.part.join"))+esc(where)+'</div>'+heraldPreviewCard(ev.payload);
+  }).join("");
+}
+/* Ask for the realm on screen; only the newest ask, and only while its realm is still there,
+   gets to paint. */
+function heraldPreviewRefresh(){
+  if(!Native.available){
+    heraldPreviewPaint(null);
+    return Promise.resolve(false);
+  }
+  const realm=HERALD_REALM||heraldRealmOnScreen();
+  const ask=++HERALD_PREVIEW_ASK;
+  return Promise.resolve(rpc("discord.preview",{profile:realm})).then(r=>{
+    if(ask!==HERALD_PREVIEW_ASK) return false;
+    if(heraldRealmKey(HERALD_REALM||heraldRealmOnScreen())!==heraldRealmKey(realm)) return false;
+    heraldPreviewPaint(r!==FAIL?r:null);
+    return true;
+  }).catch(()=>false);
+}
+/* HERALD-PREVIEW-END */
 $("#heraldModCode").addEventListener("change",()=>{heraldModCodeCommit();});
 $("#heraldModCode").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();e.target.blur();}});
 ["heraldModKindTs","heraldModKindGale"].forEach(id=>

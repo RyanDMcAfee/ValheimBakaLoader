@@ -275,13 +275,42 @@ namespace ValheimBakaLoader.Tools
                 webhookUrl = $"{webhookUrl}{separator}thread_id={Uri.EscapeDataString(threadId.Trim())}";
             }
 
-            // A role id that is not one is left out rather than sent: the hall refuses it on
-            // save, so this only meets a file edited by hand.
-            string roleId = null;
-            if (kind == HeraldEventClass.Crash && HeraldRealms.TryReadRoleId(server.HeraldCrashRoleId, out var read))
-                roleId = read;
+            return (webhookUrl, BuildEventPayload(title, description, color, prefs, RoleFor(server, kind)));
+        }
 
-            return (webhookUrl, BuildEventPayload(title, description, color, prefs, roleId));
+        /// <summary>
+        /// The role a post of this kind pings: only a crash, and only a role id that is one. One
+        /// that is not is left out rather than sent: the hall refuses it on save, so this only
+        /// meets a file edited by hand.
+        /// </summary>
+        internal static string RoleFor(ServerPreferences server, HeraldEventClass kind)
+            => kind == HeraldEventClass.Crash && HeraldRealms.TryReadRoleId(server?.HeraldCrashRoleId, out var read)
+                ? read
+                : null;
+
+        /// <summary>
+        /// A sample of one kind of event post from this realm, for the hall's preview: a start
+        /// for the routine news, a crash with its ping, and a viking joining, each built by the
+        /// same BuildEventPayload a real post is.
+        /// </summary>
+        internal static string SamplePayload(UserPreferences prefs, ServerPreferences server, HeraldEventClass kind)
+        {
+            var serverName = ServerPreferences.BlankAsNull(server?.Name) ?? server?.ProfileName ?? "";
+            return kind switch
+            {
+                HeraldEventClass.Crash => BuildEventPayload(
+                    HostCatalog.T("host.discord.crashed.title"),
+                    HostCatalog.T("host.discord.crashed.body", ("server", serverName)),
+                    0xED4245, prefs, RoleFor(server, kind)),
+                HeraldEventClass.Players => BuildEventPayload(
+                    HostCatalog.T("host.discord.joined.title"),
+                    HostCatalog.T("host.discord.joined.body", ("player", HostCatalog.T("host.discord.sample.player")), ("server", serverName)),
+                    0x3498DB, prefs),
+                _ => BuildEventPayload(
+                    HostCatalog.T("host.discord.started.title"),
+                    HostCatalog.T("host.discord.started.body", ("server", serverName)),
+                    0x57F287, prefs),
+            };
         }
 
         private void SendEmbed(string realm, HeraldEventClass kind, string title, string description, int color)
@@ -305,7 +334,13 @@ namespace ValheimBakaLoader.Tools
 
                     if (!response.IsSuccessStatusCode)
                     {
-                        Logger.Warning("Discord webhook failed: {statusCode}", response.StatusCode);
+                        // A forum channel refuses a post that names no thread. The routine news
+                        // finds the realm's forum post by itself; a kind with its own forum
+                        // webhook, or a crash or player post, needs a thread ID in its box.
+                        if (await DiscordStatusService.IsForumRefusalAsync(response))
+                            Logger.Warning("Discord refused the {kind} post of {realm}: its webhook is a forum channel and no thread was named. Put a thread ID in that kind's box in the Discord hall.", kind, realm);
+                        else
+                            Logger.Warning("Discord webhook failed: {statusCode}", response.StatusCode);
                     }
                 }
                 catch (Exception e)

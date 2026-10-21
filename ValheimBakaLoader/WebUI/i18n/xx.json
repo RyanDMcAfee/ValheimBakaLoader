@@ -3666,6 +3666,37 @@
     "herald.post.label": {
       "translation": "[Ẋ The post Ẋ] ẊẊẊ"
     },
+    "herald.preview.label": {
+      "translation": "[Ẋ Preview Ẋ] ẊẊẊ"
+    },
+    "herald.preview.note": {
+      "translation": "[Ẋ How this realm's post looks in Discord right now, drawn from the same post Publish sends. Nothing here is sent. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.preview.events": {
+      "translation": "[Ẋ Event posts, one sample of each kind Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.preview.tag": {
+      "translation": "[Ẋ APP Ẋ] Ẋ"
+    },
+    "herald.preview.name.default": {
+      "translation": "[Ẋ your webhook's name Ẋ] ẊẊẊẊẊẊ"
+    },
+    "herald.preview.off": {
+      "translation": "[Ẋ off · not sent Ẋ] ẊẊẊẊẊ"
+    },
+    "herald.preview.into_thread": {
+      "translation": "[Ẋ sent into thread {thread} Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "thread": "text"
+      }
+    },
+    "herald.preview.into_channel": {
+      "translation": "[Ẋ sent into the channel Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "herald.remove.done.forum.toast": {
+      "translation": "[Ẋ Status post removed · its forum post stays in Discord with the news in it, so delete that by hand if you want it gone Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚺ"
+    },
     "herald.publish.label": {
       "translation": "[Ẋ ᛒ  Publish now Ẋ] ẊẊẊẊẊ"
     },
@@ -8025,6 +8056,9 @@
         "library": "text"
       }
     },
+    "host.discord.sample.player": {
+      "translation": "[Ẋ Ragnar Ẋ] ẊẊ"
+    },
     "host.discord.started.title": {
       "translation": "[Ẋ Server Started Ẋ] ẊẊẊẊẊ"
     },
@@ -8207,6 +8241,9 @@
     },
     "host.status.field.mod_code.gale": {
       "translation": "[Ẋ Gale code Ẋ] ẊẊẊ"
+    },
+    "host.status.field.events": {
+      "translation": "[Ẋ Server news Ẋ] ẊẊẊẊ"
     },
     "host.status.state.online": {
       "translation": "[Ẋ Online Ẋ] ẊẊ"

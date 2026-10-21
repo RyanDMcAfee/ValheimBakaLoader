@@ -90,6 +90,12 @@ namespace ValheimBakaLoader.Tools
         /// The thread follows the same rule a realm's thread does: the kind's own when it has one,
         /// the realm's while the kind posts through the realm's webhook, and the channel itself
         /// when the kind has a webhook of its own, because a thread lives in one channel.
+        /// <para>
+        /// Routine news with no thread anywhere goes into the forum post the realm's status post
+        /// opened, when it opened one: the forum post is the realm, its first message the live
+        /// status and its replies the history. A forum channel refuses a post with no thread, so
+        /// without this the news would go nowhere.
+        /// </para>
         /// </summary>
         public static (string Url, string Thread) EventRouteFor(UserPreferences app, ServerPreferences realm, HeraldEventClass kind)
         {
@@ -97,8 +103,27 @@ namespace ValheimBakaLoader.Tools
             var ownUrl = ServerPreferences.BlankAsNull(url);
             var ownThread = ServerPreferences.BlankAsNull(thread);
             if (ownUrl != null) return (ownUrl, ownThread);
-            return (WebhookUrlFor(app, realm), ownThread ?? ThreadIdFor(app, realm));
+            var realmThread = ownThread ?? ThreadIdFor(app, realm);
+            if (realmThread == null && kind == HeraldEventClass.Routine)
+                realmThread = ServerPreferences.BlankAsNull(realm?.HeraldStatusThreadId);
+            return (WebhookUrlFor(app, realm), realmThread);
         }
+
+        /// <summary>
+        /// The name of the forum post a realm's status post opens: the realm's display name, and
+        /// its profile name when it has none, cut to the hundred characters Discord takes.
+        /// </summary>
+        public static string ForumPostNameFor(ServerPreferences realm)
+        {
+            var name = ServerPreferences.BlankAsNull(realm?.Name)?.Trim()
+                ?? ServerPreferences.BlankAsNull(realm?.ProfileName)?.Trim()
+                ?? "Valheim";
+            return name.Length > 100 ? name.Substring(0, 100) : name;
+        }
+
+        /// <summary>A Discord id: digits only, as long as Discord makes them.</summary>
+        public static bool IsSnowflake(string id)
+            => id != null && id.Length >= 5 && id.Length <= 25 && id.All(c => c >= '0' && c <= '9');
 
         /// <summary>
         /// Whether a realm sends one kind of event post: the master on, the realm on, the kind on,

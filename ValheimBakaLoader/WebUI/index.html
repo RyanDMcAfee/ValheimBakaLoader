@@ -1022,6 +1022,15 @@
                 <button class="btn btn-ember btn-sm" id="heraldPublish" title="Create this realm's status post now, or refresh it immediately if it already exists" data-i18n="herald.publish.label" data-i18n-title="herald.publish.title">ᛒ&nbsp; Publish now</button>
                 <button class="btn btn-ghost btn-sm" id="heraldRemove" title="Delete this realm's status post from Discord. Settings stay, so you can publish again any time." data-i18n="herald.remove.label" data-i18n-title="herald.remove.title">ᛪ&nbsp; Remove post</button>
               </div>
+              <!-- The post as Discord shows it, drawn by HERALD-PREVIEW from discord.preview,
+                   which takes it from the same code a publish sends. -->
+              <div class="dc-preview" id="heraldPreview">
+                <div class="microlabel" data-i18n="herald.preview.label">Preview</div>
+                <div class="subval" id="heraldPreviewNote" data-i18n="herald.preview.note">How this realm's post looks in Discord right now, drawn from the same post Publish sends. Nothing here is sent.</div>
+                <div class="dc-chan" id="heraldPreviewPost"></div>
+                <div class="microlabel" data-i18n="herald.preview.events">Event posts, one sample of each kind</div>
+                <div class="dc-chan" id="heraldPreviewEvents"></div>
+              </div>
             </div>
           </div>
         </section>

@@ -672,6 +672,30 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .herald-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;align-items:start}
 .b-herald{grid-row:span 2}
 .herald-grid .togglerow{margin-top:4px}
+/* The preview card: Discord's own dark look, whatever the app's theme, because that is what
+   the players see. Plain CSS and no picture fetched: the avatar is the name's first letter. */
+.dc-preview{margin-top:14px}
+.dc-chan{background:#313338;border-radius:6px;padding:10px 12px;margin:6px 0 12px;color:#dbdee1;font-size:13px;line-height:1.35}
+.dc-chan:empty{display:none}
+.dc-kind{font-size:11px;color:#949ba4;margin:10px 0 4px;letter-spacing:.3px}
+.dc-kind:first-child{margin-top:0}
+.dc-msg{display:flex;gap:10px;align-items:flex-start}
+.dc-ava{flex:0 0 34px;height:34px;border-radius:50%;background:#5865f2;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+.dc-body{min-width:0;flex:1}
+.dc-name{color:#f2f3f5;font-weight:600;margin-right:6px}
+.dc-tag{background:#5865f2;color:#fff;font-size:9px;font-weight:700;border-radius:3px;padding:1px 4px;vertical-align:1px}
+.dc-content{margin:2px 0}
+.dc-embed{background:#2b2d31;border-left:4px solid #95a5a6;border-radius:4px;padding:8px 12px 10px;margin-top:4px;max-width:520px}
+.dc-author{font-size:12px;font-weight:600;color:#f2f3f5;margin-bottom:4px}
+.dc-title{color:#f2f3f5;font-weight:700;margin-bottom:4px}
+.dc-desc{margin-bottom:6px}
+.dc-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 10px}
+.dc-field.full{grid-column:1/-1}
+.dc-fname{font-weight:600;color:#f2f3f5;font-size:12px}
+.dc-fval{overflow-wrap:anywhere}
+.dc-foot{font-size:11px;color:#949ba4;margin-top:8px}
+.dc-chan code{background:#1e1f22;border-radius:3px;padding:0 3px;font-size:12px}
+.dc-mention{background:rgba(88,101,242,.3);color:#c9cdfb;border-radius:3px;padding:0 2px}
 
 /* ============ SKALD (local analytics) ============
    The five stat cards keep a readable floor and wrap 3+2 rather than squeezing

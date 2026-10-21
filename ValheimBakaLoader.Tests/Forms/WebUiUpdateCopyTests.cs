@@ -370,7 +370,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // own rune.
             // 257 with 1.2.16's one for the Herald per realm: the wizard refusing to set up a realm
             // that is no longer the one on screen.
-            Assert.Equal(257, marked.Count);
+            // 258 with 1.2.16's one for a forum channel: the remove toast saying the forum post
+            // stays in Discord with the news in it.
+            Assert.Equal(258, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

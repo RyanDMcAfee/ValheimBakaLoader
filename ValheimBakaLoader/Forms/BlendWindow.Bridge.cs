@@ -5737,7 +5737,32 @@ namespace ValheimBakaLoader.Forms
                 EnsureHeraldPerRealm();
                 var realm = HeraldRealmOf(p, publishing: false);
                 var result = await DiscordStatus.RemoveStatusMessageAsync(realm);
-                return new { ok = result.Ok, error = result.Error };
+                return new { ok = result.Ok, error = result.Error, forum = result.InForum };
+            });
+
+            // The realm's post as a publish would send it now, through the same code, sent
+            // nowhere, and a sample of each kind of event post: the hall draws them as Discord
+            // would. A realm that is gone has nothing to show, which is not worth a toast.
+            RegisterRpc("discord.preview", p =>
+            {
+                EnsureHeraldPerRealm();
+                var realm = p?.Value<string>("profile")?.Trim();
+                if (string.IsNullOrWhiteSpace(realm)) realm = ActiveProfileName;
+                var result = DiscordStatus.Preview(realm);
+                if (!result.Ok)
+                    return Task.FromResult<object>(new { ok = false, error = result.Error });
+                return Task.FromResult<object>(new
+                {
+                    ok = true,
+                    payload = JObject.Parse(result.Payload),
+                    events = result.Events.Select(e => new
+                    {
+                        kind = e.Kind,
+                        on = e.On,
+                        thread = e.Thread,
+                        payload = JObject.Parse(e.Payload),
+                    }).ToList(),
+                });
             });
 
             // --- Custom join domain (the Waystone) ---

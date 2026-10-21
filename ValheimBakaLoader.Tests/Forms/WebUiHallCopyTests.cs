@@ -878,6 +878,9 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.publish.title",
                 "herald.remove.label",
                 "herald.remove.title",
+                "herald.preview.label",
+                "herald.preview.note",
+                "herald.preview.events",
             });
         }
 

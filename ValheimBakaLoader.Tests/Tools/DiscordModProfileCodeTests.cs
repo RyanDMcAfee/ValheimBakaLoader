@@ -231,6 +231,7 @@ namespace ValheimBakaLoader.Tests.Tools
             public Task<DiscordStatusResult> PublishNowAsync(string realm) => throw new NotSupportedException();
             public Task<DiscordStatusResult> ValidateWebhookAsync(string url) => throw new NotSupportedException();
             public Task<DiscordStatusResult> RemoveStatusMessageAsync(string realm) => throw new NotSupportedException();
+            public DiscordPreviewResult Preview(string realm) => throw new NotSupportedException();
         }
 
         private static ServerPreferences Realm(string name, string kind = null, string code = null) => new()

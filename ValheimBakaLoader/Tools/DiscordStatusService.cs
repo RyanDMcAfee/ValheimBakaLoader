@@ -49,6 +49,35 @@ namespace ValheimBakaLoader.Tools
         public string Error { get; set; }
         /// <summary>Extra success info - e.g. the webhook's name on validate.</summary>
         public string Detail { get; set; }
+        /// <summary>
+        /// The post a remove took down was the first message of a forum post the Herald opened,
+        /// and Discord keeps that forum post (with the event history in it) when its first
+        /// message goes, so the hall says so.
+        /// </summary>
+        public bool InForum { get; set; }
+    }
+
+    /// <summary>
+    /// What a realm would send now, sent nowhere: the status post exactly as a publish would
+    /// make it, and one sample post of each kind of event post, as the hall's preview card
+    /// draws them.
+    /// </summary>
+    public class DiscordPreviewResult
+    {
+        public bool Ok { get; set; }
+        public string Error { get; set; }
+        /// <summary>The status post's JSON, the very string a publish of this realm would create it with.</summary>
+        public string Payload { get; set; }
+        public List<DiscordEventPreview> Events { get; set; } = new();
+    }
+
+    /// <summary>One kind of event post in the preview: whether it is sent, into which thread, and a sample of it.</summary>
+    public class DiscordEventPreview
+    {
+        public string Kind { get; set; }
+        public bool On { get; set; }
+        public string Thread { get; set; }
+        public string Payload { get; set; }
     }
 
     public interface IDiscordStatusService
@@ -75,6 +104,12 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>Deletes the realm's status post from Discord (if one exists) and forgets its id.</summary>
         Task<DiscordStatusResult> RemoveStatusMessageAsync(string realm);
+
+        /// <summary>
+        /// The realm's post as a publish would send it now, through the same code, with nothing
+        /// sent; and a sample of each kind of event post.
+        /// </summary>
+        DiscordPreviewResult Preview(string realm);
     }
 
     /// <summary>
@@ -233,12 +268,15 @@ namespace ValheimBakaLoader.Tools
                     return new DiscordStatusResult { Error = "That does not look like a Discord webhook URL." };
                 webhookUrl = webhookUrl.Trim();
 
-                var snapshot = SnapshotProvider?.Invoke(server.ProfileName);
-                if (snapshot == null)
-                    return new DiscordStatusResult { Error = "No server snapshot is available yet." };
+                var payload = PayloadFor(prefs, server, out var noPayload);
+                if (payload == null)
+                    return new DiscordStatusResult { Error = noPayload };
 
-                var payload = BuildEmbedPayload(snapshot, prefs, server);
-                var threadQs = BuildThreadQuery(HeraldRealms.ThreadIdFor(prefs, server));
+                // A post the Herald opened as a forum post lives in that thread, whatever the
+                // thread box says now, so its edit and its delete name the thread it is in. A new
+                // post goes where the boxes say, and a forum channel answers that with 220001.
+                var configuredThread = HeraldRealms.ThreadIdFor(prefs, server);
+                var threadQs = BuildThreadQuery(ServerPreferences.BlankAsNull(server.HeraldStatusThreadId) ?? configuredThread);
 
                 using var client = HttpClientProvider.CreateClient();
                 client.Timeout = TimeSpan.FromSeconds(15);
@@ -259,7 +297,7 @@ namespace ValheimBakaLoader.Tools
                     if (deleteResponse.IsSuccessStatusCode || deleteResponse.StatusCode == HttpStatusCode.NotFound)
                     {
                         Logger.Information("Discord status post of {realm} signed with an older name or picture; making it again.", realm);
-                        SaveMessageId(realm, null, null);
+                        SaveMessageId(realm, null, null, null);
                         messageId = null;
                     }
                     else
@@ -287,7 +325,7 @@ namespace ValheimBakaLoader.Tools
                     if (editResponse.StatusCode == HttpStatusCode.NotFound)
                     {
                         Logger.Information("Discord status post of {realm} no longer exists; creating a new one.", realm);
-                        SaveMessageId(realm, null, null);
+                        SaveMessageId(realm, null, null, null);
                     }
                     else
                     {
@@ -299,25 +337,60 @@ namespace ValheimBakaLoader.Tools
 
                 // ...otherwise create it. ?wait=true makes Discord return the created
                 // message (including its id) instead of a fire-and-forget 204.
-                var createQs = threadQs.Length > 0 ? threadQs + "&wait=true" : "?wait=true";
-                using var createResponse = await SendAsync(
+                var createThreadQs = BuildThreadQuery(configuredThread);
+                var createQs = createThreadQs.Length > 0 ? createThreadQs + "&wait=true" : "?wait=true";
+                var createResponse = await SendAsync(
                     () => client.PostAsync(webhookUrl + createQs, new StringContent(payload, Encoding.UTF8, "application/json")), realm);
-
-                if (!createResponse.IsSuccessStatusCode)
+                try
                 {
-                    var body = await SafeReadAsync(createResponse);
-                    Logger.Warning("Discord status post of {realm} failed: {status} {body}", realm, createResponse.StatusCode, body);
-                    return new DiscordStatusResult { Error = $"Discord rejected the post ({(int)createResponse.StatusCode})." };
+                    // A webhook of a forum channel cannot post into the channel itself: Discord
+                    // answers 220001 and wants a thread to post in or a name for a new one. So
+                    // the realm becomes one forum post, named after the realm, whose first message
+                    // is this status post and whose replies are the realm's routine news.
+                    var inForum = false;
+                    if (configuredThread == null && await IsForumRefusalAsync(createResponse))
+                    {
+                        createResponse.Dispose();
+                        var named = JObject.Parse(payload);
+                        named["thread_name"] = HeraldRealms.ForumPostNameFor(server);
+                        var namedBody = named.ToString(Formatting.None);
+                        Logger.Information("Discord status post of {realm} goes to a forum channel; opening a forum post for it.", realm);
+                        createResponse = await SendAsync(
+                            () => client.PostAsync(webhookUrl + "?wait=true", new StringContent(namedBody, Encoding.UTF8, "application/json")), realm);
+                        inForum = true;
+                    }
+
+                    if (!createResponse.IsSuccessStatusCode)
+                    {
+                        var body = await SafeReadAsync(createResponse);
+                        Logger.Warning("Discord status post of {realm} failed: {status} {body}", realm, createResponse.StatusCode, body);
+                        return new DiscordStatusResult { Error = $"Discord rejected the post ({(int)createResponse.StatusCode})." };
+                    }
+
+                    var created = JObject.Parse(await createResponse.Content.ReadAsStringAsync());
+                    var newId = created.Value<string>("id");
+                    if (string.IsNullOrWhiteSpace(newId))
+                        return new DiscordStatusResult { Error = "Discord did not return the new post's id." };
+
+                    // The first message of a new forum post is in the thread it opened, so its
+                    // channel_id is that thread. Kept only when it is an id, because it goes back
+                    // out in the query of every edit.
+                    string forumThread = null;
+                    if (inForum)
+                    {
+                        var channel = created.Value<string>("channel_id");
+                        if (HeraldRealms.IsSnowflake(channel)) forumThread = channel;
+                        else Logger.Warning("Discord opened a forum post for {realm} but did not say which; its edits will go to the channel.", realm);
+                    }
+
+                    SaveMessageId(realm, newId, signature, forumThread);
+                    post.LastEditUtc = DateTime.UtcNow;
+                    return new DiscordStatusResult { Ok = true, Detail = "created" };
                 }
-
-                var created = JObject.Parse(await createResponse.Content.ReadAsStringAsync());
-                var newId = created.Value<string>("id");
-                if (string.IsNullOrWhiteSpace(newId))
-                    return new DiscordStatusResult { Error = "Discord did not return the new post's id." };
-
-                SaveMessageId(realm, newId, signature);
-                post.LastEditUtc = DateTime.UtcNow;
-                return new DiscordStatusResult { Ok = true, Detail = "created" };
+                finally
+                {
+                    createResponse.Dispose();
+                }
             }
             catch (Exception e)
             {
@@ -421,6 +494,7 @@ namespace ValheimBakaLoader.Tools
                 var server = HeraldRealms.Find(prefs, realm);
                 var messageId = server?.HeraldStatusMessageId;
                 var webhookUrl = HeraldRealms.WebhookUrlFor(prefs, server)?.Trim();
+                var forumThread = ServerPreferences.BlankAsNull(server?.HeraldStatusThreadId);
 
                 if (string.IsNullOrWhiteSpace(messageId))
                     return new DiscordStatusResult { Ok = true, Detail = "nothing to remove" };
@@ -432,7 +506,7 @@ namespace ValheimBakaLoader.Tools
                     {
                         using var client = HttpClientProvider.CreateClient();
                         client.Timeout = TimeSpan.FromSeconds(15);
-                        var deleteUrl = $"{webhookUrl}/messages/{messageId}{BuildThreadQuery(HeraldRealms.ThreadIdFor(prefs, server))}";
+                        var deleteUrl = $"{webhookUrl}/messages/{messageId}{BuildThreadQuery(forumThread ?? HeraldRealms.ThreadIdFor(prefs, server))}";
                         using var response = await SendAsync(() => client.DeleteAsync(deleteUrl), realm);
                         // 404 just means it is already gone - either way we forget the id below.
                         gone = response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound;
@@ -445,8 +519,10 @@ namespace ValheimBakaLoader.Tools
                     }
                 }
 
-                SaveMessageId(realm, null, null);
-                return new DiscordStatusResult { Ok = true, Detail = gone ? "removed" : "forgotten" };
+                // The forum post is forgotten with its first message: Discord keeps it, history
+                // and all, and the next publish opens a new one rather than replying in the old.
+                SaveMessageId(realm, null, null, null);
+                return new DiscordStatusResult { Ok = true, Detail = gone ? "removed" : "forgotten", InForum = forumThread != null };
             }
             finally
             {
@@ -454,7 +530,7 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
-        private void SaveMessageId(string realm, string id, string signature)
+        private void SaveMessageId(string realm, string id, string signature, string forumThread)
         {
             // This runs on the publish timer's thread while the server's own thread can be
             // recording a launched build into the same document. Both write the WHOLE of
@@ -469,8 +545,81 @@ namespace ValheimBakaLoader.Tools
                 if (server == null) return false;
                 server.HeraldStatusMessageId = id;
                 server.HeraldStatusMessageSignature = signature;
+                server.HeraldStatusThreadId = forumThread;
                 return true;
             });
+        }
+
+        /// <summary>
+        /// Discord's answer to a webhook post into a forum channel that names no thread: a 400
+        /// whose body carries code 220001. Only that code, so any other refusal is reported as
+        /// the refusal it is rather than answered with a forum post.
+        /// </summary>
+        internal static async Task<bool> IsForumRefusalAsync(HttpResponseMessage response)
+        {
+            if (response == null || response.StatusCode != HttpStatusCode.BadRequest || response.Content == null) return false;
+            try
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                var code = JObject.Parse(body)["code"];
+                return code != null && code.Type == JTokenType.Integer && code.Value<long>() == ForumNeedsThreadCode;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>Discord's error code for a forum post with neither a thread_name nor a thread_id.</summary>
+        internal const long ForumNeedsThreadCode = 220001;
+
+        /// <summary>
+        /// The realm's status post as it would be sent now, or null with the reason. The publish
+        /// and the hall's preview both take the post from here, so what the host sees is what goes.
+        /// </summary>
+        private string PayloadFor(UserPreferences prefs, ServerPreferences server, out string error)
+        {
+            error = null;
+            var snapshot = SnapshotProvider?.Invoke(server.ProfileName);
+            if (snapshot == null)
+            {
+                error = "No server snapshot is available yet.";
+                return null;
+            }
+            return BuildEmbedPayload(snapshot, prefs, server);
+        }
+
+        public DiscordPreviewResult Preview(string realm)
+        {
+            try
+            {
+                var prefs = UserPrefsProvider.LoadPreferences();
+                var server = HeraldRealms.Find(prefs, realm);
+                if (server == null)
+                    return new DiscordPreviewResult { Error = "That realm is gone, so there is nothing to show." };
+
+                var payload = PayloadFor(prefs, server, out var error);
+                if (payload == null)
+                    return new DiscordPreviewResult { Error = error };
+
+                var result = new DiscordPreviewResult { Ok = true, Payload = payload };
+                foreach (var kind in new[] { HeraldEventClass.Routine, HeraldEventClass.Crash, HeraldEventClass.Players })
+                {
+                    result.Events.Add(new DiscordEventPreview
+                    {
+                        Kind = kind.ToString(),
+                        On = HeraldRealms.SendsEvent(prefs, server, kind),
+                        Thread = HeraldRealms.EventRouteFor(prefs, server, kind).Thread,
+                        Payload = DiscordWebhookService.SamplePayload(prefs, server, kind),
+                    });
+                }
+                return result;
+            }
+            catch (Exception e)
+            {
+                Logger.Warning("Discord preview of {realm} could not be built: {message}", realm, e.Message);
+                return new DiscordPreviewResult { Error = e.Message };
+            }
         }
 
         private static string BuildThreadQuery(string threadId)
@@ -603,6 +752,21 @@ namespace ValheimBakaLoader.Tools
             };
             var statusLine = DiscordHeraldLook.StatusLineFor(realm);
             if (statusLine != null) embed["description"] = statusLine;
+            // Routine news in a thread of its own gets a line on the post that opens it, so a
+            // player reading the status finds the history in one tap. Not when the news goes to
+            // the thread this post is itself in (the forum post's replies are right below it),
+            // and only for an id, because the box takes whatever is pasted.
+            var events = RoutineThreadLinkFor(prefs, realm);
+            if (events != null)
+            {
+                fields.Add(new
+                {
+                    name = HostCatalog.T("host.status.field.events"),
+                    value = $"<#{events}>",
+                    inline = false,
+                });
+            }
+
             embed["color"] = color;
             embed["fields"] = JArray.FromObject(fields);
             embed["timestamp"] = DateTime.UtcNow.ToString("o");
@@ -620,6 +784,16 @@ namespace ValheimBakaLoader.Tools
             DiscordHeraldLook.Sign(payload, embed, prefs);
 
             return payload.ToString(Formatting.None);
+        }
+
+        /// <summary>The thread the realm's routine news goes to, when the status post should link it.</summary>
+        internal static string RoutineThreadLinkFor(UserPreferences prefs, ServerPreferences realm)
+        {
+            if (!HeraldRealms.ClassOn(realm, HeraldEventClass.Routine)) return null;
+            var thread = ServerPreferences.BlankAsNull(HeraldRealms.EventRouteFor(prefs, realm, HeraldEventClass.Routine).Thread)?.Trim();
+            if (!HeraldRealms.IsSnowflake(thread)) return null;
+            var own = ServerPreferences.BlankAsNull(realm.HeraldStatusThreadId) ?? HeraldRealms.ThreadIdFor(prefs, realm);
+            return string.Equals(thread, own?.Trim(), StringComparison.Ordinal) ? null : thread;
         }
 
         private static async Task<string> SafeReadAsync(HttpResponseMessage response)

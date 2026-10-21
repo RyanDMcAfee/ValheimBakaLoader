@@ -73,6 +73,8 @@ namespace ValheimBakaLoader.Tests.Forms
             // crash ping's content: both put text on the wire outside a SendEmbed call.
             ("DiscordWebhookService.cs", "ModsUpdatedBody"),
             ("DiscordWebhookService.cs", "BuildEventPayload"),
+            // The preview's sample event posts, built for the hall from the catalog.
+            ("DiscordWebhookService.cs", "SamplePayload"),
         };
 
         /// <summary>

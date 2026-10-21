@@ -971,5 +971,18 @@ else
   echo "  the herald events selftest is missing: $EVENTS_SELFTEST"; fail=1
 fi
 
+echo "== 61. the Herald's preview: the hall draws the post a publish sends =="
+# 1.2.16, issue 24. The Discord hall draws the realm's post as Discord would, from discord.preview,
+# which takes it from the code a publish sends. The quiet ways that goes wrong are something the
+# host typed reaching the page as markup, a reply for the realm the host just left painting over
+# the realm on screen, and an edit that never asks again. The selftest drives the real block.
+PREVIEW_SELFTEST="$UI_DIR/herald_preview_selftest.js"
+if [ -f "$PREVIEW_SELFTEST" ]; then
+  if out=$(node "$PREVIEW_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the herald preview selftest is missing: $PREVIEW_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail
