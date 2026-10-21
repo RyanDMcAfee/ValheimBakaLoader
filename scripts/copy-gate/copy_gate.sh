@@ -1028,5 +1028,21 @@ else
   echo "  the motion sweep selftest is missing: $SWEEP_SELFTEST"; fail=1
 fi
 
+echo "== 65. the simpler sidebar: five halls, the other four as remembered sections, every road still landing =="
+# 1.2.18. The rail lists Dashboard, Players, Map, Mods, Settings; the Log, Statistics, Configs and
+# Discord are folding sections of those halls, remembered per section through userprefs, each
+# behind a glowing chevron, and every old road (the palette, the condition bar, a mod row's
+# configs entry, a toast's action) opens the hall, unfolds the section and lights it. The quiet
+# failures (a hall dropped with its ids, a default or a saved answer not honoured, a road still
+# walking to a hall the rail lost, a check still reading currentPage for a section, the
+# preference missing on one side of the bridge) are each caught here, against docs/sidebar.md.
+SIDEBAR_SELFTEST="$UI_DIR/sidebar_sections_selftest.js"
+if [ -f "$SIDEBAR_SELFTEST" ]; then
+  if out=$(node "$SIDEBAR_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the sidebar sections selftest is missing: $SIDEBAR_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

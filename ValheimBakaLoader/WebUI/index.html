@@ -115,13 +115,9 @@
       <div class="srvsep" id="srvSep"></div>
       <div class="navitem active" data-page="hearth"><span class="rune">ᚠ</span><span class="lbl" data-i18n="side.nav.hearth.label">Dashboard</span><span class="norse" data-i18n="common.norse.hearth">Hearth</span></div>
       <div class="navitem" data-page="vikings"><span class="rune">ᛗ</span><span class="lbl" data-i18n="side.nav.vikings.label">Players</span><span class="norse" data-i18n="common.norse.vikings">Vikings</span></div>
-      <div class="navitem" data-page="mods"><span class="rune">ᚱ</span><span class="lbl" data-i18n="side.nav.mods.label">Mods</span></div>
-      <div class="navitem" data-page="runes"><span class="rune">ᚲ</span><span class="lbl" data-i18n="side.nav.runes.label">Configs</span><span class="norse" data-i18n="common.norse.runes">Runes</span></div>
-      <div class="navitem" data-page="world"><span class="rune">ᛃ</span><span class="lbl" data-i18n="side.nav.world.label">Settings</span><span class="norse" data-i18n="common.norse.world">World</span></div>
       <div class="navitem" data-page="atlas"><span class="rune">ᛞ</span><span class="lbl" data-i18n="side.nav.atlas.label">Map</span><span class="norse" data-i18n="common.norse.atlas">Atlas</span></div>
-      <div class="navitem" data-page="saga"><span class="rune">ᛋ</span><span class="lbl" data-i18n="side.nav.saga.label">Log</span><span class="norse" data-i18n="common.norse.saga">Saga</span></div>
-      <div class="navitem" data-page="herald"><span class="rune">ᚺ</span><span class="lbl" data-i18n="side.nav.herald.label">Discord</span><span class="norse" data-i18n="common.norse.herald">Herald</span></div>
-      <div class="navitem" data-page="skald"><span class="rune">ᛏ</span><span class="lbl" data-i18n="side.nav.skald.label">Statistics</span><span class="norse" data-i18n="common.norse.skald">Skald</span></div>
+      <div class="navitem" data-page="mods"><span class="rune">ᚱ</span><span class="lbl" data-i18n="side.nav.mods.label">Mods</span></div>
+      <div class="navitem" data-page="world"><span class="rune">ᛃ</span><span class="lbl" data-i18n="side.nav.world.label">Settings</span><span class="norse" data-i18n="common.norse.world">World</span></div>
       <div class="side-foot">
         <!-- Reads the shipped version, and turns into the "a newer one is ready" marker
              (glowing, clickable) while an update is waiting. app.js owns both states. -->
@@ -348,6 +344,129 @@
               <div class="term hlog" id="hearthLog"></div>
             </div>
           </div>
+
+        <!-- ============ SECTION: SKALD (Statistics, on the Dashboard: the realm's story in numbers) ============ -->
+        <div class="sect" id="sect-skald" data-sect="skald">
+          <div class="pagehead secthead">
+            <h1 data-i18n="skald.head.title"><span class="r">ᛏ</span>STATISTICS</h1>
+            <span class="hnorse" data-i18n="common.norse.skald">Skald</span>
+            <!-- No id on the subtitle: renderSkald writes it, joining the date the journal
+                 started to the sentence after it, so it is a composed message and belongs
+                 to the slice that keys those. -->
+            <span class="sub" id="skaldSub">the realm's story in numbers · counted on this machine only, nothing leaves it</span>
+            <div class="grow"></div>
+            <button class="btn btn-blood btn-sm" id="skResetBtn" title="Clear every counted number and start the journal again" data-i18n="skald.reset.label" data-i18n-title="skald.reset.title">ᛪ&nbsp; Reset statistics</button>
+          </div>
+          <div class="sectbody" id="sectBody-skald" style="display:none">
+          <div class="skald-stats">
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.uptime.label">Uptime<span class="cnorse" data-i18n="skald.uptime.norse">Hearth burned</span></div>
+              <div class="bigval" id="skUptime">-</div>
+              <div class="subval" data-i18n="skald.uptime.caption">total across 180 days</div>
+              <div style="margin-top:6px"><span class="pill green" id="skNowPill" style="display:none">alight -</span></div>
+            </div>
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.starts.label">Starts<span class="cnorse" data-i18n="skald.starts.norse">Kindlings</span></div>
+              <div class="bigval" id="skStarts">-</div>
+              <div class="subval" data-i18n="skald.starts.caption">server starts</div>
+              <div style="margin-top:6px"><span class="pill amber" id="skCrashPill" style="display:none">- crashes</span></div>
+            </div>
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.vikings.label">Players<span class="cnorse" data-i18n="common.norse.vikings">Vikings</span></div>
+              <div class="bigval" id="skVikings">-</div>
+              <div class="subval" id="skVikingsSub">unique souls · - visits</div>
+            </div>
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.deaths.label">Deaths</div>
+              <div class="bigval" id="skDeaths">-</div>
+              <div class="subval" id="skDeathsSub" data-i18n="skald.deaths.sub">valkyries dispatched</div>
+            </div>
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.mods.label">Mod history<span class="cnorse" data-i18n="skald.mods.norse">Chronicle</span></div>
+              <div class="bigval" id="skModUps">-</div>
+              <div class="subval" id="skModUpsSub">updates · - installs</div>
+            </div>
+          </div>
+          <div class="skald-grid">
+            <div class="card sk-players" style="padding:0">
+              <div style="height:6px"></div>
+              <!-- The column widths are measured, not chosen. Every one of the five
+                   headers was rendered in English, Russian, Japanese and both Chinese
+                   under the per-language type rules and measured with a Range, and the
+                   widest of each plus the 24px of cell padding is what the percentage
+                   has to give it at the app's minimum window. Three of the five used to
+                   be short of their OWN ENGLISH there: Playtime had 56px for 66.5px of
+                   ink, Sessions 36px for 66.1px, Deaths 36px for 52.3px, and an English
+                   header is one unbreakable word, so it overflowed into the column
+                   beside it while Russian and Japanese broke in half instead.
+                   What the three columns take, they take from the two that had it to
+                   give: the Player column keeps 120px at the minimum window against the
+                   126px it had, which is six pixels off a name, and Last seen keeps its
+                   widest rendering with room.
+                   The wrapper below is the floor under all of it: the table can never be
+                   squeezed below the width where the measurements hold, and a card
+                   narrower than that scrolls sideways rather than crushing the headers
+                   again. -->
+              <div class="sk-ptable">
+              <table>
+                <thead><tr><th style="width:24%" data-i18n="vikings.col.name">Player</th><th style="width:20%" data-i18n="vikings.col.playtime">Playtime</th><th style="width:19%" data-i18n="skald.col.sessions">Sessions</th><th style="width:16.5%" data-i18n="vikings.col.deaths">Deaths</th><th data-i18n="vikings.col.seen">Last seen</th></tr></thead>
+                <tbody id="skPlayerTable"></tbody>
+              </table>
+              </div>
+            </div>
+            <div class="card sk-feed">
+              <div class="microlabel" data-i18n="skald.feed.label">Recent events<span class="cnorse" data-i18n="skald.feed.norse">Happenings</span></div>
+              <div class="skfeed" id="skFeed"></div>
+            </div>
+            <div class="card sk-mods">
+              <div class="microlabel" data-i18n="skald.mods.label">Mod history<span class="cnorse" data-i18n="skald.mods.norse">Chronicle</span></div>
+              <div class="skfeed" id="skModFeed"></div>
+            </div>
+          </div>
+          </div>
+        </div>
+
+        <!-- ============ SECTION: SAGA (the Log, on the Dashboard) ============ -->
+        <div class="sect" id="sect-saga" data-sect="saga">
+          <div class="pagehead secthead">
+              <h1 data-i18n="saga.head.title"><span class="r">ᛋ</span>LOG</h1>
+              <span class="hnorse" data-i18n="common.norse.saga">Saga</span>
+              <span class="sub" data-i18n="saga.head.sub">live server log</span>
+              <div class="grow"></div>
+              <button class="btn btn-ghost btn-sm" id="vellumBtn" title="The Vellum: where the log files are kept, and what gets written" data-i18n="saga.vellum.label" data-i18n-title="saga.vellum.title">ᚹ&nbsp; Log settings</button>
+              <button class="btn btn-ghost btn-sm" id="openLogs" data-i18n="saga.logs.label">ᛃ&nbsp; Logs folder</button>
+            </div>
+          <div class="sectbody" id="sectBody-saga" style="display:none">
+          <div class="saga">
+            <div class="termwrap">
+              <div class="termhead">
+                <!-- data-f is the filter's name in the program, the words beside it are the
+                     sentence a host reads: the same split the palette rows carry, so a
+                     translated pill still filters. -->
+                <span class="fpill active" data-f="all" data-i18n="saga.filter.all">All</span>
+                <span class="fpill" data-f="info" data-i18n="saga.filter.info">Info</span>
+                <span class="fpill" data-f="warn" data-i18n="saga.filter.warn">Warn</span>
+                <span class="fpill" data-f="err" data-i18n="saga.filter.err">Error</span>
+                <span class="fpill" data-f="net" data-i18n="saga.filter.net">Net</span>
+                <input id="termSearch" class="termsearch" placeholder="search the saga…" spellcheck="false" autocomplete="off" aria-label="Search the saga" data-i18n-placeholder="saga.search.placeholder" data-i18n-aria="saga.search.aria">
+                <span class="pill ember hidden" id="termNew" title="Jump to the newest lines" data-i18n-title="saga.new.title">↓ 0 new</span>
+                <span class="fpill" id="termCopy" title="Copy the visible lines to the clipboard" data-i18n="saga.copy.label" data-i18n-title="saga.copy.title">ᛝ copy</span>
+                <span class="pill green" id="termStream">streaming</span>
+              </div>
+              <div class="term" id="term"></div>
+              <div class="termin">
+                <span class="prompt">ᛒ›</span>
+                <!-- No id on this placeholder: app.js writes it three ways at run time
+                     (devcommand, console command, and the refusal when the devcommands
+                     mods are missing), so it belongs to the slice that keys run-time
+                     messages. Keying it here would have the walker and app.js fight. -->
+                <input id="termIn" placeholder="devcommand… (Enter to send)" spellcheck="false" autocomplete="off">
+                <span class="caret" id="termCaret"></span>
+              </div>
+            </div>
+          </div>
+          </div>
+        </div>
         </section>
 
         <!-- ============ PAGE: VIKINGS ============ -->
@@ -386,6 +505,85 @@
           </div>
         </section>
 
+        <!-- ============ PAGE: ATLAS (webmap + skies) ============ -->
+        <section class="page" id="page-atlas">
+          <div class="pagehead">
+            <h1 data-i18n="atlas.head.title"><span class="r">ᛞ</span>MAP</h1>
+            <span class="hnorse" data-i18n="common.norse.atlas">Atlas</span>
+            <span class="sub" id="atlasSub" data-i18n="atlas.head.sub">the known world</span>
+            <div class="grow"></div>
+            <span class="pill amber" id="atlasModWarn" style="display:none" title=""></span>
+            <button class="btn btn-ghost btn-sm" id="atlasRecenter" title="Fit the whole world in view" data-i18n="atlas.recenter.label" data-i18n-title="atlas.recenter.title">ᚹ&nbsp; Recenter</button>
+            <button class="btn btn-ember btn-sm" id="atlasRedraw" style="margin-left:8px" title="Re-render the map from the world seed" data-i18n="atlas.redraw.label" data-i18n-title="atlas.redraw.title">ᛞ&nbsp; Redraw map</button>
+          </div>
+
+          <div class="atlas-grid">
+            <div class="card atlas-mapcard">
+              <div class="atlas-bar">
+                <span class="microlabel" style="margin:0 6px 0 0" data-i18n="atlas.layers.label">Layers</span>
+                <button class="lchip on" id="lchipPortals" data-layer="portals" data-i18n="atlas.layer.portals">ᛈ portals</button>
+                <button class="lchip on" id="lchipPois" data-layer="pois" data-i18n="atlas.layer.pois">ᛒ altars &amp; traders</button>
+                <button class="lchip on" id="lchipBuilds" data-layer="builds" data-i18n="atlas.layer.builds">ᚺ builds</button>
+                <button class="lchip" id="lchipPins" data-layer="pins" data-i18n="atlas.layer.pins">ᛘ table pins</button>
+                <!-- No id on the fog chip, and it is the one gap in this bar on purpose.
+                     emberize() rebuilds its letters into one span each while app.js is
+                     still parsing, long before the catalog lands, so the walker would find
+                     no text node of its own left and APPEND the label instead of replacing
+                     it: the chip would read its words twice. Same reason the horn of mead
+                     keys only its tooltip. Fixing it means moving emberize() after the
+                     catalog walk, which is a change to boot order and belongs with the
+                     mead link, not here. -->
+                <button class="lchip on" id="lchipFog" data-layer="fog">ᚾ fog of war</button>
+                <div class="grow"></div>
+                <span class="microlabel" id="atlasZoomLbl"></span>
+              </div>
+              <div class="atlas-wrap" id="atlasWrap">
+                <canvas id="atlasCanvas"></canvas>
+                <div class="atlas-msg" id="atlasMsg">Loading the known world…</div>
+                <div class="atlas-coord" id="atlasCoord"></div>
+              </div>
+            </div>
+
+            <div class="atlas-side">
+              <div class="card">
+                <div class="microlabel"><span data-i18n="atlas.wx.label">Skies over</span> <span id="atlasWorldName">-</span></div>
+                <div class="bigval" id="atlasDay">-</div>
+                <div class="subval" id="atlasClock">world clock unknown</div>
+                <div class="atlas-facts">
+                  <div class="afact"><span class="ak" data-i18n="atlas.fact.saved">Last save</span><span class="av" id="atlasSaved">-</span></div>
+                  <div class="afact"><span class="ak" data-i18n="atlas.fact.explored">Explored</span><span class="av" id="atlasExplored">-</span></div>
+                  <div class="afact"><span class="ak" data-i18n="atlas.fact.event">Event</span><span class="av" id="atlasEvent">-</span></div>
+                </div>
+                <div class="subval" id="atlasChunkNote" style="margin-top:6px;display:none"></div>
+                <div class="subval" id="atlasShapeNote" style="margin-top:6px;display:none"></div>
+                <div id="wxBox" style="margin-top:8px;display:none">
+                  <div class="atlas-facts">
+                    <div class="afact"><span class="ak" data-i18n="atlas.wx.now">Skies now</span><span class="av" id="wxNow">-</span></div>
+                    <div class="afact"><span class="ak" data-i18n="atlas.wx.wind">Wind</span><span class="av"><span id="wxArrow" class="wx-arrow">↑</span><span id="wxWind">-</span></span></div>
+                  </div>
+                  <div class="wx-biomes" id="wxBiomes"></div>
+                  <div class="microlabel" style="margin-top:8px" data-i18n="atlas.wx.forecast">Forecast</div>
+                  <div id="wxForecast" class="wx-forecast"></div>
+                  <div class="subval" id="wxAnchor" style="margin-top:6px"></div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="microlabel" data-i18n="atlas.roster.label">Players online<span class="cnorse" data-i18n="atlas.roster.norse">Vikings ashore</span></div>
+                <!-- Why this card lists names instead of pins. It was a hover-only title
+                     for one release, which no touch and no glance ever reached. -->
+                <div class="subval cardnote" data-i18n="atlas.roster.note">A map drawn without mods cannot follow players, so this card names who is online instead.</div>
+                <div id="atlasRoster" class="atlas-roster"></div>
+              </div>
+
+              <div class="card atlas-waycard">
+                <div class="microlabel" data-i18n="atlas.waypoints.label">Waypoints</div>
+                <div id="atlasWaypoints" class="atlas-list"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- ============ PAGE: MODS ============ -->
         <section class="page" id="page-mods">
           <div class="pagehead floating">
@@ -414,6 +612,7 @@
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>
             <button class="btn btn-ember btn-sm" id="updAllBtn" style="margin-left:8px">ᚱ&nbsp; Update all (2)</button>
           </div>
+          <div class="sectbody" id="sectBody-mods">
           <div class="modprog" id="modUpdProg" role="status" aria-live="polite" style="display:none"></div>
           <div id="bepinexRow" class="beprow-wrap" style="display:none"></div>
           <!-- The followed Gale profile: one id per realm, opened from the Follow button above.
@@ -441,12 +640,11 @@
               <tbody id="modTable"></tbody>
             </table>
           </div>
-        </section>
+          </div>
 
-        <!-- ============ PAGE: RUNES (BepInEx config editor) ============ -->
-        <section class="page" id="page-runes">
-          <div class="runes" style="height:100%">
-            <div class="pagehead">
+        <!-- ============ SECTION: RUNES (Configs, under the Mods list: the BepInEx config editor) ============ -->
+        <div class="sect" id="sect-runes" data-sect="runes">
+          <div class="pagehead secthead">
               <h1 data-i18n="runes.head.title"><span class="r">ᚲ</span>CONFIGS</h1>
               <span class="hnorse" data-i18n="common.norse.runes">Runes</span>
               <span class="sub" id="runesSub">BepInEx config files</span>
@@ -455,6 +653,8 @@
               <button class="btn btn-ghost btn-sm" id="cfgReloadBtn" style="margin-left:8px" title="Reads the list of config files, and the open one, again from disk." data-i18n="runes.reload.label" data-i18n-title="runes.reload.title">ᛋ&nbsp; Reload</button>
               <button class="btn btn-ember btn-sm" id="cfgSaveBtn" style="margin-left:8px" disabled>ᛉ&nbsp; Save</button>
             </div>
+          <div class="sectbody" id="sectBody-runes" style="display:none">
+          <div class="runes">
             <div class="runes-grid">
               <div class="card cfg-listcard">
                 <div class="microlabel" data-i18n="runes.list.label">Config files<span class="cnorse" data-i18n="common.norse.scrolls">Scrolls</span></div>
@@ -485,6 +685,8 @@
               </div>
             </div>
           </div>
+          </div>
+        </div>
         </section>
 
         <!-- ============ PAGE: WORLD ============ -->
@@ -509,6 +711,7 @@
                still saved by the button above; App holds the preferences that belong to
                BakaLoader itself and each of those saves itself as it is moved. Static both
                ways, so the walker owns both words. -->
+          <div class="sectbody" id="sectBody-world">
           <div class="worldtabs" role="tablist">
             <button class="wtab on" id="wtabServer" data-wtab="server" role="tab" aria-selected="true" data-i18n="world.tab.server">Server</button>
             <button class="wtab" id="wtabApp" data-wtab="app" role="tab" aria-selected="false" data-i18n="world.tab.app">App</button>
@@ -772,150 +975,11 @@
               <div class="subval" style="margin:2px 0 0" data-i18n="app.textsize.help">Large and Extra large zoom the whole window, the map's labels included, and take effect the moment you choose them. Extra large needs a wider window, so BakaLoader raises the smallest size the window can be dragged to.</div>
             </div>
             </div>
-        </section>
-        <!-- The unsaved notice. It sits at the bottom left of the hall, diagonally
-             opposite Save Config, and it has no button on purpose: the button it would
-             carry is the one already at the top right, and a second one is a second thing
-             to keep in step. Both sentences are static, so the walker owns them and a
-             language switch redraws them with everything else.
-             It sits OUTSIDE the hall rather than at the end of it, which is the whole of
-             why it can be trusted: a hall scrolls inside itself, so anything pinned to the
-             bottom of it has the form sliding underneath, and the first thing that slid
-             under this was the very box that had just been typed into. Out here it is a
-             sibling of the hall, and the hall gives up a band at its foot while the notice
-             is up. How deep that band is, is the notice's own measured height: these two
-             sentences wrap, so they stand one line taller in a language whose words run
-             longer, and a band written down as a number was short by a line in exactly
-             that case. app.js measures and writes it. Which hall is showing decides
-             whether it is on screen at all, in CSS. -->
-        <div class="worldunsaved" id="worldUnsaved" role="status">
-          <span class="wu-k" data-i18n="world.unsaved.title">Unsaved changes</span>
-          <span class="wu-v" data-i18n="world.unsaved.note">Save Config writes them. They stay on this hall until then, even if you walk to another one.</span>
-        </div>
-
-        <!-- ============ PAGE: ATLAS (webmap + skies) ============ -->
-        <section class="page" id="page-atlas">
-          <div class="pagehead">
-            <h1 data-i18n="atlas.head.title"><span class="r">ᛞ</span>MAP</h1>
-            <span class="hnorse" data-i18n="common.norse.atlas">Atlas</span>
-            <span class="sub" id="atlasSub" data-i18n="atlas.head.sub">the known world</span>
-            <div class="grow"></div>
-            <span class="pill amber" id="atlasModWarn" style="display:none" title=""></span>
-            <button class="btn btn-ghost btn-sm" id="atlasRecenter" title="Fit the whole world in view" data-i18n="atlas.recenter.label" data-i18n-title="atlas.recenter.title">ᚹ&nbsp; Recenter</button>
-            <button class="btn btn-ember btn-sm" id="atlasRedraw" style="margin-left:8px" title="Re-render the map from the world seed" data-i18n="atlas.redraw.label" data-i18n-title="atlas.redraw.title">ᛞ&nbsp; Redraw map</button>
           </div>
 
-          <div class="atlas-grid">
-            <div class="card atlas-mapcard">
-              <div class="atlas-bar">
-                <span class="microlabel" style="margin:0 6px 0 0" data-i18n="atlas.layers.label">Layers</span>
-                <button class="lchip on" id="lchipPortals" data-layer="portals" data-i18n="atlas.layer.portals">ᛈ portals</button>
-                <button class="lchip on" id="lchipPois" data-layer="pois" data-i18n="atlas.layer.pois">ᛒ altars &amp; traders</button>
-                <button class="lchip on" id="lchipBuilds" data-layer="builds" data-i18n="atlas.layer.builds">ᚺ builds</button>
-                <button class="lchip" id="lchipPins" data-layer="pins" data-i18n="atlas.layer.pins">ᛘ table pins</button>
-                <!-- No id on the fog chip, and it is the one gap in this bar on purpose.
-                     emberize() rebuilds its letters into one span each while app.js is
-                     still parsing, long before the catalog lands, so the walker would find
-                     no text node of its own left and APPEND the label instead of replacing
-                     it: the chip would read its words twice. Same reason the horn of mead
-                     keys only its tooltip. Fixing it means moving emberize() after the
-                     catalog walk, which is a change to boot order and belongs with the
-                     mead link, not here. -->
-                <button class="lchip on" id="lchipFog" data-layer="fog">ᚾ fog of war</button>
-                <div class="grow"></div>
-                <span class="microlabel" id="atlasZoomLbl"></span>
-              </div>
-              <div class="atlas-wrap" id="atlasWrap">
-                <canvas id="atlasCanvas"></canvas>
-                <div class="atlas-msg" id="atlasMsg">Loading the known world…</div>
-                <div class="atlas-coord" id="atlasCoord"></div>
-              </div>
-            </div>
-
-            <div class="atlas-side">
-              <div class="card">
-                <div class="microlabel"><span data-i18n="atlas.wx.label">Skies over</span> <span id="atlasWorldName">-</span></div>
-                <div class="bigval" id="atlasDay">-</div>
-                <div class="subval" id="atlasClock">world clock unknown</div>
-                <div class="atlas-facts">
-                  <div class="afact"><span class="ak" data-i18n="atlas.fact.saved">Last save</span><span class="av" id="atlasSaved">-</span></div>
-                  <div class="afact"><span class="ak" data-i18n="atlas.fact.explored">Explored</span><span class="av" id="atlasExplored">-</span></div>
-                  <div class="afact"><span class="ak" data-i18n="atlas.fact.event">Event</span><span class="av" id="atlasEvent">-</span></div>
-                </div>
-                <div class="subval" id="atlasChunkNote" style="margin-top:6px;display:none"></div>
-                <div class="subval" id="atlasShapeNote" style="margin-top:6px;display:none"></div>
-                <div id="wxBox" style="margin-top:8px;display:none">
-                  <div class="atlas-facts">
-                    <div class="afact"><span class="ak" data-i18n="atlas.wx.now">Skies now</span><span class="av" id="wxNow">-</span></div>
-                    <div class="afact"><span class="ak" data-i18n="atlas.wx.wind">Wind</span><span class="av"><span id="wxArrow" class="wx-arrow">↑</span><span id="wxWind">-</span></span></div>
-                  </div>
-                  <div class="wx-biomes" id="wxBiomes"></div>
-                  <div class="microlabel" style="margin-top:8px" data-i18n="atlas.wx.forecast">Forecast</div>
-                  <div id="wxForecast" class="wx-forecast"></div>
-                  <div class="subval" id="wxAnchor" style="margin-top:6px"></div>
-                </div>
-              </div>
-
-              <div class="card">
-                <div class="microlabel" data-i18n="atlas.roster.label">Players online<span class="cnorse" data-i18n="atlas.roster.norse">Vikings ashore</span></div>
-                <!-- Why this card lists names instead of pins. It was a hover-only title
-                     for one release, which no touch and no glance ever reached. -->
-                <div class="subval cardnote" data-i18n="atlas.roster.note">A map drawn without mods cannot follow players, so this card names who is online instead.</div>
-                <div id="atlasRoster" class="atlas-roster"></div>
-              </div>
-
-              <div class="card atlas-waycard">
-                <div class="microlabel" data-i18n="atlas.waypoints.label">Waypoints</div>
-                <div id="atlasWaypoints" class="atlas-list"></div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-
-        <!-- ============ PAGE: SAGA ============ -->
-        <section class="page" id="page-saga" style="display:none">
-          <div class="saga" style="height:100%">
-            <div class="pagehead">
-              <h1 data-i18n="saga.head.title"><span class="r">ᛋ</span>LOG</h1>
-              <span class="hnorse" data-i18n="common.norse.saga">Saga</span>
-              <span class="sub" data-i18n="saga.head.sub">live server log</span>
-              <div class="grow"></div>
-              <button class="btn btn-ghost btn-sm" id="vellumBtn" title="The Vellum: where the log files are kept, and what gets written" data-i18n="saga.vellum.label" data-i18n-title="saga.vellum.title">ᚹ&nbsp; Log settings</button>
-              <button class="btn btn-ghost btn-sm" id="openLogs" data-i18n="saga.logs.label">ᛃ&nbsp; Logs folder</button>
-            </div>
-            <div class="termwrap">
-              <div class="termhead">
-                <!-- data-f is the filter's name in the program, the words beside it are the
-                     sentence a host reads: the same split the palette rows carry, so a
-                     translated pill still filters. -->
-                <span class="fpill active" data-f="all" data-i18n="saga.filter.all">All</span>
-                <span class="fpill" data-f="info" data-i18n="saga.filter.info">Info</span>
-                <span class="fpill" data-f="warn" data-i18n="saga.filter.warn">Warn</span>
-                <span class="fpill" data-f="err" data-i18n="saga.filter.err">Error</span>
-                <span class="fpill" data-f="net" data-i18n="saga.filter.net">Net</span>
-                <input id="termSearch" class="termsearch" placeholder="search the saga…" spellcheck="false" autocomplete="off" aria-label="Search the saga" data-i18n-placeholder="saga.search.placeholder" data-i18n-aria="saga.search.aria">
-                <span class="pill ember hidden" id="termNew" title="Jump to the newest lines" data-i18n-title="saga.new.title">↓ 0 new</span>
-                <span class="fpill" id="termCopy" title="Copy the visible lines to the clipboard" data-i18n="saga.copy.label" data-i18n-title="saga.copy.title">ᛝ copy</span>
-                <span class="pill green" id="termStream">streaming</span>
-              </div>
-              <div class="term" id="term"></div>
-              <div class="termin">
-                <span class="prompt">ᛒ›</span>
-                <!-- No id on this placeholder: app.js writes it three ways at run time
-                     (devcommand, console command, and the refusal when the devcommands
-                     mods are missing), so it belongs to the slice that keys run-time
-                     messages. Keying it here would have the walker and app.js fight. -->
-                <input id="termIn" placeholder="devcommand… (Enter to send)" spellcheck="false" autocomplete="off">
-                <span class="caret" id="termCaret"></span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- ============ PAGE: HERALD (Discord sharing · one self-editing status post) ============ -->
-        <section class="page" id="page-herald" style="display:none">
-          <div class="pagehead">
+        <!-- ============ SECTION: HERALD (Discord, at the foot of Settings: one self-editing status post) ============ -->
+        <div class="sect" id="sect-herald" data-sect="herald">
+          <div class="pagehead secthead">
             <h1 data-i18n="herald.head.title"><span class="r">ᚺ</span>DISCORD</h1>
             <span class="hnorse" data-i18n="common.norse.herald">Herald</span>
             <span class="sub" data-i18n="herald.head.sub">one Discord post per realm · edits itself · never floods the channel</span>
@@ -923,6 +987,7 @@
                  shows it once there is a realm to name, so the first frame has no empty pill. -->
             <span class="pill" id="heraldRealmPill" style="display:none"></span>
           </div>
+          <div class="sectbody" id="sectBody-herald" style="display:none">
           <!-- ONE CARD, about the realm on screen and nothing else (1.2.17). No app-wide switch
                and no webhook boxes: the webhook is set up by the wizard (Change / Set up) and
                shown by the name Discord gave it. The kinds of message are ticks; where each
@@ -1022,86 +1087,33 @@
               <div class="wiz-stat dim" id="heraldLookStat" style="margin:4px 0 0"></div>
             </div>
           </div>
+          </div>
+        </div>
         </section>
+        <!-- The unsaved notice. It sits at the bottom left of the hall, diagonally
+             opposite Save Config, and it has no button on purpose: the button it would
+             carry is the one already at the top right, and a second one is a second thing
+             to keep in step. Both sentences are static, so the walker owns them and a
+             language switch redraws them with everything else.
+             It sits OUTSIDE the hall rather than at the end of it, which is the whole of
+             why it can be trusted: a hall scrolls inside itself, so anything pinned to the
+             bottom of it has the form sliding underneath, and the first thing that slid
+             under this was the very box that had just been typed into. Out here it is a
+             sibling of the hall, and the hall gives up a band at its foot while the notice
+             is up. How deep that band is, is the notice's own measured height: these two
+             sentences wrap, so they stand one line taller in a language whose words run
+             longer, and a band written down as a number was short by a line in exactly
+             that case. app.js measures and writes it. Which hall is showing decides
+             whether it is on screen at all, in CSS. -->
+        <div class="worldunsaved" id="worldUnsaved" role="status">
+          <span class="wu-k" data-i18n="world.unsaved.title">Unsaved changes</span>
+          <span class="wu-v" data-i18n="world.unsaved.note">Save Config writes them. They stay on this hall until then, even if you walk to another one.</span>
+        </div>
 
-        <!-- ============ PAGE: SKALD (analytics · the realm's story in numbers) ============ -->
-        <section class="page" id="page-skald" style="display:none">
-          <div class="pagehead">
-            <h1 data-i18n="skald.head.title"><span class="r">ᛏ</span>STATISTICS</h1>
-            <span class="hnorse" data-i18n="common.norse.skald">Skald</span>
-            <!-- No id on the subtitle: renderSkald writes it, joining the date the journal
-                 started to the sentence after it, so it is a composed message and belongs
-                 to the slice that keys those. -->
-            <span class="sub" id="skaldSub">the realm's story in numbers · counted on this machine only, nothing leaves it</span>
-            <div class="grow"></div>
-            <button class="btn btn-blood btn-sm" id="skResetBtn" title="Clear every counted number and start the journal again" data-i18n="skald.reset.label" data-i18n-title="skald.reset.title">ᛪ&nbsp; Reset statistics</button>
-          </div>
-          <div class="skald-stats">
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.uptime.label">Uptime<span class="cnorse" data-i18n="skald.uptime.norse">Hearth burned</span></div>
-              <div class="bigval" id="skUptime">-</div>
-              <div class="subval" data-i18n="skald.uptime.caption">total across 180 days</div>
-              <div style="margin-top:6px"><span class="pill green" id="skNowPill" style="display:none">alight -</span></div>
-            </div>
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.starts.label">Starts<span class="cnorse" data-i18n="skald.starts.norse">Kindlings</span></div>
-              <div class="bigval" id="skStarts">-</div>
-              <div class="subval" data-i18n="skald.starts.caption">server starts</div>
-              <div style="margin-top:6px"><span class="pill amber" id="skCrashPill" style="display:none">- crashes</span></div>
-            </div>
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.vikings.label">Players<span class="cnorse" data-i18n="common.norse.vikings">Vikings</span></div>
-              <div class="bigval" id="skVikings">-</div>
-              <div class="subval" id="skVikingsSub">unique souls · - visits</div>
-            </div>
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.deaths.label">Deaths</div>
-              <div class="bigval" id="skDeaths">-</div>
-              <div class="subval" id="skDeathsSub" data-i18n="skald.deaths.sub">valkyries dispatched</div>
-            </div>
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.mods.label">Mod history<span class="cnorse" data-i18n="skald.mods.norse">Chronicle</span></div>
-              <div class="bigval" id="skModUps">-</div>
-              <div class="subval" id="skModUpsSub">updates · - installs</div>
-            </div>
-          </div>
-          <div class="skald-grid">
-            <div class="card sk-players" style="padding:0">
-              <div style="height:6px"></div>
-              <!-- The column widths are measured, not chosen. Every one of the five
-                   headers was rendered in English, Russian, Japanese and both Chinese
-                   under the per-language type rules and measured with a Range, and the
-                   widest of each plus the 24px of cell padding is what the percentage
-                   has to give it at the app's minimum window. Three of the five used to
-                   be short of their OWN ENGLISH there: Playtime had 56px for 66.5px of
-                   ink, Sessions 36px for 66.1px, Deaths 36px for 52.3px, and an English
-                   header is one unbreakable word, so it overflowed into the column
-                   beside it while Russian and Japanese broke in half instead.
-                   What the three columns take, they take from the two that had it to
-                   give: the Player column keeps 120px at the minimum window against the
-                   126px it had, which is six pixels off a name, and Last seen keeps its
-                   widest rendering with room.
-                   The wrapper below is the floor under all of it: the table can never be
-                   squeezed below the width where the measurements hold, and a card
-                   narrower than that scrolls sideways rather than crushing the headers
-                   again. -->
-              <div class="sk-ptable">
-              <table>
-                <thead><tr><th style="width:24%" data-i18n="vikings.col.name">Player</th><th style="width:20%" data-i18n="vikings.col.playtime">Playtime</th><th style="width:19%" data-i18n="skald.col.sessions">Sessions</th><th style="width:16.5%" data-i18n="vikings.col.deaths">Deaths</th><th data-i18n="vikings.col.seen">Last seen</th></tr></thead>
-                <tbody id="skPlayerTable"></tbody>
-              </table>
-              </div>
-            </div>
-            <div class="card sk-feed">
-              <div class="microlabel" data-i18n="skald.feed.label">Recent events<span class="cnorse" data-i18n="skald.feed.norse">Happenings</span></div>
-              <div class="skfeed" id="skFeed"></div>
-            </div>
-            <div class="card sk-mods">
-              <div class="microlabel" data-i18n="skald.mods.label">Mod history<span class="cnorse" data-i18n="skald.mods.norse">Chronicle</span></div>
-              <div class="skfeed" id="skModFeed"></div>
-            </div>
-          </div>
-        </section>
+
+
+
+
 
       </div>
 

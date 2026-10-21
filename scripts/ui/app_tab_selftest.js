@@ -152,6 +152,8 @@ function hall() {
     renderEditBar() { context.asked.push("editBar"); },
     flashRow(el) { context.flashed.push(el && el.id); },
     goPage(name) { opened.push("page:" + name); },
+    /* The Settings section unfolds on the way in (1.2.18); recorded, not drawn. */
+    sectSet(key, open) { opened.push("section:" + key + ":" + open); },
     asked: [],
     flashed: [],
     opened,
@@ -298,7 +300,8 @@ test("the fold answers a keyboard as well as a pointer", () => {
 
 test("the Settings hall carries no Norse caption belonging to the Dashboard", () => {
   const from = HTML.indexOf('<section class="page" id="page-world"');
-  const to = HTML.indexOf('<!-- ============ PAGE: ATLAS', from);
+  /* The hall's own words end where its Discord section begins (1.2.18). */
+  const to = HTML.indexOf('<!-- ============ SECTION: HERALD', from);
   assert.ok(from > 0 && to > from, "index.html no longer holds the Settings hall");
   const hallHtml = HTML.slice(from, to);
   assert.ok(hallHtml.indexOf("common.norse.hearth") < 0,

@@ -274,7 +274,7 @@ const tick = () => new Promise(done => setImmediate(done));
     assert.ok(/\$\("#modsRefreshBtn"\)\?\.addEventListener\("click",\(\)=>\{modsRefreshPress\(\);\}\)/.test(APP), "the Refresh click is not bound");
     const renderMods = between("function renderMods(){", "\n}");
     assert.ok(/\$\("#modsRefreshBtn"\);\s*if\(rb\) rb\.disabled=busy;/.test(renderMods), "renderMods does not grey Refresh with Scan");
-    const runes = HTML.slice(HTML.indexOf('id="page-runes"'), HTML.indexOf('class="runes-grid"'));
+    const runes = HTML.slice(HTML.indexOf('id="sect-runes"'), HTML.indexOf('class="runes-grid"'));
     assert.ok(/<button[^>]*id="cfgReloadBtn"[^>]*data-i18n="runes\.reload\.label"[^>]*data-i18n-title="runes\.reload\.title"/.test(runes),
       "the Configs head has no Reload carrying its label and title");
     assert.ok(/\$\("#cfgReloadBtn"\)\.addEventListener\("click",[\s\S]{0,120}refreshCfgList\(true\)/.test(APP), "Reload does not re-read the list from disk");

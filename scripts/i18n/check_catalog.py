@@ -449,6 +449,13 @@ def table_english_drift(keys, app_path, findings):
 # and this list is what tells the orphan rule the sentence is kept on purpose. Keep it
 # short; an id goes on it only when no reworded sentence under the same id could be true.
 RETIRED_IDS = {
+    # 1.2.18: the rail lists five halls. Configs, the Log, Discord and Statistics became
+    # sections of the Mods, Dashboard and Settings halls and keep their own headings (the
+    # *.head.title ids), so the rail's four labels for them name nothing on screen.
+    "side.nav.runes.label": "1.2.18",
+    "side.nav.saga.label": "1.2.18",
+    "side.nav.herald.label": "1.2.18",
+    "side.nav.skald.label": "1.2.18",
     # 1.2.16: each realm keeps its own post, so "the post is about another realm while
     # it runs" is no longer true of any realm. Shipped since 1.2.11.
     "herald.modcode.preview.other": "1.2.16",

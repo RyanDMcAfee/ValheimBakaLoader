@@ -121,8 +121,12 @@ test("4. the lists: Elder Futhark, none of the halls' own runes, every one worde
     const c = g.codePointAt(0);
     assert.ok(c >= 0x16A0 && c <= 0x16EA, g + " is not a runic letter");
   }
+  /* The rail lists five halls since 1.2.18; the four that became sections keep their runes on
+     their section headings, and those are still the halls' own. */
   const nav = [...HTML.matchAll(/<div class="navitem[^"]*" data-page="[a-z]+"><span class="rune">(.)<\/span>/gu)].map(m => m[1]);
-  assert.ok(nav.length >= 9, "the sidebar's halls could not be read: " + nav.join(""));
+  const sectRunes = [...HTML.matchAll(/<div class="sect" id="sect-[a-z]+" data-sect="[a-z]+">\s*<div class="pagehead secthead">\s*<h1[^>]*><span class="r">(.)<\/span>/gu)].map(m => m[1]);
+  nav.push(...sectRunes);
+  assert.strictEqual(nav.length, 9, "the sidebar's halls and the sections that were halls could not be read: " + nav.join(""));
   /* sowilo is drawn as the long branch form (U+16CB) in the sidebar, and U+16CA is the same rune. */
   const halls = new Set(nav.concat(nav.includes("ᛋ") ? ["ᛊ"] : []));
   for (const g of glyphs) assert.ok(!halls.has(g), g + " already stands for one of the halls");

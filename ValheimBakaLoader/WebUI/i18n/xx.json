@@ -6887,6 +6887,9 @@
     "common.stat.checking": {
       "translation": "[Ẋ checking… Ẋ] ẊẊẊ"
     },
+    "common.section.toggle.title": {
+      "translation": "[Ẋ Fold this section away, or open it again Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "common.collapsible.folded": {
       "translation": {
         "one": "[Ẋ {count} setting Ẋ] ẊẊẊ",

@@ -108,6 +108,8 @@ function page(opts) {
     scanMods: o => { scans.push(o); return Promise.resolve(); },
     doAddMod: (url, extra, opts) => { adds.push({ url, extra, opts }); },
     goPage: n => pages.push(n),
+    /* A mod row's configs entry walks into the Configs section since 1.2.18. */
+    goSection: n => pages.push(n),
     refreshCfgList: () => Promise.resolve(),
     loadCfg: (f, force) => { loads.push(f); return Promise.resolve(); },
     document: { querySelectorAll: () => [] },

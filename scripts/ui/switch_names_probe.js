@@ -201,7 +201,8 @@ async function probe() {
         + 'if(el&&!el.classList.contains("open"))el.click();});'],
       ["settings app", 'goPage("world");worldTab("app");'],
       ["players", 'goPage("vikings");'],
-      ["discord", 'goPage("herald");'],
+      /* Discord is a section at the foot of Settings since 1.2.18; the road in unfolds it. */
+      ["discord", 'goSection("herald");'],
     ]) {
       await page.evaluate(code => eval(code), prepare);
       await page.waitForTimeout(250);
@@ -281,8 +282,10 @@ async function probe() {
       const saidServer = document.getElementById("editBar").textContent.trim().slice(0, 40);
       worldTab("app");
       /* The band rolls away over 0.2 s since the sweep (reveal), so the read waits for the
-         roll to end rather than for the instant hide it used to be. */
-      await new Promise(r => setTimeout(r, 500));
+         roll to end rather than for the instant hide it used to be: until the band is down,
+         or two seconds, since a loaded machine can hold a frame back. */
+      for (let i = 0; i < 40 && getComputedStyle(document.getElementById("editBar")).display !== "none"; i++)
+        await new Promise(r => setTimeout(r, 50));
       return { onServer, saidServer, onApp: getComputedStyle(document.getElementById("editBar")).display };
     });
     ok("the realm band stands on the Server tab and not on the App tab",

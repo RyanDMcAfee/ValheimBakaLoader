@@ -5450,6 +5450,16 @@ namespace ValheimBakaLoader.Forms
                     Apply("EnablePasswordValidation", v => prefs.EnablePasswordValidation = v.Value<bool>());
                     Apply("DarkMode", v => prefs.DarkMode = v.Value<bool>());
                     Apply("PlainTerminology", v => prefs.PlainTerminology = v.Value<bool>());
+                    // Which sections stand open. The page sends every section each time, so
+                    // the whole answer is taken as sent; a value that is not true or false
+                    // is dropped rather than guessed at.
+                    Apply("UiSections", v =>
+                    {
+                        if (v is not JObject sections) return;
+                        prefs.UiSections = sections.Properties()
+                            .Where(p => !string.IsNullOrWhiteSpace(p.Name) && p.Value.Type == JTokenType.Boolean)
+                            .ToDictionary(p => p.Name, p => p.Value.Value<bool>());
+                    });
                     Apply("DiscordWebhookUrl", v => prefs.DiscordWebhookUrl = v.Value<string>());
                     Apply("DiscordWebhookThreadId", v => prefs.DiscordWebhookThreadId = v.Value<string>());
                     Apply("DiscordSharingEnabled", v => prefs.DiscordSharingEnabled = v.Value<bool>());
@@ -10953,6 +10963,7 @@ namespace ValheimBakaLoader.Forms
                 prefs.DarkMode,
                 prefs.PlainTerminology,
                 prefs.SetupCompleted,
+                prefs.UiSections,
                 prefs.DiscordWebhookUrl,
                 prefs.DiscordWebhookThreadId,
                 prefs.DiscordSharingEnabled,

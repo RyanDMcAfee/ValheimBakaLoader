@@ -2031,6 +2031,7 @@
     "common.state.on": { "lore": "on" },
     "common.state.off": { "lore": "off" },
     "common.stat.checking": { "lore": "checking…" },
+    "common.section.toggle.title": { "lore": "Fold this section away, or open it again" },
     "common.collapsible.folded": { "lore": {"one": "{count} setting", "other": "{count} settings"}, "plural": "count" },
     "hearth.saga.empty.title": { "lore": "No log lines yet" },
     "hearth.saga.empty.reason": { "lore": "Lines appear here the moment the server writes any." },

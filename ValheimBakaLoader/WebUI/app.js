@@ -852,6 +852,7 @@ function repaintBootCopy(){
   try{renderAtlasMsg();}catch(_){}        /* the line the Map hall is showing right now */
   try{renderWxBiomes();}catch(_){}        /* the weather box's nine biome pills */
   try{syncCollapsibleTerms();}catch(_){}  /* every folded header's "n settings" hint */
+  try{sectWords();}catch(_){}             /* the section chevrons' tooltip */
   try{renderCfgRunningNote();}catch(_){}  /* the Settings hall's running-server note */
   try{renderStatusRconPreview();}catch(_){}  /* the status bar's RCON word in the preview */
   try{updAdvLabels();}catch(_){}          /* the three Advanced labels that carry a number */
@@ -1859,7 +1860,7 @@ function onWindowResize(){
     /* A narrower pane wraps the config text differently, so a painted find mark would be
        left over words it no longer belongs to. It is painted again where they went, and
        the pane is not scrolled: the host is resizing a window, not asking to jump. */
-    if(currentPage==="runes"){try{cfgFindPaint(false);}catch(_){}}
+    if(sectOn("runes")){try{cfgFindPaint(false);}catch(_){}}
   });
 }
 window.addEventListener("resize",onWindowResize);
@@ -1872,8 +1873,8 @@ window.addEventListener("resize",onWindowResize);
 const TOAST_BASE=42;    // matches the base offset in the .toasts rule in app.css
 function updateToastLift(){
   let lift=0;
-  if(currentPage==="saga"){
-    const row=$("#page-saga .termin");
+  if(sectOn("saga")){
+    const row=$("#sect-saga .termin");
     lift=(row&&row.offsetHeight?row.offsetHeight:36)+18;
   }
   const btns=document.querySelector(".modal-bg.open .modal .mbtns");
@@ -2014,6 +2015,101 @@ function wireCollapsible(headId,body,targetEl){
   syncCollapsible(rec);
 }
 
+/* ---------- SECTIONS (1.2.18, the simpler sidebar) ----------
+   The rail lists five halls: Dashboard, Players, Map, Mods, Settings. What used to be the Log,
+   Statistics, Configs and Discord halls are sections on the Dashboard (Statistics, then the
+   Log, under the bento), on Mods (Configs, under the list) and on Settings (Discord, at the
+   foot). Every section, the halls' own first ones included, folds behind a chevron to the left
+   of its heading, rolls through reveal, and remembers whether it stands open: across hall walks
+   in UI_SECTIONS, across restarts in userprefs (UiSections, read with the Upkeep card's answer
+   and written on every move), by the hall's own name. The defaults below apply only until a
+   host has moved one. docs/sidebar.md maps the old rail to the new. */
+const SECTIONS=[
+  {key:"hearth",page:"hearth",head:"#page-hearth>.pagehead",body:"#page-hearth>.bento",open:true},
+  {key:"skald",page:"hearth",head:"#sect-skald>.pagehead",body:"#sectBody-skald",open:false,enter:()=>{try{skaldRefresh();}catch(_){}}},
+  {key:"saga",page:"hearth",head:"#sect-saga>.pagehead",body:"#sectBody-saga",open:false,enter:()=>{try{updateToastLift();}catch(_){}}},
+  {key:"mods",page:"mods",head:"#page-mods>.pagehead",body:"#sectBody-mods",open:true},
+  {key:"runes",page:"mods",head:"#sect-runes>.pagehead",body:"#sectBody-runes",open:false,enter:()=>{if(Native.available) refreshCfgList(false);}},
+  {key:"world",page:"world",head:"#page-world>.pagehead",body:"#sectBody-world",open:true},
+  {key:"herald",page:"world",head:"#sect-herald>.pagehead",body:"#sectBody-herald",open:false,enter:()=>{if(Native.available) refreshHerald();}},
+];
+const UI_SECTIONS={};          // key -> open, as it stands on screen
+let UI_SECTIONS_LOADED=false;  // the saved answer has been read, so a move is worth writing
+function sectRec(key){return SECTIONS.find(s=>s.key===key)||null;}
+function sectIsOpen(key){return UI_SECTIONS[key]!==undefined?!!UI_SECTIONS[key]:!!(sectRec(key)||{}).open;}
+/* Whether a section is on screen: its hall is showing and it stands open. The checks that used
+   to read currentPage==="saga" and the like read this. */
+function sectOn(key){const s=sectRec(key); return !!s&&currentPage===s.page&&sectIsOpen(key);}
+function sectSet(key,open,opts){
+  const s=sectRec(key); if(!s) return false;
+  open=!!open;
+  const was=sectIsOpen(key);
+  UI_SECTIONS[key]=open;
+  const head=$(s.head), body=$(s.body), box=head?head.parentElement:null;
+  if(box) box.classList.toggle("open",open);
+  const chev=head&&head.querySelector(".sectchev");
+  if(chev) chev.setAttribute("aria-expanded",open?"true":"false");
+  const done=()=>{try{rescanScrollCues();}catch(_){}};
+  reveal(body,open,opts&&opts.now?{now:true,done}:{done});
+  /* The hall used to do this on the walk in; the section does it on the way open. */
+  if(open&&!was&&typeof s.enter==="function") s.enter();
+  if(!(opts&&opts.silent)) sectSave();
+  return open;
+}
+/* Every section's state, written whole so the document never holds half an answer. Only once
+   the saved answer has been read, the same rule the Upkeep card's switches keep. */
+function sectSave(){
+  if(!Native.available||!UI_SECTIONS_LOADED) return;
+  const prefs={}; SECTIONS.forEach(s=>{prefs[s.key]=sectIsOpen(s.key);});
+  rpc("userprefs.save",{prefs:{UiSections:prefs}});
+}
+/* The saved answer, set with no roll: this is the first frame, not a click. */
+function sectApplyPrefs(up){
+  const saved=up&&up.UiSections&&typeof up.UiSections==="object"?up.UiSections:{};
+  SECTIONS.forEach(s=>{if(typeof saved[s.key]==="boolean") sectSet(s.key,saved[s.key],{now:true,silent:true});});
+  UI_SECTIONS_LOADED=true;
+}
+/* The chevron, to the left of each heading: a button that glows like the app's other embers so
+   it reads as one. Written here rather than in the markup so the four halls that became
+   sections and the three that stayed get the same one. */
+function sectWire(){
+  SECTIONS.forEach(s=>{
+    const head=$(s.head); if(!head||head.querySelector(".sectchev")) return;
+    const b=document.createElement("button");
+    b.type="button"; b.className="sectchev";
+    const body=$(s.body); if(body&&body.id) b.setAttribute("aria-controls",body.id);
+    b.innerHTML='<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.2 6 7.7l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    head.insertBefore(b,head.firstChild);
+    b.addEventListener("click",()=>sectSet(s.key,!sectIsOpen(s.key)));
+    sectSet(s.key,sectIsOpen(s.key),{now:true,silent:true});   /* the markup's start state, said once */
+  });
+  sectWords();
+}
+/* The chevron's words, from the catalog; said again on a language switch. */
+function sectWords(){
+  $$(".sectchev").forEach(b=>{b.title=T("common.section.toggle.title");b.setAttribute("aria-label",T("common.section.toggle.title"));});
+}
+/* Every road into a section (the condition bar, the palette, a mod row's configs entry, the
+   Discord wizard, a toast's action, a link between halls): opens its hall, unfolds it, brings
+   it up and lights it. The ember glow is 0.5 s in, three soft pulses over 3 s, 0.5 s out, a
+   steady glow under reduced motion (.sect-glow in app.css), on the section's body. A key that
+   names a hall with no section of that name is a plain walk. */
+function goSection(key){
+  const s=sectRec(key); if(!s){goPage(key);return;}
+  goPage(s.page);
+  sectSet(key,true);
+  const head=$(s.head), body=$(s.body);
+  requestAnimationFrame(()=>{
+    try{(head||body).scrollIntoView({block:"start",behavior:revealReduced()?"auto":"smooth"});}catch(_){}
+    if(!body) return;
+    body.classList.remove("sect-glow");
+    void body.offsetWidth;   /* so a second landing lights the glow again from the start */
+    body.classList.add("sect-glow");
+    clearTimeout(body._glowT);
+    body._glowT=setTimeout(()=>body.classList.remove("sect-glow"),4200);
+  });
+}
+
 /* ---------- NAV ---------- */
 let currentPage="hearth";
 /* Halls laid out as a flex column so a child can be handed the pane's real
@@ -2037,7 +2133,7 @@ function goPage(name){
   refreshScrollCues();
   try{renderEditBar();}catch(_){}
   if(name==="atlas"){try{atlasEnter();}catch(_){}} // also drives the mock preview
-  if(name==="skald"){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
+  if(name==="hearth"&&sectIsOpen("skald")){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
   if(Native.available){
     if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods({force:false});
     /* The plugins folder can appear while the hall is off screen (BepInEx installed from
@@ -2046,8 +2142,8 @@ function goPage(name){
     /* Walking into the hall is one of the three moments a followed Gale profile is asked. */
     if(name==="mods") galeCheck();
     if(name==="vikings"){refreshPlayers();refreshJournal(true);}
-    if(name==="runes") refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
-    if(name==="herald") refreshHerald();      // re-read prefs so the hall always shows the saved truth
+    if(name==="mods"&&sectIsOpen("runes")) refreshCfgList(false); // re-list scrolls on every visit (keeps a dirty editor untouched)
+    if(name==="world"&&sectIsOpen("herald")) refreshHerald();      // re-read prefs so the section always shows the saved truth
     /* The notes under Start with Windows, which a trip to Task Manager can have cleared,
        are re-read by the worldTab(WORLD_TAB) call above rather than here: the walk into the
        hall goes through it, so does every press of the tab strip, and asking in both places
@@ -2057,6 +2153,7 @@ function goPage(name){
 $$(".navitem").forEach(n=>n.addEventListener("click",()=>goPage(n.dataset.page)));
 $$("[data-goto]").forEach(c=>c.addEventListener("click",()=>goPage(c.dataset.goto)));
 goPage("hearth");
+sectWire();
 
 /* ---------- MULTI-SERVER CHIP STRIP ----------
    One chip per server profile (saved or live). The active chip is the profile
@@ -2466,7 +2563,7 @@ async function adoptWorldFlow(o){
     if(r===FAIL){ok.disabled=false;ok.textContent=T("common.button.bring_back");st.textContent=T("realm.adopt.failed");return;}
     modalClose();
     await refreshServers();
-    if(r&&r.ProfileName){await switchServer(r.ProfileName);goPage("world");}
+    if(r&&r.ProfileName){await switchServer(r.ProfileName);goSection("world");}
     toast("↺ "+T("realm.adopted.toast",{name}));
   });
 }
@@ -2613,7 +2710,7 @@ async function switchServer(name,opts){
   refreshStraySaveFolder();
   toast("ᛒ "+T("realm.switched.toast",{name:prefs.ProfileName}));
   if(currentPage==="mods") scanMods({force:false});
-  if(currentPage==="runes") refreshCfgList(true);
+  if(sectOn("runes")) refreshCfgList(true);
   renderSaveBars();
 }
 /* New-Server wizard: a realm gets its OWN identity (name, world, free ports) and,
@@ -3207,7 +3304,7 @@ async function addServerProfile(source){
     }
     modalClose();
     await switchServer(created.ProfileName);
-    goPage("world"); // land on World so ports/paths are visible for the new realm
+    goSection("world"); // land on Settings so ports/paths are visible for the new realm
     /* The character goes last, once the realm stands: a copy that is refused now (a file
        that turned up since the dialog looked) leaves the realm as it is and says why. */
     const pickedChar=testCopyCharacter(chars,charPick);
@@ -4043,7 +4140,7 @@ Object.assign(ES_ACTIONS,{
     else toast("ᛋ "+T("mods.add.preview.toast")); },
   openBackups:()=>barrowModal(),
   redrawMap:()=>{ const b=$("#atlasRedraw"); if(b) b.click(); },
-  openLog:()=>goPage("saga"),
+  openLog:()=>goSection("saga"),
   copyJoin:()=>{ if(sailBtn) sailBtn.click(); },
   startServer:()=>lifecycleToggle(),
   clearModSearch:()=>setModFilter(""),
@@ -4169,7 +4266,7 @@ function renderNet(){
   });
 });
 /* Recent-log card header: jump straight to the full chronicle */
-$("#openSagaChip")?.addEventListener("click",e=>{e.stopPropagation();goPage("saga");});
+$("#openSagaChip")?.addEventListener("click",e=>{e.stopPropagation();goSection("saga");});
 
 /* open-folder affordances (shell.open - native only) */
 $("#openWorlds").addEventListener("click",e=>{
@@ -6339,7 +6436,7 @@ function modRowItems(mod){
 /* Opens one of a mod's config files in the Configs hall. The hall's own load does the rest,
    including asking first when the file open there has unsaved changes. */
 async function openModConfig(f){
-  goPage("runes");
+  goSection("runes");
   await refreshCfgList(false);
   await loadCfg(f,false);
   const it=[...document.querySelectorAll("#cfgList .cfg-item[data-f]")].find(el=>el.dataset.f===f);
@@ -8591,10 +8688,10 @@ function invokePal(){
   if(!sel) return;
   if(sel.classList.contains("disabled")){toast("ᚦ "+(sel.title||T("pal.gate.unavailable")));return;}
   closePal();
-  if(sel.dataset.cmd==="discord_sharing"){goPage("herald");return;} // works in preview too
+  if(sel.dataset.cmd==="discord_sharing"){goSection("herald");return;} // works in preview too
   if(sel.dataset.cmd==="custom_domain"){waystoneWizard();return;}   // works in preview too, the Waystone
   if(sel.dataset.cmd==="world_backups"){barrowModal();return;}      // works in preview too
-  if(sel.dataset.cmd==="server_analytics"){goPage("skald");return;} // works in preview too
+  if(sel.dataset.cmd==="server_analytics"){goSection("skald");return;} // works in preview too
   if(sel.dataset.cmd==="log_settings"){vellumModal();return;}      // works in preview too
   /* The three controls that moved onto the Settings hall's App tab in 1.2.6. The regroup's
      promise was that the palette would still land on them; openAppTab was written for it and
@@ -8658,10 +8755,10 @@ function invokePal(){
       /* Same question the condition bar asks, and the same one-at-a-time guard. */
       updateBackupPrompt(false);
     }else if(cmd==="update_mods"){
-      goPage("mods");
+      goSection("mods");
       $("#updAllBtn").click();
     }else if(cmd==="kick_player"){
-      goPage("vikings");
+      goSection("vikings");
       toast("ᚲ "+T("pal.kick.hint.toast"));
     }else if(cmd==="copy_join_address"){
       const addr=joinHost()+":"+(S.prefs?.Port??2456);
@@ -8706,7 +8803,7 @@ document.addEventListener("keydown",e=>{
    already there, the way search works nearly everywhere else. It stands down while a
    dialog or the command palette is open, and while anything is already being typed into,
    so a slash typed into a field stays a slash. */
-const PAGE_SEARCH_BOX={mods:"#modSearch",runes:"#runeSearch"};
+const PAGE_SEARCH_BOX={mods:"#modSearch"};
 function typingIntoSomething(){
   const a=document.activeElement;
   if(!a) return false;
@@ -9455,6 +9552,7 @@ async function initUpkeep(){
      that writes files unattended among them. So the save waits for a read that worked. */
   let loaded=false;
   if(up!==FAIL&&up){
+    try{sectApplyPrefs(up);}catch(_){}   /* which sections stand open, from the same read */
     setT("tCheckUpd",up.CheckForUpdates);
     setT("tAutoUpdApp",up.AutoUpdateBakaLoader);
     setT("tAutoUpdMods",up.AutoUpdateMods);
@@ -11644,7 +11742,7 @@ function conditionUnsavedStop(u){
              :T("cond.unsaved_stop.body.unnamed",{server:realm}),
     actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbUnsavedSaga">${esc(T("cond.btn.open_log"))}</button>`,
     again:()=>conditionUnsavedStop(u),
-    wire:bar=>bar.querySelector("#cbUnsavedSaga").addEventListener("click",()=>goPage("saga")),
+    wire:bar=>bar.querySelector("#cbUnsavedSaga").addEventListener("click",()=>goSection("saga")),
     onDismiss:()=>{if(Native.available) Native.call("server.unsavedStopSeen",{profile:S.profileName||null}).catch(()=>{});},
   });
 }
@@ -11656,7 +11754,7 @@ function conditionSaveFailed(ms){
           :T("cond.save.msg",{body:T("cond.save.body")}),
     actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbSaga">${esc(T("cond.btn.open_log"))}</button>`,
     again:()=>conditionSaveFailed(ms),
-    wire:bar=>bar.querySelector("#cbSaga").addEventListener("click",()=>goPage("saga")),
+    wire:bar=>bar.querySelector("#cbSaga").addEventListener("click",()=>goSection("saga")),
   });
 }
 function conditionBackupFailed(err){
@@ -11674,7 +11772,7 @@ function conditionCrashed(){
                 :T("cond.crash.body.down"),
     actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbCrashLog">${esc(T("cond.btn.open_log"))}</button>`,
     again:()=>conditionCrashed(),
-    wire:bar=>bar.querySelector("#cbCrashLog").addEventListener("click",()=>goPage("saga")),
+    wire:bar=>bar.querySelector("#cbCrashLog").addEventListener("click",()=>goSection("saga")),
   });
 }
 /* A companion plugin that would not install. The server starts anyway, on purpose, so
@@ -11722,7 +11820,7 @@ function conditionPluginFailures(list,status){
     msg:text+(more>0?" "+T("cond.plugin.more",{count:more}):""),
     actionsHtml:`<button class="btn btn-ghost btn-sm" id="cbPluginLog">${esc(T("cond.btn.open_log"))}</button>`,
     again:()=>conditionPluginFailures(fails,status),
-    wire:bar=>bar.querySelector("#cbPluginLog").addEventListener("click",()=>goPage("saga")),
+    wire:bar=>bar.querySelector("#cbPluginLog").addEventListener("click",()=>goSection("saga")),
     onDismiss:()=>{PLUGIN_FAIL_HIDDEN=sig;},
   });
 }
@@ -11741,7 +11839,7 @@ function conditionModUpdates(n){
     msg:T("cond.mods.msg",{count:n}),
     actionsHtml:`<button class="btn btn-ember btn-sm" id="cbMods">${esc(T("cond.mods.review"))}</button>`,
     again:()=>conditionModUpdates(n),
-    wire:bar=>bar.querySelector("#cbMods").addEventListener("click",()=>goPage("mods")),
+    wire:bar=>bar.querySelector("#cbMods").addEventListener("click",()=>goSection("mods")),
     onDismiss:()=>{MOD_UPDATES_HIDDEN=key;},
   });
 }
@@ -11829,7 +11927,7 @@ function bepInExAskYes(){clearCondition("bepinexAsk");bepInExAnswerConsent(true,
 function bepInExAskNo(){clearCondition("bepinexAsk");bepInExAnswerConsent(false,"on the Hearth");}
 function bepInExRepairFromCondition(){
   clearCondition("bepinexMissingFiles");
-  goPage("mods");
+  goPage("mods"); sectSet("mods",true);
   bepInExRepairFlow();
 }
 /* SECTION J. A note that lists files which are not on disk any more. winhttp.dll is the
@@ -11978,7 +12076,7 @@ function bepInExLeftAloneWrite(last){
   /* Pressing the offer IS having read the notice, so it goes down the same road the close
      does rather than spelling those two lines out a second time. */
   bepInExLeftAloneSeen(last);
-  goPage("mods");
+  goPage("mods"); sectSet("mods",true);
   bepInExUpdateFlow(gone?{takeCurrentPack:true}:null);
 }
 function bepInExLeftAloneWiki(){
@@ -12110,7 +12208,7 @@ function conditionBepInExMaintained(){
 }
 /* Opens the Connection card, where the two switches and the test live. */
 function openConnectionCard(){
-  goPage("hearth");
+  goPage("hearth"); sectSet("hearth",true);
   const card=$("#connCard");
   if(card&&!card.classList.contains("open")) $("#connHead")?.click();
   requestAnimationFrame(()=>{try{card?.scrollIntoView({block:"nearest"});}catch(_){}});
@@ -12118,7 +12216,7 @@ function openConnectionCard(){
 /* Opens the Settings hall's App tab, where the preferences about BakaLoader itself live.
    They were at the foot of the Upkeep card until 1.2.6. */
 function openAppTab(focusId){
-  goPage("world");
+  goPage("world"); sectSet("world",true);
   worldTab("app");
   const tab=$("#worldTabApp");
   /* The control the host asked for, when they asked through the palette, and the tab itself
@@ -12140,7 +12238,7 @@ function openAppTab(focusId){
 }
 /* Opens the Upkeep card, where the auto-update switch lives. */
 function openUpkeepCard(){
-  goPage("hearth");
+  goPage("hearth"); sectSet("hearth",true);
   const card=$("#upkeepCard");
   if(card&&!card.classList.contains("open")) $("#upkeepHead").click();
   requestAnimationFrame(()=>{try{card.scrollIntoView({block:"nearest"});}catch(_){}});
@@ -17326,13 +17424,13 @@ if(Native.available){
   Native.on("profiles.changed",()=>{refreshServers();});
   Native.on("servers.changed",d=>{if(Array.isArray(d)){S.servers=d;renderServerChips();}});
   /* Skald hall keeps itself fresh while it is the page on screen */
-  Native.on("server.status",()=>{if(currentPage==="skald")skaldRefresh();});
+  Native.on("server.status",()=>{if(sectOn("skald"))skaldRefresh();});
   Native.on("server.playerDied",d=>{
-    if(currentPage==="skald"&&isActiveProfile(d?.profile))skaldRefresh();
+    if(sectOn("skald")&&isActiveProfile(d?.profile))skaldRefresh();
     if(currentPage==="vikings"&&isActiveProfile(d?.profile))refreshJournal(true);
   });
   Native.on("player.updated",p=>{
-    if(currentPage==="skald"&&isActiveProfile(p?.serverKey))skaldRefresh();
+    if(sectOn("skald")&&isActiveProfile(p?.serverKey))skaldRefresh();
   });
   /* An app line names its realm, or null when it belongs to none and shows on every realm. */
   Native.on("log.app",d=>{if(d?.line!=null)logRaw(d.line,d.profile==null?null:d.profile);});

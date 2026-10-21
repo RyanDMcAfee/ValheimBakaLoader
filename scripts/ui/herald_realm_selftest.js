@@ -392,7 +392,7 @@ const settle = () => new Promise(res => setImmediate(res));
   });
 
   await test("7. no app-wide switch or webhook box on the screen, and the master is retired", async () => {
-    const page = HTML.slice(HTML.indexOf('<section class="page" id="page-herald"'), HTML.indexOf("<!-- ============ PAGE: SKALD"));
+    const page = HTML.slice(HTML.indexOf('<div class="sect" id="sect-herald"'), HTML.indexOf("<!-- The unsaved notice."));
     for (const id of ["tHerald", "heraldUrl", "heraldThread", "heraldRealmUrl", "heraldRealmThread", "heraldIntro", "heraldWizBtn"])
       assert.ok(!page.includes('id="' + id + '"'), id + " is still on the Discord screen");
     assert.ok(!/herald\.sharing\./.test(page), "the Discord sharing card is still on the screen");

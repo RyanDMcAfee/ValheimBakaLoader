@@ -62,6 +62,8 @@ namespace ValheimBakaLoader.Game
         // "WIDTHxHEIGHT" in device-independent pixels (96 dpi); see UserPreferences.WindowBounds.
         [JsonProperty("windowBounds")] public string WindowBounds { get; set; }
         [JsonProperty("windowMaximized")] public bool? WindowMaximized { get; set; }
+        // Which sections of the page stand open, by hall name; see UserPreferences.UiSections.
+        [JsonProperty("uiSections")] public Dictionary<string, bool> UiSections { get; set; }
 
         // -- Integrations --
 

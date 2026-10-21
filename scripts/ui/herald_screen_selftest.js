@@ -75,7 +75,8 @@ function block() {
   return APP.slice(from, to);
 }
 
-const PAGE = HTML.slice(HTML.indexOf('<section class="page" id="page-herald"'), HTML.indexOf("<!-- ============ PAGE: SKALD"));
+/* The Discord screen is a section at the foot of Settings since 1.2.18. */
+const PAGE = HTML.slice(HTML.indexOf('<div class="sect" id="sect-herald"'), HTML.indexOf("<!-- The unsaved notice."));
 const CARD = PAGE.slice(PAGE.indexOf('<div class="card b-herald">'), PAGE.indexOf('<div id="heraldPanels"'));
 
 /* A node that knows its parent, enough for the panels to be lent and put back. */

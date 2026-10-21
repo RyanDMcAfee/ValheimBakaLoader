@@ -473,6 +473,48 @@ html.lang-pending body>*{visibility:hidden}
 .pagehead .sub.modsneeds{color:var(--amber)}
 .pagehead .sub.modsneeds:empty{display:none}
 .pagehead .grow{flex:1}
+/* ---- SECTIONS (1.2.18, the simpler sidebar) ----
+   The four halls that became sections (Statistics and the Log on the Dashboard, Configs under
+   the Mods list, Discord at the foot of Settings) keep their heads, drawn as .secthead under a
+   hairline, and their old content in a .sectbody that app.js rolls through reveal(). The
+   chevron to the left of every section heading (the halls' own first ones included) is written
+   by sectWire in app.js and glows like the rest of the app's embers so it reads as a button;
+   it turns from pointing right (folded) to a V (open) with the same turn the folding cards use.
+   .sect-glow is the landing light every road into a section casts on its body: 0.5 s in, three
+   soft pulses over 3 s, 0.5 s out; a steady glow under reduced motion. */
+.sect{flex:none;margin-top:14px;padding-top:14px;border-top:1px solid rgba(140,109,63,.25)}
+.sect>.pagehead.secthead{margin-bottom:12px}
+.sectbody{border-radius:var(--r2)}
+.sect .saga{height:clamp(320px,55vh,640px)}
+.sect .runes{height:clamp(360px,60vh,720px)}
+.sectchev{flex:none;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;
+  align-self:center;margin:0 -2px 0 0;padding:0;border:0;border-radius:6px;background:none;cursor:pointer;
+  color:var(--amber);animation:chevEmber 4.8s ease-in-out infinite}
+.sectchev svg{width:14px;height:14px;transform:rotate(-90deg);transition:transform .2s ease-out}
+.sect.open>.pagehead .sectchev svg,.page.open>.pagehead .sectchev svg{transform:none}
+.sectchev:hover,.sectchev:focus-visible{animation:none;color:var(--ember-hi);outline:none;
+  background:var(--ember-dim);filter:drop-shadow(0 0 6px rgba(255,122,26,.7))}
+@keyframes chevEmber{
+  0%,100%{color:var(--amber);filter:drop-shadow(0 0 2px rgba(255,122,26,.25))}
+  46%{color:#FFDCA0;filter:drop-shadow(0 0 6px rgba(255,190,92,.8))}
+  78%{color:#F7C878;filter:drop-shadow(0 0 4px rgba(255,170,70,.55))}
+}
+.sect-glow{animation:sectGlow 4s ease-out}
+@keyframes sectGlow{
+  0%{box-shadow:0 0 0 0 rgba(255,122,26,0),0 0 0 rgba(255,122,26,0)}
+  12.5%,37.5%,62.5%,87.5%{box-shadow:0 0 0 2px rgba(255,122,26,.55),0 0 30px rgba(255,122,26,.35)}
+  25%,50%,75%{box-shadow:0 0 0 2px rgba(255,122,26,.28),0 0 14px rgba(255,122,26,.16)}
+  100%{box-shadow:0 0 0 0 rgba(255,122,26,0),0 0 0 rgba(255,122,26,0)}
+}
+@keyframes sectGlowSteady{
+  0%{box-shadow:0 0 0 0 rgba(255,122,26,0),0 0 0 rgba(255,122,26,0)}
+  12.5%,87.5%{box-shadow:0 0 0 2px rgba(255,122,26,.55),0 0 30px rgba(255,122,26,.35)}
+  100%{box-shadow:0 0 0 0 rgba(255,122,26,0),0 0 0 rgba(255,122,26,0)}
+}
+@media (prefers-reduced-motion:reduce){
+  .sectchev{animation:none}
+  .sect-glow{animation:sectGlowSteady 4s ease-out}
+}
 /* The Players hall's two cheat-mark controls, as a PAIR. The button and the switch beside it are
    one offer said two ways, and the head is a wrapping flex row: at 1024x680 the three things on
    the right do not fit on one line, so the switch took a line of its own at the LEFT margin
@@ -594,8 +636,12 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .bento{display:grid;grid-template-columns:repeat(6,1fr);
   grid-template-rows:repeat(2,minmax(172px,232px)) minmax(160px,1fr);
   grid-auto-rows:minmax(160px,auto);
-  gap:12px;flex:1 1 auto;min-height:0}
-/* Rows 1 and 2 stop growing at 232px so the Vikings / Network / Mods cards never
+  gap:12px;flex:1 0 auto;min-height:0}
+/* flex 1 0 auto, not 1 1 auto, since 1.2.18: Statistics and the Log stand under the bento on
+   the same hall, and with them open the hall is taller than the pane. A bento allowed to shrink
+   there would have been handed the shortfall while its rows kept their floors, and the cards
+   would have run out over the sections below. It keeps its content height and the hall scrolls.
+   Rows 1 and 2 stop growing at 232px so the Vikings / Network / Mods cards never
    hollow out on a tall window; the leftover height goes to the last row, where
    the Recent log card turns it into more lines. The floors came down from 178/178
    to 172/160 when the persistent header took 48px off the pane, so the collapsed
@@ -2506,6 +2552,7 @@ body.idle .upkeep-head .r,
 body.idle .updpill.ember .mc,
 body.idle .formsec.collapsible .r,
 body.idle .microlabel .r.glowr,
+body.idle .sectchev,
 body.idle .caret,
 body.idle #saveCfgBtn.pulse,
 body.idle .holdbar .hbprog.indet i,body.idle .modprog .hbprog.indet i{animation-play-state:paused}

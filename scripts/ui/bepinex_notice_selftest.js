@@ -164,6 +164,7 @@ function harness() {
     LOC: () => "en",
     logLine: () => {},
     goPage: () => {},
+    sectSet: () => {},
     bepInExUpdateFlow: () => { called.push("update"); },
     bepInExRepairPackGone: () => false,
     S: { bepinex: {} },

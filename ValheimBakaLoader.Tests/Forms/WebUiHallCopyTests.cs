@@ -67,6 +67,10 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var html = Html();
             var from = html.IndexOf("<section class=\"page\" id=\"page-" + page + "\"", StringComparison.Ordinal);
+            // The Log, Statistics, Configs and Discord are sections of other halls since 1.2.18,
+            // with the same ids and words they had as halls; the inventory reads them where
+            // they stand now.
+            if (from < 0) from = html.IndexOf("<div class=\"sect\" id=\"sect-" + page + "\"", StringComparison.Ordinal);
             Assert.True(from > 0, "index.html no longer has the " + page + " hall");
             var to = html.IndexOf(until, from, StringComparison.Ordinal);
             Assert.True(to > from, "the " + page + " hall no longer ends at " + until);
@@ -104,7 +108,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_players_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("vikings", "<!-- ============ PAGE: MODS"), new[]
+            TheHallNames(Hall("vikings", "<!-- ============ PAGE: ATLAS"), new[]
             {
                 "vikings.head.title", "common.norse.vikings",
                 // Clear cheat marks and its armed switch used to be listed here. 1.2.10 moved
@@ -151,7 +155,7 @@ namespace ValheimBakaLoader.Tests.Forms
             foreach (var id in new[] { "cleanseBtn", "rowCleanseArmed", "tCleanseArmed" })
                 Assert.Contains("id=\"" + id + "\"", group);
 
-            var players = Hall("vikings", "<!-- ============ PAGE: MODS");
+            var players = Hall("vikings", "<!-- ============ PAGE: ATLAS");
             foreach (var id in new[] { "cleanseBtn", "rowCleanseArmed", "tCleanseArmed" })
                 Assert.DoesNotContain("id=\"" + id + "\"", players);
             Assert.DoesNotContain("vikings.cleanse.", players);
@@ -167,7 +171,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void Every_sortable_player_column_keys_its_word_and_its_tooltip()
         {
-            var hall = Hall("vikings", "<!-- ============ PAGE: MODS");
+            var hall = Hall("vikings", "<!-- ============ PAGE: ATLAS");
             foreach (Match header in Regex.Matches(hall, @"<th[^>]*\bdata-sort=""([a-z]+)""[^>]*>"))
             {
                 Assert.True(header.Value.Contains("data-i18n=\""),
@@ -186,7 +190,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_mods_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("mods", "<!-- ============ PAGE: RUNES"), new[]
+            TheHallNames(Hall("mods", "<!-- ============ SECTION: RUNES"), new[]
             {
                 "mods.head.title", "mods.search.aria",
                 "mods.col.name", "common.sort.by_name", "mods.col.installed",
@@ -222,7 +226,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_counted_mods_labels_stay_with_the_render_that_owns_them()
         {
-            var hall = Hall("mods", "<!-- ============ PAGE: RUNES");
+            var hall = Hall("mods", "<!-- ============ SECTION: RUNES");
             var js = AppJs();
 
             var updAll = hall.Substring(hall.IndexOf("id=\"updAllBtn\"", StringComparison.Ordinal) - 40, 120);
@@ -340,7 +344,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_settings_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("world", "<!-- ============ PAGE: ATLAS"), new[]
+            TheHallNames(Hall("world", "<!-- ============ SECTION: HERALD"), new[]
             {
                 "world.head.title", "common.norse.world", "world.head.sub", "world.save.label",
                 // The hall's two tabs, added in 1.2.6. Server is everything below and App is
@@ -426,7 +430,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_five_world_dials_key_their_label_and_their_help()
         {
-            var hall = Hall("world", "<!-- ============ PAGE: ATLAS");
+            var hall = Hall("world", "<!-- ============ SECTION: HERALD");
             var catalog = Catalog();
 
             foreach (var (dial, word) in new[]
@@ -455,7 +459,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_process_priority_options_stay_the_words_the_code_reads()
         {
-            var hall = Hall("world", "<!-- ============ PAGE: ATLAS");
+            var hall = Hall("world", "<!-- ============ SECTION: HERALD");
             var select = hall.Substring(hall.IndexOf("<select id=\"prioSel\">", StringComparison.Ordinal));
             select = select.Substring(0, select.IndexOf("</select>", StringComparison.Ordinal));
 
@@ -546,7 +550,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_missing_mods_banner_keys_the_words_the_install_does_not_rewrite()
         {
-            var hall = Hall("vikings", "<!-- ============ PAGE: MODS");
+            var hall = Hall("vikings", "<!-- ============ PAGE: ATLAS");
             var js = AppJs();
 
             Assert.Contains("class=\"capshead\" data-i18n=\"vikings.caps.head\"", hall);
@@ -635,7 +639,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_map_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("atlas", "<!-- ============ PAGE: SAGA"), new[]
+            TheHallNames(Hall("atlas", "<!-- ============ PAGE: MODS"), new[]
             {
                 "atlas.head.title",
                 "common.norse.atlas",
@@ -672,7 +676,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void Every_map_layer_chip_keys_its_words_and_not_its_name()
         {
-            var hall = Hall("atlas", "<!-- ============ PAGE: SAGA");
+            var hall = Hall("atlas", "<!-- ============ PAGE: MODS");
 
             foreach (var (name, id) in new[]
             {
@@ -743,7 +747,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_log_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("saga", "<!-- ============ PAGE: HERALD"), new[]
+            TheHallNames(Hall("saga", "<!-- ============ PAGE: VIKINGS"), new[]
             {
                 // 1.2.6: the search box had a placeholder and no label at all, so a screen
                 // reader announced an unnamed edit field in the middle of the toolbar.
@@ -774,7 +778,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_log_filters_key_their_words_and_the_console_line_waits()
         {
-            var hall = Hall("saga", "<!-- ============ PAGE: HERALD");
+            var hall = Hall("saga", "<!-- ============ PAGE: VIKINGS");
             var js = AppJs();
 
             foreach (var (name, id) in new[]
@@ -801,7 +805,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_discord_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("herald", "<!-- ============ PAGE: SKALD"), new[]
+            TheHallNames(Hall("herald", "<!-- The unsaved notice."), new[]
             {
                 "herald.head.title",
                 "common.norse.herald",
@@ -876,7 +880,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_discord_sentences_that_wait_are_the_ones_with_a_reason()
         {
-            var hall = Hall("herald", "<!-- ============ PAGE: SKALD");
+            var hall = Hall("herald", "<!-- The unsaved notice.");
             var js = AppJs();
 
             // 1.2.17: the opening paragraph left the screen with the second card, so the
@@ -900,7 +904,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_statistics_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("skald", "<!-- STATUSBAR -->"), new[]
+            TheHallNames(Hall("skald", "<!-- ============ SECTION: SAGA"), new[]
             {
                 "skald.head.title",
                 "common.norse.skald",
@@ -966,7 +970,7 @@ namespace ValheimBakaLoader.Tests.Forms
         public void The_deaths_caption_carries_both_registers_and_the_subtitle_waits()
         {
             var catalog = Catalog();
-            var hall = Hall("skald", "<!-- STATUSBAR -->");
+            var hall = Hall("skald", "<!-- ============ SECTION: SAGA");
 
             Assert.Equal("valkyries dispatched", Lore(catalog, "skald.deaths.sub"));
             Assert.Equal("player deaths", catalog["skald.deaths.sub"].GetProperty("plain").GetString());

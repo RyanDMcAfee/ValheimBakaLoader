@@ -399,9 +399,11 @@ namespace ValheimBakaLoader.Tests.Forms
 
         /// <summary>
         /// Every hall on the rail reads its label out of the catalog, and every one that
-        /// has a Norse caption reads that too. The nine ids are listed here rather than
-        /// derived, because the point of the gate is that a tenth hall added without a
-        /// key fails rather than quietly ships an English-only label.
+        /// has a Norse caption reads that too. The five ids are listed here rather than
+        /// derived, because the point of the gate is that a sixth hall added without a
+        /// key fails rather than quietly ships an English-only label. The four halls that
+        /// became sections in 1.2.18 keep their captions on their section headings, read
+        /// the same way below.
         /// </summary>
         [Fact]
         public void Every_hall_on_the_rail_reads_its_label_and_its_caption_from_the_catalog()
@@ -417,14 +419,18 @@ namespace ValheimBakaLoader.Tests.Forms
             {
                 ("hearth", "Dashboard", "Hearth"),
                 ("vikings", "Players", "Vikings"),
-                ("mods", "Mods", null),
-                ("runes", "Configs", "Runes"),
-                ("world", "Settings", "World"),
                 ("atlas", "Map", "Atlas"),
-                ("saga", "Log", "Saga"),
-                ("herald", "Discord", "Herald"),
-                ("skald", "Statistics", "Skald"),
+                ("mods", "Mods", null),
+                ("world", "Settings", "World"),
             };
+
+            foreach (var (section, caption) in new[] { ("skald", "Skald"), ("saga", "Saga"), ("runes", "Runes"), ("herald", "Herald") })
+            {
+                var head = html.Substring(html.IndexOf("<div class=\"sect\" id=\"sect-" + section + "\"", StringComparison.Ordinal), 900);
+                var captionId = "common.norse." + caption.ToLowerInvariant();
+                Assert.Contains("data-i18n=\"" + captionId + "\"", head);
+                Assert.Equal(caption, Lore(catalog, captionId));
+            }
 
             foreach (var (page, label, caption) in expected)
             {

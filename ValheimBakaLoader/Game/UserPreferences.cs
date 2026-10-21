@@ -55,6 +55,14 @@ namespace ValheimBakaLoader.Game
 
         public bool StartWithWindows { get; set; }
 
+        // Which sections of the page stand open, by the hall's own name (hearth, skald, saga,
+        // mods, runes, world, herald): the Dashboard's own section, Statistics and the Log
+        // under it, the Mods list and Configs under it, Settings and Discord under it. Kept
+        // across restarts since 1.2.18, when the rail went down to five halls and these became
+        // sections; a name the document does not carry takes the page's default, which is
+        // the only time the default applies. See SECTIONS in app.js.
+        public Dictionary<string, bool> UiSections { get; set; } = new();
+
         // Anonymous usage heartbeat (install count / servers online); see HeartbeatService.
         public bool ShareAnonymousStats { get; set; } = true;
 
@@ -223,6 +231,10 @@ namespace ValheimBakaLoader.Game
                     .Where(k => !string.IsNullOrWhiteSpace(k))
                     .ToList(),
                 StartWithWindows = file.StartWithWindows ?? defaults.StartWithWindows,
+                // Nameless entries dropped on the way in, the same as the list above.
+                UiSections = (file.UiSections ?? new())
+                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value),
                 ShareAnonymousStats = file.ShareAnonymousStats ?? defaults.ShareAnonymousStats,
                 AnalyticsSalt = file.AnalyticsSalt ?? defaults.AnalyticsSalt,
                 StartMinimized = file.StartMinimized ?? defaults.StartMinimized,
@@ -300,6 +312,9 @@ namespace ValheimBakaLoader.Game
                 .Where(k => !string.IsNullOrWhiteSpace(k))
                 .ToList(),
             StartWithWindows = StartWithWindows,
+            UiSections = (UiSections ?? new())
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value),
             ShareAnonymousStats = ShareAnonymousStats,
             AnalyticsSalt = AnalyticsSalt,
             StartMinimized = StartMinimized,

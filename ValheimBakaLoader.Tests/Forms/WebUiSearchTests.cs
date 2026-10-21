@@ -396,7 +396,8 @@ namespace ValheimBakaLoader.Tests.Forms
         public void The_configs_hall_carries_a_search_over_its_list_and_a_find_inside_the_file()
         {
             var html = Html();
-            var page = Between(html, "<section class=\"page\" id=\"page-runes\">", "<!-- ============ PAGE: WORLD");
+            // Configs is a section under the Mods list since 1.2.18, with its ids as they were.
+            var page = Between(html, "<div class=\"sect\" id=\"sect-runes\" data-sect=\"runes\">", "<!-- ============ PAGE: WORLD");
 
             Assert.Contains("id=\"runeSearch\"", page);
             Assert.Contains("id=\"runeShowing\"", page);
@@ -724,12 +725,14 @@ namespace ValheimBakaLoader.Tests.Forms
         // ---------------------------------------------------------------- D. the sidebar order
 
         /// <summary>
-        /// Configs sits directly after Mods: the two halls a host moves between while fitting
-        /// a mod out. Ids and data-page values are untouched, so every link and every keyboard
-        /// route still lands where it did.
+        /// The rail lists five halls since 1.2.18, in the owner's order: Dashboard, Players, Map,
+        /// Mods, Settings. The Log and Statistics are sections of the Dashboard, Configs a
+        /// section under the Mods list and Discord a section at the foot of Settings, each with
+        /// the ids it had as a hall, so every link and every keyboard route still lands where
+        /// it did (docs/sidebar.md has the map).
         /// </summary>
         [Fact]
-        public void The_sidebar_runs_hearth_vikings_mods_runes_world_atlas_saga_herald_skald()
+        public void The_sidebar_runs_hearth_vikings_atlas_mods_world()
         {
             var html = Html();
             var rail = Between(html, "<div class=\"navitem active\" data-page=\"hearth\"", "</nav>");
@@ -739,9 +742,14 @@ namespace ValheimBakaLoader.Tests.Forms
                 .Select(m => m.Groups[1].Value)
                 .ToArray();
 
-            Assert.Equal(
-                new[] { "hearth", "vikings", "mods", "runes", "world", "atlas", "saga", "herald", "skald" },
-                order);
+            Assert.Equal(new[] { "hearth", "vikings", "atlas", "mods", "world" }, order);
+
+            var sections = System.Text.RegularExpressions.Regex
+                .Matches(html, "<div class=\"sect\" id=\"sect-([a-z]+)\" data-sect=\"\\1\">")
+                .Select(m => m.Groups[1].Value)
+                .ToArray();
+
+            Assert.Equal(new[] { "skald", "saga", "runes", "herald" }, sections);
         }
 
         /// <summary>
