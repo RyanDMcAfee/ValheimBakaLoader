@@ -260,7 +260,7 @@ namespace ValheimBakaLoader.Tools
         /// <item>The master switch goes from the screen. A host who had it off gets every realm
         /// switched off instead, so nothing starts posting by surprise; then it is set on and is
         /// read as on from here on (the file keeps it for the builds before this one).</item>
-        /// <item>A realm with no webhook of its own posted through the app-wide one, so that link
+        /// <item>A realm that was sharing with no webhook of its own posted through the app-wide one, so that link
         /// is copied into it, with the app-wide thread when it has none of its own: the same
         /// channel and thread as before, now its own.</item>
         /// <item>The name and the picture become each realm's: the app-wide values are copied
@@ -280,8 +280,12 @@ namespace ValheimBakaLoader.Tools
 
             foreach (var realm in (prefs.Servers ?? new List<ServerPreferences>()).Where(s => s != null))
             {
+                // Only a realm that was sharing ever posted through the app-wide link. A realm that
+                // was off keeps no webhook, so the screen offers Set up rather than naming a webhook
+                // it never used.
+                var wasSharing = realm.HeraldOn;
                 if (!masterOn) realm.HeraldOn = false;
-                if (ServerPreferences.BlankAsNull(realm.HeraldWebhookUrl) == null && appUrl != null)
+                if (wasSharing && ServerPreferences.BlankAsNull(realm.HeraldWebhookUrl) == null && appUrl != null)
                 {
                     realm.HeraldWebhookUrl = appUrl;
                     realm.HeraldThreadId = ServerPreferences.BlankAsNull(realm.HeraldThreadId) ?? appThread;

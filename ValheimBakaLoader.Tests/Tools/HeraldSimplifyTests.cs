@@ -86,7 +86,8 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal(HookA, R(prefs, "Alpha").HeraldWebhookUrl);
             Assert.Equal("777", R(prefs, "Alpha").HeraldThreadId);
             Assert.Equal((HookA, "777"), (HeraldRealms.WebhookUrlFor(prefs, R(prefs, "Alpha")), HeraldRealms.ThreadIdFor(prefs, R(prefs, "Alpha"))));
-            Assert.Equal(HookA, R(prefs, "Off").HeraldWebhookUrl);
+            // A realm that was off never posted through it, so it is left to Set up on its own.
+            Assert.Null(R(prefs, "Off").HeraldWebhookUrl);
             // A realm with a webhook of its own keeps it, and gets no thread from another channel.
             Assert.Equal(HookB, R(prefs, "Beta").HeraldWebhookUrl);
             Assert.Null(R(prefs, "Beta").HeraldThreadId);

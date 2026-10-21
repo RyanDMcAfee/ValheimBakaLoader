@@ -886,7 +886,7 @@ namespace ValheimBakaLoader.Tests.Tools
             // retired: the move switched every realm off once instead, and it is read as on from
             // then on, so the press goes out. (Before 1.2.16 this press was refused.)
             Assert.True(hall.UserPrefs.LoadPreferences().HeraldSimplifiedMigrated);
-            Change(hall, p => { HeraldRealms.Find(p, "Alpha").HeraldOn = true; p.DiscordSharingEnabled = false; });
+            Change(hall, p => { var a = HeraldRealms.Find(p, "Alpha"); a.HeraldOn = true; a.HeraldWebhookUrl = HookA; p.DiscordSharingEnabled = false; });
             var sent = await hall.Call("discord.publish", new { profile = "Alpha" });
             Assert.True((bool)sent["ok"], (string)sent["error"]);
             Assert.Single(hall.Wire.Seen);
