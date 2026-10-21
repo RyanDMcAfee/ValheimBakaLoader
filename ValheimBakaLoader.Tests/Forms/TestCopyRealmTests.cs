@@ -262,6 +262,109 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.True(ValheimServerOptions.FromPreferences(stored, new UserPreferences(), null).Public);
         }
 
+        /// <summary>
+        /// The extra arguments box sits after -public on the command line, and the game lets the
+        /// last -public win, so a "-public 1" in it would list the copy. The copy takes the
+        /// source's extra arguments as they are, so this is the start line itself, built for real.
+        /// </summary>
+        [Fact]
+        public async Task A_public_1_in_the_extra_arguments_never_lists_a_test_copy()
+        {
+            var source = await MakeSource();
+            source = ServerPrefs().LoadPreferences(Source);
+            source.AdditionalArgs = "-console -public 1";
+            ServerPrefs().SavePreferences(source);
+
+            await MakeTestCopy();
+            var copy = ServerPrefs().LoadPreferences(Copy);
+            Assert.Equal("-console -public 1", copy.AdditionalArgs);
+
+            var parts = ValheimServer.DescribeLaunchParts(
+                ValheimServerOptions.FromPreferences(copy, new UserPreferences(), null));
+            var line = string.Join(" ", parts);
+            Assert.DoesNotContain("-public 1", line);
+            Assert.Contains("-public 0", line);
+            Assert.Contains("-console", line);
+            Assert.Single(parts, part => part.StartsWith("-public", StringComparison.OrdinalIgnoreCase)
+                                         || part.Contains(" -public", StringComparison.OrdinalIgnoreCase));
+
+            // Typed into Settings on the copy itself: the same.
+            copy.AdditionalArgs = "-public 1";
+            var typed = string.Join(" ", ValheimServer.DescribeLaunchParts(
+                ValheimServerOptions.FromPreferences(copy, new UserPreferences(), null)));
+            Assert.DoesNotContain("-public 1", typed);
+            Assert.Contains("-public 0", typed);
+        }
+
+        /// <summary>
+        /// The mark is a name, and a deleted source's name can be given to a new realm. That realm
+        /// never made the copy, so the copy keeps saying its source is gone, and a rename of the
+        /// new realm does not drag the copy's mark along.
+        /// </summary>
+        [Fact]
+        public async Task A_new_realm_under_a_deleted_sources_name_does_not_become_its_source()
+        {
+            await MakeSource();
+            await MakeTestCopy();
+            Assert.DoesNotContain("testSourceGone", JsonConvert.SerializeObject(
+                ServerPrefs().LoadPreferences(Copy).ToFile()).Replace("\"testSourceGone\":null", ""));
+
+            await Call("profiles.delete", new { name = Source, deleteFiles = true });
+            Assert.True(ServerPrefs().LoadPreferences(Copy).TestSourceGone);
+            Assert.Contains("\"testSourceGone\":true", JsonConvert.SerializeObject(ServerPrefs().LoadPreferences(Copy).ToFile()));
+
+            await Call("profiles.get", new { name = Home });
+            Assert.IsType<ServerPreferences>(await Call("servers.create", new
+            {
+                name = Source,
+                password = "another1",
+                isolateInstall = false,
+                isolateSaveFolder = true,
+            }));
+
+            var row = ListRow(Copy);
+            Assert.Equal(Source, row.Value<string>("testCopyOf"));
+            Assert.True(row.Value<bool>("testSourceGone"), "the copy was handed to a realm that only took its source's name");
+
+            // A settings save of the copy keeps the flag over whatever the form sent.
+            var cur = JObject.Parse(JsonConvert.SerializeObject(await Call("profiles.get", new { name = Copy })));
+            cur["TestSourceGone"] = false;
+            foreach (var key in new[] { "EffectiveServerExePath", "ServerExePathSource", "EffectiveSaveDataFolderPath", "SaveDataFolderPathSource" })
+                cur.Remove(key);
+            await Call("profiles.save", new { name = Copy, prefs = cur });
+            Assert.True(ServerPrefs().LoadPreferences(Copy).TestSourceGone);
+
+            await Call("profiles.rename", new { name = Source, newName = "Fourth Sunset" });
+            Assert.Equal(Source, ServerPrefs().LoadPreferences(Copy).TestCopyOf);
+            Assert.True(ListRow(Copy).Value<bool>("testSourceGone"));
+        }
+
+        /// <summary>
+        /// A source file taken away by hand leaves no delete to mark the copy, so the realm made
+        /// under that name later marks it instead.
+        /// </summary>
+        [Fact]
+        public async Task A_source_removed_by_hand_is_not_reattached_by_a_new_realm_either()
+        {
+            await MakeSource();
+            await MakeTestCopy();
+            ServerPrefs().RemovePreferences(Source);
+            Assert.False(ServerPrefs().LoadPreferences(Copy).TestSourceGone);
+            Assert.True(ListRow(Copy).Value<bool>("testSourceGone"));
+
+            await Call("profiles.get", new { name = Home });
+            await Call("servers.create", new
+            {
+                name = Source,
+                password = "another1",
+                isolateInstall = false,
+                isolateSaveFolder = true,
+            });
+
+            Assert.True(ServerPrefs().LoadPreferences(Copy).TestSourceGone);
+            Assert.True(ListRow(Copy).Value<bool>("testSourceGone"));
+        }
+
         [Fact]
         public async Task A_source_that_is_not_there_is_refused_before_anything_is_made()
         {

@@ -119,6 +119,7 @@ function page() {
   vm.createContext(context);
   const code = [
     line("const esc="),
+    line("const WORLD_NAME_MAX="),
     fn("function markSwitch(t){"),
     fn("function gateDialogSwitch(t){"),
     between("/* CHIPLOOK-BEGIN", "/* CHIPLOOK-END */"),
@@ -141,6 +142,18 @@ test("1. the names: source_bakaT, world_bakaT, and a number when the name is tak
   assert.strictEqual(p.testCopyName("  Second Sunset ", SERVERS), "Second Sunset_bakaT");
   assert.strictEqual(p.testCopyWorld("Sunset"), "Sunset_bakaT");
   assert.strictEqual(p.testCopyWorld(""), "");
+  // A source world near the limit is cut so the suffix fits: the dialog must not open on a
+  // world name its own check turns down as too long.
+  const max = vm.runInContext("WORLD_NAME_MAX", p);
+  assert.strictEqual(typeof max, "number");
+  const long = "W".repeat(max - 2);
+  const offered = p.testCopyWorld(long);
+  assert.ok(offered.length <= max, "the world prefill is " + offered.length + " long, over " + max);
+  assert.ok(offered.endsWith("_bakaT"), offered);
+  assert.strictEqual(offered, "W".repeat(max - 6) + "_bakaT");
+  assert.strictEqual(p.testCopyWorld("W".repeat(max - 6)), "W".repeat(max - 6) + "_bakaT");
+  // A cut that would leave a trailing space or dot before the suffix drops it.
+  assert.strictEqual(p.testCopyWorld("W".repeat(max - 7) + " XYZ"), "W".repeat(max - 7) + "_bakaT");
   const taken = SERVERS.concat([{ name: "second sunset_BAKAT" }, { name: "Second Sunset_bakaT2" }]);
   assert.strictEqual(p.testCopyName("Second Sunset", taken), "Second Sunset_bakaT3",
     "the dialog opens on a name another realm already has");

@@ -166,7 +166,7 @@ namespace ValheimBakaLoader.Tools
             {
                 if (problem == CharacterFile.UnknownVersion)
                     throw new HostFacingException("characters.copy.unknownVersion",
-                        $"'{file}' was saved by a version of Valheim BakaLoader does not know, so it was not copied.", ("file", file));
+                        $"'{file}' was saved by a version of Valheim that BakaLoader does not know, so it was not copied.", ("file", file));
                 throw new HostFacingException("characters.copy.unreadable",
                     $"'{file}' could not be read as a Valheim character, so nothing was copied.", ("file", file));
             }

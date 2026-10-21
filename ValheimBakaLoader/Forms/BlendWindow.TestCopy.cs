@@ -84,6 +84,11 @@ namespace ValheimBakaLoader.Forms
             }
             catch { /* an unreadable profile leaves the payload as it came */ }
 
+            // A first save under a name nothing has yet is a new realm, and a copy still pointing
+            // at that name lost its source earlier.
+            if (stored == null && !string.IsNullOrWhiteSpace(prefs.ProfileName))
+                MarkTestCopiesSourceGone(prefs.ProfileName);
+
             return prefs.KeepTestCopyFrom(stored);
         }
 
@@ -95,13 +100,38 @@ namespace ValheimBakaLoader.Forms
         {
             if (string.IsNullOrWhiteSpace(oldName) || string.IsNullOrWhiteSpace(newName)) return;
 
+            // A copy whose source was deleted keeps naming the old one: the realm being renamed
+            // only took that name later and never made it.
             foreach (var copy in ServerPrefsProvider.LoadPreferences()
-                         .Where(x => string.Equals(x.TestCopyOf, oldName, StringComparison.OrdinalIgnoreCase))
+                         .Where(x => !x.TestSourceGone
+                                     && string.Equals(x.TestCopyOf, oldName, StringComparison.OrdinalIgnoreCase))
                          .ToList())
             {
                 copy.TestCopyOf = newName;
                 ServerPrefsProvider.SavePreferences(copy);
                 Logger.Information("Test copy '{0}' now names its source '{1}' (was '{2}').", copy.ProfileName, newName, oldName);
+            }
+        }
+
+        /// <summary>
+        /// Every test copy of <paramref name="sourceName"/> marked as having lost its source, after
+        /// that realm was deleted, or before a new realm is made under a name such a copy still
+        /// names. The copies stay standing; the mark only keeps a later realm with the same name
+        /// from quietly becoming their source.
+        /// </summary>
+        private void MarkTestCopiesSourceGone(string sourceName)
+        {
+            if (string.IsNullOrWhiteSpace(sourceName)) return;
+
+            foreach (var copy in ServerPrefsProvider.LoadPreferences()
+                         .Where(x => !x.TestSourceGone
+                                     && !string.Equals(x.ProfileName, sourceName, StringComparison.OrdinalIgnoreCase)
+                                     && string.Equals(x.TestCopyOf, sourceName, StringComparison.OrdinalIgnoreCase))
+                         .ToList())
+            {
+                copy.TestSourceGone = true;
+                ServerPrefsProvider.SavePreferences(copy);
+                Logger.Information("Test copy '{0}' lost its source '{1}'.", copy.ProfileName, sourceName);
             }
         }
 

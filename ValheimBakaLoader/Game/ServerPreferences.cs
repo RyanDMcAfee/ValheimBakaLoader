@@ -148,6 +148,16 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public string TestCopyOf { get; set; }
 
+        /// <summary>
+        /// True once the realm <see cref="TestCopyOf"/> names has been deleted. The mark is a
+        /// name, and a name can be given again: without this, a new realm that happened to take
+        /// the deleted source's name would quietly become the source of a copy it never made.
+        /// Set when the source is removed, and when a realm is made under a name a copy still
+        /// points at with nothing there; never cleared, because nothing can bring the old
+        /// source back.
+        /// </summary>
+        public bool TestSourceGone { get; set; }
+
         // -- How the realm's chip looks in the sidebar --
 
         /// <summary>
@@ -248,8 +258,13 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public ServerPreferences KeepTestCopyFrom(ServerPreferences stored)
         {
-            if (stored != null) TestCopyOf = stored.TestCopyOf;
+            if (stored != null)
+            {
+                TestCopyOf = stored.TestCopyOf;
+                TestSourceGone = stored.TestSourceGone;
+            }
             TestCopyOf = string.IsNullOrWhiteSpace(TestCopyOf) ? null : TestCopyOf.Trim();
+            if (TestCopyOf == null) TestSourceGone = false;
             if (TestCopyOf != null) Public = false;
             return this;
         }
@@ -328,6 +343,7 @@ namespace ValheimBakaLoader.Game
                 IsolatedInstall = file.IsolatedInstall ?? defaults.IsolatedInstall,
                 ModManifest = file.ModManifest ?? defaults.ModManifest,
                 TestCopyOf = string.IsNullOrWhiteSpace(file.TestCopyOf) ? null : file.TestCopyOf.Trim(),
+                TestSourceGone = (file.TestSourceGone ?? false) && !string.IsNullOrWhiteSpace(file.TestCopyOf),
                 LookRune = NormalizeLook(file.LookRune),
                 LookColor = NormalizeLook(file.LookColor),
                 GaleProfileId = StoredGaleProfileId(file.GaleProfileId),
@@ -376,6 +392,9 @@ namespace ValheimBakaLoader.Game
             IsolatedInstall = IsolatedInstall,
             ModManifest = ModManifest,
             TestCopyOf = string.IsNullOrWhiteSpace(TestCopyOf) ? null : TestCopyOf.Trim(),
+            // Written only when it is true, so a realm that is not a test copy, or one whose
+            // source is still here, carries no key for it at all.
+            TestSourceGone = TestSourceGone && !string.IsNullOrWhiteSpace(TestCopyOf) ? true : (bool?)null,
             LookRune = NormalizeLook(LookRune),
             LookColor = NormalizeLook(LookColor),
             GaleProfileId = StoredGaleProfileId(GaleProfileId),

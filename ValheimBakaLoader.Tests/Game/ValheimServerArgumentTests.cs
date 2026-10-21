@@ -79,6 +79,31 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.Equal(new List<string> { "-resetmodifiers" }, removed);
         }
 
+        [Theory]
+        // -public belongs to the listing switch: the game lets the last one on the line win,
+        // and the extra arguments go last, so one typed here would undo the switch. Its value
+        // is the next argument whatever it is, the way the game reads it, and goes with it.
+        [InlineData("-public 1", "")]
+        [InlineData("-public 0", "")]
+        [InlineData("-console -public 1 -crossplay", "-console -crossplay")]
+        [InlineData("-PUBLIC 1 -console", "-console")]
+        [InlineData("\"-public\" 1 -console", "-console")]
+        [InlineData("-console -public", "-console")]
+        [InlineData("-demomode -public 1 -console", "-console")]
+        public void A_typed_public_and_its_value_are_taken_out(string typed, string expected)
+        {
+            Assert.Equal(expected, ValheimServer.SanitizeAdditionalArgs(typed, out var removed));
+            Assert.Contains(removed, flag => string.Equals(flag, "-public", System.StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Theory]
+        [InlineData("-publicx 1")]
+        [InlineData("-name \"public\"")]
+        public void A_flag_that_only_looks_like_public_is_left_alone(string typed)
+        {
+            Assert.Equal(typed, ValheimServer.SanitizeAdditionalArgs(typed));
+        }
+
         [Fact]
         public void NothingIsReportedWhenNothingWasRemoved()
         {

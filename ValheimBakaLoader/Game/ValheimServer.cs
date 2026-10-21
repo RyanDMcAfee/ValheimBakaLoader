@@ -3708,7 +3708,22 @@ namespace ValheimBakaLoader.Game
                 // and clear the starting keys they had just written, so the world would come
                 // up with no modifiers on it at all.
                 ["-resetmodifiers"] = "BakaLoader already resets and writes back the world modifiers at every start, so a second reset would wipe the settings it had just applied",
+                // The game reads -public in the same pass, and the last one wins, so a
+                // "-public 1" down here would undo the listing switch above. That matters most
+                // for a test copy, which must never be listed, and its extra arguments are
+                // copied from the realm it was made from. The listing switch is the one place
+                // a realm's listing is set.
+                ["-public"] = "the Public switch in Settings decides whether the server is listed, and a test copy is never listed, so the value typed after it was left out as well",
             };
+
+        /// <summary>
+        /// The blocked flags the game reads a value after. The game takes the next argument as
+        /// that value whatever it is (FejdStartup reads <c>commandLineArgs[i + 1]</c> and skips
+        /// it), so the token after one goes with it rather than being left on the line as a
+        /// stray word.
+        /// </summary>
+        private static readonly HashSet<string> BlockedArgsWithValue =
+            new(StringComparer.OrdinalIgnoreCase) { "-public" };
 
         /// <summary>
         /// Drops the launch flags listed in <see cref="BlockedAdditionalArgs"/> from a
@@ -3729,11 +3744,22 @@ namespace ValheimBakaLoader.Game
             var kept = new List<string>();
             var dropped = new List<string>();
 
+            var skipValue = false;
             foreach (var token in SplitArgTokens(additionalArgs))
             {
-                if (BlockedAdditionalArgs.ContainsKey(token))
+                if (skipValue)
                 {
-                    dropped.Add(token);
+                    skipValue = false;
+                    continue;
+                }
+
+                // The game sees a quoted flag without its quotes, so "-public" in quotes is
+                // still -public to it.
+                var flag = token.Trim('"');
+                if (BlockedAdditionalArgs.ContainsKey(flag))
+                {
+                    dropped.Add(flag);
+                    skipValue = BlockedArgsWithValue.Contains(flag);
                     continue;
                 }
 

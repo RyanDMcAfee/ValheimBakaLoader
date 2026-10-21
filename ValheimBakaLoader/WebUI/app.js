@@ -2640,10 +2640,17 @@ function testCopyName(source,servers){
   for(let n=2;n<100;n++){const next=base+n;if(!taken.has(next.toLowerCase())) return next;}
   return base;
 }
-/* The world a test copy's world is offered under, or "" when the source has none. */
+/* The world a test copy's world is offered under, or "" when the source has none. A source
+   world near the length limit has its end cut so the suffix still fits, so the dialog never
+   opens on a world name its own check (worldNameProblem) turns down as too long. The limit is
+   the page's WORLD_NAME_MAX, read when this runs. */
 function testCopyWorld(world){
   const w=String(world||"").trim();
-  return w?w+TEST_COPY_SUFFIX:"";
+  if(!w) return "";
+  const max=typeof WORLD_NAME_MAX==="number"?WORLD_NAME_MAX:64;
+  const room=max-TEST_COPY_SUFFIX.length;
+  const base=w.length>room?w.slice(0,room).replace(/[ .]+$/,""):w;
+  return base+TEST_COPY_SUFFIX;
 }
 /* The refusal for a name another realm already has, whatever its case, or null. An empty
    name is left to the dialog's own "give it a name". */

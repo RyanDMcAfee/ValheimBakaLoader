@@ -4401,6 +4401,7 @@ namespace ValheimBakaLoader.Forms
                         $"Stop the server '{name}' before removing its profile.", ("name", name));
 
                 ServerPrefsProvider.RemovePreferences(name);
+                MarkTestCopiesSourceGone(name);
                 if (CurrentProfile == name) CurrentProfile = null;
 
                 // Drop the dead session so its server unsubscribes from the player repo.
@@ -4432,6 +4433,10 @@ namespace ValheimBakaLoader.Forms
                         .Any(x => string.Equals(x.ProfileName, newName, StringComparison.OrdinalIgnoreCase)))
                     throw new HostFacingException("profiles.rename.nameTaken",
                         $"A server named '{newName}' already exists.", ("newName", newName));
+
+                // A copy that still names newName lost that source earlier (nothing has the name,
+                // or the rename would have been refused), and must not be handed to this realm.
+                MarkTestCopiesSourceGone(newName);
 
                 prefs.ProfileName = newName;
                 ServerPrefsProvider.SavePreferences(prefs);
@@ -4604,6 +4609,9 @@ namespace ValheimBakaLoader.Forms
                 }
 
                 ServerPrefsProvider.RemovePreferences(name);
+                // Its test copies stay standing, marked so the name cannot hand them to the
+                // next realm that takes it.
+                MarkTestCopiesSourceGone(name);
 
                 PostEvent("servers.changed", BuildServersList());
                 return true;
@@ -4807,6 +4815,7 @@ namespace ValheimBakaLoader.Forms
 
                 created.ProfileName = name;
                 created.TestCopyOf = testSource?.ProfileName;
+                created.TestSourceGone = false;
                 created.Name = name;              // its own in-game name, never the base server's
                 created.WorldName = world;
                 created.Password = password;      // its own password, never the base server's
@@ -4910,6 +4919,9 @@ namespace ValheimBakaLoader.Forms
                     created.IsolatedInstall = false;
                 }
 
+                // The name is free (it was checked above), so a copy that still points at it
+                // lost its source earlier and must not be handed to this new realm.
+                MarkTestCopiesSourceGone(name);
                 ServerPrefsProvider.SavePreferences(created);
 
                 // A realm can be forged over a world that is already on disk, and that world may
@@ -5066,6 +5078,7 @@ namespace ValheimBakaLoader.Forms
                 });
                 created.IsolatedInstall = true;
 
+                MarkTestCopiesSourceGone(name);
                 ServerPrefsProvider.SavePreferences(created);
                 CurrentProfile = created.ProfileName;
                 Logger.Information("Adopted orphan world '{0}' as server '{1}' (port {2}).", world, name, gamePort);
@@ -8939,8 +8952,10 @@ namespace ValheimBakaLoader.Forms
                     // The realm this one is a test copy of, and whether that realm is still
                     // here. A deleted source leaves the copy standing, and the chip says so.
                     testCopyOf = look?.TestCopyOf,
+                    // The stored flag is what holds once the source was deleted, whatever realm
+                    // takes its name later; the name check covers a source file removed by hand.
                     testSourceGone = !string.IsNullOrWhiteSpace(look?.TestCopyOf)
-                        && !storedByName.ContainsKey(look.TestCopyOf),
+                        && (look.TestSourceGone || !storedByName.ContainsKey(look.TestCopyOf)),
                 };
             }).ToList();
         }
@@ -10745,6 +10760,7 @@ namespace ValheimBakaLoader.Forms
             // Nor whether the realm is a test copy: a duplicate of a test copy is a realm of its
             // own, and servers.create marks a test copy itself.
             created.TestCopyOf = null;
+            created.TestSourceGone = false;
             return created;
         }
 

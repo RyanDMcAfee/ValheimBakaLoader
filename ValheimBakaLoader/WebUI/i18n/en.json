@@ -1556,7 +1556,7 @@
     "realm.test.character.reason.bad_ref": { "lore": "That is not a character file BakaLoader can copy." },
     "realm.test.character.reason.missing": { "lore": "There is no character file '{file}' on this PC any more, so nothing was copied.", "params": { "file": "text" } },
     "realm.test.character.reason.unreadable": { "lore": "'{file}' could not be read as a Valheim character, so nothing was copied.", "params": { "file": "text" } },
-    "realm.test.character.reason.unknown_version": { "lore": "'{file}' was saved by a version of Valheim BakaLoader does not know, so it was not copied.", "params": { "file": "text" } },
+    "realm.test.character.reason.unknown_version": { "lore": "'{file}' was saved by a version of Valheim that BakaLoader does not know, so it was not copied.", "params": { "file": "text" } },
     "realm.test.character.reason.exists": { "lore": "There is already a character file '{file}', so '{name}' was not copied. BakaLoader never writes over a character.", "params": { "file": "text", "name": "text" } },
     "realm.test.character.reason.failed": { "lore": "The copy of '{name}' could not be written: {detail}", "params": { "name": "text", "detail": "text" } },
     "realm.new.working": { "lore": "Forging…" },

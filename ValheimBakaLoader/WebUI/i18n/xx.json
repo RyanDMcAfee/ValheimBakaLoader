@@ -5191,7 +5191,7 @@
       }
     },
     "realm.test.character.reason.unknown_version": {
-      "translation": "[Ẋ '{file}' was saved by a version of Valheim BakaLoader does not know, so it was not copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "translation": "[Ẋ '{file}' was saved by a version of Valheim that BakaLoader does not know, so it was not copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "params": {
         "file": "text"
       }

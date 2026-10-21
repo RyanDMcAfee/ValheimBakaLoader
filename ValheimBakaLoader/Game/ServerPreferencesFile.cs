@@ -77,6 +77,7 @@ namespace ValheimBakaLoader.Game
         // -- A test copy of another realm --
 
         [JsonProperty("testCopyOf")] public string TestCopyOf { get; set; }
+        [JsonProperty("testSourceGone")] public bool? TestSourceGone { get; set; }
 
         // -- The chip's look in the sidebar --
 
