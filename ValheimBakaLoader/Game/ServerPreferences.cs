@@ -128,7 +128,10 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public bool HeraldOn { get; set; }
 
-        /// <summary>The webhook this realm posts through. Blank is the app-wide webhook.</summary>
+        /// <summary>
+        /// The webhook this realm posts through. Blank was the app-wide webhook until 1.2.17,
+        /// which copied that link into every realm that used it; blank is now no webhook.
+        /// </summary>
         public string HeraldWebhookUrl { get; set; }
 
         /// <summary>
@@ -189,6 +192,26 @@ namespace ValheimBakaLoader.Game
         public bool HeraldPlayersOn { get; set; }
         public string HeraldPlayersWebhookUrl { get; set; }
         public string HeraldPlayersThreadId { get; set; }
+
+        // -- The Discord screen of 1.2.17. The webhook's own name, kept so the screen can say
+        //    which webhook the realm posts through without showing the link; the name and the
+        //    picture the realm's posts are signed with, which were app wide before; and a note
+        //    per kind of event post that Discord refused it for naming no thread in a forum,
+        //    so the screen can say so under that kind instead of only in the Saga. --
+
+        /// <summary>The name Discord gave the realm's webhook when it was checked, or nothing.</summary>
+        public string HeraldWebhookName { get; set; }
+
+        /// <summary>The name the realm's posts are signed with. Blank is the webhook's own name.</summary>
+        public string HeraldBotName { get; set; }
+
+        /// <summary>The picture the realm's posts are signed with. Blank is the BakaLoader logo.</summary>
+        public string HeraldAvatarUrl { get; set; }
+
+        /// <summary>Discord refused the last post of that kind: a forum channel and no thread named.</summary>
+        public bool HeraldRoutineNoThread { get; set; }
+        public bool HeraldCrashNoThread { get; set; }
+        public bool HeraldPlayersNoThread { get; set; }
 
         public bool RconEnabled { get; set; }
 
@@ -383,6 +406,12 @@ namespace ValheimBakaLoader.Game
             HeraldPlayersOn = stored.HeraldPlayersOn;
             HeraldPlayersWebhookUrl = stored.HeraldPlayersWebhookUrl;
             HeraldPlayersThreadId = stored.HeraldPlayersThreadId;
+            HeraldWebhookName = stored.HeraldWebhookName;
+            HeraldBotName = stored.HeraldBotName;
+            HeraldAvatarUrl = stored.HeraldAvatarUrl;
+            HeraldRoutineNoThread = stored.HeraldRoutineNoThread;
+            HeraldCrashNoThread = stored.HeraldCrashNoThread;
+            HeraldPlayersNoThread = stored.HeraldPlayersNoThread;
             return KeepHeraldPostFrom(stored);
         }
 
@@ -494,6 +523,12 @@ namespace ValheimBakaLoader.Game
                 HeraldPlayersOn = file.HeraldPlayersOn ?? defaults.HeraldPlayersOn,
                 HeraldPlayersWebhookUrl = BlankAsNull(file.HeraldPlayersWebhookUrl),
                 HeraldPlayersThreadId = BlankAsNull(file.HeraldPlayersThreadId),
+                HeraldWebhookName = BlankAsNull(file.HeraldWebhookName),
+                HeraldBotName = BlankAsNull(file.HeraldBotName),
+                HeraldAvatarUrl = BlankAsNull(file.HeraldAvatarUrl),
+                HeraldRoutineNoThread = file.HeraldRoutineNoThread ?? false,
+                HeraldCrashNoThread = file.HeraldCrashNoThread ?? false,
+                HeraldPlayersNoThread = file.HeraldPlayersNoThread ?? false,
                 RconEnabled = file.RconEnabled ?? defaults.RconEnabled,
                 RconPort = file.RconPort ?? defaults.RconPort,
                 RconPassword = file.RconPassword ?? defaults.RconPassword,
@@ -564,6 +599,13 @@ namespace ValheimBakaLoader.Game
             HeraldPlayersOn = HeraldPlayersOn,
             HeraldPlayersWebhookUrl = BlankAsNull(HeraldPlayersWebhookUrl),
             HeraldPlayersThreadId = BlankAsNull(HeraldPlayersThreadId),
+            HeraldWebhookName = BlankAsNull(HeraldWebhookName),
+            HeraldBotName = BlankAsNull(HeraldBotName),
+            HeraldAvatarUrl = BlankAsNull(HeraldAvatarUrl),
+            // Written only when set, so a realm that was never refused keeps its entry as short as before.
+            HeraldRoutineNoThread = HeraldRoutineNoThread ? true : null,
+            HeraldCrashNoThread = HeraldCrashNoThread ? true : null,
+            HeraldPlayersNoThread = HeraldPlayersNoThread ? true : null,
             RconEnabled = RconEnabled,
             RconPort = RconPort,
             RconPassword = RconPassword,

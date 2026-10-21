@@ -501,7 +501,10 @@ function named(one) {
 
 test("every switch in the window has a name, and the name is the words beside it", () => {
   const all = switchesInMarkup();
-  assert.ok(all.length >= 30, "found only " + all.length + " switches in index.html");
+  /* A floor that proves the markup was read, not a count of features. 1.2.17 took it from 30 to
+     25: the Discord screen lost its app-wide switch, and six of its switches became ticks
+     (checkboxes, which name themselves by their label and are not switches). */
+  assert.ok(all.length >= 25, "found only " + all.length + " switches in index.html");
 
   const nameless = [];
   for (const one of all) {

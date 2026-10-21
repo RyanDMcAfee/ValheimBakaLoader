@@ -866,7 +866,7 @@ namespace ValheimBakaLoader.Tests.Tools
         }
 
         [Fact]
-        public async Task A_publish_with_the_master_or_the_realm_off_is_refused_and_sends_nothing()
+        public async Task A_publish_with_the_realm_off_is_refused_and_the_retired_master_is_not_read()
         {
             var prefs = TwoRealms();
             prefs.DiscordSharingEnabled = true;
@@ -879,15 +879,14 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal("discord.publish.off", realmOff.MessageId);
             Assert.Equal(English("herald.realm.off.send"), realmOff.Message);
 
-            // The realm on, the master off.
-            Change(hall, p => { HeraldRealms.Find(p, "Alpha").HeraldOn = true; p.DiscordSharingEnabled = false; });
-            var masterOff = await Assert.ThrowsAsync<HostFacingException>(() => hall.Call("discord.publish", new { profile = "Alpha" }));
-            Assert.Equal("discord.publish.off", masterOff.MessageId);
             Assert.Empty(hall.Wire.Seen);
             Assert.Null(hall.Realm("Alpha").HeraldStatusMessageId);
 
-            // Both on: the same press goes out.
-            Change(hall, p => p.DiscordSharingEnabled = true);
+            // The realm on, the old master switched off in the file. Since 1.2.17 the master is
+            // retired: the move switched every realm off once instead, and it is read as on from
+            // then on, so the press goes out. (Before 1.2.16 this press was refused.)
+            Assert.True(hall.UserPrefs.LoadPreferences().HeraldSimplifiedMigrated);
+            Change(hall, p => { HeraldRealms.Find(p, "Alpha").HeraldOn = true; p.DiscordSharingEnabled = false; });
             var sent = await hall.Call("discord.publish", new { profile = "Alpha" });
             Assert.True((bool)sent["ok"], (string)sent["error"]);
             Assert.Single(hall.Wire.Seen);

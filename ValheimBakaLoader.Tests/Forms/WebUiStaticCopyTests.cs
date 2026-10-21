@@ -467,7 +467,9 @@ namespace ValheimBakaLoader.Tests.Forms
                 // from the Hearth's Upkeep card, which named the wrong hall. The card head there
                 // has no Norse caption now, and neither does the Language heading under it.
                 ("hearth", 3), ("vikings", 4), ("saga", 3), ("runes", 2), ("world", 2),
-                ("atlas", 2), ("herald", 3), ("skald", 2),
+                // Herald went from three to two in 1.2.17: the Discord sharing card, whose caption
+                // carried it, left the screen with the app-wide switch.
+                ("atlas", 2), ("herald", 2), ("skald", 2),
                 ("forge", 1), ("scrolls", 1), ("heimr", 1), ("rites", 1),
             };
 

@@ -8,15 +8,21 @@
  * (or reads under another name), the wizard's single switch flattening a host's careful choice,
  * and the old switch lingering somewhere so a save writes a value nothing honours.
  *
+ * Since 1.2.17 each kind is a tick on the one card, the crash role box shows only while crashes
+ * are ticked, a refusal Discord gave for a forum with no thread is a line under its kind, and the
+ * webhook and thread of each kind live in the Send these somewhere else dialog.
+ *
  * THE CODE UNDER TEST is the block between the HERALD-EVENTS markers in app.js, evaluated here
- * with the page's own globals stood in for. The sentences come out of the real en.json.
+ * with the page's own globals stood in for (the tick helpers come out of app.js itself). The
+ * sentences come out of the real en.json.
  *
  * The rules:
  *   1. The three kinds paint from the realm's block, and a save reads the same controls back.
  *   2. A realm with nothing read yet has every kind off and every box blank.
  *   3. The wizard's one switch moves all three kinds only when the host moved it.
- *   4. The hall: every control in the realm's card with its words in the catalog, every switch
- *      and box saves, and nothing of the old single switch is left.
+ *   4. The screen: every tick on the card and every box in its dialog with their words in the
+ *      catalog, the role box only with crashes, the forum warning per kind, every tick and box
+ *      saves, and nothing of the old single switch is left.
  *   5. The seam: every key the page sends is one the host side applies and hands back, and the
  *      refusals are worded in the page's table with the catalog's own English.
  *
@@ -75,13 +81,8 @@ const BOXES = ["heraldRoutineUrl", "heraldRoutineThread", "heraldCrashUrl", "her
                "heraldPlayersUrl", "heraldPlayersThread"];
 
 function switchEl() {
-  const classes = new Set(["toggle"]);
   const listeners = {};
-  return {
-    classList: { contains: c => classes.has(c), toggle: (c, v) => (v ? classes.add(c) : classes.delete(c)) },
-    addEventListener: (ev, f) => { listeners[ev] = f; },
-    listeners,
-  };
+  return { checked: false, addEventListener: (ev, f) => { listeners[ev] = f; }, listeners };
 }
 function boxEl() {
   const listeners = {};
@@ -92,17 +93,20 @@ function hall() {
   const el = {};
   SWITCHES.forEach(id => { el["#" + id] = switchEl(); });
   BOXES.forEach(id => { el["#" + id] = boxEl(); });
+  el["#heraldCrashRoleWrap"] = { style: { display: "none" } };
+  ["heraldRoutineWarn", "heraldCrashWarn", "heraldPlayersWarn"].forEach(id => { el["#" + id] = { style: { display: "none" }, textContent: "" }; });
   const saves = [];
   const context = {
     $: sel => el[sel] || null,
-    setT: (id, on) => el["#" + id].classList.toggle("on", !!on),
+    T: id => { if (!KEYS[id]) throw new Error("the catalog has no sentence for " + id); return KEYS[id].lore; },
     heraldSave: () => { saves.push(JSON.parse(JSON.stringify(context.heraldEventValues()))); return Promise.resolve({}); },
   };
   vm.createContext(context);
+  for (const head of ["function heraldTick(id,on){", "function heraldTicked(id){"]) vm.runInContext(fn(head), context);
   vm.runInContext(block(), context, { filename: "app.js#herald-events" });
   for (const name of ["heraldRenderEvents", "heraldEventValues", "heraldEventsAllOn", "heraldEventsFromWizard", "heraldWireEvents"])
     assert.strictEqual(typeof context[name], "function", name + " did not come out of the block");
-  const on = id => el["#" + id].classList.contains("on");
+  const on = id => el["#" + id].checked;
   return { context, el, saves, on };
 }
 
@@ -161,32 +165,58 @@ test("3. the wizard's one switch moves all three only when the host moved it", (
   assert.ok(finish.includes("heraldEventsFromWizard(HWIZ.eventsWas,HWIZ.events)"), "the wizard's switch does not reach the kinds");
 });
 
-test("4. the hall: every control in the realm's card, its words in the catalog, every one saves", () => {
-  const card = HTML.slice(HTML.indexOf('<div class="card b-heraldshare">'), HTML.indexOf("<!-- THE POST -->"));
+test("4. the screen: every tick on the card and box in its dialog, its words in the catalog, every one saves", () => {
+  const card = HTML.slice(HTML.indexOf('<div class="card b-herald">'), HTML.indexOf('id="heraldPreview"'));
+  const from = HTML.indexOf('<div id="heraldElsewherePanel">');
+  const dialog = HTML.slice(from, HTML.indexOf("</section>", from));
   assert.ok(card.length > 0, "the realm's card is gone");
-  [...SWITCHES, ...BOXES].forEach(id => assert.ok(card.includes('id="' + id + '"'), id + " is not in the realm's card"));
-  const ids = [...card.matchAll(/data-i18n(?:-title|-placeholder|-aria)?="([^"]+)"/g)].map(m => m[1]);
-  ["herald.share.events", "herald.share.events.title", "herald.events.note", "herald.events.routine", "herald.events.routine.title",
+  assert.ok(from > 0 && dialog.length > 0, "the Send these somewhere else panel is gone");
+  /* The ticks and the crash role on the card; where each kind goes in the dialog, not on the card. */
+  [...SWITCHES, "heraldCrashRole"].forEach(id => assert.ok(card.includes('id="' + id + '"'), id + " is not on the card"));
+  SWITCHES.forEach(id => assert.ok(card.includes('<input type="checkbox" id="' + id + '"'), id + " is not a tick"));
+  BOXES.filter(id => id !== "heraldCrashRole").forEach(id => {
+    assert.ok(dialog.includes('id="' + id + '"'), id + " is not in the Send these somewhere else dialog");
+    assert.ok(!card.includes('id="' + id + '"'), id + " is still on the card");
+  });
+  assert.ok(/id="heraldCrashRoleWrap"[^>]*style="display:none"/.test(card), "the role box shows before crashes are ticked");
+  assert.ok(card.includes('id="heraldElsewhereBtn"') && card.includes('data-i18n="herald.elsewhere.button"'), "the card has no way to the dialog");
+  const ids = [...(card + dialog).matchAll(/data-i18n(?:-title|-placeholder|-aria)?="([^"]+)"/g)].map(m => m[1]);
+  ["herald.events.label", "herald.events.routine.tick", "herald.events.crash.tick", "herald.events.players.tick",
+   "herald.events.routine", "herald.events.routine.title",
    "herald.events.crash", "herald.events.crash.title", "herald.events.players", "herald.events.players.title",
    "herald.events.webhook.placeholder", "herald.events.thread.placeholder", "herald.events.role.placeholder",
-   "herald.events.role.title"].forEach(id => {
+   "herald.events.role.title", "herald.events.role.label", "herald.elsewhere.note"].forEach(id => {
     assert.ok(ids.includes(id), id + " is not on the card");
     assert.ok(KEYS[id] && typeof KEYS[id].lore === "string", "the catalog has no " + id);
   });
   ids.forEach(id => assert.ok(KEYS[id], "the card asks for " + id + ", which the catalog lacks"));
   assert.ok(!/herald\.share\.events\.note/.test(HTML + APP), "the retired from-every-realm note is still shown");
 
-  /* Every switch saves on its click and every box when it is left. */
+  /* The role box follows the crash tick, and a forum refusal is one line under its kind. */
+  const r = hall();
+  r.context.heraldRenderEvents({ CrashOn: false });
+  assert.strictEqual(r.el["#heraldCrashRoleWrap"].style.display, "none", "the role box shows with crashes off");
+  r.context.heraldRenderEvents({ CrashOn: true, PlayersNoThread: true });
+  assert.strictEqual(r.el["#heraldCrashRoleWrap"].style.display, "", "the role box hides with crashes on");
+  assert.strictEqual(r.el["#heraldPlayersWarn"].style.display, "");
+  assert.strictEqual(r.el["#heraldPlayersWarn"].textContent, "ᚦ " + KEYS["herald.events.nothread"].lore);
+  assert.strictEqual(r.el["#heraldCrashWarn"].style.display, "none", "a kind Discord did not refuse shows a warning");
+  r.context.heraldWireEvents();
+  r.el["#tHeraldCrash"].checked = false;
+  r.el["#tHeraldCrash"].listeners.change();
+  assert.strictEqual(r.el["#heraldCrashRoleWrap"].style.display, "none", "unticking crashes left the role box up");
+
+  /* Every tick saves when it changes and every box when it is left. */
   const h = hall();
   h.context.heraldWireEvents();
-  SWITCHES.forEach(id => { assert.ok(h.el["#" + id].listeners.click, id + " does not save"); h.el["#" + id].listeners.click(); });
+  SWITCHES.forEach(id => { assert.ok(h.el["#" + id].listeners.change, id + " does not save"); h.el["#" + id].listeners.change(); });
   BOXES.forEach(id => { assert.ok(h.el["#" + id].listeners.change, id + " does not save"); h.el["#" + id].listeners.change(); });
   assert.strictEqual(h.saves.length, SWITCHES.length + BOXES.length);
   assert.ok(/\n\/\* HERALD-EVENTS-END \*\/\nheraldWireEvents\(\);/.test(APP), "the block's controls are never wired");
 
   /* The save carries them inside the realm's block, and a realm switch repaints them. */
-  const save = fn("function heraldSave(extra){");
-  assert.ok(save.includes("const realm=Object.assign(heraldRealmValues(),heraldEventValues());") && save.includes("Herald:realm"),
+  const save = fn("function heraldSave(extra,realmExtra){");
+  assert.ok(save.includes("const realm=heraldDefined(Object.assign(heraldRealmValues(),heraldEventValues(),realmExtra||{}));") && save.includes("Herald:realm"),
     "the save does not carry the kinds in the realm's block");
   assert.ok(fn("function heraldRenderRealm(){").includes("heraldRenderEvents(b)"), "a realm switch does not repaint the kinds");
 

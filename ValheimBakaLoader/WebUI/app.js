@@ -714,9 +714,7 @@ function repaintBootCopy(){
   try{renderServerChips();}catch(_){}     /* the sidebar strip's chip tooltips */
   try{renderHexiumCopy();}catch(_){}      /* the Upkeep card's second-mod-site switch */
   try{renderStartWinNote();}catch(_){}    /* and the note under Start with Windows */
-  try{heraldRenderIntro();}catch(_){}     /* the Discord hall's opening sentence */
   try{heraldRenderPost();}catch(_){}      /* whether a status post is placed */
-  try{heraldRenderUrlStat();}catch(_){}   /* and the line under the webhook box */
   try{heraldRenderModCodeLine();}catch(_){} /* and the line under the mod profile code */
   try{heraldRenderLookLine();}catch(_){}  /* and the line under the post's look */
   try{heraldRenderRealmLines();}catch(_){} /* and the realm's own head and webhook line */
@@ -779,9 +777,7 @@ function applyLanguage(code){
   try{renderServerUpdate();}catch(_){}      /* the server-update card */
   try{renderUpdatePill();}catch(_){}        /* the waiting-update pill */
   try{renderLaunchHold();}catch(_){}        /* the held start, if one is standing */
-  try{heraldRenderIntro();}catch(_){}       /* the Discord hall's opening sentence */
-  try{heraldRenderPost();}catch(_){}        /* and its post status */
-  try{heraldRenderUrlStat();}catch(_){}     /* and the line under its webhook box */
+  try{heraldRenderPost();}catch(_){}        /* the Discord screen's post status */
   try{heraldRenderModCodeLine();}catch(_){} /* and the one under its mod profile code */
   try{heraldRenderLookLine();}catch(_){}    /* and the one under the post's look */
   try{heraldRenderRealmLines();}catch(_){}  /* and the realm's own head and webhook line */
@@ -6898,8 +6894,25 @@ function galeApply(st){
   conditionGale();
   return true;
 }
+/* Whether the host opened the followed profile's line from the Follow button. */
+let GALE_BOX_OPEN=false;
 function renderGaleBox(){
   const input=$("#galeId"), status=$("#galeStatus");
+  /* The button beside Add from Thunderstore says whether this realm follows a profile, and the
+     line with Check now, Review and Forget shows only once the host opened it. */
+  const following=!!(GALE&&GALE.following);
+  const btn=$("#galeFollowBtn"), box=$("#galeBox");
+  if(btn){
+    btn.textContent=following?T("mods.gale.button.following"):T("mods.gale.box.label");
+    btn.setAttribute("aria-expanded",following&&GALE_BOX_OPEN?"true":"false");
+  }
+  if(box) box.style.display=following&&GALE_BOX_OPEN?"":"none";
+  /* The paste dialog's own line, while it is open: the refusal, or what following does. */
+  const dlg=$("#galeDlgStat");
+  if(dlg){
+    dlg.className=GALE_REFUSED?"wiz-stat bad":"wiz-stat dim";
+    dlg.textContent=GALE_REFUSED?galeSentence(GALE_REFUSED):T("mods.gale.status.off");
+  }
   const check=$("#galeCheckBtn"), forget=$("#galeForgetBtn"), review=$("#galeReviewBtn");
   const st=GALE;
   /* The field follows the stored id, except while the host is typing in it. */
@@ -6952,8 +6965,11 @@ async function galeCheck(){
 async function galeCheckNow(){
   if(!Native.available){toast("ᛋ "+T("mods.gale.preview.toast"));return;}
   if(GALE_BUSY||GALE_INSTALLING) return;
-  const typed=String(($("#galeId")||{}).value||"").trim();
   const stored=GALE&&GALE.id?GALE.id:"";
+  /* The code box lives in the paste dialog now; with the dialog closed, Check now checks the
+     code that is saved, and never reads a missing box as a cleared one. */
+  const idBox=$("#galeId");
+  const typed=idBox?String(idBox.value||"").trim():stored;
   GALE_REFUSED=null;
   if(typed!==stored){
     const r=await Native.call("gale.set",{profile:S.profileName||null,id:typed}).catch(()=>null);
@@ -7391,13 +7407,50 @@ async function galeInstall(st,ticked,unticked){
   }
   if(isActiveProfile(profile)) await scanMods({force:false});
 }
+/* The Follow button. With a code saved it opens and closes the line below; with none it opens
+   the paste dialog, whose Follow saves the code for this realm and runs the check. */
+function galeFollowClick(){
+  if(GALE&&GALE.following){GALE_BOX_OPEN=!GALE_BOX_OPEN;renderGaleBox();return;}
+  galeFollowDialog();
+}
+function galeFollowDialog(){
+  GALE_REFUSED=null;
+  const m=modalOpen(`<div class="mtitle">${esc(T("mods.gale.box.label"))}</div>`+
+    `<div class="field"><input id="galeId" class="galeid mono" type="text" spellcheck="false" autocomplete="off" placeholder="${esc(T("mods.gale.box.placeholder"))}" aria-label="${esc(T("mods.gale.box.aria"))}"></div>`+
+    `<div class="wiz-stat dim" id="galeDlgStat" role="status" aria-live="polite"></div>`+
+    `<div class="wiz-nav"><button class="btn btn-ghost btn-sm" id="galeDlgCancel">${esc(T("common.button.cancel"))}</button><span class="grow"></span>`+
+    `<button class="btn btn-ember btn-sm" id="galeDlgOk">${esc(T("mods.gale.follow.ok"))}</button></div>`);
+  const input=m.querySelector("#galeId");
+  m.querySelector("#galeDlgCancel").addEventListener("click",()=>modalClose());
+  m.querySelector("#galeDlgOk").addEventListener("click",()=>galeFollowSubmit());
+  input.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();galeFollowSubmit();}});
+  input.addEventListener("input",()=>{if(GALE_REFUSED){GALE_REFUSED=null;renderGaleBox();}});
+  renderGaleBox();
+  setTimeout(()=>input.focus(),30);
+  return m;
+}
+/* A valid code is saved for the realm (gale.set, the same road Check now took), the dialog
+   closes onto the opened line, and the check runs. A refused one says why in the dialog. */
+async function galeFollowSubmit(){
+  if(!Native.available){toast("ᛋ "+T("mods.gale.preview.toast"));return false;}
+  if(GALE_BUSY||GALE_INSTALLING) return false;
+  const typed=String(($("#galeId")||{}).value||"").trim();
+  if(!typed){GALE_REFUSED="mods.gale.id.bad";renderGaleBox();return false;}
+  GALE_REFUSED=null;
+  const r=await Native.call("gale.set",{profile:S.profileName||null,id:typed}).catch(()=>null);
+  if(!r){renderGaleBox();return false;}
+  if(!r.ok){GALE_REFUSED=r.sentenceId||"mods.gale.id.bad";renderGaleBox();return false;}
+  modalClose();
+  GALE_BOX_OPEN=true;
+  galeApply(r.state);
+  await galeCheck();
+  return true;
+}
 /* GALE-END */
+$("#galeFollowBtn")?.addEventListener("click",()=>galeFollowClick());
 $("#galeCheckBtn")?.addEventListener("click",()=>galeCheckNow());
 $("#galeForgetBtn")?.addEventListener("click",()=>galeForget());
 $("#galeReviewBtn")?.addEventListener("click",()=>galeDialog());
-$("#galeId")?.addEventListener("keydown",e=>{if(e.key==="Enter")galeCheckNow();});
-/* A refused id stays said until the box is touched again. */
-$("#galeId")?.addEventListener("input",()=>{if(GALE_REFUSED){GALE_REFUSED=null;renderGaleBox();}});
 try{renderGaleBox();}catch(_){}
 
 /* ---------- COMMAND PALETTE ---------- */
@@ -9493,33 +9546,26 @@ async function runConnectionTest(){
   }
 }
 
-/* ---------- HERALD (Discord sharing · one self-editing status post per realm) ----------
+/* ---------- HERALD (Discord · one self-editing status post per realm) ----------
    The C# DiscordStatusService owns the posts: it debounces edits per realm and PATCHes
-   each realm's own message forever. This hall only reads/writes prefs + the 3 discord.*
-   RPCs. The master switch, the app-wide webhook and the look are the app's; everything
-   about one post is the realm on screen's (HERALD-REALM below). */
+   each realm's own message forever. This screen only reads/writes prefs + the discord.*
+   RPCs. Since 1.2.17 it is one card about the realm on screen and nothing else: there is no
+   app-wide switch and no app-wide webhook. Each realm has its own webhook (set up by the
+   wizard and shown by the name Discord gave it), its own name and picture, and its own say
+   in what the post carries (HERALD-REALM below). Only the BakaLoader line is app wide. */
 let HERALD_HAS_POST=false;
 const HERALD_URL_RE=/^https:\/\/((ptb|canary)\.)?discord(app)?\.com\/api\/(v\d+\/)?webhooks\/\d+\/[\w-]+/;
-/* The Discord hall's opening sentence. One entry with one named slot, and the bold
-   goes round the slot VALUE at this call site rather than into the entry, so the
-   catalog keeps its no-markup rule and a translator gets a whole sentence with the
-   emphasised word somewhere they can move it. */
-function heraldRenderIntro(){
-  const el=$("#heraldIntro"); if(!el) return;
-  el.innerHTML=esc(T("herald.intro.body",{one:"\u0000one\u0000"}))
-    .split("\u0000one\u0000").join("<strong>"+esc(T("herald.intro.one"))+"</strong>");
-}
 function heraldRenderPost(){
   const el=$("#heraldPostStat"); if(!el) return;
   el.textContent=HERALD_HAS_POST?T("herald.post.placed"):T("herald.post.none");
 }
+/* A tick on the card is a checkbox, so its state is its own checked flag. */
+function heraldTick(id,on){const el=$("#"+id); if(!el) return false; el.checked=!!on; return !!on;}
+function heraldTicked(id){const el=$("#"+id); return !!(el&&el.checked);}
 function heraldApply(up){
-  setT("tHerald",up.DiscordSharingEnabled);
-  $("#heraldUrl").value=up.DiscordWebhookUrl||"";
-  $("#heraldThread").value=up.DiscordWebhookThreadId||"";
-  try{heraldApplyLook(up);}catch(_){} /* the name, picture and link */
-  /* Each realm's own block, then the realm on screen painted from it: its switch, webhook,
-     thread, share switches, title, status line and whether its post is placed. */
+  try{heraldApplyLook(up);}catch(_){} /* the BakaLoader line */
+  /* Each realm's own block, then the realm on screen painted from it: its switch, webhook
+     line, ticks, look and whether its post is placed. */
   try{heraldRealmsFrom(up);heraldRenderRealm();}catch(_){}
   heraldRenderPost();
 }
@@ -9530,32 +9576,38 @@ async function refreshHerald(){
   if(!Native.available) return; /* preview keeps whatever the user clicked */
   const up=await rpc("userprefs.get");
   if(up!==FAIL&&up) heraldApply(up);
-  try{heraldPreviewRefresh();}catch(_){} /* the server may have moved since the hall was last open */
+  try{heraldPreviewRefresh();}catch(_){} /* the server may have moved since the screen was last open */
 }
-function heraldSave(extra){
-  /* The line under the mod profile code says whether the post carries it, and the sharing
-     switch is part of that answer, so every save of the hall's switches repaints it. */
+/* A save carries only what has a control on the page. A key left undefined is dropped from
+   the JSON, and the host side writes only the keys a block carries, so a dialog's panel that
+   is not in the document never blanks what is stored. */
+function heraldDefined(o){
+  const out={};
+  Object.keys(o||{}).forEach(k=>{ if(o[k]!==undefined) out[k]=o[k]; });
+  return out;
+}
+function heraldSave(extra,realmExtra){
+  /* The line under the mod profile code says whether the post carries it, and the realm's
+     switch is part of that answer, so every save repaints it. */
   try{heraldRenderModCodeLine();}catch(_){}
   try{heraldRenderLookLine();}catch(_){}
-  try{heraldRenderRealmLines();}catch(_){}
-  /* The realm block names the realm the hall was drawn for, so a realm switch that lands
+  /* The realm block names the realm the screen was drawn for, so a realm switch that lands
      before the write cannot put this realm's switches on the other one. */
-  const realm=Object.assign(heraldRealmValues(),heraldEventValues());
+  const realm=heraldDefined(Object.assign(heraldRealmValues(),heraldEventValues(),realmExtra||{}));
   return Promise.resolve(rpc("userprefs.save",{prefs:Object.assign({
-    DiscordSharingEnabled:swOn("tHerald"),
-    DiscordWebhookUrl:$("#heraldUrl").value.trim(),
-    DiscordWebhookThreadId:$("#heraldThread").value.trim(),
     Herald:realm
   },heraldLookValues(),extra||{})})).then(r=>{
     /* Kept by name once it is saved, so a switch away and back shows it without a read. */
-    if(r!==FAIL) heraldRealmRemember(realm);
-    /* Every edit in the hall lands here, so the preview is drawn again from what was saved. */
+    if(r!==FAIL){heraldRealmRemember(realm);try{heraldRenderRealmLines();}catch(_){}}
+    /* Every edit on the screen lands here, so the preview is drawn again from what was saved. */
     if(r!==FAIL) try{heraldPreviewRefresh();}catch(_){}
     return r;
   });
 }
-["tHerald","tHeraldRealm","tHeraldAddr","tHeraldPass","tHeraldLink"].forEach(id=>
+["tHeraldRealm","tHeraldLink"].forEach(id=>
   $("#"+id).addEventListener("click",()=>heraldSave()));
+["tHeraldAddr","tHeraldPass"].forEach(id=>
+  $("#"+id).addEventListener("change",()=>heraldSave()));
 /* HERALD-LOOK-BEGIN
    The Herald's look: the name and picture every post is signed with, the status post's title,
    a line of the host's own at the top of it, and the switch for the small BakaLoader line that
@@ -9597,27 +9649,23 @@ function heraldLookNameProblem(v){
   if(n.length>HERALD_LOOK_NAME_MAX||/discord|clyde/i.test(n)) return "herald.look.name.refused";
   return null;
 }
-/* What a save carries for the app-wide look. A value that would be refused is left out, so it
-   is never sent and the rest of the hall still saves around it. The title and the status line
-   are the realm's and go in its block. */
+/* What a save carries for the app-wide look: only the BakaLoader line since 1.2.17. The name
+   and the picture are the realm's own and go in its block (heraldRealmValues), with the title
+   and the status line; a value that would be refused is left out there, so it is never sent
+   and the rest of the screen still saves around it. */
 function heraldLookValues(){
   const out={};
   const sw=$("#tHeraldLink");
   if(sw) out.DiscordLinkToBakaLoader=sw.classList.contains("on");
-  const name=heraldLookBox("heraldName"), avatar=heraldLookBox("heraldAvatar");
-  if(!heraldLookNameProblem(name)) out.DiscordBotName=name;
-  if(!heraldLookAvatarProblem(avatar)) out.DiscordAvatarUrl=avatar;
   return out;
 }
 /* The line under the boxes: the refusal when one is standing, otherwise what the post will
-   carry, part by part, in the host's words. With Discord sharing off there is no post, so it
-   says the look is saved and nothing is posted. */
+   carry, part by part, in the host's words. With this realm's switch off there is no post, so
+   it says the look is saved and nothing is posted. */
 function heraldRenderLookLine(){
   const el=$("#heraldLookStat"); if(!el) return;
   if(HERALD_LOOK_REFUSED){el.className="wiz-stat bad";el.textContent="ᚦ "+T(HERALD_LOOK_REFUSED);return;}
-  const sharing=$("#tHerald");
-  if(sharing&&!sharing.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.look.preview.off");return;}
-  /* The master on and this realm off: the look is kept, and this realm's post is not made. */
+  /* This realm off: the look is kept, and this realm's post is not made. */
   const mine=$("#tHeraldRealm");
   if(mine&&!mine.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.look.preview.realm_off");return;}
   const name=heraldLookBox("heraldName"), avatar=heraldLookBox("heraldAvatar");
@@ -9633,13 +9681,10 @@ function heraldRenderLookLine(){
   el.className="wiz-stat ok";
   el.textContent=T("herald.look.preview",{parts:parts.join(T("herald.look.part.join"))});
 }
-/* Paint the app-wide boxes and the switch from the saved preferences, and drop a standing
-   refusal: it was about text that is no longer in the box. The title and the status line are
-   painted with the rest of the realm, by heraldRenderRealm. */
+/* Paint the app-wide switch from the saved preferences, and drop a standing refusal: it was
+   about text that is no longer in the box. The name, the picture, the title and the status
+   line are the realm's and are painted with the rest of it, by heraldRenderRealm. */
 function heraldApplyLook(up){
-  const set=(id,v)=>{const el=$("#"+id); if(el) el.value=v||"";};
-  set("heraldName",up.DiscordBotName);
-  set("heraldAvatar",up.DiscordAvatarUrl);
   const sw=$("#tHeraldLink");
   if(sw) sw.classList.toggle("on",up.DiscordLinkToBakaLoader!==false);
   HERALD_LOOK_REFUSED=null;
@@ -9708,9 +9753,9 @@ function heraldModCodeName(kind){
   return kind==="gale"?T("herald.modcode.kind.gale"):T("herald.modcode.kind.thunderstore");
 }
 /* The line under the box: the refusal when there is one standing, otherwise what the post
-   carries for this realm. It only promises the post when there will be one: with Discord
-   sharing off there is no post at all, and with this realm's own switch off there is none for
-   this realm, so the line says the code is saved and why it is not showing. Another realm's
+   carries for this realm. It only promises the post when there will be one: with this realm's
+   own switch off there is none, so the line says the code is saved and why it is not showing.
+   (The app-wide switch it also answered to left the screen in 1.2.17.) Another realm's
    server being up changes nothing here: that realm has a post of its own. */
 function heraldRenderModCodeLine(){
   const el=$("#heraldModCodeStat"); if(!el) return;
@@ -9719,8 +9764,6 @@ function heraldRenderModCodeLine(){
   const kind=heraldModCodeKind();
   if(HERALD_MODCODE_REFUSED){el.className="wiz-stat bad";el.textContent="ᚦ "+T("herald.modcode.refused");return;}
   if(!code){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.none");return;}
-  const sw=$("#tHerald");
-  if(sw&&!sw.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.off");return;}
   const mine=$("#tHeraldRealm");
   if(mine&&!mine.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.realm_off");return;}
   el.className="wiz-stat ok";
@@ -9737,7 +9780,14 @@ function heraldRenderModCode(){
   if(gale) gale.checked=kind==="gale";
   if(box) box.value=p.ModProfileCode||"";
   HERALD_MODCODE_REFUSED=false;
+  heraldRenderModTick(!!String(p.ModProfileCode||"").trim());
   heraldRenderModCodeLine();
+}
+/* The tick in front of the code (1.2.17): on shows the kind and the box, off hides them. */
+function heraldRenderModTick(on){
+  const t=$("#tHeraldModCode"); if(t) t.checked=!!on;
+  const w=$("#heraldModCodeWrap"); if(w) w.style.display=on?"":"none";
+  const st=$("#heraldModCodeStat"); if(st) st.style.display=on?"":"none";
 }
 /* A commit: the box was left or Enter was pressed, or a radio moved. Answers true when the
    code was saved (or, in the browser preview, kept), false when it was refused. */
@@ -9767,22 +9817,23 @@ async function heraldModCodeCommit(){
 }
 /* HERALD-MODCODE-END */
 /* HERALD-REALM-BEGIN
-   The realm's own post (1.2.16, issue 24). Each realm keeps a status post of its own, so the
-   hall edits the realm on screen: its switch, its webhook and thread (blank is the app-wide
-   pair), what its post carries, its title and status line, and Publish and Remove act on its
-   post alone. The master switch, the app-wide webhook and the look stay the app's.
+   The realm's own post (1.2.16, issue 24; one card since 1.2.17). Each realm keeps a status
+   post of its own, so the screen edits the realm on screen: its switch, the webhook it posts
+   through (named, never shown as a link), what its post carries, its name, picture, title and
+   status line, and Publish and Remove act on its post alone. A realm's blank webhook is no
+   webhook: the 1.2.17 move copied the app-wide one into every realm that used it.
    The blocks come from userprefs.get (HeraldRealms, one per realm) and are kept here by name,
-   so a realm switch repaints the hall from that realm's last read at once, the way the mod code
-   above repaints from S.prefs; the switch then reads the host side again. HERALD_REALM is the
-   realm the hall was last drawn for, and every save and every press names it rather than
+   so a realm switch repaints the screen from that realm's last read at once, the way the mod
+   code above repaints from S.prefs; the switch then reads the host side again. HERALD_REALM is
+   the realm the screen was last drawn for, and every save and every press names it rather than
    whichever realm is on screen by the time the reply lands. */
 let HERALD_REALM=null;
 let HERALD_REALMS={};
-/* A realm with nothing read yet is what a new realm starts as: off, the app-wide webhook, the
-   address shared and the password not. */
+/* A realm with nothing read yet is what a new realm starts as: off, no webhook, the address
+   shared and the password not. */
 function heraldRealmDefaults(name){
-  return {Realm:name,On:false,WebhookUrl:"",ThreadId:"",ShareAddress:true,SharePassword:false,
-          Title:"",StatusLine:"",HasPost:false};
+  return {Realm:name,On:false,WebhookUrl:"",WebhookName:"",ThreadId:"",ShareAddress:true,SharePassword:false,
+          Title:"",StatusLine:"",BotName:"",AvatarUrl:"",HasPost:false};
 }
 function heraldRealmKey(name){return String(name||"").toLowerCase();}
 function heraldRealmsFrom(up){
@@ -9794,19 +9845,25 @@ function heraldRealmEntry(name){
   return Object.assign(heraldRealmDefaults(name),HERALD_REALMS[heraldRealmKey(name)]||{});
 }
 function heraldRealmOnScreen(){return S.profileName||(S.prefs&&S.prefs.ProfileName)||null;}
-/* What a save carries for this realm, read off the controls. */
+/* What a save carries for this realm, read off the controls. A control that is not in the
+   document reads as undefined and is left out of the save (heraldDefined). The webhook is not
+   here: only the wizard sets it, and it hands it to heraldSave itself. */
 function heraldRealmValues(){
-  const box=id=>{const el=$("#"+id);return el?String(el.value||"").trim():"";};
-  const on=id=>{const el=$("#"+id);return !!(el&&el.classList.contains("on"));};
+  const box=id=>{const el=$("#"+id);return el?String(el.value||"").trim():undefined;};
+  const sw=id=>{const el=$("#"+id);return el?el.classList.contains("on"):undefined;};
+  const tick=id=>{const el=$("#"+id);return el?!!el.checked:undefined;};
+  const name=box("heraldName"), avatar=box("heraldAvatar");
   return {
     Realm:HERALD_REALM||heraldRealmOnScreen(),
-    On:on("tHeraldRealm"),
-    WebhookUrl:box("heraldRealmUrl"),
-    ThreadId:box("heraldRealmThread"),
-    ShareAddress:on("tHeraldAddr"),
-    SharePassword:on("tHeraldPass"),
+    On:sw("tHeraldRealm"),
+    ShareAddress:tick("tHeraldAddr"),
+    SharePassword:tick("tHeraldPass"),
     Title:box("heraldTitle"),
     StatusLine:box("heraldStatusLine"),
+    /* The name and the picture are the realm's own since 1.2.17. One that would be refused is
+       left out, so it is never sent and the rest still saves around it. */
+    BotName:name!==undefined&&!heraldLookNameProblem(name)?name:undefined,
+    AvatarUrl:avatar!==undefined&&!heraldLookAvatarProblem(avatar)?avatar:undefined,
   };
 }
 /* A save keeps the realm's block here as well, so a switch away and back shows what was saved
@@ -9814,64 +9871,78 @@ function heraldRealmValues(){
 function heraldRealmRemember(values){
   if(!values||!values.Realm) return;
   const k=heraldRealmKey(values.Realm);
-  HERALD_REALMS[k]=Object.assign(heraldRealmEntry(values.Realm),values);
+  HERALD_REALMS[k]=Object.assign(heraldRealmEntry(values.Realm),heraldDefined(values));
 }
-/* Whether a realm's post is placed, kept on its block; the line under The post follows the
+/* Whether a realm's post is placed, kept on its block; the line under the preview follows the
    realm on screen. */
 function heraldRealmPost(name,has){
   const k=heraldRealmKey(name);
   HERALD_REALMS[k]=Object.assign(heraldRealmEntry(name),{HasPost:!!has});
   if(heraldRealmKey(name)===heraldRealmKey(HERALD_REALM)){HERALD_HAS_POST=!!has;heraldRenderPost();}
 }
-/* The words on the realm's part of the hall that are not inputs: the head naming the realm, and
-   the line under its webhook box. Redrawn on a language switch. */
-let HERALD_REALM_URL_STAT=null;
+/* The words on the card that are not inputs: the head, the switch's sentence, the webhook
+   line and its button, and the forum warnings under the kinds. Redrawn on a language switch. */
 function heraldRenderRealmLines(){
   const name=HERALD_REALM||heraldRealmOnScreen()||"";
   const head=$("#heraldRealmName");
-  if(head) head.textContent=name?T("herald.realm.editing",{name}):"";
+  if(head) head.textContent=name?T("herald.screen.head",{name}):"";
+  const on=$("#heraldOnLabel");
+  if(on) on.textContent=T("herald.screen.on",{name});
   const pill=$("#heraldRealmPill");
   if(pill){pill.textContent=name?T("herald.realm.editing",{name}):"";pill.style.display=name?"":"none";}
-  const stat=$("#heraldRealmUrlStat");
-  if(!stat) return;
-  const s=HERALD_REALM_URL_STAT;
-  if(s){
-    stat.className=s.cls||"wiz-stat dim";
-    stat.textContent=(s.mark?s.mark+" ":"")+(s.text!=null?s.text:T(s.wordId,s.params));
-    return;
-  }
-  const own=$("#heraldRealmUrl"), app=$("#heraldUrl");
-  const ownUrl=own?String(own.value||"").trim():"", appUrl=app?String(app.value||"").trim():"";
-  stat.className="wiz-stat dim";
-  stat.textContent=ownUrl?"":appUrl?T("herald.realm.hook.stat.app"):T("herald.realm.hook.stat.none");
+  const b=heraldRealmEntry(name);
+  const url=String(b.WebhookUrl||"").trim();
+  const line=$("#heraldHookLine");
+  if(line) line.textContent=!url?T("herald.hook.line.none")
+    :b.WebhookName?T("herald.hook.line.named",{name:String(b.WebhookName)}):T("herald.hook.line.unnamed");
+  const btn=$("#heraldHookChange");
+  if(btn) btn.textContent=url?T("herald.hook.change"):T("herald.hook.setup");
+  try{heraldRenderWarns(b);}catch(_){}
 }
-/* Paint the realm's part of the hall from its block. A switch to another realm reads the host
-   side again, because a realm made since the last read starts with the webhook and switches of
-   the realm it was made from. */
+/* Paint the card from the realm's block. A switch to another realm reads the host side again,
+   because a realm made since the last read starts with the webhook and switches of the realm
+   it was made from. */
 function heraldRenderRealm(){
   const name=heraldRealmOnScreen();
   const moved=heraldRealmKey(name)!==heraldRealmKey(HERALD_REALM);
   HERALD_REALM=name;
   const b=heraldRealmEntry(name);
   setT("tHeraldRealm",!!b.On);
-  setT("tHeraldAddr",b.ShareAddress!==false);
-  setT("tHeraldPass",!!b.SharePassword);
+  heraldTick("tHeraldAddr",b.ShareAddress!==false);
+  heraldTick("tHeraldPass",!!b.SharePassword);
   const set=(id,v)=>{const el=$("#"+id); if(el) el.value=v||"";};
-  set("heraldRealmUrl",b.WebhookUrl);
-  set("heraldRealmThread",b.ThreadId);
   set("heraldTitle",b.Title);
   set("heraldStatusLine",b.StatusLine);
-  try{heraldRenderEvents(b);}catch(_){} /* the three kinds of event post (HERALD-EVENTS) */
+  set("heraldName",b.BotName);
+  set("heraldAvatar",b.AvatarUrl);
+  HERALD_LOOK_REFUSED=null;
+  try{heraldRenderEvents(b);}catch(_){} /* the three kinds of message (HERALD-EVENTS) */
   HERALD_HAS_POST=!!b.HasPost;
-  HERALD_REALM_URL_STAT=null;
   heraldRenderRealmLines();
   heraldRenderPost();
   try{heraldRenderLookLine();}catch(_){}
   try{heraldRenderModCodeLine();}catch(_){}
+  try{heraldAskHookName(b);}catch(_){}
   try{if(moved) heraldPreviewRefresh();}catch(_){} /* the post of the realm now on screen */
   if(moved&&HERALD_REALM!==null&&Native.available) heraldReadAgain();
 }
-/* One read of the host side at a time; the hall repaints when it lands, for the realm on
+/* A webhook kept from before 1.2.17 has no name on file, because the app-wide box never kept
+   one. Discord is asked once per link (a check sends nothing), and the name it gives is saved
+   on the realm so the line can say which webhook this is. */
+const HERALD_NAME_ASKED={};
+function heraldAskHookName(b){
+  const url=String((b&&b.WebhookUrl)||"").trim();
+  if(!url||b.WebhookName||!Native.available||HERALD_NAME_ASKED[url]) return false;
+  HERALD_NAME_ASKED[url]=true;
+  const realm=b.Realm;
+  Promise.resolve(rpc("discord.validate",{url})).then(r=>{
+    if(r===FAIL||!r||!r.ok||!r.name) return;
+    if(heraldRealmKey(realm)!==heraldRealmKey(HERALD_REALM)) return;
+    heraldSave(null,{WebhookName:String(r.name)});
+  }).catch(()=>{});
+  return true;
+}
+/* One read of the host side at a time; the screen repaints when it lands, for the realm on
    screen by then. */
 let HERALD_READING=null;
 function heraldReadAgain(){
@@ -9881,16 +9952,14 @@ function heraldReadAgain(){
   }).catch(()=>{}).then(()=>{HERALD_READING=null;});
   return HERALD_READING;
 }
-/* Publish: this realm's post, made or refreshed now. Publishing switches the master and this
-   realm on, because a host who presses it wants the post. */
+/* Publish: this realm's post, made or refreshed now. Publishing switches this realm on,
+   because a host who presses it wants the post. A realm with no webhook yet is set up first. */
 async function heraldPublish(){
   const realm=HERALD_REALM||heraldRealmOnScreen();
-  const own=$("#heraldRealmUrl"), app=$("#heraldUrl");
-  const url=(own?String(own.value||"").trim():"")||(app?String(app.value||"").trim():"");
-  if(!url){toast("ᚦ "+T("herald.publish.no_url.toast"));return false;}
-  setT("tHerald",true);
+  const url=String(heraldRealmEntry(realm).WebhookUrl||"").trim();
+  if(!url){toast("ᚦ "+T("herald.publish.no_url.toast"));heraldWizard();return false;}
   setT("tHeraldRealm",true);
-  /* The save is what switches them on. One that failed has already said why, and publishing
+  /* The save is what switches it on. One that failed has already said why, and publishing
      after it would post for a realm whose switch is still off on the host side. */
   if(await heraldSave()===FAIL) return false;
   if(!Native.available){heraldRealmPost(realm,true);toast("ᚺ "+T("herald.publish.preview.toast"));return true;}
@@ -9925,37 +9994,56 @@ async function heraldRemove(){
 }
 /* HERALD-REALM-END */
 /* HERALD-EVENTS-BEGIN
-   The realm's event posts (1.2.16, issue 24), three kinds read by different people: Server
-   news (started, stopped, updated, update failed, held, old world, cheat marks cleared, mods
-   updated), Crashes (the call to action, which can ping one role) and players coming and
-   going. Each kind has its own switch, and a webhook and thread box that are blank for the
-   realm's own. They ride in the realm's Herald block, so the host side decides whether a post
-   goes and where (the master, the realm, the kind) and this block only paints and reads them.
-   A realm with nothing read yet has every kind off, like a realm made after the update. */
+   The realm's messages (1.2.16, issue 24; ticks since 1.2.17), three kinds read by different
+   people: the server starting, stopping or updating (and the rest of the routine news: update
+   failed, held, old world, cheat marks cleared, mods updated), the server crashing (the call to
+   action, which can ping one role), and players coming and going. Each kind is a tick on the
+   card; its webhook and thread live in the Send these somewhere else dialog and are blank for
+   the same place as the post. They ride in the realm's Herald block, so the host side decides
+   whether a message goes and where, and this block only paints and reads them. The role box
+   shows only while crashes are ticked. A realm with nothing read yet has every kind off. */
 const HERALD_EVENT_KINDS=[
-  {kind:"Routine",sw:"tHeraldRoutine",url:"heraldRoutineUrl",thread:"heraldRoutineThread"},
-  {kind:"Crash",sw:"tHeraldCrash",url:"heraldCrashUrl",thread:"heraldCrashThread",role:"heraldCrashRole"},
-  {kind:"Players",sw:"tHeraldPlayers",url:"heraldPlayersUrl",thread:"heraldPlayersThread"},
+  {kind:"Routine",sw:"tHeraldRoutine",url:"heraldRoutineUrl",thread:"heraldRoutineThread",warn:"heraldRoutineWarn"},
+  {kind:"Crash",sw:"tHeraldCrash",url:"heraldCrashUrl",thread:"heraldCrashThread",role:"heraldCrashRole",warn:"heraldCrashWarn"},
+  {kind:"Players",sw:"tHeraldPlayers",url:"heraldPlayersUrl",thread:"heraldPlayersThread",warn:"heraldPlayersWarn"},
 ];
 /* Paint the three kinds from a realm's block. */
 function heraldRenderEvents(b){
   b=b||{};
   const set=(id,v)=>{const el=$("#"+id); if(el) el.value=v||"";};
   HERALD_EVENT_KINDS.forEach(k=>{
-    setT(k.sw,!!b[k.kind+"On"]);
+    heraldTick(k.sw,!!b[k.kind+"On"]);
     set(k.url,b[k.kind+"WebhookUrl"]);
     set(k.thread,b[k.kind+"ThreadId"]);
     if(k.role) set(k.role,b[k.kind+"RoleId"]);
   });
+  heraldRenderRoleBox();
+  heraldRenderWarns(b);
+}
+/* The role box stands beside the crash tick only while it is ticked. */
+function heraldRenderRoleBox(){
+  const w=$("#heraldCrashRoleWrap");
+  if(w) w.style.display=heraldTicked("tHeraldCrash")?"":"none";
+}
+/* One line under a kind whose last message Discord refused for naming no thread in a forum
+   channel, so the host sees it here and not only in the Saga. */
+function heraldRenderWarns(b){
+  b=b||{};
+  HERALD_EVENT_KINDS.forEach(k=>{
+    const w=$("#"+k.warn); if(!w) return;
+    const show=!!b[k.kind+"NoThread"];
+    w.style.display=show?"":"none";
+    w.textContent=show?"ᚦ "+T("herald.events.nothread"):"";
+  });
 }
 /* What a save carries for the three kinds, read off the controls, merged into the realm's
-   Herald block by heraldSave. */
+   Herald block by heraldSave. A control not in the document is left out. */
 function heraldEventValues(){
-  const box=id=>{const el=$("#"+id);return el?String(el.value||"").trim():"";};
-  const on=id=>{const el=$("#"+id);return !!(el&&el.classList.contains("on"));};
+  const box=id=>{const el=$("#"+id);return el?String(el.value||"").trim():undefined;};
+  const tick=id=>{const el=$("#"+id);return el?!!el.checked:undefined;};
   const out={};
   HERALD_EVENT_KINDS.forEach(k=>{
-    out[k.kind+"On"]=on(k.sw);
+    out[k.kind+"On"]=tick(k.sw);
     out[k.kind+"WebhookUrl"]=box(k.url);
     out[k.kind+"ThreadId"]=box(k.thread);
     if(k.role) out[k.kind+"RoleId"]=box(k.role);
@@ -9968,16 +10056,17 @@ function heraldEventsAllOn(){
   return HERALD_EVENT_KINDS.every(k=>v[k.kind+"On"]);
 }
 /* The wizard's one switch, put on all three kinds, but only when the host moved it: a realm
-   with Crashes on and the rest off keeps that when the wizard is run again. */
+   with crashes on and the rest off keeps that when the wizard is run again. */
 function heraldEventsFromWizard(was,now){
   if(!!was===!!now) return false;
-  HERALD_EVENT_KINDS.forEach(k=>setT(k.sw,!!now));
+  HERALD_EVENT_KINDS.forEach(k=>heraldTick(k.sw,!!now));
+  heraldRenderRoleBox();
   return true;
 }
-/* A switch saves on its click, a box when it is left, like the realm's own boxes above. */
+/* A tick saves when it changes, a box when it is left, like the realm's other boxes. */
 function heraldWireEvents(){
   HERALD_EVENT_KINDS.forEach(k=>{
-    const sw=$("#"+k.sw); if(sw) sw.addEventListener("click",()=>heraldSave());
+    const sw=$("#"+k.sw); if(sw) sw.addEventListener("change",()=>{heraldRenderRoleBox();heraldSave();});
     [k.url,k.thread,k.role].forEach(id=>{
       const el=id?$("#"+id):null; if(el) el.addEventListener("change",()=>heraldSave());
     });
@@ -10059,83 +10148,71 @@ $("#heraldModCode").addEventListener("change",()=>{heraldModCodeCommit();});
 $("#heraldModCode").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();e.target.blur();}});
 ["heraldModKindTs","heraldModKindGale"].forEach(id=>
   $("#"+id).addEventListener("change",()=>{heraldModCodeCommit();}));
-/* What the webhook line is saying, as a fact rather than as text already on screen.
-   It used to be four textContent writes and no state at all, which meant a language
-   switch left whatever the last keystroke had put there: the line is the one place on
-   this hall that says whether the host's webhook answered, and reading it in the
-   language before the switch is worse than reading nothing.
-   An id where the sentence is ours, and `text` where it is the host side's own words,
-   which a catalog cannot reword and which are shown exactly as they arrived. */
-let HERALD_URL_STAT={cls:"wiz-stat dim",wordId:"herald.hook.stat.idle"};
-function heraldRenderUrlStat(){
-  const el=$("#heraldUrlStat"); if(!el) return;
-  const s=HERALD_URL_STAT||{};
-  el.className=s.cls||"wiz-stat dim";
-  el.textContent=(s.mark?s.mark+" ":"")+(s.text!=null?s.text:T(s.wordId||"herald.hook.stat.idle",s.params));
-}
-{
-  const inp=$("#heraldUrl");
-  let t=null;
-  inp.addEventListener("input",()=>{
-    clearTimeout(t);
-    const v=inp.value.trim();
-    try{heraldRenderRealmLines();}catch(_){}
-    if(!v){
-      HERALD_URL_STAT={cls:"wiz-stat dim",wordId:"herald.hook.stat.idle"};heraldRenderUrlStat();
-      t=setTimeout(()=>heraldSave(),400);return;
-    }
-    HERALD_URL_STAT={cls:"wiz-stat dim",wordId:"common.stat.checking"};heraldRenderUrlStat();
-    t=setTimeout(async()=>{
-      const r=Native.available?await rpc("discord.validate",{url:v})
-        :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:T("herald.hook.stat.malformed")};
-      if(r===FAIL) return;
-      /* Named and unnamed are two sentences, not one with a ternary in the middle: a
-         webhook that answered without giving a name must not leave a dangling separator.
-         A refusal the host side worded itself is kept as text, because no id came with it. */
-      HERALD_URL_STAT=r.ok
-        ?{cls:"wiz-stat ok",mark:"ᛉ",
-          wordId:r.name?"herald.hook.stat.answers":"herald.hook.stat.answers.unnamed",
-          params:r.name?{name:r.name}:null}
-        :(r.error?{cls:"wiz-stat bad",mark:"ᚦ",text:r.error}
-                 :{cls:"wiz-stat bad",mark:"ᚦ",wordId:"herald.hook.stat.no_answer"});
-      heraldRenderUrlStat();
-      if(r.ok) heraldSave();
-    },500);
+/* The tick in front of the mod code. On opens the box to paste into; off takes the code out of
+   the post, which is what a blank box has always meant. */
+$("#tHeraldModCode").addEventListener("change",()=>{
+  const on=heraldTicked("tHeraldModCode");
+  heraldRenderModTick(on);
+  const box=$("#heraldModCode");
+  if(on){ if(box) setTimeout(()=>box.focus(),0); return; }
+  if(box&&String(box.value||"").trim()){box.value="";heraldModCodeCommit();}
+});
+/* HERALD-DIALOGS-BEGIN
+   Appearance and Send these somewhere else (1.2.17). Each dialog is a panel that lives at the
+   end of the Discord screen while closed (#heraldPanels), lent to the app's modal while open
+   and put back the moment the modal goes, however it goes. So their boxes are always the same
+   elements, painted by heraldRenderRealm and read by the saves like any other control, and a
+   dialog closed by Escape or a click outside it still saves what was typed: the panel is put
+   back first, then the save reads it. */
+const HERALD_PANELS={look:$("#heraldLookPanel"),elsewhere:$("#heraldElsewherePanel")};
+const HERALD_DIALOGS={
+  look:{titleId:"herald.look.label",commit:()=>heraldLookCommit()},
+  elsewhere:{titleId:"herald.elsewhere.title",commit:()=>heraldSave()},
+};
+function heraldPanelsHome(){
+  const home=$("#heraldPanels"); if(!home) return;
+  Object.keys(HERALD_PANELS).forEach(k=>{
+    const p=HERALD_PANELS[k];
+    if(p&&p.parentNode!==home) home.appendChild(p);
   });
-  $("#heraldThread").addEventListener("change",()=>heraldSave());
 }
-/* The realm's own webhook box: the same check as the app-wide one, and blank is a real choice
-   (the app-wide webhook), saved without asking Discord anything. */
-{
-  const inp=$("#heraldRealmUrl");
-  let t=null;
-  inp.addEventListener("input",()=>{
-    clearTimeout(t);
-    const v=inp.value.trim();
-    if(!v){
-      HERALD_REALM_URL_STAT=null;heraldRenderRealmLines();
-      t=setTimeout(()=>heraldSave(),400);return;
-    }
-    HERALD_REALM_URL_STAT={cls:"wiz-stat dim",wordId:"common.stat.checking"};heraldRenderRealmLines();
-    t=setTimeout(async()=>{
-      const r=Native.available?await rpc("discord.validate",{url:v})
-        :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:T("herald.hook.stat.malformed")};
-      if(r===FAIL) return;
-      HERALD_REALM_URL_STAT=r.ok
-        ?{cls:"wiz-stat ok",mark:"ᛉ",
-          wordId:r.name?"herald.hook.stat.answers":"herald.hook.stat.answers.unnamed",
-          params:r.name?{name:r.name}:null}
-        :(r.error?{cls:"wiz-stat bad",mark:"ᚦ",text:r.error}
-                 :{cls:"wiz-stat bad",mark:"ᚦ",wordId:"herald.hook.stat.no_answer"});
-      heraldRenderRealmLines();
-      if(r.ok) heraldSave();
-    },500);
+function heraldDialog(which){
+  const panel=HERALD_PANELS[which], d=HERALD_DIALOGS[which];
+  if(!panel||!d) return null;
+  heraldPanelsHome();
+  const m=modalOpen(`<div class="mtitle">${esc(T(d.titleId))}</div><div class="herald-one" data-herald-slot></div>`+
+    `<div class="wiz-nav"><span class="grow"></span><button class="btn btn-ember btn-sm" data-herald-done>${esc(T("common.button.close"))}</button></div>`,
+    ()=>heraldDialog(which));
+  m.querySelector("[data-herald-slot]").appendChild(panel);
+  m.querySelector("[data-herald-done]").addEventListener("click",()=>modalClose());
+  onModalDismissed(()=>{heraldPanelsHome();try{d.commit();}catch(_){}});
+  return m;
+}
+/* The (?) beside each heading and the role box: the shared hover panel, which a keyboard host
+   reaches by focus. One or two plain sentences each. */
+const HERALD_HELP=[
+  {marker:"heraldHelpOn",textId:"herald.screen.on.help"},
+  {marker:"heraldHelpShow",textId:"herald.show.help"},
+  {marker:"heraldHelpEvents",textId:"herald.events.help"},
+  {marker:"heraldHelpRole",textId:"herald.events.role.help"},
+  {marker:"heraldHelpPreview",textId:"herald.preview.note"},
+];
+function heraldHelpHtml(textId){
+  return `<div class="wgt-intro">${esc(T(textId,{name:HERALD_REALM||heraldRealmOnScreen()||""}))}</div>`;
+}
+function heraldWireHelp(){
+  HERALD_HELP.forEach(h=>{
+    const el=$("#"+h.marker);
+    if(el) wireWgTipMarker(el,null,()=>wgTipOpenHtml(el,heraldHelpHtml(h.textId)));
   });
-  $("#heraldRealmThread").addEventListener("change",()=>heraldSave());
 }
+/* HERALD-DIALOGS-END */
 $("#heraldPublish").addEventListener("click",()=>{heraldPublish();});
 $("#heraldRemove").addEventListener("click",()=>{heraldRemove();});
-$("#heraldWizBtn").addEventListener("click",()=>heraldWizard());
+$("#heraldHookChange").addEventListener("click",()=>heraldWizard());
+$("#heraldLookBtn").addEventListener("click",()=>heraldDialog("look"));
+$("#heraldElsewhereBtn").addEventListener("click",()=>heraldDialog("elsewhere"));
+heraldWireHelp();
 
 /* ---------- CONTEXT MENU (live, JS-positioned) ---------- */
 const ctxEl=$("#ctxMenu");
@@ -15315,48 +15392,52 @@ $("#btnSetupReset").addEventListener("click",()=>{
 
 /* ---------- HERALD SETUP WIZARD ----------
    Same shell as the first-launch wizard: numbered steps, per-step help,
-   live webhook validation, and a first publish at the end. */
-const HWIZ={step:0,realm:null,url:"",thread:"",valid:false,name:"",addr:true,pass:false,events:false,eventsWas:false};
-/* The wizard sets up the realm on screen. It opens on the webhook that realm posts through
-   now: its own, or the app-wide one. */
+   live webhook validation, and a first publish at the end. It is the only place a realm's
+   webhook is set (1.2.17): pasted here, with a thread only behind "Post in a thread instead".
+   A realm being set up while another realm already has a webhook is offered that realm's
+   channel first, which copies the link into this realm; nothing is inherited any more. */
+const HWIZ={step:0,realm:null,other:null,same:false,url:"",thread:"",threadOn:false,valid:false,name:"",addr:true,pass:false,events:false,eventsWas:false};
+/* Another realm with a webhook of its own, for "Use the same channel as". */
+function heraldWizOther(realm){
+  const k=heraldRealmKey(realm);
+  const keys=Object.keys(HERALD_REALMS).filter(x=>x!==k&&String((HERALD_REALMS[x]||{}).WebhookUrl||"").trim()).sort();
+  if(!keys.length) return null;
+  const b=HERALD_REALMS[keys[0]];
+  return {realm:String(b.Realm||keys[0]),url:String(b.WebhookUrl).trim(),thread:String(b.ThreadId||"").trim(),name:String(b.WebhookName||"")};
+}
+/* The wizard sets up the realm on screen, and opens on the webhook that realm posts through. */
 function heraldWizard(){
-  const ownUrl=$("#heraldRealmUrl").value.trim(), ownThread=$("#heraldRealmThread").value.trim();
+  const realm=HERALD_REALM||heraldRealmOnScreen();
+  const b=heraldRealmEntry(realm);
+  const own=String(b.WebhookUrl||"").trim(), thread=String(b.ThreadId||"").trim();
+  const other=heraldWizOther(realm);
   Object.assign(HWIZ,{
-    step:0,
-    realm:HERALD_REALM||heraldRealmOnScreen(),
-    url:ownUrl||$("#heraldUrl").value.trim(),
-    thread:ownUrl?ownThread:(ownThread||$("#heraldThread").value.trim()),
-    valid:false,name:"",
-    addr:swOn("tHeraldAddr"),pass:swOn("tHeraldPass"),events:heraldEventsAllOn(),eventsWas:heraldEventsAllOn()
+    step:0,realm,other,
+    same:!own&&!!other,
+    url:own,thread,threadOn:!!thread,
+    valid:false,name:String(b.WebhookName||""),
+    addr:heraldTicked("tHeraldAddr"),pass:heraldTicked("tHeraldPass"),events:heraldEventsAllOn(),eventsWas:heraldEventsAllOn()
   });
   heraldWizRender();
 }
-/* Where the wizard's webhook goes. The first one set up becomes the app-wide webhook, so the
-   next realm turned on needs only its switch; the app-wide one again leaves this realm on it;
-   any other is this realm's own, with its thread. */
-function heraldWizPlace(url,thread,appUrl,appThread){
-  url=String(url||"").trim();thread=String(thread||"").trim();
-  appUrl=String(appUrl||"").trim();appThread=String(appThread||"").trim();
-  if(!appUrl) return {appUrl:url,appThread:thread,url:"",thread:""};
-  if(url===appUrl) return {appUrl,appThread,url:"",thread:thread===appThread?"":thread};
-  return {appUrl,appThread,url,thread};
+/* Where this realm will post: the other realm's channel and thread, or the link pasted here
+   and its thread when "Post in a thread instead" is ticked. */
+function heraldWizPlace(w){
+  w=w||HWIZ;
+  if(w.same&&w.other) return {url:w.other.url,thread:w.other.thread,name:w.other.name};
+  return {url:String(w.url||"").trim(),thread:w.threadOn?String(w.thread||"").trim():"",name:String(w.name||"")};
 }
 async function heraldWizFinish(){
-  /* persist choices + flip sharing and this realm on, then place (or refresh) its post */
+  /* persist choices + switch this realm on, then place (or refresh) its post */
   if(HWIZ.realm&&heraldRealmKey(HWIZ.realm)!==heraldRealmKey(HERALD_REALM)){
     /* The realm on screen moved while the wizard was open: nothing is set up on the wrong one. */
     modalClose();toast("ᚦ "+T("herald.wiz.realm_moved.toast",{name:HWIZ.realm}));return;
   }
-  const place=heraldWizPlace(HWIZ.url,HWIZ.thread,$("#heraldUrl").value,$("#heraldThread").value);
-  setT("tHerald",true);
+  const place=heraldWizPlace();
   setT("tHeraldRealm",true);
-  setT("tHeraldAddr",HWIZ.addr);setT("tHeraldPass",HWIZ.pass);heraldEventsFromWizard(HWIZ.eventsWas,HWIZ.events);
-  $("#heraldUrl").value=place.appUrl;
-  $("#heraldThread").value=place.appThread;
-  $("#heraldRealmUrl").value=place.url;
-  $("#heraldRealmThread").value=place.thread;
+  heraldTick("tHeraldAddr",HWIZ.addr);heraldTick("tHeraldPass",HWIZ.pass);heraldEventsFromWizard(HWIZ.eventsWas,HWIZ.events);
   modalClose();
-  await heraldSave();
+  if(await heraldSave(null,{WebhookUrl:place.url,ThreadId:place.thread,WebhookName:place.name})===FAIL) return;
   const realm=HERALD_REALM||heraldRealmOnScreen();
   if(!Native.available){
     heraldRealmPost(realm,true);
@@ -15366,12 +15447,6 @@ async function heraldWizFinish(){
   if(r===FAIL) return;
   if(r.ok){
     heraldRealmPost(realm,true);
-    $("#heraldUrlStat").className="wiz-stat ok";
-    /* Two sentences rather than one with a gap in it: a webhook that answered without
-       naming itself must not leave a trailing separator on screen. */
-    $("#heraldUrlStat").textContent="ᛉ "+(HWIZ.name
-      ?T("herald.hook.stat.answers",{name:HWIZ.name})
-      :T("herald.hook.stat.answers.unnamed"));
     toast("ᚺ "+T("herald.publish.done.toast"));
     logLine("ok","[Herald] Discord sharing configured · status post published",null,null);
   }else{
@@ -15397,8 +15472,15 @@ function heraldWizRender(){
     nav=`<button class="btn btn-ghost btn-sm" id="hwCancel">${esc(T("common.button.cancel"))}</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="hwNext">${esc(T("common.button.begin"))}</button>`;
   }else if(HWIZ.step===1){
+    /* The other realm's channel first, when there is one: one click and this realm posts
+       beside it. */
+    const choice=HWIZ.other
+      ?`<label class="mchk"><input type="radio" name="hwPlace" id="hwSame"${HWIZ.same?" checked":""}> ${esc(T("herald.wiz.same",{name:HWIZ.other.realm}))}</label>`+
+       `<label class="mchk"><input type="radio" name="hwPlace" id="hwOwn"${HWIZ.same?"":" checked"}> ${esc(T("herald.wiz.own"))}</label>`
+      :"";
     body=
-      `<div class="mtitle">${T("herald.wiz.hook.title")}</div>`+
+      `<div class="mtitle">${T("herald.wiz.hook.title")}</div>`+choice+
+      `<div id="hwOwnBox" style="${HWIZ.other&&HWIZ.same?"display:none":""}">`+
       `<div class="wiz-help">${T("herald.wiz.hook.body")}<br>`+
       `1 · ${T("herald.wiz.hook.step1")}<br>`+
       `2 · ${T("herald.wiz.hook.step2")}<br>`+
@@ -15406,8 +15488,11 @@ function heraldWizRender(){
       `4 · ${T("herald.wiz.hook.step4")}</div>`+
       `<div class="field"><label>${esc(T("herald.wiz.hook.url.label"))}</label><input type="text" id="hwUrl" spellcheck="false" autocomplete="off" placeholder="https://discord.com/api/webhooks/…"></div>`+
       `<div class="wiz-stat dim" id="hwUrlStat">${T("herald.wiz.hook.stat.idle")}</div>`+
+      `<label class="mchk"><input type="checkbox" id="hwThreadOn"${HWIZ.threadOn?" checked":""}> ${esc(T("herald.wiz.thread.toggle"))}</label>`+
+      `<div id="hwThreadBox" style="${HWIZ.threadOn?"":"display:none"}">`+
       `<div class="field" style="margin-top:8px"><label>${T("herald.wiz.hook.thread.label")}</label><input type="text" id="hwThread" spellcheck="false" autocomplete="off" placeholder="${T("herald.wiz.hook.thread.placeholder")}"></div>`+
-      `<div class="wiz-help" style="margin-top:4px">${T("herald.wiz.hook.thread.note")}</div>`;
+      `<div class="wiz-help" style="margin-top:4px">${T("herald.wiz.hook.thread.note")}</div></div>`+
+      `</div>`;
     nav=`<button class="btn btn-ghost btn-sm" id="hwBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="hwNext" disabled>${esc(T("common.button.next"))}</button>`;
   }else if(HWIZ.step===2){
@@ -15422,12 +15507,15 @@ function heraldWizRender(){
     nav=`<button class="btn btn-ghost btn-sm" id="hwBack">${esc(T("common.button.back"))}</button><span class="grow"></span>`+
         `<button class="btn btn-ember btn-sm" id="hwNext">${esc(T("common.button.next"))}</button>`;
   }else{
+    const place=heraldWizPlace();
+    const hook=HWIZ.same&&HWIZ.other?T("herald.wiz.sum.webhook.same",{name:HWIZ.other.realm})
+      :place.name?T("herald.wiz.sum.webhook.named",{name:place.name}):T("herald.wiz.sum.webhook.validated");
     body=
       `<div class="mtitle">${T("herald.wiz.sum.title")}</div>`+
       `<div class="wiz-sum">`+
       `<div class="row"><span class="k">${esc(T("herald.wiz.sum.realm"))}</span><span class="v">${esc(HWIZ.realm||"")}</span></div>`+
-      `<div class="row"><span class="k">${esc(T("herald.wiz.sum.webhook"))}</span><span class="v">${esc(HWIZ.name?T("herald.wiz.sum.webhook.named",{name:HWIZ.name}):T("herald.wiz.sum.webhook.validated"))}</span></div>`+
-      `<div class="row"><span class="k">${T("herald.wiz.sum.thread")}</span><span class="v">${esc(HWIZ.thread.trim()||T("herald.wiz.sum.thread.none"))}</span></div>`+
+      `<div class="row"><span class="k">${esc(T("herald.wiz.sum.webhook"))}</span><span class="v">${esc(hook)}</span></div>`+
+      `<div class="row"><span class="k">${T("herald.wiz.sum.thread")}</span><span class="v">${esc(place.thread||T("herald.wiz.sum.thread.none"))}</span></div>`+
       `<div class="row"><span class="k">${T("herald.wiz.sum.address")}</span><span class="v">${esc(HWIZ.addr?T("common.state.shared"):T("common.state.hidden"))}</span></div>`+
       `<div class="row"><span class="k">${T("herald.wiz.sum.password")}</span><span class="v">${esc(HWIZ.pass?T("herald.wiz.sum.password.shared"):T("common.state.hidden"))}</span></div>`+
       `<div class="row"><span class="k">${T("herald.share.events")}</span><span class="v">${esc(HWIZ.events?T("common.state.on"):T("common.state.off"))}</span></div>`+
@@ -15448,17 +15536,27 @@ function heraldWizRender(){
   });
 
   if(HWIZ.step===1){
-    const inp=m.querySelector("#hwUrl"),thr=m.querySelector("#hwThread"),
-          stat=m.querySelector("#hwUrlStat"),next=m.querySelector("#hwNext");
+    const inp=m.querySelector("#hwUrl"),thr=m.querySelector("#hwThread"),thrOn=m.querySelector("#hwThreadOn"),
+          stat=m.querySelector("#hwUrlStat"),next=m.querySelector("#hwNext"),ownBox=m.querySelector("#hwOwnBox");
     inp.value=HWIZ.url; thr.value=HWIZ.thread;
     thr.addEventListener("input",()=>{HWIZ.thread=thr.value;});
+    thrOn.addEventListener("change",()=>{
+      HWIZ.threadOn=thrOn.checked;
+      m.querySelector("#hwThreadBox").style.display=HWIZ.threadOn?"":"none";
+    });
+    /* Next is open when the other realm's channel is chosen, or when the pasted link answered. */
+    const gate=()=>{next.disabled=!(HWIZ.same&&HWIZ.other)&&!HWIZ.valid;};
+    const pick=same=>{HWIZ.same=same;ownBox.style.display=same?"none":"";gate();if(!same)setTimeout(()=>inp.focus(),30);};
+    const sameEl=m.querySelector("#hwSame"),ownEl=m.querySelector("#hwOwn");
+    if(sameEl) sameEl.addEventListener("change",()=>{if(sameEl.checked)pick(true);});
+    if(ownEl) ownEl.addEventListener("change",()=>{if(ownEl.checked)pick(false);});
     let t=null;
     const check=()=>{
       HWIZ.url=inp.value;
       clearTimeout(t);
       const v=inp.value.trim();
       if(!v){
-        HWIZ.valid=false;next.disabled=true;
+        HWIZ.valid=false;gate();
         stat.className="wiz-stat dim";stat.textContent=T("herald.wiz.hook.stat.idle");
         return;
       }
@@ -15467,7 +15565,7 @@ function heraldWizRender(){
         const r=Native.available?await rpc("discord.validate",{url:v})
           :{ok:HERALD_URL_RE.test(v),name:"preview-hook",error:T("herald.hook.stat.malformed")};
         const ok=r!==FAIL&&!!r.ok;
-        HWIZ.valid=ok;HWIZ.name=ok?(r.name||""):"";next.disabled=!ok;
+        HWIZ.valid=ok;HWIZ.name=ok?(r.name||""):"";gate();
         stat.className="wiz-stat "+(ok?"ok":"bad");
         stat.textContent=ok
           ?("ᛉ "+(HWIZ.name?T("herald.wiz.hook.stat.answers",{name:HWIZ.name})
@@ -15476,8 +15574,9 @@ function heraldWizRender(){
       },350);
     };
     inp.addEventListener("input",check);
+    gate();
     if(HWIZ.url) check();
-    setTimeout(()=>inp.focus(),30);
+    if(!(HWIZ.same&&HWIZ.other)) setTimeout(()=>inp.focus(),30);
   }
   if(HWIZ.step===2){
     const flip=(id,key)=>{const el=m.querySelector(id);el.addEventListener("click",()=>{

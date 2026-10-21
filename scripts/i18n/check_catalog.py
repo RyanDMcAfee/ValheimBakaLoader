@@ -455,6 +455,48 @@ RETIRED_IDS = {
     # 1.2.16: the event posts are each realm's own, in three kinds, so "from every realm" is no
     # longer true. Shipped since the Herald's first event posts.
     "herald.share.events.note": "1.2.16",
+    # 1.2.17: the Discord screen became one card about the realm on screen. The app-wide
+    # switch, the app-wide and per realm webhook boxes, the intro sentence and the second
+    # card's headings left it, and the webhook is set up by the wizard only, so none of these
+    # sentences describes anything on screen any more. Shipped in 1.2.16 or before.
+    "herald.carries.label": "1.2.17",
+    "herald.carries.note": "1.2.17",
+    "herald.events.note": "1.2.17",
+    "herald.field.thread": "1.2.17",
+    "herald.field.thread.title": "1.2.17",
+    "herald.field.webhook": "1.2.17",
+    "herald.field.webhook.title": "1.2.17",
+    "herald.hook.stat.answers": "1.2.17",
+    "herald.hook.stat.answers.unnamed": "1.2.17",
+    "herald.hook.stat.idle": "1.2.17",
+    "herald.hook.stat.no_answer": "1.2.17",
+    "herald.intro.body": "1.2.17",
+    "herald.intro.one": "1.2.17",
+    "herald.look.preview.off": "1.2.17",
+    "herald.modcode.label": "1.2.17",
+    "herald.modcode.note": "1.2.17",
+    "herald.modcode.preview.off": "1.2.17",
+    "herald.post.label": "1.2.17",
+    "herald.realm.head": "1.2.17",
+    "herald.realm.hook.stat.app": "1.2.17",
+    "herald.realm.hook.stat.none": "1.2.17",
+    "herald.realm.thread": "1.2.17",
+    "herald.realm.thread.placeholder": "1.2.17",
+    "herald.realm.toggle": "1.2.17",
+    "herald.realm.toggle.title": "1.2.17",
+    "herald.realm.webhook": "1.2.17",
+    "herald.realm.webhook.placeholder": "1.2.17",
+    "herald.realm.webhook.title": "1.2.17",
+    "herald.share.events.title": "1.2.17",
+    "herald.share.password.title": "1.2.17",
+    "herald.share.password.warn": "1.2.17",
+    "herald.sharing.app.note": "1.2.17",
+    "herald.sharing.label": "1.2.17",
+    "herald.sharing.toggle": "1.2.17",
+    "herald.sharing.toggle.title": "1.2.17",
+    "herald.thread.placeholder": "1.2.17",
+    "herald.wiz.label": "1.2.17",
+    "herald.wiz.title": "1.2.17",
 }
 
 

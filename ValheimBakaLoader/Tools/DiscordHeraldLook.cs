@@ -104,10 +104,13 @@ namespace ValheimBakaLoader.Tools
             return null;
         }
 
-        /// <summary>The name to sign with, or null for the webhook's own name.</summary>
-        public static string NameFor(UserPreferences prefs)
+        /// <summary>
+        /// The name to sign with, or null for the webhook's own name. The realm's own once the
+        /// realms stand alone (1.2.17); the app-wide one before that move copied it into them.
+        /// </summary>
+        public static string NameFor(UserPreferences prefs, ServerPreferences realm = null)
         {
-            var n = prefs?.DiscordBotName?.Trim();
+            var n = (realm != null && HeraldRealms.StandsAlone(prefs) ? realm.HeraldBotName : prefs?.DiscordBotName)?.Trim();
             if (string.IsNullOrEmpty(n)) return null;
             return NameProblem(n) == null ? n : null;
         }
@@ -116,9 +119,9 @@ namespace ValheimBakaLoader.Tools
         /// The picture to sign with. Blank is the logo, and so is a link that is not a picture:
         /// one that slipped past the save (a hand edit of the file) is never sent.
         /// </summary>
-        public static string AvatarFor(UserPreferences prefs)
+        public static string AvatarFor(UserPreferences prefs, ServerPreferences realm = null)
         {
-            var a = prefs?.DiscordAvatarUrl?.Trim();
+            var a = (realm != null && HeraldRealms.StandsAlone(prefs) ? realm.HeraldAvatarUrl : prefs?.DiscordAvatarUrl)?.Trim();
             if (string.IsNullOrEmpty(a)) return LogoUrl;
             return IsImageUrl(a) ? a : LogoUrl;
         }
@@ -145,18 +148,19 @@ namespace ValheimBakaLoader.Tools
         /// name and picture when the post is made, and an edit cannot change them, so the
         /// status service keeps this beside the post's id and makes the post again when it moves.
         /// </summary>
-        public static string SignatureFor(UserPreferences prefs) => (NameFor(prefs) ?? "") + "\n" + AvatarFor(prefs);
+        public static string SignatureFor(UserPreferences prefs, ServerPreferences realm = null)
+            => (NameFor(prefs, realm) ?? "") + "\n" + AvatarFor(prefs, realm);
 
         /// <summary>
         /// Signs a post: the name when one is set, the picture always, and the BakaLoader line
         /// on the embed when the switch is on. The title and the status line are the status
         /// post's own business and are set by it.
         /// </summary>
-        public static void Sign(JObject payload, JObject embed, UserPreferences prefs)
+        public static void Sign(JObject payload, JObject embed, UserPreferences prefs, ServerPreferences realm = null)
         {
-            var name = NameFor(prefs);
+            var name = NameFor(prefs, realm);
             if (name != null) payload["username"] = name;
-            payload["avatar_url"] = AvatarFor(prefs);
+            payload["avatar_url"] = AvatarFor(prefs, realm);
 
             if (prefs == null || prefs.DiscordLinkToBakaLoader)
             {

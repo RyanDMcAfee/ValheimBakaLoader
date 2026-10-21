@@ -186,6 +186,13 @@ namespace ValheimBakaLoader.Game
         // move still finds the same post and edits it rather than making a second one.
         public bool HeraldPerRealmMigrated { get; set; }
 
+        // True once every realm stands on its own (1.2.17): the app-wide webhook copied into
+        // each realm that posted through it, the app-wide name and picture copied into every
+        // realm, and the master switch retired (every realm switched off once when it was off).
+        // From then on a realm's blank webhook is no webhook, and the master is read as on: it
+        // is kept in the file for the builds before this one and never shown.
+        public bool HeraldSimplifiedMigrated { get; set; }
+
         public List<ServerPreferences> Servers { get; set; } = new();
 
         public List<WorldPreferences> Worlds { get; set; } = new();
@@ -242,7 +249,10 @@ namespace ValheimBakaLoader.Game
                 WindowMaximized = file.WindowMaximized ?? defaults.WindowMaximized,
                 DiscordWebhookUrl = file.DiscordWebhookUrl ?? defaults.DiscordWebhookUrl,
                 DiscordWebhookThreadId = file.DiscordWebhookThreadId ?? defaults.DiscordWebhookThreadId,
-                DiscordSharingEnabled = file.DiscordSharingEnabled ?? defaults.DiscordSharingEnabled,
+                // Forced on once the realms stand on their own: the switch is not on screen any
+                // more, and a file that says off was answered by the move, which switched every
+                // realm off instead.
+                DiscordSharingEnabled = file.HeraldSimplifiedMigrated == true || (file.DiscordSharingEnabled ?? defaults.DiscordSharingEnabled),
                 DiscordShareAddress = file.DiscordShareAddress ?? defaults.DiscordShareAddress,
                 DiscordSharePassword = file.DiscordSharePassword ?? defaults.DiscordSharePassword,
                 DiscordEventPosts = file.DiscordEventPosts ?? defaults.DiscordEventPosts,
@@ -255,6 +265,7 @@ namespace ValheimBakaLoader.Game
                 DiscordStatusMessageSignature = file.DiscordStatusMessageSignature ?? defaults.DiscordStatusMessageSignature,
                 CustomJoinDomain = file.CustomJoinDomain ?? defaults.CustomJoinDomain,
                 HeraldPerRealmMigrated = file.HeraldPerRealmMigrated ?? defaults.HeraldPerRealmMigrated,
+                HeraldSimplifiedMigrated = file.HeraldSimplifiedMigrated ?? defaults.HeraldSimplifiedMigrated,
 
                 Servers = (file.Servers ?? new())
                     .Where(s => s != null)
@@ -322,6 +333,7 @@ namespace ValheimBakaLoader.Game
             DiscordStatusMessageSignature = DiscordStatusMessageSignature,
             CustomJoinDomain = CustomJoinDomain,
             HeraldPerRealmMigrated = HeraldPerRealmMigrated,
+            HeraldSimplifiedMigrated = HeraldSimplifiedMigrated,
 
             Servers = (Servers ?? new())
                 .Select(s => s.ToFile())

@@ -31,7 +31,8 @@
  *      nothing here: the line promises this realm's post. With this realm's own switch off there
  *      is no post for it, so the line says the code is saved and why it is not showing. (Until
  *      1.2.16 the one post followed whichever realm was up, and this rule held the line to that.)
- *  10. With Discord sharing switched off there is no post, so the line says saved, post off.
+ *  10. The tick in front of the code (1.2.17) shows the box only with a code, unticking takes the
+ *      code out of the post, and there is no app-wide sharing switch for the line to answer to.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -94,7 +95,9 @@ function hall(opts) {
     "#heraldModKindTs": { checked: true, disabled: false },
     "#heraldModKindGale": { checked: false, disabled: false },
     "#heraldModCode": { value: "", disabled: false },
-    "#heraldModCodeStat": { className: "", textContent: "" },
+    "#heraldModCodeStat": { className: "", textContent: "", style: {} },
+    "#tHeraldModCode": { checked: false },
+    "#heraldModCodeWrap": { style: {} },
     "#tHerald": switchEl(opts.sharing !== false),
     "#tHeraldRealm": switchEl(opts.realm !== false),
   };
@@ -164,11 +167,11 @@ function choose(h, kind) {
     assert.strictEqual(h.el["#heraldModCode"].value, "", "the box kept the spaces");
     assert.strictEqual(h.context.S.prefs.ModProfileCodeKind, "none");
     assert.strictEqual(h.context.S.prefs.ModProfileCode, null);
-    /* And the save went through the road every other field on the hall takes, which builds
-       the switches and the webhook alongside whatever extra it is handed. */
-    const save = APP.slice(APP.indexOf("function heraldSave(extra){"), APP.indexOf("\n}", APP.indexOf("function heraldSave(extra){")));
-    assert.ok(/DiscordSharingEnabled:swOn\("tHerald"\)/.test(save) && /extra\|\|\{\}/.test(save),
-      "heraldSave no longer carries the hall's switches beside the extra keys");
+    /* And the save went through the road every other field on the screen takes, which builds
+       the realm's block alongside whatever extra it is handed. */
+    const save = APP.slice(APP.indexOf("function heraldSave(extra,realmExtra){"), APP.indexOf("\n}", APP.indexOf("function heraldSave(extra,realmExtra){")));
+    assert.ok(/Herald:realm/.test(save) && /extra\|\|\{\}/.test(save),
+      "heraldSave no longer carries the realm's block beside the extra keys");
   });
 
   await test("3. a refused code shows its one sentence and sends nothing", async () => {
@@ -267,8 +270,9 @@ function choose(h, kind) {
   });
 
   await test("8. the wiring around the block", async () => {
-    const share = HTML.slice(HTML.indexOf('<div class="card b-heraldshare">'), HTML.indexOf("<!-- THE POST -->"));
-    assert.ok(share.length > 0, "the What the post carries card is gone");
+    /* 1.2.17: one card, and the code under Show in the post. */
+    const share = HTML.slice(HTML.indexOf('<div class="card b-herald">'), HTML.indexOf('id="heraldPreview"'));
+    assert.ok(share.length > 0, "the Discord card is gone");
     const at = id => share.indexOf('id="' + id + '"');
     for (const id of ["heraldModCode", "heraldModKindTs", "heraldModKindGale", "heraldModCodeStat"])
       assert.ok(at(id) > 0, id + " is not in the What the post carries group");
@@ -277,7 +281,11 @@ function choose(h, kind) {
     assert.ok(/<input type="radio" name="heraldModKind" id="heraldModKindTs" value="thunderstore"/.test(share));
     assert.ok(/<input type="radio" name="heraldModKind" id="heraldModKindGale" value="gale"/.test(share));
     assert.ok(/role="radiogroup"[^>]*data-i18n-aria="herald\.modcode\.kinds\.aria"/.test(share));
-    assert.ok(/data-i18n="herald\.modcode\.note"/.test(share), "the note is not in the group");
+    /* The note under the box gave way to a tick in front of it, worded as the post words it. */
+    assert.ok(/<input type="checkbox" id="tHeraldModCode"> <span data-i18n="herald\.show\.modcode">/.test(share), "the code has no tick in front of it");
+    assert.ok(at("tHeraldModCode") < at("heraldModKindTs"), "the tick is not in front of the code");
+    assert.ok(/data-i18n="herald\.modcode\.kind\.ts\.short"/.test(share) && /data-i18n="herald\.modcode\.kind\.gale\.short"/.test(share),
+      "the two kinds are not worded on the card");
     const stat = share.slice(share.indexOf('id="heraldModCodeStat"') - 40, share.indexOf('id="heraldModCodeStat"') + 60);
     assert.ok(!/data-i18n/.test(stat), "the line under the box is app.js's and must carry no id");
 
@@ -358,36 +366,49 @@ function choose(h, kind) {
     assert.strictEqual(off.sent.length, 1, "the code was not saved while this realm is off");
     assert.strictEqual(off.line().textContent, T("herald.modcode.preview.realm_off"));
 
-    /* The master off outranks this realm's switch: it is the one that holds every realm. */
+    /* The retired master changes nothing: this realm's own switch is the only one there is. */
     const master = hall({ realm: false, sharing: false });
     master.el["#heraldModCode"].value = "AB12CD";
     choose(master, "gale");
     master.context.heraldRenderModCodeLine();
-    assert.strictEqual(master.line().textContent, T("herald.modcode.preview.off"));
+    assert.strictEqual(master.line().textContent, T("herald.modcode.preview.realm_off"));
 
     /* And the line follows the realm's switch: its repaint redraws the line. */
     const realm = APP.slice(APP.indexOf("function heraldRenderRealm(){"), APP.indexOf("\n}", APP.indexOf("function heraldRenderRealm(){")));
     assert.ok(realm.includes("heraldRenderModCodeLine()"), "a realm repaint does not redraw the line under the code");
   });
 
-  await test("10. sharing switched off: saved, and the line says there is no post", async () => {
+  await test("10. the tick in front of the code, and no app-wide switch to answer to", async () => {
+    /* A stray app-wide switch drawn off changes nothing: it left the screen in 1.2.17. */
     const h = hall({ sharing: false });
     h.el["#heraldModCode"].value = "AB12CD";
     choose(h, "gale");
     assert.strictEqual(await h.context.heraldModCodeCommit(), true);
-    assert.strictEqual(h.sent.length, 1, "the code was not saved while sharing was off");
-    assert.strictEqual(h.line().className, "wiz-stat dim");
-    assert.strictEqual(h.line().textContent, T("herald.modcode.preview.off"));
-
-    /* Switching sharing back on: the switch's save repaints the line, and it promises again. */
-    h.el["#tHerald"].classList.toggle("on", true);
-    h.context.heraldRenderModCodeLine();
+    assert.strictEqual(h.sent.length, 1, "the code was not saved");
+    assert.strictEqual(h.line().className, "wiz-stat ok", "the line still answers to the retired master switch");
     assert.strictEqual(h.line().textContent, T("herald.modcode.preview", { name: T("herald.modcode.kind.gale") }));
-    const save = APP.slice(APP.indexOf("function heraldSave(extra){"), APP.indexOf("\n}", APP.indexOf("function heraldSave(extra){")));
-    assert.ok(save.includes("heraldRenderModCodeLine()"), "moving the sharing switch does not repaint the line");
+    assert.ok(!block().includes('$("#tHerald")'), "the block still reads the retired master switch");
+    const save = APP.slice(APP.indexOf("function heraldSave(extra,realmExtra){"), APP.indexOf("\n}", APP.indexOf("function heraldSave(extra,realmExtra){")));
+    assert.ok(save.includes("heraldRenderModCodeLine()"), "moving the realm's switch does not repaint the line");
 
-    /* A refusal still outranks both: what is wrong with the box comes first. */
-    h.el["#tHerald"].classList.toggle("on", false);
+    /* A realm with a code shows the tick on and the box; one without shows neither. */
+    const withCode = hall({ prefs: { ModProfileCodeKind: "gale", ModProfileCode: "AB12CD" } });
+    withCode.context.heraldRenderModCode();
+    assert.strictEqual(withCode.el["#tHeraldModCode"].checked, true);
+    assert.strictEqual(withCode.el["#heraldModCodeWrap"].style.display, "");
+    const none = hall({});
+    none.context.heraldRenderModCode();
+    assert.strictEqual(none.el["#tHeraldModCode"].checked, false);
+    assert.strictEqual(none.el["#heraldModCodeWrap"].style.display, "none", "the box shows with no code and no tick");
+    assert.strictEqual(none.el["#heraldModCodeStat"].style.display, "none");
+    /* Unticking takes the code out of the post, the way a blank box always has. */
+    const at = APP.indexOf('$("#tHeraldModCode").addEventListener("change",()=>{');
+    assert.ok(at > 0, "the tick is not wired");
+    const wire = APP.slice(at, APP.indexOf("\n});", at));
+    assert.ok(wire.includes('box.value="";heraldModCodeCommit();'), "unticking does not take the code out of the post");
+    assert.ok(wire.includes("heraldRenderModTick(on)"), "the tick does not show or hide the box");
+
+    /* A refusal still comes first: what is wrong with the box comes first. */
     h.el["#heraldModCode"].value = "no good";
     assert.strictEqual(await h.context.heraldModCodeCommit(), false);
     assert.strictEqual(h.line().textContent, "ᚦ " + T("herald.modcode.refused"));

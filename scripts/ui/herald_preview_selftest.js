@@ -201,7 +201,7 @@ const REPLY = {
     assert.strictEqual(await off.context.heraldPreviewRefresh(), false);
     assert.strictEqual(off.asks.length, 0);
 
-    assert.ok(fn("function heraldSave(extra){").includes("heraldPreviewRefresh()"), "a save in the hall does not ask again");
+    assert.ok(fn("function heraldSave(extra,realmExtra){").includes("heraldPreviewRefresh()"), "a save on the screen does not ask again");
     assert.ok(fn("function heraldRenderRealm(){").includes("heraldPreviewRefresh()"), "a realm switch does not ask again");
     assert.ok(fn("async function heraldPublish(){").includes("heraldPreviewRefresh()"), "a publish does not ask again");
   });
@@ -217,14 +217,19 @@ const REPLY = {
     /* Every word the block asks for is in the catalog, the kinds' labels included. */
     [...b.matchAll(/T\("([a-z0-9_.]+)"/g)].forEach(m => assert.ok(KEYS[m[1]], "the block asks for " + m[1] + ", which the catalog lacks"));
     Object.values(hall().context.HERALD_PREVIEW_KINDS).forEach(id => assert.ok(KEYS[id], id));
-    /* The card lives under The post, with its words keyed. */
-    const post = HTML.slice(HTML.indexOf('data-i18n="herald.post.label"'));
-    const card = post.slice(0, post.indexOf("</section>"));
-    ["heraldPreview", "heraldPreviewPost", "heraldPreviewEvents", "heraldPreviewNote"].forEach(id => assert.ok(card.includes('id="' + id + '"'), id + " is not under The post"));
-    ["herald.preview.label", "herald.preview.note", "herald.preview.events"].forEach(id => {
+    /* The preview sits on the one card (1.2.17), above Publish and Remove, with its words keyed.
+       Its note became the (?) beside the Preview heading, so it is said once, on hover or focus. */
+    const pv = HTML.indexOf('<div class="dc-preview" id="heraldPreview">');
+    assert.ok(pv > HTML.indexOf('<div class="card b-herald">'), "heraldPreview is not on the card");
+    const card = HTML.slice(pv, HTML.indexOf('id="heraldPublish"', pv));
+    ["heraldPreview", "heraldPreviewPost", "heraldPreviewEvents", "heraldHelpPreview"].forEach(id => assert.ok(card.includes('id="' + id + '"'), id + " is not with the preview"));
+    assert.ok(!HTML.includes('id="heraldPreviewNote"'), "the note is said twice: under the heading and in its (?)");
+    ["herald.preview.label", "herald.preview.events"].forEach(id => {
       assert.ok(card.includes('data-i18n="' + id + '"'), id + " is not on the card");
       assert.ok(KEYS[id], "the catalog has no " + id);
     });
+    assert.ok(APP.includes('{marker:"heraldHelpPreview",textId:"herald.preview.note"}'), "the preview's (?) does not carry its note");
+    assert.ok(KEYS["herald.preview.note"], "the catalog has no herald.preview.note");
     /* Remove tells a forum post, which Discord keeps, from a channel post. */
     assert.ok(BRIDGE.includes("forum = result.InForum"), "discord.remove does not say whether the post was a forum post");
     assert.ok(fn("async function heraldRemove(){").includes('(r.forum?T("herald.remove.done.forum.toast"):T("herald.remove.done.toast"))'), "the remove toast does not tell a forum post apart");

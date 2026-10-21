@@ -200,10 +200,12 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.folder.label",
                 // Refresh, beside Scan: reads the plugins folder again off the disk (1.2.11).
                 "mods.refresh.label", "mods.refresh.title",
-                // Follow a Gale profile, under the BepInEx row: its label, the field's two
-                // words, Check now and Forget with their tooltips, and Review. The status line
-                // under them is app.js's, because it carries the check's own counts and times.
-                "mods.gale.box.label", "mods.gale.box.placeholder", "mods.gale.box.aria",
+                // Follow a Gale profile (1.2.17): a button beside Add from Thunderstore, whose
+                // tooltip is the walker's and whose words are app.js's (Follow or Following), and
+                // the line it opens: Check now and Forget with their tooltips, and Review. The
+                // paste box is in the dialog the button opens, and the status line is app.js's,
+                // because it carries the check's own counts and times.
+                "mods.gale.button.title",
                 "mods.gale.box.check", "mods.gale.box.check.title",
                 "mods.gale.box.forget", "mods.gale.box.forget.title", "mods.gale.box.review",
             });
@@ -804,33 +806,43 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.head.title",
                 "common.norse.herald",
                 "herald.head.sub",
-                "herald.wiz.label",
-                "herald.wiz.title",
-                "herald.sharing.label",
-                "herald.sharing.toggle",
-                "herald.sharing.toggle.title",
-                // 1.2.16: the note that says the webhook below is every realm's unless it has its
-                // own, and the realm's own card: its caption, switch, webhook and thread. The line
-                // naming the realm and the line under its webhook are app.js's
-                // (heraldRenderRealmLines), and so is the pill in the head.
-                "herald.sharing.app.note",
-                "herald.realm.head",
-                "herald.realm.toggle",
-                "herald.realm.toggle.title",
-                "herald.realm.webhook",
-                "herald.realm.webhook.placeholder",
-                "herald.realm.webhook.title",
-                "herald.realm.thread",
-                "herald.realm.thread.placeholder",
-                "herald.field.webhook",
-                "herald.field.webhook.title",
-                "herald.field.thread",
-                "herald.field.thread.title",
-                "herald.thread.placeholder",
-                // The Herald's look (1.2.14): its caption, the four boxes' captions and
-                // placeholders, the note about public image links and the link switch. The
-                // line under them is app.js's (heraldRenderLookLine).
-                "herald.look.label",
+                // 1.2.17: one card about the realm on screen. The head, the switch's sentence,
+                // the webhook line and its button's word are app.js's (heraldRenderRealmLines);
+                // the button's tooltip and the (?) markers' spoken name are the walker's.
+                "herald.hook.change.title",
+                "herald.screen.on.title",
+                "herald.help.aria",
+                // Show in the post: three ticks, and the mod code's two kinds and box.
+                "herald.show.label",
+                "herald.show.address",
+                "herald.show.password",
+                "herald.show.modcode",
+                "herald.modcode.kinds.aria",
+                "herald.modcode.kind.ts.short",
+                "herald.modcode.kind.gale.short",
+                "herald.modcode.placeholder",
+                // Also send messages when: a tick per kind with its tooltip, the crash role box,
+                // and the button to the dialog that says where each kind goes.
+                "herald.events.label",
+                "herald.events.routine.tick",
+                "herald.events.routine.title",
+                "herald.events.crash.tick",
+                "herald.events.crash.title",
+                "herald.events.role.label",
+                "herald.events.role.placeholder",
+                "herald.events.role.title",
+                "herald.events.players.tick",
+                "herald.events.players.title",
+                "herald.elsewhere.button",
+                "herald.publish.label",
+                "herald.publish.title",
+                "herald.remove.label",
+                "herald.remove.title",
+                "herald.look.button",
+                "herald.preview.label",
+                // The Appearance panel: the four boxes' captions and placeholders, the note
+                // about public image links and the link switch. The line under them and the
+                // dialog's title are app.js's.
                 "herald.look.name.label",
                 "herald.look.name.placeholder",
                 "herald.look.avatar.label",
@@ -842,44 +854,14 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.look.status.placeholder",
                 "herald.look.link",
                 "herald.look.link.title",
-                "herald.carries.label",
-                "herald.carries.note",
-                "herald.share.address",
-                "herald.share.address.title",
-                "herald.share.password",
-                "herald.share.password.title",
-                "herald.share.password.warn",
-                // The mod profile code (1.2.11): its caption, the box's placeholder, the
-                // radio group's spoken name and the two radios. The line under it is app.js's.
-                "herald.modcode.label",
-                "herald.modcode.placeholder",
-                "herald.modcode.kinds.aria",
-                "herald.modcode.kind.thunderstore",
-                "herald.modcode.kind.gale",
-                "herald.modcode.note",
-                "herald.share.events",
-                "herald.share.events.title",
-                // 1.2.16: the realm's event posts in three kinds, each a switch with its title,
-                // the webhook and thread boxes the three share placeholders for, and the crash
-                // role. The old note said the posts came from every realm and is retired.
-                "herald.events.note",
+                // The Send these somewhere else panel: its note, and a webhook and thread box per
+                // kind, named for screen readers by the kind.
+                "herald.elsewhere.note",
                 "herald.events.routine",
-                "herald.events.routine.title",
                 "herald.events.crash",
-                "herald.events.crash.title",
                 "herald.events.players",
-                "herald.events.players.title",
                 "herald.events.webhook.placeholder",
                 "herald.events.thread.placeholder",
-                "herald.events.role.placeholder",
-                "herald.events.role.title",
-                "herald.post.label",
-                "herald.publish.label",
-                "herald.publish.title",
-                "herald.remove.label",
-                "herald.remove.title",
-                "herald.preview.label",
-                "herald.preview.note",
                 "herald.preview.events",
             });
         }
@@ -900,16 +882,18 @@ namespace ValheimBakaLoader.Tests.Forms
             var hall = Hall("herald", "<!-- ============ PAGE: SKALD");
             var js = AppJs();
 
-            var paragraph = hall.Substring(hall.IndexOf("BakaLoader keeps <strong>", StringComparison.Ordinal) - 60, 120);
-            Assert.DoesNotContain("data-i18n", paragraph);
+            // 1.2.17: the opening paragraph left the screen with the second card, so the
+            // sentence with the bold word in it is gone from the hall altogether.
+            Assert.DoesNotContain("BakaLoader keeps <strong>", hall);
 
             var status = hall.Substring(hall.IndexOf("id=\"heraldPostStat\"", StringComparison.Ordinal) - 40, 120);
             Assert.DoesNotContain("data-i18n", status);
             Assert.Contains("el.textContent=HERALD_HAS_POST?T(\"herald.post.placed\"):T(\"herald.post.none\");", js);
 
-            var url = hall.Substring(hall.IndexOf("id=\"heraldUrl\"", StringComparison.Ordinal), 200);
-            Assert.Contains("placeholder=\"https://discord.com/api/webhooks/…\"", url);
-            Assert.DoesNotContain("data-i18n-placeholder", url.Substring(0, url.IndexOf('>')));
+            // The webhook box moved into the setup wizard (1.2.17), which keeps the example
+            // address, an address rather than a sentence that no language translates.
+            Assert.DoesNotContain("id=\"heraldUrl\"", hall);
+            Assert.Contains("id=\"hwUrl\" spellcheck=\"false\" autocomplete=\"off\" placeholder=\"https://discord.com/api/webhooks/…\"", js);
         }
 
         // --------------------------------------------------------------- H. Statistics

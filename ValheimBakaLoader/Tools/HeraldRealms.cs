@@ -43,10 +43,24 @@ namespace ValheimBakaLoader.Tools
                        .OrderByDescending(s => s.LastSaved).FirstOrDefault();
         }
 
-        /// <summary>The webhook a realm posts through: its own, or the app-wide one when it has none.</summary>
+        /// <summary>
+        /// Whether every realm stands on its own (1.2.17): its own webhook, name and picture, and
+        /// no master switch over it. Until the move has copied the app-wide values into the
+        /// realms, the old reading holds, so nothing stops posting in the moment between loading
+        /// an old file and the move.
+        /// </summary>
+        public static bool StandsAlone(UserPreferences app) => app != null && app.HeraldSimplifiedMigrated;
+
+        /// <summary>The master switch as it is read now: retired, so on, once the realms stand alone.</summary>
+        public static bool MasterOn(UserPreferences app) => app != null && (app.HeraldSimplifiedMigrated || app.DiscordSharingEnabled);
+
+        /// <summary>
+        /// The webhook a realm posts through: its own. Before the 1.2.17 move a blank one meant
+        /// the app-wide webhook; the move copied that link into the realm, so blank is now none.
+        /// </summary>
         public static string WebhookUrlFor(UserPreferences app, ServerPreferences realm)
             => ServerPreferences.BlankAsNull(realm?.HeraldWebhookUrl)
-               ?? ServerPreferences.BlankAsNull(app?.DiscordWebhookUrl);
+               ?? (StandsAlone(app) ? null : ServerPreferences.BlankAsNull(app?.DiscordWebhookUrl));
 
         /// <summary>
         /// The thread a realm posts into. Its own when it has one. Otherwise the app-wide thread,
@@ -57,6 +71,7 @@ namespace ValheimBakaLoader.Tools
         {
             var own = ServerPreferences.BlankAsNull(realm?.HeraldThreadId);
             if (own != null) return own;
+            if (StandsAlone(app)) return null;
             return ServerPreferences.BlankAsNull(realm?.HeraldWebhookUrl) == null
                 ? ServerPreferences.BlankAsNull(app?.DiscordWebhookThreadId)
                 : null;
@@ -64,7 +79,7 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>Whether a realm's post is kept up to date: the master on, the realm on, and somewhere to post.</summary>
         public static bool Shares(UserPreferences app, ServerPreferences realm)
-            => app != null && app.DiscordSharingEnabled
+            => MasterOn(app)
                && realm != null && realm.HeraldOn
                && WebhookUrlFor(app, realm) != null;
 
@@ -76,6 +91,26 @@ namespace ValheimBakaLoader.Tools
             HeraldEventClass.Players => realm.HeraldPlayersOn,
             _ => false,
         };
+
+        /// <summary>Whether Discord refused the last post of a kind for naming no thread in a forum.</summary>
+        public static bool NoThread(ServerPreferences realm, HeraldEventClass kind) => realm != null && kind switch
+        {
+            HeraldEventClass.Routine => realm.HeraldRoutineNoThread,
+            HeraldEventClass.Crash => realm.HeraldCrashNoThread,
+            HeraldEventClass.Players => realm.HeraldPlayersNoThread,
+            _ => false,
+        };
+
+        public static void SetNoThread(ServerPreferences realm, HeraldEventClass kind, bool refused)
+        {
+            if (realm == null) return;
+            switch (kind)
+            {
+                case HeraldEventClass.Routine: realm.HeraldRoutineNoThread = refused; break;
+                case HeraldEventClass.Crash: realm.HeraldCrashNoThread = refused; break;
+                case HeraldEventClass.Players: realm.HeraldPlayersNoThread = refused; break;
+            }
+        }
 
         private static (string Url, string Thread) ClassBoxes(ServerPreferences realm, HeraldEventClass kind) => kind switch
         {
@@ -117,7 +152,7 @@ namespace ValheimBakaLoader.Tools
         {
             var name = ServerPreferences.BlankAsNull(realm?.Name)?.Trim()
                 ?? ServerPreferences.BlankAsNull(realm?.ProfileName)?.Trim()
-                ?? "Valheim";
+                ?? HostCatalog.T("host.discord.forum.fallback_name");
             return name.Length > 100 ? name.Substring(0, 100) : name;
         }
 
@@ -130,7 +165,7 @@ namespace ValheimBakaLoader.Tools
         /// and somewhere to send it. One rule for every event, read when the post is sent.
         /// </summary>
         public static bool SendsEvent(UserPreferences app, ServerPreferences realm, HeraldEventClass kind)
-            => app != null && app.DiscordSharingEnabled
+            => MasterOn(app)
                && realm != null && realm.HeraldOn
                && ClassOn(realm, kind)
                && EventRouteFor(app, realm, kind).Url != null;
@@ -215,6 +250,48 @@ namespace ValheimBakaLoader.Tools
             owner.HeraldPlayersOn = prefs.DiscordEventPosts;
 
             prefs.HeraldPerRealmMigrated = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Lets every realm stand on its own, once (1.2.17). Runs after <see cref="Migrate"/>,
+        /// never before it, because that move decides which realm the old post belongs to.
+        /// <list type="bullet">
+        /// <item>The master switch goes from the screen. A host who had it off gets every realm
+        /// switched off instead, so nothing starts posting by surprise; then it is set on and is
+        /// read as on from here on (the file keeps it for the builds before this one).</item>
+        /// <item>A realm with no webhook of its own posted through the app-wide one, so that link
+        /// is copied into it, with the app-wide thread when it has none of its own: the same
+        /// channel and thread as before, now its own.</item>
+        /// <item>The name and the picture become each realm's: the app-wide values are copied
+        /// into every realm that has none, so every post stays signed as it was.</item>
+        /// </list>
+        /// The app-wide fields are left as they were written, unused. Answers whether anything changed.
+        /// </summary>
+        public static bool Simplify(UserPreferences prefs)
+        {
+            if (prefs == null || prefs.HeraldSimplifiedMigrated || !prefs.HeraldPerRealmMigrated) return false;
+
+            var masterOn = prefs.DiscordSharingEnabled;
+            var appUrl = ServerPreferences.BlankAsNull(prefs.DiscordWebhookUrl);
+            var appThread = ServerPreferences.BlankAsNull(prefs.DiscordWebhookThreadId);
+            var appName = ServerPreferences.BlankAsNull(prefs.DiscordBotName);
+            var appAvatar = ServerPreferences.BlankAsNull(prefs.DiscordAvatarUrl);
+
+            foreach (var realm in (prefs.Servers ?? new List<ServerPreferences>()).Where(s => s != null))
+            {
+                if (!masterOn) realm.HeraldOn = false;
+                if (ServerPreferences.BlankAsNull(realm.HeraldWebhookUrl) == null && appUrl != null)
+                {
+                    realm.HeraldWebhookUrl = appUrl;
+                    realm.HeraldThreadId = ServerPreferences.BlankAsNull(realm.HeraldThreadId) ?? appThread;
+                }
+                realm.HeraldBotName = ServerPreferences.BlankAsNull(realm.HeraldBotName) ?? appName;
+                realm.HeraldAvatarUrl = ServerPreferences.BlankAsNull(realm.HeraldAvatarUrl) ?? appAvatar;
+            }
+
+            prefs.DiscordSharingEnabled = true;
+            prefs.HeraldSimplifiedMigrated = true;
             return true;
         }
     }

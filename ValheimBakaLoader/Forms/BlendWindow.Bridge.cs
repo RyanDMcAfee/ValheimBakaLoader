@@ -11022,6 +11022,19 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         public static void CheckHeraldLook(JObject dto)
         {
+            // The name and the picture are each realm's since 1.2.17 and ride in its Herald block
+            // as BotName and AvatarUrl; the app-wide keys are still checked for whatever sends them.
+            var block = dto.TryGetValue("Herald", StringComparison.OrdinalIgnoreCase, out var heraldToken) ? heraldToken as JObject : null;
+            if (block != null)
+            {
+                var look = new JObject();
+                if (block.TryGetValue("AvatarUrl", StringComparison.OrdinalIgnoreCase, out var realmAvatar) && realmAvatar.Type == JTokenType.String)
+                    look["DiscordAvatarUrl"] = realmAvatar;
+                if (block.TryGetValue("BotName", StringComparison.OrdinalIgnoreCase, out var realmName) && realmName.Type == JTokenType.String)
+                    look["DiscordBotName"] = realmName;
+                CheckHeraldLook(look);
+            }
+
             if (dto.TryGetValue("DiscordAvatarUrl", StringComparison.OrdinalIgnoreCase, out var avatar)
                 && DiscordHeraldLook.AvatarProblem(avatar.Value<string>()) != null)
                 throw new HostFacingException("userprefs.save.badAvatarUrl",
@@ -11108,7 +11121,9 @@ namespace ValheimBakaLoader.Forms
             realm.HeraldShareAddress ? "addr" : "noaddr",
             realm.HeraldSharePassword ? "pass" : "nopass",
             realm.HeraldTitle ?? "",
-            realm.HeraldStatusLine ?? "");
+            realm.HeraldStatusLine ?? "",
+            realm.HeraldBotName ?? "",
+            realm.HeraldAvatarUrl ?? "");
 
         /// <summary>
         /// The realm a save's Herald block is for: the one it names, else the realm on screen, or
@@ -11159,8 +11174,20 @@ namespace ValheimBakaLoader.Forms
                     set(v.Value<bool>());
             }
 
+            var urlBefore = realm.HeraldWebhookUrl;
+            var routesBefore = EventRoutesKey(realm);
             Switch("On", v => realm.HeraldOn = v);
             Text("WebhookUrl", v => realm.HeraldWebhookUrl = v);
+            // The webhook's own name, as Discord answered the check the page made of it. A link
+            // that moved without one leaves no name, rather than the name of the webhook before.
+            Text("WebhookName", v => realm.HeraldWebhookName = v);
+            if (!string.Equals(urlBefore, realm.HeraldWebhookUrl, StringComparison.Ordinal)
+                && !block.TryGetValue("WebhookName", StringComparison.OrdinalIgnoreCase, out _))
+                realm.HeraldWebhookName = null;
+            // The name and the picture the realm's posts are signed with (1.2.17), checked by
+            // CheckHeraldLook before anything is written.
+            Text("BotName", v => realm.HeraldBotName = v);
+            Text("AvatarUrl", v => realm.HeraldAvatarUrl = v);
             Text("ThreadId", v => realm.HeraldThreadId = v);
             Switch("ShareAddress", v => realm.HeraldShareAddress = v);
             Switch("SharePassword", v => realm.HeraldSharePassword = v);
@@ -11179,8 +11206,24 @@ namespace ValheimBakaLoader.Forms
             Switch("PlayersOn", v => realm.HeraldPlayersOn = v);
             Text("PlayersWebhookUrl", v => realm.HeraldPlayersWebhookUrl = v);
             Text("PlayersThreadId", v => realm.HeraldPlayersThreadId = v);
+
+            // A refusal for naming no thread was about the place the posts went before. Once the
+            // host has changed where they go, the warning under that kind has nothing to say.
+            if (!string.Equals(routesBefore, EventRoutesKey(realm), StringComparison.Ordinal))
+            {
+                realm.HeraldRoutineNoThread = false;
+                realm.HeraldCrashNoThread = false;
+                realm.HeraldPlayersNoThread = false;
+            }
             return !string.Equals(before, HeraldRealmKey(realm), StringComparison.Ordinal);
         }
+
+        // Every place a realm's event posts can go, as one string.
+        private static string EventRoutesKey(ServerPreferences realm) => string.Join("\n",
+            realm.HeraldWebhookUrl ?? "", realm.HeraldThreadId ?? "",
+            realm.HeraldRoutineWebhookUrl ?? "", realm.HeraldRoutineThreadId ?? "",
+            realm.HeraldCrashWebhookUrl ?? "", realm.HeraldCrashThreadId ?? "",
+            realm.HeraldPlayersWebhookUrl ?? "", realm.HeraldPlayersThreadId ?? "");
 
         /// <summary>
         /// Refuses a Herald block whose event posts could not go where it says: a webhook box
@@ -11236,6 +11279,12 @@ namespace ValheimBakaLoader.Forms
                     PlayersOn = r.HeraldPlayersOn,
                     PlayersWebhookUrl = r.HeraldPlayersWebhookUrl,
                     PlayersThreadId = r.HeraldPlayersThreadId,
+                    WebhookName = r.HeraldWebhookName,
+                    BotName = r.HeraldBotName,
+                    AvatarUrl = r.HeraldAvatarUrl,
+                    RoutineNoThread = r.HeraldRoutineNoThread,
+                    CrashNoThread = r.HeraldCrashNoThread,
+                    PlayersNoThread = r.HeraldPlayersNoThread,
                 })
                 .ToList();
 
@@ -11260,7 +11309,7 @@ namespace ValheimBakaLoader.Forms
         {
             var prefs = UserPrefsProvider.LoadPreferences();
             var server = HeraldRealms.Find(prefs, realm);
-            if (prefs?.DiscordSharingEnabled == true && (server == null || server.HeraldOn)) return;
+            if (HeraldRealms.MasterOn(prefs) && (server == null || server.HeraldOn)) return;
             throw new HostFacingException("discord.publish.off", "Discord sharing is switched off for this realm, so nothing was sent. Switch it on and publish again.", ("name", realm));
         }
 
@@ -11287,9 +11336,19 @@ namespace ValheimBakaLoader.Forms
                     .Select(s => s.ProfileName)
                     .ToList();
                 var described = HeraldRealms.PostRealm(live, ActiveProfileName);
-                var moved = UserPrefsProvider.Mutate((Func<UserPreferences, bool>)(prefs => HeraldRealms.Migrate(prefs, described)));
+                var simplified = false;
+                var moved = UserPrefsProvider.Mutate((Func<UserPreferences, bool>)(prefs =>
+                {
+                    // In this order and in one write: the 1.2.16 move decides which realm the old
+                    // post belongs to, and the 1.2.17 one then lets every realm stand on its own.
+                    var handed = HeraldRealms.Migrate(prefs, described);
+                    simplified = HeraldRealms.Simplify(prefs);
+                    return handed || simplified;
+                }));
                 var after = UserPrefsProvider.LoadPreferences();
-                HeraldPerRealmChecked = after?.HeraldPerRealmMigrated == true;
+                HeraldPerRealmChecked = after?.HeraldPerRealmMigrated == true && after.HeraldSimplifiedMigrated;
+                if (simplified && HeraldPerRealmChecked)
+                    Logger.Information("Every realm now keeps its own Discord webhook, name and picture; the app-wide switch is gone from the Discord screen.");
                 if (moved && HeraldPerRealmChecked)
                 {
                     Logger.Information("The Discord status post now belongs to {realm}; every other realm starts with its own switch off.",

@@ -2177,6 +2177,15 @@
     "mods.gale.box.label": {
       "translation": "[Ẋ Follow a Gale profile Ẋ] ẊẊẊẊẊẊẊ"
     },
+    "mods.gale.button.following": {
+      "translation": "[Ẋ Following a Gale profile Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.button.title": {
+      "translation": "[Ẋ Keep this server's mods in step with a Gale profile. Nothing installs until you approve it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.follow.ok": {
+      "translation": "[Ẋ Follow Ẋ] ẊẊ"
+    },
     "mods.gale.box.placeholder": {
       "translation": "[Ẋ Gale profile code Ẋ] ẊẊẊẊẊẊ"
     },
@@ -3509,6 +3518,126 @@
     },
     "herald.head.sub": {
       "translation": "[Ẋ one Discord post per realm · edits itself · never floods the channel Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.screen.head": {
+      "translation": "[Ẋ Discord · {name} Ẋ] ẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "herald.screen.on": {
+      "translation": "[Ẋ Post {name} to Discord Ẋ] ẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "herald.screen.on.help": {
+      "translation": "[Ẋ On: BakaLoader keeps one post about {name} in your Discord channel and edits it whenever the server changes. Off: nothing is sent for it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "herald.screen.on.title": {
+      "translation": "[Ẋ On: this realm's post is kept up to date. Off: nothing is sent for it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.help.aria": {
+      "translation": "[Ẋ More about this Ẋ] ẊẊẊẊẊ"
+    },
+    "herald.hook.line.named": {
+      "translation": "[Ẋ Posting through the \"{name}\" webhook Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "herald.hook.line.unnamed": {
+      "translation": "[Ẋ Posting through a webhook that has not given its name Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.hook.line.none": {
+      "translation": "[Ẋ Not set up yet Ẋ] ẊẊẊẊẊ"
+    },
+    "herald.hook.change": {
+      "translation": "[Ẋ Change Ẋ] ẊẊ"
+    },
+    "herald.hook.setup": {
+      "translation": "[Ẋ Set up Ẋ] ẊẊ"
+    },
+    "herald.hook.change.title": {
+      "translation": "[Ẋ Runs the setup again: paste a webhook, or use the same channel as another server. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.show.label": {
+      "translation": "[Ẋ Show in the post Ẋ] ẊẊẊẊẊ"
+    },
+    "herald.show.help": {
+      "translation": "[Ẋ The post always shows the server name, its status, who is online, the world, the mod count and the next restart. Tick these to add more. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.show.address": {
+      "translation": "[Ẋ How to join (address) Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "herald.show.password": {
+      "translation": "[Ẋ Password (trusted channels only) Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.show.modcode": {
+      "translation": "[Ẋ Mod list code Ẋ] ẊẊẊẊ"
+    },
+    "herald.modcode.kind.ts.short": {
+      "translation": "[Ẋ Thunderstore Ẋ] ẊẊẊẊ"
+    },
+    "herald.modcode.kind.gale.short": {
+      "translation": "[Ẋ Gale Ẋ] ẊẊ"
+    },
+    "herald.events.label": {
+      "translation": "[Ẋ Also send messages when Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "herald.events.help": {
+      "translation": "[Ẋ These are separate messages, not edits of the post. Each kind can go to its own channel or thread under Send these somewhere else. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.routine.tick": {
+      "translation": "[Ẋ the server starts, stops or updates Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.crash.tick": {
+      "translation": "[Ẋ the server crashes Ẋ] ẊẊẊẊẊẊ"
+    },
+    "herald.events.players.tick": {
+      "translation": "[Ẋ players join or leave Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "herald.events.role.label": {
+      "translation": "[Ẋ ping role id Ẋ] ẊẊẊẊ"
+    },
+    "herald.events.role.help": {
+      "translation": "[Ẋ Pings one Discord role when the server crashes. Turn on Developer Mode in Discord (User Settings, Advanced), then right-click the role and choose Copy Role ID. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.events.nothread": {
+      "translation": "[Ẋ Discord refused the last one: that webhook is a forum channel and no thread was named. Set a thread under Send these somewhere else. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.elsewhere.button": {
+      "translation": "[Ẋ Send these somewhere else… Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "herald.elsewhere.title": {
+      "translation": "[Ẋ Send these somewhere else Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "herald.elsewhere.note": {
+      "translation": "[Ẋ Blank sends a kind to the same place as the post. Paste another webhook to send it to another channel, or a thread ID to put it in a thread. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "herald.look.button": {
+      "translation": "[Ẋ Appearance… Ẋ] ẊẊẊẊ"
+    },
+    "herald.wiz.same": {
+      "translation": "[Ẋ Use the same channel as {name} Ẋ] ẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "herald.wiz.own": {
+      "translation": "[Ẋ Paste a webhook link Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "herald.wiz.thread.toggle": {
+      "translation": "[Ẋ Post in a thread instead Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "herald.wiz.sum.webhook.same": {
+      "translation": "[Ẋ the same channel as {name} Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
     },
     "herald.wiz.label": {
       "translation": "[Ẋ ᚺ  Setup wizard Ẋ] ẊẊẊẊẊ"
@@ -8202,6 +8331,15 @@
     },
     "host.discord.author": {
       "translation": "[Ẋ BakaLoader Ẋ] ẊẊẊẊ"
+    },
+    "host.discord.forum.fallback_name": {
+      "translation": "[Ẋ Valheim Ẋ] ẊẊẊ"
+    },
+    "host.discord.realm_gone.send": {
+      "translation": "[Ẋ That realm is gone, so nothing was sent. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "host.discord.realm_gone.preview": {
+      "translation": "[Ẋ That realm is gone, so there is nothing to show. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "host.status.title": {
       "translation": "[Ẋ Valheim server Ẋ] ẊẊẊẊẊ"

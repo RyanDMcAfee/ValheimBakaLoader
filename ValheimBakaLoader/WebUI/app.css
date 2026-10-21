@@ -669,9 +669,22 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .upkeep-head:focus-visible{outline:1px solid var(--ember);outline-offset:1px}
 
 /* ============ HERALD (Discord sharing) ============ */
-.herald-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px;align-items:start}
-.b-herald{grid-row:span 2}
-.herald-grid .togglerow{margin-top:4px}
+.herald-one{max-width:760px}
+.herald-one .togglerow{margin-top:4px}
+.herald-one .togglerow .wginfo{margin-left:6px}
+.herald-hookline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 4px}
+.herald-head{display:flex;align-items:center;gap:6px;margin-top:14px}
+.herald-head .microlabel{margin:0}
+.herald-ticks{display:flex;align-items:center;gap:6px 16px;flex-wrap:wrap;margin:4px 0}
+.herald-inline{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.herald-inline input[type=text]{flex:1 1 180px;min-width:140px}
+.herald-one .mchk{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;color:var(--bone);cursor:pointer}
+.herald-one .mchk input{accent-color:var(--ember);margin:0}
+.herald-tick{display:flex;margin:4px 0}
+.herald-role{width:170px}
+.herald-route{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 10px}
+.herald-route input:first-child{flex:2 1 220px}
+.herald-route input:last-child{flex:1 1 140px}
 /* The preview card: Discord's own dark look, whatever the app's theme, because that is what
    the players see. Plain CSS and no picture fetched: the avatar is the name's first letter. */
 .dc-preview{margin-top:14px}

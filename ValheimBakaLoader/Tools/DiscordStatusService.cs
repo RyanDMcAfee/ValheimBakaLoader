@@ -190,7 +190,7 @@ namespace ValheimBakaLoader.Tools
         public void RequestUpdateAll()
         {
             var prefs = UserPrefsProvider.LoadPreferences();
-            if (prefs == null || !prefs.DiscordSharingEnabled) return;
+            if (!HeraldRealms.MasterOn(prefs)) return;
             foreach (var realm in (prefs.Servers ?? new List<ServerPreferences>())
                          .Where(r => r != null && !r.Archived && HeraldRealms.Shares(prefs, r))
                          .Select(r => r.ProfileName)
@@ -257,7 +257,7 @@ namespace ValheimBakaLoader.Tools
                 var prefs = UserPrefsProvider.LoadPreferences();
                 var server = HeraldRealms.Find(prefs, realm);
                 if (server == null)
-                    return new DiscordStatusResult { Error = "That realm is gone, so nothing was sent." };
+                    return new DiscordStatusResult { Error = HostCatalog.T("host.discord.realm_gone.send") };
                 if (scheduled && !HeraldRealms.Shares(prefs, server))
                     return new DiscordStatusResult { Ok = true, Detail = "not shared" };
 
@@ -288,7 +288,7 @@ namespace ValheimBakaLoader.Tools
                 // edited as before, because a second post beside it is the one thing this
                 // service must never do.
                 var messageId = server.HeraldStatusMessageId;
-                var signature = DiscordHeraldLook.SignatureFor(prefs);
+                var signature = DiscordHeraldLook.SignatureFor(prefs, server);
                 if (!string.IsNullOrWhiteSpace(messageId)
                     && !string.Equals(server.HeraldStatusMessageSignature, signature, StringComparison.Ordinal))
                 {
@@ -596,7 +596,7 @@ namespace ValheimBakaLoader.Tools
                 var prefs = UserPrefsProvider.LoadPreferences();
                 var server = HeraldRealms.Find(prefs, realm);
                 if (server == null)
-                    return new DiscordPreviewResult { Error = "That realm is gone, so there is nothing to show." };
+                    return new DiscordPreviewResult { Error = HostCatalog.T("host.discord.realm_gone.preview") };
 
                 var payload = PayloadFor(prefs, server, out var error);
                 if (payload == null)
@@ -781,7 +781,7 @@ namespace ValheimBakaLoader.Tools
                 // An empty mention allowlist so nothing in a server name can ever ping anyone.
                 ["allowed_mentions"] = new JObject { ["parse"] = new JArray() },
             };
-            DiscordHeraldLook.Sign(payload, embed, prefs);
+            DiscordHeraldLook.Sign(payload, embed, prefs, realm);
 
             return payload.ToString(Formatting.None);
         }

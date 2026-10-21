@@ -82,6 +82,8 @@ namespace ValheimBakaLoader.Game
         // True once the single status post has been handed to the realm it described; see
         // UserPreferences.HeraldPerRealmMigrated.
         [JsonProperty("heraldPerRealmMigrated")] public bool? HeraldPerRealmMigrated { get; set; }
+        // True once every realm stands on its own (1.2.17); see UserPreferences.HeraldSimplifiedMigrated.
+        [JsonProperty("heraldSimplifiedMigrated")] public bool? HeraldSimplifiedMigrated { get; set; }
 
         // -- Nested collections --
 

@@ -230,7 +230,7 @@ namespace ValheimBakaLoader.Tools
         /// pings, and tells Discord that role is the only mention it may act on, so nothing
         /// else in the post can ever reach everyone.
         /// </para>
-        internal static string BuildEventPayload(string title, string description, int color, UserPreferences prefs, string roleId = null)
+        internal static string BuildEventPayload(string title, string description, int color, UserPreferences prefs, string roleId = null, ServerPreferences realm = null)
         {
             var embed = new JObject
             {
@@ -250,7 +250,7 @@ namespace ValheimBakaLoader.Tools
                     ["roles"] = new JArray(roleId),
                 };
             }
-            DiscordHeraldLook.Sign(payload, embed, prefs);
+            DiscordHeraldLook.Sign(payload, embed, prefs, realm);
             return payload.ToString(Formatting.None);
         }
 
@@ -275,7 +275,7 @@ namespace ValheimBakaLoader.Tools
                 webhookUrl = $"{webhookUrl}{separator}thread_id={Uri.EscapeDataString(threadId.Trim())}";
             }
 
-            return (webhookUrl, BuildEventPayload(title, description, color, prefs, RoleFor(server, kind)));
+            return (webhookUrl, BuildEventPayload(title, description, color, prefs, RoleFor(server, kind), server));
         }
 
         /// <summary>
@@ -301,16 +301,41 @@ namespace ValheimBakaLoader.Tools
                 HeraldEventClass.Crash => BuildEventPayload(
                     HostCatalog.T("host.discord.crashed.title"),
                     HostCatalog.T("host.discord.crashed.body", ("server", serverName)),
-                    0xED4245, prefs, RoleFor(server, kind)),
+                    0xED4245, prefs, RoleFor(server, kind), server),
                 HeraldEventClass.Players => BuildEventPayload(
                     HostCatalog.T("host.discord.joined.title"),
                     HostCatalog.T("host.discord.joined.body", ("player", HostCatalog.T("host.discord.sample.player")), ("server", serverName)),
-                    0x3498DB, prefs),
+                    0x3498DB, prefs, null, server),
                 _ => BuildEventPayload(
                     HostCatalog.T("host.discord.started.title"),
                     HostCatalog.T("host.discord.started.body", ("server", serverName)),
-                    0x57F287, prefs),
+                    0x57F287, prefs, null, server),
             };
+        }
+
+        /// <summary>
+        /// Keeps on the realm whether Discord refused the last post of a kind for naming no thread
+        /// in a forum, so the Discord screen can say so under that kind and not only in the Saga.
+        /// Written only when it moves, so a busy realm's every post is not a write of the file.
+        /// </summary>
+        internal void NoteNoThread(string realm, HeraldEventClass kind, bool refused)
+        {
+            try
+            {
+                var known = HeraldRealms.Find(UserPrefsProvider.LoadPreferences(), realm);
+                if (known == null || HeraldRealms.NoThread(known, kind) == refused) return;
+                UserPrefsProvider.Mutate((Func<UserPreferences, bool>)(prefs =>
+                {
+                    var server = HeraldRealms.Find(prefs, realm);
+                    if (server == null || HeraldRealms.NoThread(server, kind) == refused) return false;
+                    HeraldRealms.SetNoThread(server, kind, refused);
+                    return true;
+                }));
+            }
+            catch (Exception e)
+            {
+                Logger.Warning("Could not note the refused Discord post of {realm}: {message}", realm, e.Message);
+            }
         }
 
         private void SendEmbed(string realm, HeraldEventClass kind, string title, string description, int color)
@@ -338,9 +363,16 @@ namespace ValheimBakaLoader.Tools
                         // finds the realm's forum post by itself; a kind with its own forum
                         // webhook, or a crash or player post, needs a thread ID in its box.
                         if (await DiscordStatusService.IsForumRefusalAsync(response))
-                            Logger.Warning("Discord refused the {kind} post of {realm}: its webhook is a forum channel and no thread was named. Put a thread ID in that kind's box in the Discord hall.", kind, realm);
+                        {
+                            Logger.Warning("Discord refused the {kind} post of {realm}: its webhook is a forum channel and no thread was named. Put a thread ID for that kind under Send these somewhere else on the Discord screen.", kind, realm);
+                            NoteNoThread(realm, kind, true);
+                        }
                         else
                             Logger.Warning("Discord webhook failed: {statusCode}", response.StatusCode);
+                    }
+                    else
+                    {
+                        NoteNoThread(realm, kind, false);
                     }
                 }
                 catch (Exception e)

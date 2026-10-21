@@ -91,6 +91,16 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("heraldPlayersWebhookUrl")] public string HeraldPlayersWebhookUrl { get; set; }
         [JsonProperty("heraldPlayersThreadId")] public string HeraldPlayersThreadId { get; set; }
 
+        // -- The Discord screen of 1.2.17: the webhook's own name, the realm's own name and
+        //    picture for its posts, and the forum refusals per kind. Null reads as none. --
+
+        [JsonProperty("heraldWebhookName")] public string HeraldWebhookName { get; set; }
+        [JsonProperty("heraldBotName")] public string HeraldBotName { get; set; }
+        [JsonProperty("heraldAvatarUrl")] public string HeraldAvatarUrl { get; set; }
+        [JsonProperty("heraldRoutineNoThread")] public bool? HeraldRoutineNoThread { get; set; }
+        [JsonProperty("heraldCrashNoThread")] public bool? HeraldCrashNoThread { get; set; }
+        [JsonProperty("heraldPlayersNoThread")] public bool? HeraldPlayersNoThread { get; set; }
+
         // -- RCON --
 
         [JsonProperty("rconEnabled")] public bool? RconEnabled { get; set; }

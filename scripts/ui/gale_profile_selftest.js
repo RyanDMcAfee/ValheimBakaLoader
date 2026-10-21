@@ -59,6 +59,10 @@
  *      the sentence when the server is up; the status line names the count.
  *  15. The dialog's one click and one change listener reach the toggle, Refresh, Apply, the
  *      switch and the ticks, and a disabled control reaches nothing.
+ *  16. Follow a Gale profile is a button beside Add from Thunderstore (1.2.17): with no code it
+ *      opens a dialog to paste one, a valid code is saved for the realm and the check runs, and
+ *      with a code saved it reads Following and opens the status line, Check now, Review and
+ *      Forget; Check now with the paste box closed checks the saved code and never forgets it.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -555,9 +559,12 @@ function fnBody(source, head) {
 
   await test("8. the wiring: the box, the three moments, the realm switch, the host side", () => {
     const hall = HTML.slice(HTML.indexOf('id="page-mods"'), HTML.indexOf('id="modsTable"'));
-    for (const id of ["galeBox", "galeId", "galeCheckBtn", "galeForgetBtn", "galeReviewBtn", "galeStatus"])
+    /* 1.2.17: the paste box moved into the Follow button's dialog (rule 16), so the hall has the
+       button where it had the box. */
+    for (const id of ["galeBox", "galeFollowBtn", "galeCheckBtn", "galeForgetBtn", "galeReviewBtn", "galeStatus"])
       assert.ok(hall.includes('id="' + id + '"'), "the Mods hall has no #" + id);
-    assert.ok(/data-i18n="mods\.gale\.box\.label"/.test(hall), "the box's label is not from the catalog");
+    assert.ok(/data-i18n-title="mods\.gale\.button\.title"/.test(hall), "the button's tooltip is not from the catalog");
+    assert.ok(APP.includes('T("mods.gale.box.label")') && APP.includes('T("mods.gale.button.following")'), "the button's words are not from the catalog");
     assert.ok(/\$\("#galeCheckBtn"\)\?\.addEventListener\("click",\(\)=>galeCheckNow\(\)\)/.test(APP), "Check now is not wired");
     assert.ok(/\$\("#galeForgetBtn"\)\?\.addEventListener\("click",\(\)=>galeForget\(\)\)/.test(APP), "Forget is not wired");
 
@@ -931,6 +938,69 @@ function fnBody(source, head) {
     assert.strictEqual(p.sent.filter(s => s.method === "gale.configs").length, 1, "a disabled Refresh fetched");
     m.listeners.click({ target: null });
     m.listeners.change({ target: { getAttribute: () => null } });
+  });
+
+  await test("16. Follow a Gale profile is a button: paste in a dialog, then the line it opens", async () => {
+    /* The markup: a button beside Add from Thunderstore in the same look, the line hidden until
+       it is opened, and no paste box left on the hall. */
+    const head = HTML.slice(HTML.indexOf('id="addModBtn"'), HTML.indexOf('id="modsRefreshBtn"'));
+    assert.ok(/<button class="btn btn-ghost btn-sm" id="galeFollowBtn"/.test(head), "the Follow button is not beside Add from Thunderstore, in its look");
+    assert.ok(/<button class="btn btn-ghost btn-sm" id="addModBtn">/.test(HTML), "Add from Thunderstore changed its look");
+    const hall = HTML.slice(HTML.indexOf('id="page-mods"'), HTML.indexOf('id="modsTable"'));
+    assert.ok(/<div class="galebox" id="galeBox" style="display:none">/.test(hall), "the Gale line is always visible");
+    assert.ok(!hall.includes('id="galeId"'), "the paste box is still always on the Mods hall");
+    assert.ok(/\$\("#galeFollowBtn"\)\?\.addEventListener\("click",\(\)=>galeFollowClick\(\)\)/.test(APP), "the button is not wired");
+
+    const p = page({ replies: {
+      "gale.set": prm => (prm.id === "AB12CD" ? { ok: true, state: state({ id: "AB12CD", check: null }) } : { ok: false, sentenceId: "mods.gale.id.bad" }),
+      "gale.check": state(),
+    } });
+    delete p.els["#galeId"];
+    p.els["#galeFollowBtn"] = Object.assign(el(), { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } });
+    p.els["#galeBox"] = el();
+    const quiet = () => ({ addEventListener: () => {} });
+    const dlg = { "#galeId": Object.assign(el(), quiet()), "#galeDlgOk": quiet(), "#galeDlgCancel": quiet() };
+    let opened = null;
+    p.context.modalOpen = html => { opened = html; p.els["#galeId"] = dlg["#galeId"]; p.els["#galeDlgStat"] = el(); return { querySelector: q => dlg[q] || null }; };
+    p.context.modalClose = () => { opened = "closed"; delete p.els["#galeId"]; delete p.els["#galeDlgStat"]; };
+    p.context.setTimeout = () => 0; /* the focus after the dialog opens */
+
+    p.context.galeApply(state({ following: false, id: null, check: null }));
+    assert.strictEqual(p.els["#galeFollowBtn"].textContent, T("mods.gale.box.label"));
+    assert.strictEqual(p.els["#galeBox"].style.display, "none", "the line shows with nothing followed");
+
+    p.context.galeFollowClick();
+    assert.ok(opened && opened.includes('id="galeId"'), "the button does not open the paste dialog");
+    assert.strictEqual(p.els["#galeDlgStat"].textContent, T("mods.gale.status.off"));
+    /* A refused code says why in the dialog and goes no further. */
+    p.els["#galeId"].value = "not a code!";
+    assert.strictEqual(await p.context.galeFollowSubmit(), false);
+    assert.strictEqual(p.els["#galeDlgStat"].textContent, T("mods.gale.id.bad"));
+    assert.ok(!p.sent.some(x => x.method === "gale.check"), "a refused code was checked");
+    /* A valid one is saved for this realm, the dialog closes onto the line and the check runs. */
+    p.els["#galeId"].value = " AB12CD ";
+    assert.strictEqual(await p.context.galeFollowSubmit(), true);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(p.sent.filter(x => x.method === "gale.set").pop().params)), { profile: "Final Sunset", id: "AB12CD" });
+    assert.ok(p.sent.some(x => x.method === "gale.check"), "the check did not run after following");
+    assert.strictEqual(opened, "closed", "the dialog stayed open");
+    assert.strictEqual(p.els["#galeFollowBtn"].textContent, T("mods.gale.button.following"));
+    assert.strictEqual(p.els["#galeBox"].style.display, "", "the line did not open after following");
+    assert.strictEqual(p.els["#galeFollowBtn"].attrs["aria-expanded"], "true");
+
+    /* With a code saved the button opens and closes the line, and no dialog. */
+    opened = null;
+    p.context.galeFollowClick();
+    assert.strictEqual(opened, null, "the button opened the paste dialog over a saved code");
+    assert.strictEqual(p.els["#galeBox"].style.display, "none");
+    p.context.galeFollowClick();
+    assert.strictEqual(p.els["#galeBox"].style.display, "");
+
+    /* Check now with no paste box on screen checks the saved code and never forgets it. */
+    const before = p.sent.length;
+    await p.context.galeCheckNow();
+    const after = p.sent.slice(before).map(x => x.method);
+    assert.ok(!after.includes("gale.set") && !after.includes("gale.forget"), "Check now read the missing box as a cleared code");
+    assert.ok(after.includes("gale.check"), "Check now did not check");
   });
 
   console.log("");

@@ -984,5 +984,19 @@ else
   echo "  the herald preview selftest is missing: $PREVIEW_SELFTEST"; fail=1
 fi
 
+echo "== 62. the Discord screen: one card about the realm on screen, a (?) on every heading, two dialogs =="
+# 1.2.17. The owner found the screen before it confusing: an app-wide switch and webhook beside a
+# realm's own, and every kind of message with its own boxes on the main screen. The quiet ways
+# the one card goes wrong are a control drifting back onto it or out of order, a heading without
+# its (?) or a (?) only a mouse can open, and a dialog closed by Escape losing what was typed or
+# keeping the panel the saves read. The selftest drives the real block and reads the markup.
+SCREEN_SELFTEST="$UI_DIR/herald_screen_selftest.js"
+if [ -f "$SCREEN_SELFTEST" ]; then
+  if out=$(node "$SCREEN_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the herald screen selftest is missing: $SCREEN_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail
