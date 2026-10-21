@@ -676,8 +676,11 @@ tbody td:has(>.empty-state){border-bottom:none;padding:0}
 .herald-head{display:flex;align-items:center;gap:6px;margin-top:14px}
 .herald-head .microlabel{margin:0}
 .herald-ticks{display:flex;align-items:center;gap:6px 16px;flex-wrap:wrap;margin:4px 0}
-.herald-inline{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
-.herald-inline input[type=text]{flex:1 1 180px;min-width:140px}
+/* A tick's own boxes (a kind's webhook, thread and role; the mod code's kind and box), set in
+   under the tick they belong to and rolled in and out by reveal() in app.js (1.2.17 follow-up). */
+.herald-sub{margin:0 0 6px 24px}
+.herald-sub .herald-route{margin:2px 0 4px}
+.herald-sub .herald-ticks{margin:2px 0}
 .herald-one .mchk{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;color:var(--bone);cursor:pointer}
 .herald-one .mchk input{accent-color:var(--ember);margin:0}
 .herald-tick{display:flex;margin:4px 0}
@@ -1250,6 +1253,17 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 .modal-bg{position:absolute;inset:0;z-index:85;background:rgba(8,9,11,.6);backdrop-filter:blur(3px);
   display:none;align-items:center;justify-content:center;animation:fadeIn .16s var(--ease)}
 .modal-bg.open{display:flex}
+/* modalFadeOut's stand-in for a dialog that has just gone (1.2.17 follow-up): a copy that fades
+   in 0.2 s and takes no clicks, so the dialog leaves the way it came instead of vanishing. With
+   prefers-reduced-motion every dialog comes and goes as a plain fade, no movement. */
+.modal-bg.modal-ghost{display:flex;pointer-events:none;animation:revealOut .2s ease-out forwards}
+.modal-ghost .modal{animation:none}
+@keyframes revealOut{to{opacity:0}}
+@media (prefers-reduced-motion: reduce){
+  .modal-bg,.modal{animation:fadeIn .2s ease-out}
+  .modal-bg.modal-ghost{animation:revealOut .2s ease-out forwards}
+  .modal-ghost .modal{animation:none}
+}
 .modal{width:460px;max-height:72vh;overflow:hidden;display:flex;flex-direction:column;gap:12px;
   background:linear-gradient(180deg,var(--surface-3),var(--surface-1));
   border:1px solid var(--bronze-hi);border-radius:var(--r3);padding:var(--s4);

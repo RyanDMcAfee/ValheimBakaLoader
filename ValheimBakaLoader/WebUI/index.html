@@ -926,10 +926,11 @@
           <!-- ONE CARD, about the realm on screen and nothing else (1.2.17). No app-wide switch
                and no webhook boxes: the webhook is set up by the wizard (Change / Set up) and
                shown by the name Discord gave it. The kinds of message are ticks; where each
-               one goes lives in the Send these somewhere else dialog, and the name, picture,
-               title, status line and BakaLoader line in Appearance. Both dialogs are the
-               panels at the end of this section, lent to the app's modal while open and put
-               back after, so their boxes are always the same elements. Each (?) is the shared
+               one goes rolls in under its own tick while it is ticked (1.2.17 follow-up), and the
+               name, picture, title, status line and BakaLoader line live in Appearance. That
+               dialog is the panel at the end of this section, lent to the app's modal while
+               open and put back after, so its boxes are always the same elements. Every part
+               that shows or hides here does it through reveal() in app.js, so nothing jumps. Each (?) is the shared
                hover panel (wireWgTipMarker), reachable by keyboard focus as well. -->
           <div class="herald-one">
             <div class="card b-herald">
@@ -942,33 +943,46 @@
                 <label class="mchk"><input type="checkbox" id="tHeraldAddr"> <span data-i18n="herald.show.address">How to join (address)</span></label>
                 <label class="mchk"><input type="checkbox" id="tHeraldPass"> <span data-i18n="herald.show.password">Password (trusted channels only)</span></label>
               </div>
-              <div class="herald-ticks">
-                <label class="mchk"><input type="checkbox" id="tHeraldModCode"> <span data-i18n="herald.show.modcode">Mod list code</span></label>
-                <span id="heraldModCodeWrap" class="herald-inline">
-                  <span id="heraldModKinds" role="radiogroup" aria-label="Which mod manager the code is for" data-i18n-aria="herald.modcode.kinds.aria" class="herald-inline">
-                    <label class="mchk"><input type="radio" name="heraldModKind" id="heraldModKindTs" value="thunderstore" checked> <span data-i18n="herald.modcode.kind.ts.short">Thunderstore</span></label>
-                    <label class="mchk"><input type="radio" name="heraldModKind" id="heraldModKindGale" value="gale"> <span data-i18n="herald.modcode.kind.gale.short">Gale</span></label>
-                  </span>
-                  <input type="text" id="heraldModCode" spellcheck="false" autocomplete="off" maxlength="64" placeholder="paste the code · blank = no code in the post" data-i18n-placeholder="herald.modcode.placeholder" aria-label="Mod list code" data-i18n-aria="herald.show.modcode">
-                </span>
+              <label class="mchk herald-tick"><input type="checkbox" id="tHeraldModCode"> <span data-i18n="herald.show.modcode">Mod list code</span></label>
+              <div id="heraldModCodeWrap" class="herald-sub" style="display:none">
+                <div id="heraldModKinds" role="radiogroup" aria-label="Which mod manager the code is for" data-i18n-aria="herald.modcode.kinds.aria" class="herald-ticks">
+                  <label class="mchk"><input type="radio" name="heraldModKind" id="heraldModKindTs" value="thunderstore" checked> <span data-i18n="herald.modcode.kind.ts.short">Thunderstore</span></label>
+                  <label class="mchk"><input type="radio" name="heraldModKind" id="heraldModKindGale" value="gale"> <span data-i18n="herald.modcode.kind.gale.short">Gale</span></label>
+                </div>
+                <div class="herald-route"><input type="text" id="heraldModCode" spellcheck="false" autocomplete="off" maxlength="64" placeholder="paste the code · blank = no code in the post" data-i18n-placeholder="herald.modcode.placeholder" aria-label="Mod list code" data-i18n-aria="herald.show.modcode"></div>
+                <div class="wiz-stat dim" id="heraldModCodeStat"></div>
               </div>
-              <div class="wiz-stat dim" id="heraldModCodeStat" style="margin:2px 0 6px"></div>
 
               <div class="herald-head"><span class="microlabel" data-i18n="herald.events.label">Also send messages when</span><button type="button" class="wginfo" id="heraldHelpEvents" aria-controls="wgTip" aria-label="More about this" data-i18n-aria="herald.help.aria">?</button></div>
+              <!-- Under each tick, while it is ticked, where that kind goes: a webhook and a
+                   thread, each blank for the same place as the post, and for crashes the role
+                   it pings. Unticking rolls them away; what was typed stays saved. -->
               <label class="mchk herald-tick" title="Started, stopped, updated, update failed, start held, old world format, cheat marks cleared, and mods updated." data-i18n-title="herald.events.routine.title"><input type="checkbox" id="tHeraldRoutine"> <span data-i18n="herald.events.routine.tick">the server starts, stops or updates</span></label>
+              <div id="heraldRoutineMore" class="herald-sub" style="display:none">
+                <div class="herald-route">
+                  <input type="text" id="heraldRoutineUrl" spellcheck="false" autocomplete="off" aria-label="Server news" data-i18n-aria="herald.events.routine" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
+                  <input type="text" id="heraldRoutineThread" spellcheck="false" autocomplete="off" aria-label="Server news" data-i18n-aria="herald.events.routine" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder"></div>
+              </div>
               <div class="wiz-stat bad" id="heraldRoutineWarn" style="display:none"></div>
-              <div class="herald-ticks">
-                <label class="mchk herald-tick" title="The server crashed. It can ping one role, so somebody comes to look." data-i18n-title="herald.events.crash.title"><input type="checkbox" id="tHeraldCrash"> <span data-i18n="herald.events.crash.tick">the server crashes</span></label>
-                <span id="heraldCrashRoleWrap" class="herald-inline" style="display:none">
+              <label class="mchk herald-tick" title="The server crashed. It can ping one role, so somebody comes to look." data-i18n-title="herald.events.crash.title"><input type="checkbox" id="tHeraldCrash"> <span data-i18n="herald.events.crash.tick">the server crashes</span></label>
+              <div id="heraldCrashMore" class="herald-sub" style="display:none">
+                <div class="herald-route">
+                  <input type="text" id="heraldCrashUrl" spellcheck="false" autocomplete="off" aria-label="Crashes" data-i18n-aria="herald.events.crash" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
+                  <input type="text" id="heraldCrashThread" spellcheck="false" autocomplete="off" aria-label="Crashes" data-i18n-aria="herald.events.crash" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder"></div>
+                <div id="heraldCrashRoleWrap" class="herald-ticks">
                   <label for="heraldCrashRole" class="subval" data-i18n="herald.events.role.label">ping role id</label>
                   <input type="text" id="heraldCrashRole" class="herald-role" spellcheck="false" autocomplete="off" maxlength="32" placeholder="role ID to ping · blank = no ping" data-i18n-placeholder="herald.events.role.placeholder" title="The role pinged when the server crashes. In Discord: Server Settings, Roles, right-click the role, Copy Role ID. Only this role is pinged, never everyone." data-i18n-title="herald.events.role.title">
                   <button type="button" class="wginfo" id="heraldHelpRole" aria-controls="wgTip" aria-label="More about this" data-i18n-aria="herald.help.aria">?</button>
-                </span>
+                </div>
               </div>
               <div class="wiz-stat bad" id="heraldCrashWarn" style="display:none"></div>
               <label class="mchk herald-tick" title="A viking joined or left. A busy realm sends a lot of these, so they can go to a channel of their own." data-i18n-title="herald.events.players.title"><input type="checkbox" id="tHeraldPlayers"> <span data-i18n="herald.events.players.tick">players join or leave</span></label>
+              <div id="heraldPlayersMore" class="herald-sub" style="display:none">
+                <div class="herald-route">
+                  <input type="text" id="heraldPlayersUrl" spellcheck="false" autocomplete="off" aria-label="Vikings joining and leaving" data-i18n-aria="herald.events.players" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
+                  <input type="text" id="heraldPlayersThread" spellcheck="false" autocomplete="off" aria-label="Vikings joining and leaving" data-i18n-aria="herald.events.players" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder"></div>
+              </div>
               <div class="wiz-stat bad" id="heraldPlayersWarn" style="display:none"></div>
-              <div style="margin-top:6px"><button class="btn btn-ghost btn-sm" id="heraldElsewhereBtn" data-i18n="herald.elsewhere.button">Send these somewhere else…</button></div>
 
               <!-- The post as Discord shows it, drawn by HERALD-PREVIEW from discord.preview,
                    which takes it from the same code a publish sends. -->
@@ -987,7 +1001,7 @@
               </div>
             </div>
           </div>
-          <!-- The two dialogs' panels, at home here while closed. -->
+          <!-- The Appearance dialog's panel, at home here while closed. -->
           <div id="heraldPanels" style="display:none">
             <!-- APPEARANCE: the name and picture the realm's posts are signed with (each
                  realm's own since 1.2.17), its title and status line, and the BakaLoader line,
@@ -1006,23 +1020,6 @@
                 <input type="text" id="heraldStatusLine" autocomplete="off" maxlength="300" placeholder="a line at the top of the post · blank = none" data-i18n-placeholder="herald.look.status.placeholder"></div>
               <div class="togglerow" style="margin-top:8px"><span class="tl" data-i18n="herald.look.link">Link to the BakaLoader page</span><span class="toggle on" id="tHeraldLink" data-t title="Puts a small BakaLoader line at the top of each post that opens the project page." data-i18n-title="herald.look.link.title"></span></div>
               <div class="wiz-stat dim" id="heraldLookStat" style="margin:4px 0 0"></div>
-            </div>
-            <!-- SEND THESE SOMEWHERE ELSE: one row per kind, a webhook and a thread, blank for
-                 the same place as the post. -->
-            <div id="heraldElsewherePanel">
-              <div class="subval" style="margin:0 0 8px" data-i18n="herald.elsewhere.note">Blank sends a kind to the same place as the post. Paste another webhook to send it to another channel, or a thread ID to put it in a thread.</div>
-              <div class="microlabel" data-i18n="herald.events.routine.tick">the server starts, stops or updates</div>
-              <div class="herald-route">
-                <input type="text" id="heraldRoutineUrl" spellcheck="false" autocomplete="off" aria-label="Server news" data-i18n-aria="herald.events.routine" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
-                <input type="text" id="heraldRoutineThread" spellcheck="false" autocomplete="off" aria-label="Server news" data-i18n-aria="herald.events.routine" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder"></div>
-              <div class="microlabel" data-i18n="herald.events.crash.tick">the server crashes</div>
-              <div class="herald-route">
-                <input type="text" id="heraldCrashUrl" spellcheck="false" autocomplete="off" aria-label="Crashes" data-i18n-aria="herald.events.crash" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
-                <input type="text" id="heraldCrashThread" spellcheck="false" autocomplete="off" aria-label="Crashes" data-i18n-aria="herald.events.crash" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder"></div>
-              <div class="microlabel" data-i18n="herald.events.players.tick">players join or leave</div>
-              <div class="herald-route">
-                <input type="text" id="heraldPlayersUrl" spellcheck="false" autocomplete="off" aria-label="Vikings joining and leaving" data-i18n-aria="herald.events.players" placeholder="webhook · blank = this realm's" data-i18n-placeholder="herald.events.webhook.placeholder">
-                <input type="text" id="heraldPlayersThread" spellcheck="false" autocomplete="off" aria-label="Vikings joining and leaving" data-i18n-aria="herald.events.players" placeholder="thread ID · blank = this realm's" data-i18n-placeholder="herald.events.thread.placeholder"></div>
             </div>
           </div>
         </section>

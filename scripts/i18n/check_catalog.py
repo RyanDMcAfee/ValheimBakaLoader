@@ -497,6 +497,11 @@ RETIRED_IDS = {
     "herald.thread.placeholder": "1.2.17",
     "herald.wiz.label": "1.2.17",
     "herald.wiz.title": "1.2.17",
+    # 1.2.17 follow-up: the Send these somewhere else dialog left the Discord screen. Each kind's
+    # webhook and thread roll in under its own tick, so there is no button, title or note for it.
+    "herald.elsewhere.button": "1.2.17",
+    "herald.elsewhere.note": "1.2.17",
+    "herald.elsewhere.title": "1.2.17",
 }
 
 

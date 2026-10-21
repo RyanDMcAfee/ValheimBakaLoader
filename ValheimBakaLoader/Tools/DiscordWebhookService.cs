@@ -364,7 +364,7 @@ namespace ValheimBakaLoader.Tools
                         // webhook, or a crash or player post, needs a thread ID in its box.
                         if (await DiscordStatusService.IsForumRefusalAsync(response))
                         {
-                            Logger.Warning("Discord refused the {kind} post of {realm}: its webhook is a forum channel and no thread was named. Put a thread ID for that kind under Send these somewhere else on the Discord screen.", kind, realm);
+                            Logger.Warning("Discord refused the {kind} post of {realm}: its webhook is a forum channel and no thread was named. Put a thread ID in the box under that kind's tick on the Discord screen.", kind, realm);
                             NoteNoThread(realm, kind, true);
                         }
                         else

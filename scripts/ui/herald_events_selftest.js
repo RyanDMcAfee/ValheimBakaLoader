@@ -8,9 +8,10 @@
  * (or reads under another name), the wizard's single switch flattening a host's careful choice,
  * and the old switch lingering somewhere so a save writes a value nothing honours.
  *
- * Since 1.2.17 each kind is a tick on the one card, the crash role box shows only while crashes
- * are ticked, a refusal Discord gave for a forum with no thread is a line under its kind, and the
- * webhook and thread of each kind live in the Send these somewhere else dialog.
+ * Since 1.2.17 each kind is a tick on the one card and a refusal Discord gave for a forum with no
+ * thread is a line under its kind. Since the 1.2.17 follow-up the webhook and thread of each kind
+ * (and the crash role) roll in right under its tick while it is ticked, and keep what was typed
+ * while hidden; the Send these somewhere else dialog that held them is gone.
  *
  * THE CODE UNDER TEST is the block between the HERALD-EVENTS markers in app.js, evaluated here
  * with the page's own globals stood in for (the tick helpers come out of app.js itself). The
@@ -93,7 +94,8 @@ function hall() {
   const el = {};
   SWITCHES.forEach(id => { el["#" + id] = switchEl(); });
   BOXES.forEach(id => { el["#" + id] = boxEl(); });
-  el["#heraldCrashRoleWrap"] = { style: { display: "none" } };
+  /* Each kind's block of boxes, hidden in the markup until its tick is ticked. */
+  ["heraldRoutineMore", "heraldCrashMore", "heraldPlayersMore"].forEach(id => { el["#" + id] = { style: { display: "none" } }; });
   ["heraldRoutineWarn", "heraldCrashWarn", "heraldPlayersWarn"].forEach(id => { el["#" + id] = { style: { display: "none" }, textContent: "" }; });
   const saves = [];
   const context = {
@@ -102,6 +104,8 @@ function hall() {
     heraldSave: () => { saves.push(JSON.parse(JSON.stringify(context.heraldEventValues()))); return Promise.resolve({}); },
   };
   vm.createContext(context);
+  /* The page's one show/hide helper (REVEAL), as the page has it: a stand-in element has no layout, so it is set at once. */
+  vm.runInContext(APP.slice(APP.indexOf("/* REVEAL-BEGIN"), APP.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   for (const head of ["function heraldTick(id,on){", "function heraldTicked(id){"]) vm.runInContext(fn(head), context);
   vm.runInContext(block(), context, { filename: "app.js#herald-events" });
   for (const name of ["heraldRenderEvents", "heraldEventValues", "heraldEventsAllOn", "heraldEventsFromWizard", "heraldWireEvents"])
@@ -165,46 +169,52 @@ test("3. the wizard's one switch moves all three only when the host moved it", (
   assert.ok(finish.includes("heraldEventsFromWizard(HWIZ.eventsWas,HWIZ.events)"), "the wizard's switch does not reach the kinds");
 });
 
-test("4. the screen: every tick on the card and box in its dialog, its words in the catalog, every one saves", () => {
+test("4. the screen: every tick on the card with its own boxes right under it, its words in the catalog, every one saves", () => {
   const card = HTML.slice(HTML.indexOf('<div class="card b-herald">'), HTML.indexOf('id="heraldPreview"'));
-  const from = HTML.indexOf('<div id="heraldElsewherePanel">');
-  const dialog = HTML.slice(from, HTML.indexOf("</section>", from));
   assert.ok(card.length > 0, "the realm's card is gone");
-  assert.ok(from > 0 && dialog.length > 0, "the Send these somewhere else panel is gone");
-  /* The ticks and the crash role on the card; where each kind goes in the dialog, not on the card. */
-  [...SWITCHES, "heraldCrashRole"].forEach(id => assert.ok(card.includes('id="' + id + '"'), id + " is not on the card"));
+  /* 1.2.17 follow-up: no dialog. Each tick is followed by its own block (hidden until ticked)
+     holding its webhook and thread, and for crashes the role, before the next tick. */
   SWITCHES.forEach(id => assert.ok(card.includes('<input type="checkbox" id="' + id + '"'), id + " is not a tick"));
-  BOXES.filter(id => id !== "heraldCrashRole").forEach(id => {
-    assert.ok(dialog.includes('id="' + id + '"'), id + " is not in the Send these somewhere else dialog");
-    assert.ok(!card.includes('id="' + id + '"'), id + " is still on the card");
+  assert.ok(!/heraldElsewhere/.test(HTML), "the Send these somewhere else dialog is still on the screen");
+  const kinds = [["tHeraldRoutine", "heraldRoutineMore", ["heraldRoutineUrl", "heraldRoutineThread"]],
+                 ["tHeraldCrash", "heraldCrashMore", ["heraldCrashUrl", "heraldCrashThread", "heraldCrashRole"]],
+                 ["tHeraldPlayers", "heraldPlayersMore", ["heraldPlayersUrl", "heraldPlayersThread"]]];
+  kinds.forEach(([sw, more, boxes], i) => {
+    const tick = card.indexOf('id="' + sw + '"'), block = card.indexOf('<div id="' + more + '" class="herald-sub" style="display:none">');
+    const next = i + 1 < kinds.length ? card.indexOf('id="' + kinds[i + 1][0] + '"') : card.length;
+    assert.ok(tick > 0 && block > tick && block < next, more + " is not right under " + sw + " and hidden until ticked");
+    boxes.forEach(id => { const at = card.indexOf('id="' + id + '"'); assert.ok(at > block && at < next, id + " is not under " + sw); });
   });
-  assert.ok(/id="heraldCrashRoleWrap"[^>]*style="display:none"/.test(card), "the role box shows before crashes are ticked");
-  assert.ok(card.includes('id="heraldElsewhereBtn"') && card.includes('data-i18n="herald.elsewhere.button"'), "the card has no way to the dialog");
-  const ids = [...(card + dialog).matchAll(/data-i18n(?:-title|-placeholder|-aria)?="([^"]+)"/g)].map(m => m[1]);
+  const ids = [...card.matchAll(/data-i18n(?:-title|-placeholder|-aria)?="([^"]+)"/g)].map(m => m[1]);
   ["herald.events.label", "herald.events.routine.tick", "herald.events.crash.tick", "herald.events.players.tick",
    "herald.events.routine", "herald.events.routine.title",
    "herald.events.crash", "herald.events.crash.title", "herald.events.players", "herald.events.players.title",
    "herald.events.webhook.placeholder", "herald.events.thread.placeholder", "herald.events.role.placeholder",
-   "herald.events.role.title", "herald.events.role.label", "herald.elsewhere.note"].forEach(id => {
+   "herald.events.role.title", "herald.events.role.label"].forEach(id => {
     assert.ok(ids.includes(id), id + " is not on the card");
     assert.ok(KEYS[id] && typeof KEYS[id].lore === "string", "the catalog has no " + id);
   });
   ids.forEach(id => assert.ok(KEYS[id], "the card asks for " + id + ", which the catalog lacks"));
   assert.ok(!/herald\.share\.events\.note/.test(HTML + APP), "the retired from-every-realm note is still shown");
 
-  /* The role box follows the crash tick, and a forum refusal is one line under its kind. */
+  /* Each kind's boxes follow its tick, and a forum refusal is one line under its kind. */
   const r = hall();
   r.context.heraldRenderEvents({ CrashOn: false });
-  assert.strictEqual(r.el["#heraldCrashRoleWrap"].style.display, "none", "the role box shows with crashes off");
-  r.context.heraldRenderEvents({ CrashOn: true, PlayersNoThread: true });
-  assert.strictEqual(r.el["#heraldCrashRoleWrap"].style.display, "", "the role box hides with crashes on");
+  ["heraldRoutineMore", "heraldCrashMore", "heraldPlayersMore"].forEach(id =>
+    assert.strictEqual(r.el["#" + id].style.display, "none", id + " shows with its kind off"));
+  r.context.heraldRenderEvents({ CrashOn: true, PlayersNoThread: true, CrashWebhookUrl: HOOK_C });
+  assert.strictEqual(r.el["#heraldCrashMore"].style.display, "", "the crash boxes hide with crashes on");
+  assert.strictEqual(r.el["#heraldRoutineMore"].style.display, "none");
   assert.strictEqual(r.el["#heraldPlayersWarn"].style.display, "");
   assert.strictEqual(r.el["#heraldPlayersWarn"].textContent, "ᚦ " + KEYS["herald.events.nothread"].lore);
   assert.strictEqual(r.el["#heraldCrashWarn"].style.display, "none", "a kind Discord did not refuse shows a warning");
   r.context.heraldWireEvents();
   r.el["#tHeraldCrash"].checked = false;
   r.el["#tHeraldCrash"].listeners.change();
-  assert.strictEqual(r.el["#heraldCrashRoleWrap"].style.display, "none", "unticking crashes left the role box up");
+  assert.strictEqual(r.el["#heraldCrashMore"].style.display, "none", "unticking crashes left its boxes up");
+  /* Hidden is not forgotten: the boxes keep what was typed and the save still carries it. */
+  assert.strictEqual(r.el["#heraldCrashUrl"].value, HOOK_C, "unticking cleared the crash webhook");
+  assert.strictEqual(r.context.heraldEventValues().CrashWebhookUrl, HOOK_C, "a hidden kind's webhook is not saved");
 
   /* Every tick saves when it changes and every box when it is left. */
   const h = hall();

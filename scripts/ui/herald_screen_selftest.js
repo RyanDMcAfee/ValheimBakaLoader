@@ -14,14 +14,20 @@
  * of the real en.json.
  *
  * The rules:
- *   1. The card, top to bottom: the head, the realm's switch, the webhook line, Show in the post,
- *      Also send messages when, Send these somewhere else, the preview, Publish, Remove and
- *      Appearance; and nothing app wide on it.
+ *   1. The card, top to bottom: the head, the realm's switch, the webhook line, Show in the post
+ *      (the mod code's kind and box in a block under its tick), Also send messages when (each
+ *      kind's webhook and thread, and the crash role, in a block under its own tick; the Send
+ *      these somewhere else dialog left in the 1.2.17 follow-up), the preview, Publish, Remove
+ *      and Appearance; and nothing app wide on it.
  *   2. Every heading and the role box has a (?): the shared hover panel, opened by the mouse and
  *      by keyboard focus, with one or two sentences out of the catalog.
- *   3. Appearance and Send these somewhere else open the app's dialog with their panel in it,
- *      and however the dialog goes, the panel goes home and what was typed is saved.
- *   4. The panels hold the boxes the saves read, and wait hidden at the end of the screen.
+ *   3. Appearance opens the app's dialog with its panel in it and asks to fade out, and however
+ *      the dialog goes, the panel goes home and what was typed is saved.
+ *   4. The Appearance panel holds the boxes the saves read and waits hidden at the end of the
+ *      screen; the retired dialog's sentences stay in the catalog, retired, asked for by nothing.
+ *   5. Nothing on the screen appears, vanishes or jumps: every show and hide goes through
+ *      reveal (rolled), revealText (faded) or revealSwap (the preview), and the hidden boxes
+ *      are still saved.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -87,12 +93,11 @@ function node(name) {
 
 function screen() {
   const home = node("home");
-  const look = node("look"), elsewhere = node("elsewhere");
+  const look = node("look");
   home.appendChild(look);
-  home.appendChild(elsewhere);
   const markers = {};
   ["heraldHelpOn", "heraldHelpShow", "heraldHelpEvents", "heraldHelpRole", "heraldHelpPreview"].forEach(id => { markers["#" + id] = node(id); });
-  const el = Object.assign({ "#heraldPanels": home, "#heraldLookPanel": look, "#heraldElsewherePanel": elsewhere }, markers);
+  const el = Object.assign({ "#heraldPanels": home, "#heraldLookPanel": look }, markers);
   const log = { modals: [], dismissed: [], commits: [], wired: [], tips: [] };
   let modal = null;
   const context = {
@@ -105,7 +110,8 @@ function screen() {
       const slot = node("slot"), done = node("done");
       modal = { html, again, slot, done, closed: false };
       log.modals.push(modal);
-      return { querySelector: q => (q === "[data-herald-slot]" ? slot : q === "[data-herald-done]" ? done : null) };
+      modal.box = { dataset: {}, querySelector: q => (q === "[data-herald-slot]" ? slot : q === "[data-herald-done]" ? done : null) };
+      return modal.box;
     },
     modalClose: () => { if (modal) modal.closed = true; },
     onModalDismissed: fn => log.dismissed.push(fn),
@@ -118,17 +124,20 @@ function screen() {
   vm.runInContext(block(), context, { filename: "app.js#herald-dialogs" });
   for (const name of ["heraldPanelsHome", "heraldDialog", "heraldWireHelp", "heraldHelpHtml"])
     assert.strictEqual(typeof context[name], "function", name + " did not come out of the block");
-  return { context, el, log, home, look, elsewhere, markers, current: () => modal };
+  return { context, el, log, home, look, markers, current: () => modal };
 }
 
 test("1. the card, top to bottom, and nothing app wide on it", () => {
   assert.ok(CARD.length > 0, "the Discord card is gone");
   assert.strictEqual((PAGE.match(/<div class="card /g) || []).length, 1, "the Discord screen has more than one card");
   const order = ['id="heraldRealmName"', 'id="heraldOnLabel"', 'id="tHeraldRealm"', 'id="heraldHookLine"', 'id="heraldHookChange"',
-                 'data-i18n="herald.show.label"', 'id="tHeraldAddr"', 'id="tHeraldPass"', 'id="tHeraldModCode"', 'id="heraldModCode"',
-                 'data-i18n="herald.events.label"', 'id="tHeraldRoutine"', 'id="tHeraldCrash"', 'id="heraldCrashRole"',
-                 'id="tHeraldPlayers"', 'id="heraldElsewhereBtn"', 'id="heraldPreview"', 'id="heraldPublish"',
-                 'id="heraldRemove"', 'id="heraldLookBtn"'];
+                 'data-i18n="herald.show.label"', 'id="tHeraldAddr"', 'id="tHeraldPass"', 'id="tHeraldModCode"',
+                 'id="heraldModCodeWrap"', 'id="heraldModKindTs"', 'id="heraldModCode"', 'id="heraldModCodeStat"',
+                 'data-i18n="herald.events.label"',
+                 'id="tHeraldRoutine"', 'id="heraldRoutineMore"', 'id="heraldRoutineUrl"', 'id="heraldRoutineThread"', 'id="heraldRoutineWarn"',
+                 'id="tHeraldCrash"', 'id="heraldCrashMore"', 'id="heraldCrashUrl"', 'id="heraldCrashThread"', 'id="heraldCrashRole"', 'id="heraldCrashWarn"',
+                 'id="tHeraldPlayers"', 'id="heraldPlayersMore"', 'id="heraldPlayersUrl"', 'id="heraldPlayersThread"', 'id="heraldPlayersWarn"',
+                 'id="heraldPreview"', 'id="heraldPublish"', 'id="heraldRemove"', 'id="heraldLookBtn"'];
   let at = -1;
   for (const mark of order) {
     const i = CARD.indexOf(mark);
@@ -142,7 +151,23 @@ test("1. the card, top to bottom, and nothing app wide on it", () => {
   /* Nothing app wide: no master, no webhook or thread box, no link anywhere on the card. */
   for (const id of ["tHerald", "heraldUrl", "heraldThread", "heraldRealmUrl", "heraldRealmThread", "heraldWizBtn"])
     assert.ok(!PAGE.includes('id="' + id + '"'), id + " is still on the Discord screen");
-  assert.ok(!/<input[^>]*id="heraldRoutineUrl"/.test(CARD), "a kind's webhook box is still on the card");
+  /* 1.2.17 follow-up: no Send these somewhere else dialog. Each kind's boxes (and the mod code's)
+     sit in their own block right under the tick, hidden until it is ticked. */
+  assert.ok(!/heraldElsewhere/.test(PAGE + APP), "the Send these somewhere else dialog is still on the screen");
+  for (const [more, ids] of [["heraldModCodeWrap", ["heraldModKindTs", "heraldModKindGale", "heraldModCode", "heraldModCodeStat"]],
+                             ["heraldRoutineMore", ["heraldRoutineUrl", "heraldRoutineThread"]],
+                             ["heraldCrashMore", ["heraldCrashUrl", "heraldCrashThread", "heraldCrashRole", "heraldHelpRole"]],
+                             ["heraldPlayersMore", ["heraldPlayersUrl", "heraldPlayersThread"]]]) {
+    const m = CARD.match(new RegExp('<div id="' + more + '" class="herald-sub" style="display:none">'));
+    assert.ok(m, more + " is not a block that starts hidden");
+    const from = CARD.indexOf(m[0]);
+    let depth = 0, at = from, end = -1;
+    const tag = /<(\/?)div\b[^>]*>/g;
+    tag.lastIndex = from;
+    for (let t; (t = tag.exec(CARD)); ) { depth += t[1] ? -1 : 1; if (depth === 0) { end = t.index; break; } }
+    const inner = CARD.slice(from, end);
+    ids.forEach(id => assert.ok(inner.includes('id="' + id + '"'), id + " is not under its own tick in " + more));
+  }
   assert.ok(!/discord\.com\/api\/webhooks/.test(CARD), "the card shows a webhook link");
   /* The words: the head names the realm, the webhook line names the webhook, never the link. */
   assert.strictEqual(T("herald.screen.head", { name: "Final Sunset" }), "Discord · Final Sunset");
@@ -186,14 +211,15 @@ test("2. every heading and the role box has a (?), by mouse and by keyboard focu
   assert.ok(/\nheraldWireHelp\(\);/.test(APP), "the (?) markers are never wired");
 });
 
-test("3. both dialogs lend their panel to the app's dialog, and however it goes the panel goes home and saves", () => {
-  for (const [which, titleId, commit] of [["look", "herald.look.label", "look"], ["elsewhere", "herald.elsewhere.title", "save"]]) {
+test("3. Appearance lends its panel to the app's dialog, fades out, and however it goes the panel goes home and saves", () => {
+  for (const [which, titleId, commit] of [["look", "herald.look.label", "look"]]) {
     const s = screen();
     const panel = s[which];
     s.context.heraldDialog(which);
     const m = s.current();
     assert.ok(m.html.includes(s.context.esc(T(titleId))), which + " has the wrong title");
     assert.strictEqual(panel.parentNode, m.slot, which + "'s panel is not in the dialog");
+    assert.strictEqual(m.box.dataset.fadeOut, "1", which + " does not ask to fade out");
     /* Close: the button closes the app's dialog; then whatever closed it, the dismissal puts the
        panel back home and saves what was typed. */
     m.done.listeners.click();
@@ -218,27 +244,56 @@ test("3. both dialogs lend their panel to the app's dialog, and however it goes 
     assert.strictEqual(u.log.modals.length, 2);
   }
   assert.ok(/\$\("#heraldLookBtn"\)\.addEventListener\("click",\(\)=>heraldDialog\("look"\)\);/.test(APP), "Appearance does not open its dialog");
-  assert.ok(/\$\("#heraldElsewhereBtn"\)\.addEventListener\("click",\(\)=>heraldDialog\("elsewhere"\)\);/.test(APP), "Send these somewhere else does not open its dialog");
+  assert.ok(!/heraldDialog\("elsewhere"\)/.test(APP), "Send these somewhere else still opens a dialog");
 });
 
 test("4. the panels hold the boxes the saves read, hidden at the end of the screen", () => {
   assert.ok(/<div id="heraldPanels" style="display:none">/.test(PAGE), "the panels' home shows on the screen");
-  const look = PAGE.slice(PAGE.indexOf('<div id="heraldLookPanel">'), PAGE.indexOf('<div id="heraldElsewherePanel">'));
-  const elsewhere = PAGE.slice(PAGE.indexOf('<div id="heraldElsewherePanel">'));
+  const look = PAGE.slice(PAGE.indexOf('<div id="heraldLookPanel">'));
   for (const id of ["heraldName", "heraldAvatar", "heraldTitle", "heraldStatusLine", "tHeraldLink", "heraldLookStat"])
     assert.ok(look.includes('id="' + id + '"'), id + " is not in Appearance");
-  for (const id of ["heraldRoutineUrl", "heraldRoutineThread", "heraldCrashUrl", "heraldCrashThread", "heraldPlayersUrl", "heraldPlayersThread"])
-    assert.ok(elsewhere.includes('id="' + id + '"'), id + " is not in Send these somewhere else");
+  assert.strictEqual((PAGE.slice(PAGE.indexOf('<div id="heraldPanels"')).match(/<div id="herald\w+Panel">/g) || []).length, 1,
+    "the panels' home holds a dialog besides Appearance");
   /* The saves read those boxes by id, and leave out a box that is not in the document. */
   const values = APP.slice(APP.indexOf("function heraldRealmValues(){"), APP.indexOf("\n}", APP.indexOf("function heraldRealmValues(){")));
   assert.ok(values.includes('return el?String(el.value||"").trim():undefined;'), "a missing box reads as blank");
   for (const id of ["heraldName", "heraldAvatar", "heraldTitle", "heraldStatusLine"]) assert.ok(values.includes('box("' + id + '")'), id + " is not read by the save");
   const save = APP.slice(APP.indexOf("function heraldSave(extra,realmExtra){"), APP.indexOf("\n}", APP.indexOf("function heraldSave(extra,realmExtra){")));
   assert.ok(save.includes("heraldDefined("), "the save sends undefined boxes as keys");
-  for (const id of ["herald.look.button", "herald.look.label", "herald.elsewhere.button", "herald.elsewhere.title", "herald.elsewhere.note"])
+  for (const id of ["herald.look.button", "herald.look.label"])
     assert.ok(KEYS[id] && typeof KEYS[id].lore === "string", "the catalog has no " + id);
+  /* The dialog's words are released ids: kept in the catalog, retired, asked for by nothing. */
+  const RETIRED = fs.readFileSync(path.join(path.dirname(WEB), "..", "scripts", "i18n", "check_catalog.py"), "utf8");
+  for (const id of ["herald.elsewhere.button", "herald.elsewhere.title", "herald.elsewhere.note"]) {
+    assert.ok(KEYS[id], id + " was deleted from the catalog");
+    assert.ok(RETIRED.includes('"' + id + '": "1.2.17"'), id + " is not retired");
+    assert.ok(!(PAGE + APP).includes(id), id + " is still asked for");
+  }
   assert.ok(!/\u2014|\u2013/.test(Object.entries(KEYS).filter(([k]) => /^herald\.(screen|hook\.line|show|elsewhere|help|wiz\.(same|own|thread))/.test(k)).map(([, v]) => v.lore).join(" ")),
     "a new sentence carries a long dash");
+});
+
+test("5. nothing on the screen appears, vanishes or jumps: every show and hide goes through reveal", () => {
+  const from = APP.indexOf("let HERALD_HAS_POST"), to = APP.indexOf("/* HERALD-DIALOGS-END */");
+  assert.ok(from > 0 && to > from, "the Discord screen's code moved");
+  const herald = APP.slice(from, to);
+  assert.ok(!/\.style\.display\s*=/.test(herald), "a part of the Discord screen still pops in or out with style.display");
+  const body = head => { const at = APP.indexOf(head); assert.ok(at >= 0, "app.js has no " + head); return APP.slice(at, APP.indexOf("\n}", at)); };
+  assert.ok(body("function heraldRenderModTick(on){").includes('reveal($("#heraldModCodeWrap"),!!on)'), "the mod code's block does not roll");
+  assert.ok(body("function heraldRenderKindBoxes(){").includes("reveal($(\"#\"+k.more),heraldTicked(k.sw))"), "a kind's boxes do not roll");
+  assert.ok(body("function heraldRenderWarns(b){").includes("reveal(w,show)"), "a forum warning line pops in");
+  assert.ok(body("function heraldRenderRealmLines(){").includes("reveal(pill,!!name,{fade:true})"), "the realm pill pops in");
+  assert.ok(/revealText\(line,/.test(body("function heraldRenderRealmLines(){")), "the webhook line (Not set up yet) does not fade");
+  assert.ok(body("function heraldRenderPost(){").includes("revealText(el,"), "the post line does not fade");
+  assert.ok(body("function heraldRenderModCodeLine(){").includes("revealText(el,") && body("function heraldRenderLookLine(){").includes("revealText(el,"),
+    "a paused or refused line does not fade");
+  assert.ok(body("function heraldPreviewPaint(r){").includes('revealSwap($("#heraldPreview")'), "the preview jumps on a refresh");
+  /* Every tick wires to the rolling paint, and the Appearance dialog fades out through modalClose. */
+  assert.ok(APP.includes('sw.addEventListener("change",()=>{heraldRenderKindBoxes();heraldSave();});'), "a kind's tick does not roll its boxes");
+  assert.ok(body("function modalClose(){").includes("modalFadeOut();"), "a dialog asking to fade out vanishes");
+  /* Saved values are kept while hidden: the boxes stay in the document and the save reads them. */
+  const values = body("function heraldEventValues(){");
+  assert.ok(values.includes("out[k.kind+\"WebhookUrl\"]=box(k.url);") && !values.includes("heraldTicked"), "a hidden kind's boxes are not saved");
 });
 
 console.log(failures.length === 0

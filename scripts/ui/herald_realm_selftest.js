@@ -163,6 +163,8 @@ function hall(opts) {
     },
   };
   vm.createContext(context);
+  /* The page's one show/hide helper (REVEAL), as the page has it: a stand-in element has no layout, so it is set at once. */
+  vm.runInContext(APP.slice(APP.indexOf("/* REVEAL-BEGIN"), APP.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   /* The page's own helpers the block leans on, out of app.js rather than stood in for. */
   for (const head of ["function heraldTick(id,on){", "function heraldTicked(id){", "function heraldDefined(o){",
                       "function heraldLookAvatarProblem(v){", "function heraldLookNameProblem(v){"])

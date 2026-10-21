@@ -97,6 +97,8 @@ function hall(opts) {
     LOC: () => "en",
   };
   vm.createContext(context);
+  /* The page's one show/hide helper (REVEAL), as the page has it: a stand-in element has no layout, so it is set at once. */
+  vm.runInContext(APP.slice(APP.indexOf("/* REVEAL-BEGIN"), APP.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(ESC_LINE + "\nthis.esc=esc;\n" + block() + "\nthis.HERALD_PREVIEW_KINDS=HERALD_PREVIEW_KINDS;", context, { filename: "app.js#herald-preview" });
   for (const name of ["heraldPreviewText", "heraldPreviewCard", "heraldPreviewPaint", "heraldPreviewRefresh"])
     assert.strictEqual(typeof context[name], "function", name + " did not come out of the block");

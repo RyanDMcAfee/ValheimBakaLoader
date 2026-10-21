@@ -3589,7 +3589,7 @@
       "translation": "[Ẋ Also send messages when Ẋ] ẊẊẊẊẊẊẊ"
     },
     "herald.events.help": {
-      "translation": "[Ẋ These are separate messages, not edits of the post. Each kind can go to its own channel or thread under Send these somewhere else. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ These are separate messages, not edits of the post. Tick a kind and its own webhook and thread boxes open under it, so it can go to its own channel or thread. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.events.routine.tick": {
       "translation": "[Ẋ the server starts, stops or updates Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ"
@@ -3607,7 +3607,7 @@
       "translation": "[Ẋ Pings one Discord role when the server crashes. Turn on Developer Mode in Discord (User Settings, Advanced), then right-click the role and choose Copy Role ID. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.events.nothread": {
-      "translation": "[Ẋ Discord refused the last one: that webhook is a forum channel and no thread was named. Set a thread under Send these somewhere else. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Discord refused the last one: that webhook is a forum channel and no thread was named. Put a thread ID in the thread box above this line. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "herald.elsewhere.button": {
       "translation": "[Ẋ Send these somewhere else… Ẋ] ẊẊẊẊẊẊẊẊ"

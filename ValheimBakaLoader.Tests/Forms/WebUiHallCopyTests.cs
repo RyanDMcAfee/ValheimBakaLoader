@@ -821,8 +821,8 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.modcode.kind.ts.short",
                 "herald.modcode.kind.gale.short",
                 "herald.modcode.placeholder",
-                // Also send messages when: a tick per kind with its tooltip, the crash role box,
-                // and the button to the dialog that says where each kind goes.
+                // Also send messages when: a tick per kind with its tooltip, and under each, while
+                // it is ticked, where it goes (the boxes below) and for crashes the role box.
                 "herald.events.label",
                 "herald.events.routine.tick",
                 "herald.events.routine.title",
@@ -833,7 +833,6 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.events.role.title",
                 "herald.events.players.tick",
                 "herald.events.players.title",
-                "herald.elsewhere.button",
                 "herald.publish.label",
                 "herald.publish.title",
                 "herald.remove.label",
@@ -854,9 +853,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 "herald.look.status.placeholder",
                 "herald.look.link",
                 "herald.look.link.title",
-                // The Send these somewhere else panel: its note, and a webhook and thread box per
-                // kind, named for screen readers by the kind.
-                "herald.elsewhere.note",
+                // A webhook and thread box per kind, named for screen readers by the kind.
                 "herald.events.routine",
                 "herald.events.crash",
                 "herald.events.players",
@@ -870,7 +867,7 @@ namespace ValheimBakaLoader.Tests.Forms
         /// The one sentence this hall does not key, and why it is not an oversight. The
         /// card's opening paragraph has a bold word in the middle of it, so the walker
         /// would translate the words before the bold and leave the rest in English.
-        /// The post's status line is app.js's, not the walker's: heraldRenderPost writes
+        /// The post's status line is app.js's, not the walker's: heraldRenderPost writes (and fades in)
         /// one of two whole catalog sentences into it every time the post appears or goes,
         /// so the element carries no id of its own and the two owners cannot fight.
         /// The webhook box keeps its example address, which is an address rather than a
@@ -888,7 +885,9 @@ namespace ValheimBakaLoader.Tests.Forms
 
             var status = hall.Substring(hall.IndexOf("id=\"heraldPostStat\"", StringComparison.Ordinal) - 40, 120);
             Assert.DoesNotContain("data-i18n", status);
-            Assert.Contains("el.textContent=HERALD_HAS_POST?T(\"herald.post.placed\"):T(\"herald.post.none\");", js);
+            // Since the 1.2.17 follow-up the new sentence fades in (revealText) rather than
+            // popping in; it is still one of the two whole catalog sentences.
+            Assert.Contains("revealText(el,HERALD_HAS_POST?T(\"herald.post.placed\"):T(\"herald.post.none\"));", js);
 
             // The webhook box moved into the setup wizard (1.2.17), which keeps the example
             // address, an address rather than a sentence that no language translates.

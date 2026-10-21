@@ -97,7 +97,7 @@ function hall(opts) {
     "#heraldModCode": { value: "", disabled: false },
     "#heraldModCodeStat": { className: "", textContent: "", style: {} },
     "#tHeraldModCode": { checked: false },
-    "#heraldModCodeWrap": { style: {} },
+    "#heraldModCodeWrap": { style: { display: "none" } }, /* hidden in the markup until ticked */
     "#tHerald": switchEl(opts.sharing !== false),
     "#tHeraldRealm": switchEl(opts.realm !== false),
   };
@@ -116,6 +116,8 @@ function hall(opts) {
     },
   };
   vm.createContext(context);
+  /* The page's one show/hide helper (REVEAL), as the page has it: a stand-in element has no layout, so it is set at once. */
+  vm.runInContext(APP.slice(APP.indexOf("/* REVEAL-BEGIN"), APP.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(block(), context, { filename: "app.js#herald-modcode" });
   for (const name of ["heraldModCodeKind", "heraldModCodeProblem", "heraldRenderModCodeLine",
                       "heraldRenderModCode", "heraldModCodeCommit"])
@@ -400,7 +402,13 @@ function choose(h, kind) {
     none.context.heraldRenderModCode();
     assert.strictEqual(none.el["#tHeraldModCode"].checked, false);
     assert.strictEqual(none.el["#heraldModCodeWrap"].style.display, "none", "the box shows with no code and no tick");
-    assert.strictEqual(none.el["#heraldModCodeStat"].style.display, "none");
+    /* 1.2.17 follow-up: the kind, the box and the line under them are one block below the tick,
+       rolled in and out together, so the line has no show/hide of its own. */
+    const page = fs.readFileSync(path.join(WEB, "index.html"), "utf8");
+    const wrapAt = page.indexOf('<div id="heraldModCodeWrap" class="herald-sub" style="display:none">');
+    assert.ok(wrapAt > page.indexOf('id="tHeraldModCode"'), "the mod code's block is not below its tick");
+    assert.ok(page.indexOf('id="heraldModCodeStat"') > wrapAt && page.indexOf('id="heraldModCodeStat"') < page.indexOf('data-i18n="herald.events.label"'),
+      "the line under the box is not inside its block");
     /* Unticking takes the code out of the post, the way a blank box always has. */
     const at = APP.indexOf('$("#tHeraldModCode").addEventListener("change",()=>{');
     assert.ok(at > 0, "the tick is not wired");

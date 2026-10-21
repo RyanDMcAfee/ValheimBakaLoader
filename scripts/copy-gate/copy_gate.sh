@@ -984,7 +984,7 @@ else
   echo "  the herald preview selftest is missing: $PREVIEW_SELFTEST"; fail=1
 fi
 
-echo "== 62. the Discord screen: one card about the realm on screen, a (?) on every heading, two dialogs =="
+echo "== 62. the Discord screen: one card about the realm on screen, a (?) on every heading, each tick's boxes under it =="
 # 1.2.17. The owner found the screen before it confusing: an app-wide switch and webhook beside a
 # realm's own, and every kind of message with its own boxes on the main screen. The quiet ways
 # the one card goes wrong are a control drifting back onto it or out of order, a heading without
@@ -996,6 +996,22 @@ if [ -f "$SCREEN_SELFTEST" ]; then
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 else
   echo "  the herald screen selftest is missing: $SCREEN_SELFTEST"; fail=1
+fi
+
+echo "== 63. nothing on the page appears, vanishes or jumps: the one show/hide helper =="
+# 1.2.17 follow-up, the owner's rule for all of the page: a part that shows rolls down and fades
+# in, one that hides rolls up and fades out, and the rows under it slide with it; reduced motion
+# gets a plain fade. The Discord screen uses it first and the app-wide sweep reuses it, so its
+# quiet failures (a height left pinned, a fast second click undone by the first roll, movement
+# under reduced motion) are proved once here against the real REVEAL block.
+REVEAL_SELFTEST="$UI_DIR/reveal_selftest.js"
+if [ -f "$REVEAL_SELFTEST" ]; then
+  if out=$(node "$REVEAL_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the reveal selftest is missing: $REVEAL_SELFTEST"; fail=1
 fi
 
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"

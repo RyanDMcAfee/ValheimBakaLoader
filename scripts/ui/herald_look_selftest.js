@@ -133,6 +133,8 @@ function hall(opts) {
     return Promise.resolve(opts.reply === undefined ? {} : opts.reply);
   };
   vm.createContext(context);
+  /* The page's one show/hide helper (REVEAL), as the page has it: a stand-in element has no layout, so it is set at once. */
+  vm.runInContext(APP.slice(APP.indexOf("/* REVEAL-BEGIN"), APP.indexOf("/* REVEAL-END */")), context, { filename: "app.js#reveal" });
   vm.runInContext(block(), context, { filename: "app.js#herald-look" });
   for (const name of ["heraldLookAvatarProblem", "heraldLookNameProblem", "heraldLookValues",
                       "heraldRenderLookLine", "heraldApplyLook", "heraldLookCommit"])
@@ -321,7 +323,7 @@ function preview(parts) {
     /* 1.2.17: the whole look sits in the Appearance panel, which waits at the end of the
        screen and is lent to the dialog while it is open; the card has only the button. */
     const from = HTML.indexOf('<div id="heraldLookPanel">');
-    const card = HTML.slice(from, HTML.indexOf('<div id="heraldElsewherePanel">'));
+    const card = HTML.slice(from, HTML.indexOf("</section>", from));
     const realmCard = card;
     assert.ok(from > 0, "the Appearance panel is gone");
     const order = ['id="heraldName"', 'id="heraldAvatar"', 'id="heraldTitle"', 'id="heraldStatusLine"',

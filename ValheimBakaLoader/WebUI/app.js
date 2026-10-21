@@ -34,6 +34,105 @@ const Native = (() => {
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+/* REVEAL-BEGIN
+   The one way a part of the page shows or hides (1.2.17 follow-up, the owner's rule: nothing
+   appears, vanishes or jumps when something is clicked). reveal(el,true) rolls el down from
+   nothing to its own height while it fades in, so whatever sits under it slides down with it;
+   reveal(el,false) rolls it back up and fades it out, then takes it out of the layout with
+   display:none, which is also how a hidden part is written in index.html. Its height is
+   measured at the moment, so it works for a box of any size, and the animation holds no style
+   when it ends, so the box is back in the normal layout with no height pinned on it. A second
+   call while one runs starts from where the first one is on screen, so fast clicking never
+   leaves a box half open. With prefers-reduced-motion it is a plain fade, no movement. A box
+   whose page is not on screen is set at once: there is nothing to see move. {fade:true} fades
+   without rolling, for a box beside others in a row rather than above them. Answers whether
+   the box ends shown. Block boxes only: an inline box has no height to roll. */
+function revealReduced(){
+  try{ return !!(window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches); }catch(_){ return false; }
+}
+function revealShown(el){
+  return el._revealShow!==undefined?el._revealShow:el.style.display!=="none";
+}
+const REVEAL_ROLL=["height","paddingTop","paddingBottom","marginTop","marginBottom"];
+function revealFrame(el){
+  const cs=getComputedStyle(el), f={opacity:cs.opacity};
+  f.height=el.offsetHeight+"px";
+  REVEAL_ROLL.slice(1).forEach(p=>{f[p]=cs[p];});
+  return f;
+}
+function revealSettle(el){
+  if(el._revealOverflow===undefined) return;
+  el.style.overflow=el._revealOverflow;
+  el.style.boxSizing=el._revealBoxSizing;
+  el._revealOverflow=el._revealBoxSizing=undefined;
+}
+function reveal(el,show,opts){
+  if(!el) return false;
+  show=!!show;
+  if(revealShown(el)===show) return show;
+  el._revealShow=show;
+  const parent=el.parentElement;
+  const onScreen=typeof el.animate==="function"&&!!parent&&parent.getClientRects().length>0;
+  /* Where the box is on screen right now, read before a running roll is stopped. */
+  const was=onScreen&&el.style.display!=="none"?revealFrame(el):null;
+  if(el._revealAnim){ try{el._revealAnim.cancel();}catch(_){} el._revealAnim=null; }
+  revealSettle(el);
+  el.style.display=show?"":"none";
+  if(!onScreen) return show;
+  if(!show) el.style.display="";
+  const fadeOnly=revealReduced()||!!(opts&&opts.fade);
+  const zero={opacity:"0"}; if(!fadeOnly) REVEAL_ROLL.forEach(p=>{zero[p]="0px";});
+  const full=revealFrame(el);
+  const from=was||(show?zero:full), to=show?full:zero;
+  const pick=f=>{const o={opacity:f.opacity}; if(!fadeOnly) REVEAL_ROLL.forEach(p=>{o[p]=f[p];}); return o;};
+  if(!fadeOnly){
+    el._revealOverflow=el.style.overflow; el._revealBoxSizing=el.style.boxSizing;
+    el.style.overflow="hidden"; el.style.boxSizing="border-box";
+  }
+  const a=el.animate([pick(from),pick(to)],{duration:200,easing:"ease-out"});
+  el._revealAnim=a;
+  a.onfinish=()=>{
+    if(el._revealAnim!==a) return;
+    el._revealAnim=null;
+    revealSettle(el);
+    if(!show) el.style.display="none";
+  };
+  return show;
+}
+/* A box whose words or contents change in place fades the new ones in, and when its height
+   changes with them the boxes under it slide rather than jump. change() makes the change. */
+function revealSwap(el,change){
+  const live=!!el&&typeof el.animate==="function";
+  const before=live&&el.getClientRects().length?el.offsetHeight:null;
+  change();
+  if(!live) return;
+  if(el._revealSwap){ try{el._revealSwap.cancel();}catch(_){} el._revealSwap=null; }
+  if(el._revealSwapOverflow!==undefined){ el.style.overflow=el._revealSwapOverflow; el._revealSwapOverflow=undefined; }
+  if(before===null||!el.getClientRects().length) return;
+  const after=el.offsetHeight;
+  const frames=[{opacity:"0.35"},{opacity:"1"}];
+  const roll=!revealReduced()&&after!==before;
+  if(roll){ frames[0].height=before+"px"; frames[1].height=after+"px"; el._revealSwapOverflow=el.style.overflow; el.style.overflow="hidden"; }
+  const a=el.animate(frames,{duration:200,easing:"ease-out"});
+  el._revealSwap=a;
+  a.onfinish=()=>{
+    if(el._revealSwap!==a) return;
+    el._revealSwap=null;
+    if(el._revealSwapOverflow!==undefined){ el.style.overflow=el._revealSwapOverflow; el._revealSwapOverflow=undefined; }
+  };
+}
+/* A line whose words change fades the new words in; the same words leave it alone. cls, when
+   given, is the line's class (its tone), set either way. */
+function revealText(el,text,cls){
+  if(!el) return;
+  if(cls!==undefined) el.className=cls;
+  text=String(text==null?"":text);
+  if(el.textContent===text) return;
+  el.textContent=text;
+  if(typeof el.animate==="function"&&el.getClientRects().length)
+    el.animate([{opacity:"0"},{opacity:"1"}],{duration:200,easing:"ease-out"});
+}
+/* REVEAL-END */
 /* A name to stand out inside a sentence the catalog owns. The markup goes into the SLOT
    rather than into the entry, so the entry stays a plain sentence a translator can move
    the name around inside, and the catalog's no-markup rule still holds over it. esc()
@@ -9557,7 +9656,7 @@ let HERALD_HAS_POST=false;
 const HERALD_URL_RE=/^https:\/\/((ptb|canary)\.)?discord(app)?\.com\/api\/(v\d+\/)?webhooks\/\d+\/[\w-]+/;
 function heraldRenderPost(){
   const el=$("#heraldPostStat"); if(!el) return;
-  el.textContent=HERALD_HAS_POST?T("herald.post.placed"):T("herald.post.none");
+  revealText(el,HERALD_HAS_POST?T("herald.post.placed"):T("herald.post.none"));
 }
 /* A tick on the card is a checkbox, so its state is its own checked flag. */
 function heraldTick(id,on){const el=$("#"+id); if(!el) return false; el.checked=!!on; return !!on;}
@@ -9664,10 +9763,10 @@ function heraldLookValues(){
    it says the look is saved and nothing is posted. */
 function heraldRenderLookLine(){
   const el=$("#heraldLookStat"); if(!el) return;
-  if(HERALD_LOOK_REFUSED){el.className="wiz-stat bad";el.textContent="ᚦ "+T(HERALD_LOOK_REFUSED);return;}
+  if(HERALD_LOOK_REFUSED){revealText(el,"ᚦ "+T(HERALD_LOOK_REFUSED),"wiz-stat bad");return;}
   /* This realm off: the look is kept, and this realm's post is not made. */
   const mine=$("#tHeraldRealm");
-  if(mine&&!mine.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.look.preview.realm_off");return;}
+  if(mine&&!mine.classList.contains("on")){revealText(el,T("herald.look.preview.realm_off"),"wiz-stat dim");return;}
   const name=heraldLookBox("heraldName"), avatar=heraldLookBox("heraldAvatar");
   const title=heraldLookBox("heraldTitle"), status=heraldLookBox("heraldStatusLine");
   const link=$("#tHeraldLink");
@@ -9678,8 +9777,7 @@ function heraldRenderLookLine(){
   ];
   if(status) parts.push(T("herald.look.part.status"));
   if(!link||link.classList.contains("on")) parts.push(T("herald.look.part.link"));
-  el.className="wiz-stat ok";
-  el.textContent=T("herald.look.preview",{parts:parts.join(T("herald.look.part.join"))});
+  revealText(el,T("herald.look.preview",{parts:parts.join(T("herald.look.part.join"))}),"wiz-stat ok");
 }
 /* Paint the app-wide switch from the saved preferences, and drop a standing refusal: it was
    about text that is no longer in the box. The name, the picture, the title and the status
@@ -9762,12 +9860,11 @@ function heraldRenderModCodeLine(){
   const box=$("#heraldModCode");
   const code=box?String(box.value||"").trim():"";
   const kind=heraldModCodeKind();
-  if(HERALD_MODCODE_REFUSED){el.className="wiz-stat bad";el.textContent="ᚦ "+T("herald.modcode.refused");return;}
-  if(!code){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.none");return;}
+  if(HERALD_MODCODE_REFUSED){revealText(el,"ᚦ "+T("herald.modcode.refused"),"wiz-stat bad");return;}
+  if(!code){revealText(el,T("herald.modcode.preview.none"),"wiz-stat dim");return;}
   const mine=$("#tHeraldRealm");
-  if(mine&&!mine.classList.contains("on")){el.className="wiz-stat dim";el.textContent=T("herald.modcode.preview.realm_off");return;}
-  el.className="wiz-stat ok";
-  el.textContent=T("herald.modcode.preview",{name:heraldModCodeName(kind)});
+  if(mine&&!mine.classList.contains("on")){revealText(el,T("herald.modcode.preview.realm_off"),"wiz-stat dim");return;}
+  revealText(el,T("herald.modcode.preview",{name:heraldModCodeName(kind)}),"wiz-stat ok");
 }
 /* Paint the radios and the box from the active realm's saved profile. A realm with no kind
    saved shows Thunderstore chosen, which is only where the radio rests: nothing is posted
@@ -9783,11 +9880,11 @@ function heraldRenderModCode(){
   heraldRenderModTick(!!String(p.ModProfileCode||"").trim());
   heraldRenderModCodeLine();
 }
-/* The tick in front of the code (1.2.17): on shows the kind and the box, off hides them. */
+/* The tick in front of the code (1.2.17): on rolls the kind, the box and the line under them
+   in below it, off rolls them away (reveal), so the rows under them slide rather than jump. */
 function heraldRenderModTick(on){
   const t=$("#tHeraldModCode"); if(t) t.checked=!!on;
-  const w=$("#heraldModCodeWrap"); if(w) w.style.display=on?"":"none";
-  const st=$("#heraldModCodeStat"); if(st) st.style.display=on?"":"none";
+  reveal($("#heraldModCodeWrap"),!!on);
 }
 /* A commit: the box was left or Enter was pressed, or a radio moved. Answers true when the
    code was saved (or, in the browser preview, kept), false when it was refused. */
@@ -9889,14 +9986,13 @@ function heraldRenderRealmLines(){
   const on=$("#heraldOnLabel");
   if(on) on.textContent=T("herald.screen.on",{name});
   const pill=$("#heraldRealmPill");
-  if(pill){pill.textContent=name?T("herald.realm.editing",{name}):"";pill.style.display=name?"":"none";}
+  if(pill){if(name) pill.textContent=T("herald.realm.editing",{name}); reveal(pill,!!name,{fade:true});}
   const b=heraldRealmEntry(name);
   const url=String(b.WebhookUrl||"").trim();
   const line=$("#heraldHookLine");
-  if(line) line.textContent=!url?T("herald.hook.line.none")
-    :b.WebhookName?T("herald.hook.line.named",{name:String(b.WebhookName)}):T("herald.hook.line.unnamed");
-  const btn=$("#heraldHookChange");
-  if(btn) btn.textContent=url?T("herald.hook.change"):T("herald.hook.setup");
+  revealText(line,!url?T("herald.hook.line.none")
+    :b.WebhookName?T("herald.hook.line.named",{name:String(b.WebhookName)}):T("herald.hook.line.unnamed"));
+  revealText($("#heraldHookChange"),url?T("herald.hook.change"):T("herald.hook.setup"));
   try{heraldRenderWarns(b);}catch(_){}
 }
 /* Paint the card from the realm's block. A switch to another realm reads the host side again,
@@ -9998,14 +10094,15 @@ async function heraldRemove(){
    people: the server starting, stopping or updating (and the rest of the routine news: update
    failed, held, old world, cheat marks cleared, mods updated), the server crashing (the call to
    action, which can ping one role), and players coming and going. Each kind is a tick on the
-   card; its webhook and thread live in the Send these somewhere else dialog and are blank for
-   the same place as the post. They ride in the realm's Herald block, so the host side decides
-   whether a message goes and where, and this block only paints and reads them. The role box
-   shows only while crashes are ticked. A realm with nothing read yet has every kind off. */
+   card, and while it is ticked its webhook and thread (and for crashes the role) roll in right
+   under it, each blank for the same place as the post (the combined dialog for them left in the
+   1.2.17 follow-up). Unticking rolls them away and keeps what was typed, which still saves. They
+   ride in the realm's Herald block, so the host side decides whether a message goes and where,
+   and this block only paints and reads them. A realm with nothing read yet has every kind off. */
 const HERALD_EVENT_KINDS=[
-  {kind:"Routine",sw:"tHeraldRoutine",url:"heraldRoutineUrl",thread:"heraldRoutineThread",warn:"heraldRoutineWarn"},
-  {kind:"Crash",sw:"tHeraldCrash",url:"heraldCrashUrl",thread:"heraldCrashThread",role:"heraldCrashRole",warn:"heraldCrashWarn"},
-  {kind:"Players",sw:"tHeraldPlayers",url:"heraldPlayersUrl",thread:"heraldPlayersThread",warn:"heraldPlayersWarn"},
+  {kind:"Routine",sw:"tHeraldRoutine",more:"heraldRoutineMore",url:"heraldRoutineUrl",thread:"heraldRoutineThread",warn:"heraldRoutineWarn"},
+  {kind:"Crash",sw:"tHeraldCrash",more:"heraldCrashMore",url:"heraldCrashUrl",thread:"heraldCrashThread",role:"heraldCrashRole",warn:"heraldCrashWarn"},
+  {kind:"Players",sw:"tHeraldPlayers",more:"heraldPlayersMore",url:"heraldPlayersUrl",thread:"heraldPlayersThread",warn:"heraldPlayersWarn"},
 ];
 /* Paint the three kinds from a realm's block. */
 function heraldRenderEvents(b){
@@ -10017,13 +10114,12 @@ function heraldRenderEvents(b){
     set(k.thread,b[k.kind+"ThreadId"]);
     if(k.role) set(k.role,b[k.kind+"RoleId"]);
   });
-  heraldRenderRoleBox();
+  heraldRenderKindBoxes();
   heraldRenderWarns(b);
 }
-/* The role box stands beside the crash tick only while it is ticked. */
-function heraldRenderRoleBox(){
-  const w=$("#heraldCrashRoleWrap");
-  if(w) w.style.display=heraldTicked("tHeraldCrash")?"":"none";
+/* Each kind's boxes stand under its tick only while it is ticked, rolled in and out. */
+function heraldRenderKindBoxes(){
+  HERALD_EVENT_KINDS.forEach(k=>reveal($("#"+k.more),heraldTicked(k.sw)));
 }
 /* One line under a kind whose last message Discord refused for naming no thread in a forum
    channel, so the host sees it here and not only in the Saga. */
@@ -10032,8 +10128,8 @@ function heraldRenderWarns(b){
   HERALD_EVENT_KINDS.forEach(k=>{
     const w=$("#"+k.warn); if(!w) return;
     const show=!!b[k.kind+"NoThread"];
-    w.style.display=show?"":"none";
-    w.textContent=show?"ᚦ "+T("herald.events.nothread"):"";
+    if(show) w.textContent="ᚦ "+T("herald.events.nothread");
+    reveal(w,show);
   });
 }
 /* What a save carries for the three kinds, read off the controls, merged into the realm's
@@ -10060,13 +10156,13 @@ function heraldEventsAllOn(){
 function heraldEventsFromWizard(was,now){
   if(!!was===!!now) return false;
   HERALD_EVENT_KINDS.forEach(k=>heraldTick(k.sw,!!now));
-  heraldRenderRoleBox();
+  heraldRenderKindBoxes();
   return true;
 }
 /* A tick saves when it changes, a box when it is left, like the realm's other boxes. */
 function heraldWireEvents(){
   HERALD_EVENT_KINDS.forEach(k=>{
-    const sw=$("#"+k.sw); if(sw) sw.addEventListener("change",()=>{heraldRenderRoleBox();heraldSave();});
+    const sw=$("#"+k.sw); if(sw) sw.addEventListener("change",()=>{heraldRenderKindBoxes();heraldSave();});
     [k.url,k.thread,k.role].forEach(id=>{
       const el=id?$("#"+id):null; if(el) el.addEventListener("change",()=>heraldSave());
     });
@@ -10119,6 +10215,10 @@ const HERALD_PREVIEW_KINDS={Routine:"herald.events.routine",Crash:"herald.events
 function heraldPreviewPaint(r){
   const post=$("#heraldPreviewPost"), events=$("#heraldPreviewEvents");
   if(!post||!events) return;
+  /* A refresh fades the new post in and slides what is under it to the new height. */
+  revealSwap($("#heraldPreview"),()=>heraldPreviewFill(post,events,r));
+}
+function heraldPreviewFill(post,events,r){
   if(!r||!r.ok){post.innerHTML="";events.innerHTML="";return;}
   post.innerHTML=heraldPreviewCard(r.payload);
   events.innerHTML=(Array.isArray(r.events)?r.events:[]).map(ev=>{
@@ -10158,16 +10258,16 @@ $("#tHeraldModCode").addEventListener("change",()=>{
   if(box&&String(box.value||"").trim()){box.value="";heraldModCodeCommit();}
 });
 /* HERALD-DIALOGS-BEGIN
-   Appearance and Send these somewhere else (1.2.17). Each dialog is a panel that lives at the
-   end of the Discord screen while closed (#heraldPanels), lent to the app's modal while open
-   and put back the moment the modal goes, however it goes. So their boxes are always the same
-   elements, painted by heraldRenderRealm and read by the saves like any other control, and a
-   dialog closed by Escape or a click outside it still saves what was typed: the panel is put
-   back first, then the save reads it. */
-const HERALD_PANELS={look:$("#heraldLookPanel"),elsewhere:$("#heraldElsewherePanel")};
+   Appearance (1.2.17). The dialog is a panel that lives at the end of the Discord screen while
+   closed (#heraldPanels), lent to the app's modal while open and put back the moment the modal
+   goes, however it goes. So its boxes are always the same elements, painted by heraldRenderRealm
+   and read by the saves like any other control, and a dialog closed by Escape or a click outside
+   it still saves what was typed: the panel is put back first, then the save reads it. The Send
+   these somewhere else dialog left in the 1.2.17 follow-up: each kind's boxes roll in under its
+   own tick. The dialog fades out as it goes (data-fade-out, read by modalClose). */
+const HERALD_PANELS={look:$("#heraldLookPanel")};
 const HERALD_DIALOGS={
   look:{titleId:"herald.look.label",commit:()=>heraldLookCommit()},
-  elsewhere:{titleId:"herald.elsewhere.title",commit:()=>heraldSave()},
 };
 function heraldPanelsHome(){
   const home=$("#heraldPanels"); if(!home) return;
@@ -10183,6 +10283,7 @@ function heraldDialog(which){
   const m=modalOpen(`<div class="mtitle">${esc(T(d.titleId))}</div><div class="herald-one" data-herald-slot></div>`+
     `<div class="wiz-nav"><span class="grow"></span><button class="btn btn-ember btn-sm" data-herald-done>${esc(T("common.button.close"))}</button></div>`,
     ()=>heraldDialog(which));
+  m.dataset.fadeOut="1";
   m.querySelector("[data-herald-slot]").appendChild(panel);
   m.querySelector("[data-herald-done]").addEventListener("click",()=>modalClose());
   onModalDismissed(()=>{heraldPanelsHome();try{d.commit();}catch(_){}});
@@ -10211,7 +10312,6 @@ $("#heraldPublish").addEventListener("click",()=>{heraldPublish();});
 $("#heraldRemove").addEventListener("click",()=>{heraldRemove();});
 $("#heraldHookChange").addEventListener("click",()=>heraldWizard());
 $("#heraldLookBtn").addEventListener("click",()=>heraldDialog("look"));
-$("#heraldElsewhereBtn").addEventListener("click",()=>heraldDialog("elsewhere"));
 heraldWireHelp();
 
 /* ---------- CONTEXT MENU (live, JS-positioned) ---------- */
@@ -10308,12 +10408,32 @@ function redrawOpenModal(){
 function modalClose(){
   wgTipClose();               // a dial panel must not outlive the dialog that opened it
   releaseModalScrollCues();   // let go of this modal's panes before the nodes are dropped
+  modalFadeOut();
   modalBg.classList.remove("open");
   modalBg.innerHTML="";
   MODAL_REDRAW=null;
   updateToastLift();
 }
 modalBg.addEventListener("mousedown",e=>{if(e.target===modalBg)modalClose();});
+/* A dialog that asked for it (data-fade-out on its .modal) fades out rather than vanishing
+   (1.2.17 follow-up, the owner's no-jump rule). The real dialog goes at once, as it always has,
+   so whatever runs on its dismissal sees it gone; a copy with no ids, names or clicks of its own
+   stands in its place for 0.2 s and fades. The later sweep turns this on for every dialog. */
+function modalFadeOut(){
+  const box=modalBg.firstElementChild;
+  if(!modalIsOpen()||!box||!box.dataset||!box.dataset.fadeOut||!modalBg.parentNode) return;
+  const ghost=modalBg.cloneNode(true);
+  ghost.removeAttribute("id");
+  ghost.querySelectorAll("[id],[name],[for]").forEach(n=>{n.removeAttribute("id");n.removeAttribute("name");n.removeAttribute("for");});
+  /* A copy carries what the markup says, not what was typed, so the boxes are copied over. */
+  const src=modalBg.querySelectorAll("input,textarea,select"), dst=ghost.querySelectorAll("input,textarea,select");
+  dst.forEach((n,i)=>{const o=src[i]; if(!o) return; n.value=o.value; n.checked=!!o.checked;});
+  ghost.classList.add("modal-ghost");
+  ghost.setAttribute("aria-hidden","true");
+  ghost.setAttribute("inert","");
+  modalBg.parentNode.insertBefore(ghost,modalBg.nextSibling);
+  setTimeout(()=>ghost.remove(),220);
+}
 /**
  * Puts one dialog on screen.
  * @param {string} html the dialog, worded and escaped by the caller
