@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Newtonsoft.Json;
 
 namespace ValheimBakaLoader.Tools.Models
@@ -52,6 +53,16 @@ namespace ValheimBakaLoader.Tools.Models
 
         [JsonProperty("full_name")]
         public string FullName { get; set; }
+
+        /// <summary>
+        /// What this version says it needs, as the site lists it: "Owner-Name-x.y.z" per entry,
+        /// the version being the lowest one the author built against. The package page carries it
+        /// on "latest", the per-version page on the version itself, and the community listing on
+        /// every entry of versions[]. Null when the answer had no such field, which is read as
+        /// "it needs nothing BakaLoader was told about", never as a failure.
+        /// </summary>
+        [JsonProperty("dependencies")]
+        public List<string> Dependencies { get; set; }
 
         /// <summary>
         /// When this version was published to Thunderstore, from the API's

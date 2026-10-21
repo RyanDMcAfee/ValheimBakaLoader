@@ -4368,6 +4368,11 @@ function modSearchText(m){
       :m.notListed?T("mods.status.not_listed")
       :(m.UpdateAvailable?T("mods.status.update"):T("mods.status.current")),
     m.possiblyOutdated&&!m.IsPatcher?T("mods.possibly_outdated.yes"):"",
+    /* The warning pill, word for word as the row draws it, and the names of what it needs,
+       so typing "needs" or the missing library's name finds the rows waiting on it. */
+    modNeeds(m).length===1?T("mods.deps.pill.one",{name:modNeeds(m)[0].name||modNeeds(m)[0].fullName})
+      :modNeeds(m).length?T("mods.deps.pill.many",{count:modNeeds(m).length}):"",
+    ...modNeeds(m).map(n=>n.name||n.fullName),
   ];
   return bits.filter(Boolean).join(" ");
 }
@@ -4580,6 +4585,14 @@ function renderModIndexLine(count){
     :(both?T("mods.index.line.unread.both",p):T("mods.index.line.unread",p));
   el.title=S.modIndexSource==="listing-index"?T("mods.index.via.listing_index")
     :(S.modIndexSource==="v1"?T("mods.index.via.full_listing"):"");
+  renderModNeedsLine();
+}
+/* Beside the line above, and only when a row needs something: how many rows carry the
+   warning pill. Its own element and its own sentence, so the line above stays whole. */
+function renderModNeedsLine(){
+  const el=$("#modsNeeds"); if(!el) return;
+  const n=(S.mods||[]).filter(m=>modNeeds(m).length).length;
+  el.textContent=n?T("mods.index.needs",{count:n}):"";
 }
 /* The two buttons in the Mods header say which sites they reach, so they follow the
    Upkeep switch rather than naming Thunderstore whatever the setting is. A host who never
@@ -4788,6 +4801,7 @@ function renderMods(){
       :failed?T("mods.index.line.failed"):T("mods.index.line.not_scanned");
     /* Nothing has been read, so the note saying which address answered goes with it. */
     $("#modsSub").title="";
+    renderModNeedsLine();
     renderModShowing(0,0);
     return;
   }
@@ -4901,10 +4915,34 @@ function modInstalledCell(m){
     return `<td class="mono"><span class="modchip modver from-ts" title="${esc(T("mods.tag.installed.thunderstore.tip"))}">${v}</span></td>`;
   return `<td class="mono">${v}</td>`;
 }
+/* What a row's manifest asks for that the realm does not give it, as the scan handed it
+   over. The host side works it out from the manifests on disk, so a hand copy with no
+   manifest has none and a row from an older build reads as needing nothing. */
+function modNeeds(m){
+  return (m&&Array.isArray(m.missingDependencies))?m.missingDependencies.filter(n=>n&&n.fullName):[];
+}
+/* One dependency in one whole sentence, for the pill's tooltip and the dialog's rows: not
+   there (with or without the version asked for), there but older, or there and off. */
+function modDepLine(n){
+  const name=n.name||n.fullName;
+  if(n.state==="off") return T("mods.deps.line.off",{name});
+  if(n.state==="older") return T("mods.deps.line.older",{name,installed:n.installedVersion||"?",version:n.minVersion||"?"});
+  return n.minVersion?T("mods.deps.line.missing.version",{name,version:n.minVersion}):T("mods.deps.line.missing",{name});
+}
+/* The warning beside the Status pill. One dependency is named; more are counted, with every
+   one of them listed on hover. Nothing at all for a row that has what it asked for. */
+function modNeedsPill(m){
+  const needs=modNeeds(m);
+  if(!needs.length) return "";
+  const label=needs.length===1?T("mods.deps.pill.one",{name:needs[0].name||needs[0].fullName})
+    :T("mods.deps.pill.many",{count:needs.length});
+  const tip=[T("mods.deps.pill.tip")].concat(needs.map(modDepLine)).join("\n");
+  return ` <span class="pill amber modneeds" title="${esc(tip)}">${esc(label)}</span>`;
+}
 function modRowHtml(m,blind){
   const has=!!m.UpdateAvailable;
   const st=S.modRowStatus&&S.modRowStatus[m.FullName];
-  const statusCell=st?renderRowStatus(st):modStatusPill(m,blind);
+  const statusCell=(st?renderRowStatus(st):modStatusPill(m,blind))+modNeedsPill(m);
   /* Patcher-only mods are not update-tracked (the install path is plugins-oriented), so the
      possibly-outdated hint stays blank for them. */
   const po=(m.possiblyOutdated&&!m.IsPatcher)
@@ -6128,6 +6166,10 @@ function modRowItems(mod){
     items.push({r:"ᚨ",label:T("mods.menu.reinstall"),
       title:mod.layout==="nested"?T("mods.menu.reinstall.tip.nested"):"",
       fn:()=>reinstallModFlow(mod)});
+  /* Only on a row whose pill says it needs something: the same dialog a pasted link opens
+     after its install, with the same ticks. */
+  if(modNeeds(mod).length)
+    items.push({r:"ᚨ",label:T("mods.menu.install_needs"),fn:()=>modDepsDialog(mod.ModName||mod.FullName,modNeeds(mod))});
   /* Off and on, by the files' names (.dll.old is what BepInEx skips), with nothing removed
      and no config touched. One entry, worded for the state the row is in. */
   const up=modRealmUp();
@@ -6408,9 +6450,23 @@ function hexiumFailToast(r){
 const HEXIUM_PREVIEW={Owner:"JereKuusela",Name:"WorldEditCommands",Version:"1.67.0",
   FileSize:1830412,Replacing:true,ReplacingVersion:"1.65.0",
   Dependencies:["denikson-BepInExPack_Valheim-5.4.2350"],Token:"preview"};
+/* The mark a Hexium dependency line carries, from the host side's DependencyMarks: missing,
+   older than asked for, or switched off. A line with no mark is there, on and new enough. The
+   mark's own name is read off the line the way the host side reads it, the version split off
+   the last hyphen. */
+function hexiumDepMark(dep,marks){
+  const s=String(dep||"").trim();
+  const cut=s.lastIndexOf("-");
+  const full=(cut>0&&/^\d/.test(s.slice(cut+1)))?s.slice(0,cut):s;
+  const mk=(marks||[]).find(x=>x&&x.fullName&&String(x.fullName).toLowerCase()===full.toLowerCase());
+  if(!mk) return "";
+  const word=mk.state==="off"?T("mods.deps.mark.off"):mk.state==="older"?T("mods.deps.mark.older"):T("mods.deps.mark.missing");
+  return ` <span class="moddep-mark">${esc(word)}</span>`;
+}
 function hexiumConsentModal(pay,onAccept){
   const size=(pay.FileSize!=null&&Number(pay.FileSize)>0)?fmtBytes(pay.FileSize):null;
   const deps=Array.isArray(pay.Dependencies)?pay.Dependencies:[];
+  const marks=Array.isArray(pay.DependencyMarks)?pay.DependencyMarks:[];
   const body=()=>
     `<div class="mbody-note">${esc(T("mods.hexium.consent.note"))}</div>`+
     `<div class="mono-list">`+
@@ -6423,7 +6479,7 @@ function hexiumConsentModal(pay,onAccept){
       :`<div class="mbody-note">${esc(T("mods.hexium.consent.fresh"))}</div>`)+
     (deps.length
       ?`<div class="mbody-note" style="margin-top:10px">${esc(T("mods.hexium.consent.deps"))}</div>`+
-       `<div class="mono-list">${deps.map(d=>esc(d)).join("<br>")}</div>`
+       `<div class="mono-list">${deps.map(d=>esc(d)+hexiumDepMark(d,marks)).join("<br>")}</div>`
       :"")+
     ((S.state?.status==="Running")
       ?`<div class="mwarn">⚠ ${esc(T("mods.hexium.consent.running"))}</div>`:"");
@@ -6514,7 +6570,8 @@ function addModFlow(){
     ()=>T("common.button.install"),m=>{
       const url=(m.querySelector("#mModUrl")?.value||"").trim();
       if(!url){toast("ᚦ "+T("mods.add.no_link.toast"));return;}
-      doAddMod(url);
+      /* The one road that offers what the mod needs once it is in. */
+      doAddMod(url,undefined,{offerDeps:true});
     });
   const inp=document.querySelector("#mModUrl");
   if(inp){
@@ -6522,7 +6579,7 @@ function addModFlow(){
     inp.addEventListener("keydown",e=>{if(e.key==="Enter")document.querySelector("#mOk")?.click();});
   }
 }
-async function doAddMod(url,extra){
+async function doAddMod(url,extra,opts){
   if(S.modsUpdating||S.modsScanning) return;
   S.modsUpdating=true; renderMods();
   toast("ᚨ "+T("mods.add.fetching.toast"));
@@ -6565,7 +6622,7 @@ async function doAddMod(url,extra){
     renderMods();
     /* The pasted address is held right here and the same add is finished with it the
        moment the loader is in, so the host never types it twice. */
-    bepInExOfferModal(()=>doAddMod(url,extra));
+    bepInExOfferModal(()=>doAddMod(url,extra,opts));
     return;
   }
   /* Which site an answer came from. The two Hexium calls spell it Source and the
@@ -6589,6 +6646,13 @@ async function doAddMod(url,extra){
     logLine("ok","[Thunderstore] installed "+full+" v"+(r.Version||"?")+(r.Replaced?" (previous copy backed up)":""));
     if(S.state?.status==="Running") logLine("warn","[Thunderstore] server is running, so "+full+" loads on the next restart");
     await scanMods({force:false});
+    /* After the scan, so the table behind the dialog already shows the new row and its pill.
+       Only a pasted link asks: a Reinstall or a swap passes no opts and reads nothing here. */
+    const needs=(opts&&opts.offerDeps&&Array.isArray(r.missingDependencies))?r.missingDependencies:[];
+    if(needs.length){
+      logLine("warn","[Thunderstore] "+full+" needs: "+needs.map(n=>n.fullName+" ("+n.state+")").join(", "));
+      modDepsDialog(r.Name||full,needs);
+    }
   }else{
     /* A refusal that named itself is said in the reader's own language here too. The add
        carries the id in Reason and the sentence's named values in ErrorParams, so a
@@ -6611,6 +6675,95 @@ $("#addModBtn").addEventListener("click",()=>{
   toast("ᚨ "+T("mods.add.native_only.toast"));
 });
 
+/* MODDEPS-BEGIN: what a mod needs, offered after a link install and from a row's menu.
+   A mod installed by link without the library it is built on never loads, and BepInEx says so
+   in its own log where nobody reads it. The host side hands back what is missing, older than
+   asked for, or switched off; this asks before it fetches any of it, one ticked row at a time
+   through the same add with the realm and requireStopped, the way the Gale walk does. The Gale
+   walk and a row's Reinstall never open this: they read nothing of missingDependencies. */
+/* Thunderstore's page for a package's newest build, which is what a dependency is fetched as. */
+function modDepUrl(fullName){
+  const dash=fullName.indexOf("-");
+  return "https://thunderstore.io/c/valheim/p/"+fullName.slice(0,dash)+"/"+fullName.slice(dash+1)+"/";
+}
+/* The reasons the walk stops on rather than trying the next row: each one would refuse the
+   next row the same way. */
+const MODDEPS_STOPS=["serverRunning","realmChanged","noBepInEx","noServerPath","busy"];
+function modDepFailSentence(r){
+  const gone=modNotAvailableText(r);
+  if(gone) return gone;
+  if(r.Reason==="serverRunning")
+    return T("mods.deps.install.server_running.toast",{name:(r.ErrorParams&&r.ErrorParams.name)||S.profileName||""});
+  if(r.Reason==="realmChanged") return T("mods.deps.install.realm_changed.toast");
+  return hostSentence(r.Reason,r.ErrorParams)||T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")});
+}
+/* The dialog. Missing and older rows are ticked; an off row has no tick, because fetching a
+   copy over one that is only switched off is not the fix, and offers Switch on instead. */
+function modDepsDialog(who,needs){
+  const list=(needs||[]).filter(n=>n&&n.fullName);
+  if(!list.length) return null;
+  const up=modRealmUp();
+  const rows=list.map((n,i)=>n.state==="off"
+    ?`<div class="mchk moddep-off"><span>${esc(modDepLine(n))}</span> <button class="btn btn-ghost btn-sm" data-dep-on="${i}">${esc(T("mods.menu.enable"))}</button></div>`
+    :`<label class="mchk"><input type="checkbox" data-dep="${i}" checked> ${esc(modDepLine(n))}</label>`).join("");
+  const m=modalOpen(
+    `<div class="mtitle">${esc(T("mods.deps.dialog.title",{mod:who}))}</div>`+
+    `<div class="mbody"><div class="mbody-note">${esc(T("mods.deps.dialog.note"))}</div>${rows}`+
+    (up?`<div class="mwarn">⚠ ${esc(T("mods.deps.dialog.running"))}</div>`:"")+`</div>`+
+    `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("mods.deps.dialog.later"))}</button><button class="btn btn-ember btn-sm" id="mOk">${esc(T("common.button.install"))}</button></div>`);
+  const ok=m.querySelector("#mOk");
+  /* The walk sends requireStopped, so a server holding the plugins open would refuse the
+     first row anyway; the button says so before it is pressed. */
+  if(up) ok.disabled=true;
+  ok.addEventListener("click",()=>{
+    const ticked=[...m.querySelectorAll("input[data-dep]")].filter(c=>c.checked).map(c=>list[Number(c.dataset.dep)]);
+    modalClose();
+    if(!ticked.length){toast("ᚨ "+T("mods.deps.install.none.toast"));return;}
+    modDepsInstall(ticked);
+  });
+  m.querySelector("#mCancel").addEventListener("click",modalClose);
+  [...m.querySelectorAll("button[data-dep-on]")].forEach(b=>b.addEventListener("click",async()=>{
+    const n=list[Number(b.dataset.depOn)];
+    b.disabled=true;
+    await setModEnabled({FullName:n.fullName,ModName:n.name||n.fullName},true);
+  }));
+  return m;
+}
+/* One ticked row at a time through the Mods hall's own add, newest build, with the realm and
+   requireStopped, then one scan. A row that fails is said and the walk goes on; a reason that
+   would refuse every row after it stops the walk. */
+async function modDepsInstall(list){
+  if(!Native.available){toast("ᛋ "+T("mods.add.preview.toast"));return;}
+  if(S.modsUpdating||S.modsScanning) return;
+  const profile=S.profileName||null;
+  S.modsUpdating=true;
+  toast("ᚨ "+T("mods.deps.install.begun.toast",{count:list.length}));
+  let done=0,failed=0;
+  for(let i=0;i<list.length;i++){
+    if(!isActiveProfile(profile)) break;
+    const n=list[i];
+    MOD_UPD={phase:"updating",total:list.length,done,current:n.fullName,index:i+1,labelId:"mods.deps.progress.one"};
+    renderModUpdateProgress(); renderMods();
+    const a=await rpc("mods.addFromUrl",{url:modDepUrl(n.fullName),profile,requireStopped:true});
+    if(a!==FAIL&&a&&a.Installed){
+      done++;
+      logLine("ok","[Thunderstore] installed "+n.fullName+" v"+(a.Version||"?")+(n.requiredBy?" (needed by "+n.requiredBy+")":""));
+    }else{
+      failed++;
+      const why=a===FAIL||!a?null:modDepFailSentence(a);
+      if(why) toast("ᚦ "+why);
+      logLine("warn","[Thunderstore] could not install "+n.fullName+": "+((a&&a!==FAIL&&a.Error)||"unknown"));
+      if(a&&a!==FAIL&&MODDEPS_STOPS.includes(a.Reason)) break;
+    }
+  }
+  MOD_UPD=null; renderModUpdateProgress();
+  S.modsUpdating=false;
+  if(done&&!failed&&done===list.length) toast("ᚨ "+T("mods.deps.install.done.toast",{count:done}));
+  else if(done) toast("ᚦ "+T("mods.deps.install.partial.toast",{done,total:list.length}));
+  if(isActiveProfile(profile)) await scanMods({force:false});
+  else renderMods();
+}
+/* MODDEPS-END */
 /* GALE-BEGIN: following a Gale synced profile (issue 19).
  *
  * One box in the Mods hall, one row on the condition bar and one dialog. The host pastes a

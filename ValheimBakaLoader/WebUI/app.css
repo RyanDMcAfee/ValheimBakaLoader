@@ -469,6 +469,9 @@ html.lang-pending body>*{visibility:hidden}
 .pagehead h1{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:4px;color:var(--bone)}
 .pagehead h1 .r{color:var(--ember);margin-right:8px;text-shadow:0 0 10px rgba(255,122,26,.6)}
 .pagehead .sub{font-size:11px;color:var(--bone-dim);letter-spacing:.5px}
+/* The count of Mods rows that need something: amber like the pill it counts, gone when empty. */
+.pagehead .sub.modsneeds{color:var(--amber)}
+.pagehead .sub.modsneeds:empty{display:none}
 .pagehead .grow{flex:1}
 /* The Players hall's two cheat-mark controls, as a PAIR. The button and the switch beside it are
    one offer said two ways, and the head is a wrapping flex row: at 1024x680 the three things on
@@ -1256,6 +1259,10 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 .mlink:focus-visible{outline:1px solid var(--ember);outline-offset:2px}
 .modal .mchk{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--bone);cursor:pointer}
 .modal .mchk input{accent-color:var(--ember)}
+/* A dependency the dialogs mark as not there, older or off: amber, beside the line it marks. */
+.moddep-mark{color:var(--amber);font-family:var(--sans);font-size:10px;letter-spacing:.3px}
+/* An off row in the dependency dialog has a button where a tick would be, so it reads as text. */
+.modal .mchk.moddep-off{cursor:default;justify-content:space-between}
 /* server-console picker (consoleModal) */
 .modal .clist{max-height:250px;overflow-y:auto;border:1px solid var(--bronze);border-radius:7px;
   background:var(--iron-deeper);padding:4px}

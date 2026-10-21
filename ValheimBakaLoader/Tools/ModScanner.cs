@@ -268,6 +268,10 @@ namespace ValheimBakaLoader.Tools
                     InstalledVersion = installedVersion,
                     Website = manifest.WebsiteUrl,
                     Dependencies = ParseDependencyFullNames(manifest.Dependencies),
+                    // The same list with each entry's version kept, for the check that says a
+                    // dependency on disk is older than the one this mod was built against.
+                    DeclaredDependencies = (manifest.Dependencies ?? Array.Empty<string>())
+                        .Where(d => !string.IsNullOrWhiteSpace(d)).Select(d => d.Trim()).ToArray(),
                     // Where these files came from, when BakaLoader put them there itself
                     // and left a note saying so. The note is only believed when it names
                     // the same version the manifest does, so a folder replaced since is

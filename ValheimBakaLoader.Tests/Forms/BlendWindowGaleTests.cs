@@ -18,6 +18,7 @@ using ValheimBakaLoader.Game;
 using ValheimBakaLoader.Tools;
 using ValheimBakaLoader.Tools.Http;
 using ValheimBakaLoader.Tools.Logging;
+using ValheimBakaLoader.Tools.Models;
 using ValheimBakaLoader.Tests.Tools;
 using Xunit;
 
@@ -54,6 +55,8 @@ namespace ValheimBakaLoader.Tests.Forms
         private readonly Dictionary<string, Func<JObject, Task<object>>> Rpc;
         private readonly Mock<IModUpdateService> ModUpdates = new();
         private readonly Mock<IBepInExService> BepInEx = new();
+        private readonly Mock<IThunderstoreClient> Thunderstore = new();
+        private readonly Mock<IHexiumClient> Hexium = new();
 
         public BlendWindowGaleTests()
         {
@@ -87,6 +90,10 @@ namespace ValheimBakaLoader.Tests.Forms
             {
                 [typeof(IModUpdateService)] = ModUpdates.Object,
                 [typeof(IBepInExService)] = BepInEx.Object,
+                // Loose, and answering nothing unless a test says otherwise: the Gale tests never
+                // reach it, and the dependency tests below give it the answers they need.
+                [typeof(IThunderstoreClient)] = Thunderstore.Object,
+                [typeof(IHexiumClient)] = Hexium.Object,
             });
             typeof(BlendWindow).GetField("CurrentProfile", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(Window, Profile);
         }
@@ -371,6 +378,200 @@ namespace ValheimBakaLoader.Tests.Forms
 
             Assert.True(a.Value<bool>("Installed"));
             ModUpdates.Verify(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()), Times.Once);
+        }
+
+        // ------------------------------------------------------------------ 1.2.16: what the mod needs
+
+        private const string ForgeUrl = "https://thunderstore.io/c/valheim/p/MySix/MySix_ForgeOfPotential/";
+
+        /// <summary>A plugin folder with a manifest that lists these dependencies.</summary>
+        private void InstallNeeding(string fullName, string version, params string[] needs)
+        {
+            var dir = Path.Combine(Plugins, fullName);
+            Directory.CreateDirectory(dir);
+            var name = fullName.Substring(fullName.IndexOf('-') + 1);
+            File.WriteAllText(Path.Combine(dir, "manifest.json"), JsonConvert.SerializeObject(new
+            {
+                name, version_number = version, website_url = "", description = "", dependencies = needs,
+            }));
+        }
+
+        /// <summary>The install mock answering with what the installed build said it needs, and writing its folder.</summary>
+        private void InstallAnswers(params string[] needs)
+        {
+            ModUpdates.Setup(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()))
+                .ReturnsAsync((ThunderstoreModReference r, string _) =>
+                {
+                    InstallNeeding($"{r.Owner}-{r.Name}", r.Version ?? "1.0.0", needs);
+                    return new ModInstallResult
+                        { Installed = true, Owner = r.Owner, Name = r.Name, Version = r.Version ?? "1.0.0", Dependencies = needs };
+                });
+        }
+
+        private static ThunderstoreLiveLookup LatestNeeding(string owner, string name, params string[] needs) => new()
+        {
+            Answered = true,
+            Package = new ThunderstorePackage
+            {
+                Namespace = owner,
+                Name = name,
+                Latest = new ThunderstorePackageVersion { VersionNumber = "1.0.2", Dependencies = needs.ToList() },
+            },
+        };
+
+        [Fact]
+        public async Task A_link_install_hands_back_the_missing_dependency_and_the_one_behind_it()
+        {
+            InstallAnswers("denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2");
+            Thunderstore.Setup(t => t.LookupLiveAsync("MySix", "MySix_Core"))
+                .ReturnsAsync(LatestNeeding("MySix", "MySix_Core", "denikson-BepInExPack_Valheim-5.4.2350", "ValheimModding-Jotunn-2.25.0"));
+
+            var a = await Call("mods.addFromUrl", new { url = ForgeUrl });
+
+            Assert.True(a.Value<bool>("Installed"));
+            var needs = (JArray)a["missingDependencies"]!;
+            Assert.Equal(2, needs.Count);
+            Assert.Equal("MySix-MySix_Core", needs[0]!.Value<string>("fullName"));
+            Assert.Equal("MySix_Core", needs[0]!.Value<string>("name"));
+            Assert.Equal("missing", needs[0]!.Value<string>("state"));
+            Assert.Equal("1.0.2", needs[0]!.Value<string>("minVersion"));
+            Assert.Equal("MySix-MySix_ForgeOfPotential", needs[0]!.Value<string>("requiredBy"));
+            // Jotunn is on the server at 2.20.1, and the core asks for 2.25.0.
+            Assert.Equal("ValheimModding-Jotunn", needs[1]!.Value<string>("fullName"));
+            Assert.Equal("older", needs[1]!.Value<string>("state"));
+            Assert.Equal("2.20.1", needs[1]!.Value<string>("installedVersion"));
+            Assert.Equal("MySix-MySix_Core", needs[1]!.Value<string>("requiredBy"));
+            // One install, the pasted one: the host side offers, it never fetches on its own.
+            ModUpdates.Verify(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task A_link_install_with_everything_there_carries_an_empty_list()
+        {
+            InstallNeeding("MySix-MySix_Core", "1.0.5");
+            InstallAnswers("MySix-MySix_Core-1.0.2", "ValheimModding-Jotunn-2.20.0");
+
+            var a = await Call("mods.addFromUrl", new { url = ForgeUrl });
+
+            Assert.True(a.Value<bool>("Installed"));
+            Assert.Equal(JTokenType.Array, a["missingDependencies"]!.Type);
+            Assert.Empty(a["missingDependencies"]!);
+            // Everything was on disk, so the site was never asked.
+            Thunderstore.Verify(t => t.LookupLiveAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task The_BepInEx_pack_counts_as_there_when_BepInEx_is_installed()
+        {
+            InstallAnswers("denikson-BepInExPack_Valheim-5.4.2350");
+
+            var a = await Call("mods.addFromUrl", new { url = ForgeUrl });
+
+            Assert.True(a.Value<bool>("Installed"));
+            Assert.Empty(a["missingDependencies"]!);
+            Thunderstore.Verify(t => t.LookupLiveAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task A_refused_add_has_the_same_shape_with_nothing_in_it()
+        {
+            var a = await Call("mods.addFromUrl", new { url = "not a link at all" });
+            Assert.False(a.Value<bool>("Installed"));
+            Assert.Equal("badUrl", a.Value<string>("Reason"));
+            Assert.Empty(a["missingDependencies"]!);
+        }
+
+        [Fact]
+        public async Task The_Gale_walks_add_is_one_install_whatever_the_mod_needs()
+        {
+            // The page's Gale walk ignores the field; the host side must not act on it either.
+            InstallAnswers("MySix-MySix_Core-1.0.2");
+
+            var a = await Call("mods.addFromUrl", new { url = PinnedUrl, profile = Profile, requireStopped = true });
+
+            Assert.True(a.Value<bool>("Installed"));
+            Assert.Single(a["missingDependencies"]!);
+            ModUpdates.Verify(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()), Times.Once);
+            ModUpdates.Verify(m => m.InstallFromThunderstoreAsync(
+                It.Is<ThunderstoreModReference>(r => r.Owner == "MySix"), It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public void The_scan_row_says_what_it_needs_from_the_disk_alone()
+        {
+            InstallNeeding("MySix-MySix_ForgeOfPotential", "1.0.0", "denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2");
+            Directory.CreateDirectory(Path.Combine(Plugins, "Someone-HandCopy"));
+            File.WriteAllText(Path.Combine(Plugins, "Someone-HandCopy", "HandCopy.dll"), "MZ");
+
+            // The scan RPC itself reaches both sites and the Hexium step, which this window was
+            // not built with, so the two steps it runs for the rows are driven as it runs them:
+            // the same scanner, then MarkMissingDependencies, then BuildModDto, through JSON.
+            var mods = new ModScanner(new Mock<IApplicationLogger>().Object).ScanPlugins(Plugins);
+            typeof(BlendWindow).GetMethod("MarkMissingDependencies", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(Window, new object[] { mods, Plugins });
+            var rows = JArray.Parse(JsonConvert.SerializeObject(mods.Select(m => BlendWindow.BuildModDto(m)).ToList()));
+            var forge = rows.Single(r => r.Value<string>("FullName") == "MySix-MySix_ForgeOfPotential");
+            var need = Assert.Single((JArray)forge["missingDependencies"]!);
+            Assert.Equal("MySix-MySix_Core", need!.Value<string>("fullName"));
+            Assert.Equal("missing", need.Value<string>("state"));
+            Assert.Empty(rows.Single(r => r.Value<string>("FullName") == "Someone-HandCopy")["missingDependencies"]!);
+            Assert.Empty(rows.Single(r => r.Value<string>("FullName") == "ValheimModding-Jotunn")["missingDependencies"]!);
+            // No site was asked about a dependency.
+            Assert.Empty(Thunderstore.Invocations);
+
+            // And the scan RPC runs the step before it builds its rows.
+            var bridge = AppSourceTree.Lf(AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindow.Bridge.cs"));
+            var scanRpc = bridge.Substring(bridge.IndexOf("RegisterRpc(\"mods.scan\"", StringComparison.Ordinal));
+            scanRpc = scanRpc.Substring(0, scanRpc.IndexOf("RegisterRpc(\"mods.checkOne\"", StringComparison.Ordinal));
+            Assert.True(scanRpc.IndexOf("MarkMissingDependencies(mods, pluginsDir);", StringComparison.Ordinal)
+                < scanRpc.IndexOf("BuildModDto(m, gameUpdatedUtc)", StringComparison.Ordinal));
+            Assert.Contains("MarkMissingDependencies(mods, pluginsDir);", scanRpc);
+        }
+
+        [Fact]
+        public async Task Hexiums_consent_marks_each_dependency_against_the_disk()
+        {
+            ((IUserPreferencesProvider)UserPrefs).Mutate(prefs => prefs.UseHexiumSource = true);
+            // A window built without its constructor has no consent gate; the real one is put in.
+            typeof(BlendWindow).GetField("HexiumConsent", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(Window, new HexiumConsentGate());
+            InstallNeeding("Azumatt-AzuCraftyBoxes", "1.8.4");
+            // Switched off: its plugin file is named .dll.old and there is no .dll beside it.
+            File.WriteAllText(Path.Combine(Plugins, "Azumatt-AzuCraftyBoxes", "AzuCraftyBoxes.dll.old"), "MZ");
+            Hexium.Setup(h => h.LookupAsync("JereKuusela-WorldEditCommands")).ReturnsAsync(new HexiumLookup
+            {
+                IndexAvailable = true,
+                Package = new HexiumPackage
+                {
+                    Owner = "JereKuusela",
+                    Name = "WorldEditCommands",
+                    Versions = new List<HexiumPackageVersion>
+                    {
+                        new()
+                        {
+                            VersionNumber = "1.67.0",
+                            DownloadUrl = "https://hexium.gg/download/1",
+                            Dependencies = new List<string>
+                            {
+                                "denikson-BepInExPack_Valheim-5.4.2350", "MySix-MySix_Core-1.0.2",
+                                "ValheimModding-Jotunn-2.25.0", "Azumatt-AzuCraftyBoxes-1.8.0",
+                            },
+                        },
+                    },
+                },
+            });
+
+            var r = await Call("mods.hexiumPrepare", new { owner = "JereKuusela", name = "WorldEditCommands", version = "1.67.0" });
+
+            Assert.True(r.Value<bool>("NeedsConsent"), r.ToString());
+            Assert.Equal(4, ((JArray)r["Dependencies"]!).Count);
+            var marks = ((JArray)r["DependencyMarks"]!).Select(m => (m!.Value<string>("fullName"), m.Value<string>("state"))).ToArray();
+            Assert.Equal(new[]
+            {
+                ("MySix-MySix_Core", "missing"),
+                ("ValheimModding-Jotunn", "older"),
+                ("Azumatt-AzuCraftyBoxes", "off"),
+            }, marks);
         }
 
         // ------------------------------------------------------------------ failures are a line

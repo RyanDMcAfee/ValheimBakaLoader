@@ -230,7 +230,8 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.menu.check_one", "mods.menu.check_one.tip.bundled",
                 "mods.menu.check_one.tip.no_package",
                 "mods.menu.disable", "mods.menu.enable",
-                "mods.menu.hexium", "mods.menu.install_hexium", "mods.menu.install_thunderstore",
+                // 1.2.16: Install what it needs, on a row whose pill says it needs something.
+                "mods.menu.hexium", "mods.menu.install_hexium", "mods.menu.install_needs", "mods.menu.install_thunderstore",
                 "mods.menu.reinstall", "mods.menu.reinstall.tip.nested",
                 "mods.menu.remove", "mods.menu.thunderstore", "mods.menu.thunderstore.tip.missing",
                 "mods.menu.toggle.tip.running",

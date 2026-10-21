@@ -526,6 +526,33 @@ function fnBody(source, head) {
     assert.deepStrictEqual(none.methods(), ["gale.untick", "gale.dismiss"], none.methods().join(","));
   });
 
+  await test("7b. 1.2.16: an add that says the mod needs something changes nothing in the walk", async () => {
+    /* From 1.2.16 every successful add hands back missingDependencies. The walk is unattended
+       by design, so it must read nothing of it: no dependency dialog, no extra call, the same
+       recorded order as a mod that needs nothing. */
+    const needs = [{ fullName: "MySix-MySix_Core", name: "MySix_Core", minVersion: "1.0.0", state: "missing" }];
+    const p = page({ replies: {
+      "gale.untick": { ok: true, state: state() },
+      "mods.addFromUrl": params => ({ Installed: true, Version: params.url.split("/v/")[1].replace("/", ""), missingDependencies: needs }),
+      "gale.dismiss": { ok: true, state: state({ lastApproved: "2026-10-11T09:00:00.123456+00:00", check: { due: false } }) },
+    } });
+    let offered = 0;
+    p.context.modDepsDialog = () => { offered++; };
+    p.context.modDepsInstall = () => { offered++; };
+    p.context.galeApply(state());
+    p.context.galeDialog();
+    const m = p.modals[0];
+    const rows = p.context.galeDialogRows(state()).rows;
+    for (const b of m.boxes) if (rows[Number(b.getAttribute())].name === "ValheimModding-Jotunn") b.checked = false;
+    m.handlers.galeInstall();
+    for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+    assert.deepStrictEqual(p.methods(), ["gale.untick", "mods.addFromUrl", "gale.dismiss"], p.methods().join(","));
+    assert.strictEqual(offered, 0, "the Gale walk offered the dependencies");
+    assert.strictEqual(p.modals.length, 1, "the Gale walk opened a second dialog");
+    const walk = fnBody(APP, "async function galeInstall(");
+    assert.ok(!/missingDependencies|modDeps/.test(walk), "galeInstall reads the dependency field");
+  });
+
   await test("8. the wiring: the box, the three moments, the realm switch, the host side", () => {
     const hall = HTML.slice(HTML.indexOf('id="page-mods"'), HTML.indexOf('id="modsTable"'));
     for (const id of ["galeBox", "galeId", "galeCheckBtn", "galeForgetBtn", "galeReviewBtn", "galeStatus"])

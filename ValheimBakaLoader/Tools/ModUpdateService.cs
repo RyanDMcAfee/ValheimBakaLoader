@@ -67,9 +67,12 @@ namespace ValheimBakaLoader.Tools
         public string Source { get; init; }
 
         /// <summary>
-        /// The mods this package's own manifest says it needs, as the index listed
-        /// them. Nothing here is installed for the host: it is handed back so the
-        /// page can say what else this mod expects to find. Never null.
+        /// The mods this package's own manifest says it needs, as the site listed them
+        /// ("Owner-Name-x.y.z"). Nothing here is installed for the host: it is handed back so
+        /// the page can say what else this mod expects to find and offer to fetch it. A
+        /// Thunderstore install fills it from the answer that named the version (the package
+        /// page for a link with no version, the per-version page for a pinned one), and leaves
+        /// it empty when neither answered. Never null.
         /// </summary>
         public string[] Dependencies { get; init; } = Array.Empty<string>();
 
@@ -462,6 +465,9 @@ namespace ValheimBakaLoader.Tools
             // server loads from is replaced.
             ThunderstorePackageVersion published = null;
 
+            // What the version being fetched says it needs, from whichever answer named it.
+            List<string> declared = null;
+
             if (!string.IsNullOrWhiteSpace(version))
             {
                 // A pinned version's download URL is always constructable directly, and
@@ -489,6 +495,7 @@ namespace ValheimBakaLoader.Tools
 
                 version = lookup.Package.LatestVersion;
                 published = lookup.Published;
+                declared = lookup.Package.Latest?.Dependencies;
             }
 
             // --- Download + extract + install ---
@@ -554,6 +561,13 @@ namespace ValheimBakaLoader.Tools
                     reference.FolderName, version ?? "?", targetDir, placement.Placed, placement.ConfigKept,
                     backupDir != null ? $" (previous copy backed up to {backupDir})" : "");
 
+                // A pinned link fetched its build with no lookup, so the build's own list of
+                // what it needs is asked for now, once, after the files are in. Asked after and
+                // not before on purpose: a site that will not answer this must never be what
+                // stops a pinned install that would otherwise have worked.
+                if (!string.IsNullOrWhiteSpace(reference.Version))
+                    declared = await PinnedDependenciesAsync(reference.Owner, reference.Name, version);
+
                 return new ModInstallResult
                 {
                     Owner = reference.Owner,
@@ -563,6 +577,7 @@ namespace ValheimBakaLoader.Tools
                     Installed = true,
                     Replaced = replacing,
                     Source = "thunderstore",
+                    Dependencies = CleanDependencyList(declared),
                 };
             }
             catch (Exception e)
@@ -605,6 +620,33 @@ namespace ValheimBakaLoader.Tools
                 TryDelete(tempZip);
                 TryDeleteDirectory(tempExtract);
             }
+        }
+
+        /// <summary>
+        /// What one pinned build says it needs, from its per-version page, or null when that did
+        /// not answer. Never throws: the install it follows has already happened.
+        /// </summary>
+        private async Task<List<string>> PinnedDependenciesAsync(string owner, string name, string version)
+        {
+            try
+            {
+                return (await Thunderstore.LookupVersionAsync(owner, name, version))?.Dependencies;
+            }
+            catch (Exception e)
+            {
+                Logger.Debug("Could not read what {0}-{1} {2} needs: {3}", owner, name, version, e.Message);
+                return null;
+            }
+        }
+
+        /// <summary>The entries that say something, trimmed, in the order the site gave. Never null.</summary>
+        internal static string[] CleanDependencyList(IEnumerable<string> declared)
+        {
+            if (declared == null) return Array.Empty<string>();
+            var list = new List<string>();
+            foreach (var entry in declared)
+                if (!string.IsNullOrWhiteSpace(entry)) list.Add(entry.Trim());
+            return list.ToArray();
         }
 
         /// <summary>The English sentence for a pinned build Thunderstore no longer has. The page words it from the catalog.</summary>

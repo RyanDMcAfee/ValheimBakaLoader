@@ -1854,6 +1854,128 @@
     "mods.menu.reinstall": {
       "translation": "[Ẋ Reinstall this version Ẋ] ẊẊẊẊẊẊẊ"
     },
+    "mods.deps.pill.one": {
+      "translation": "[Ẋ Needs {name} Ẋ] ẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.deps.pill.many": {
+      "translation": {
+        "one": "[Ẋ Needs {count} mod Ẋ] ẊẊẊẊ",
+        "other": "[Ẋ Needs {count} mods Ẋ] ẊẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "mods.deps.pill.tip": {
+      "translation": "[Ẋ Its manifest asks for these, and BepInEx will not load it without them: Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.deps.line.missing": {
+      "translation": "[Ẋ {name} is not installed Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.deps.line.missing.version": {
+      "translation": "[Ẋ {name} {version} or newer is not installed Ẋ] ẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "version": "text"
+      }
+    },
+    "mods.deps.line.older": {
+      "translation": "[Ẋ {name} is older than needed: {installed} is installed and {version} is asked for Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "installed": "text",
+        "version": "text"
+      }
+    },
+    "mods.deps.line.off": {
+      "translation": "[Ẋ {name} is installed but switched off Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.deps.mark.missing": {
+      "translation": "[Ẋ not installed Ẋ] ẊẊẊẊ"
+    },
+    "mods.deps.mark.older": {
+      "translation": "[Ẋ older than needed Ẋ] ẊẊẊẊẊẊ"
+    },
+    "mods.deps.mark.off": {
+      "translation": "[Ẋ switched off Ẋ] ẊẊẊẊ"
+    },
+    "mods.menu.install_needs": {
+      "translation": "[Ẋ Install what it needs Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "mods.deps.dialog.title": {
+      "translation": "[Ẋ {mod} needs these to load Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text"
+      }
+    },
+    "mods.deps.dialog.note": {
+      "translation": "[Ẋ Its manifest asks for these and this server does not have them as asked. The ticked ones are fetched from Thunderstore, newest build, one at a time. A switched off one only needs switching on. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.deps.dialog.running": {
+      "translation": "[Ẋ The server is running. Stop it first: nothing is written into a plugins folder a running server has open. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.deps.dialog.later": {
+      "translation": "[Ẋ Not now Ẋ] ẊẊẊ"
+    },
+    "mods.deps.progress.one": {
+      "translation": "[Ẋ Installing {mod} ({index} of {total}) Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text",
+        "index": "number",
+        "total": "number"
+      }
+    },
+    "mods.deps.install.begun.toast": {
+      "translation": {
+        "one": "[Ẋ Fetching {count} mod it needs… Ẋ] ẊẊẊẊẊẊẊ",
+        "other": "[Ẋ Fetching {count} mods it needs… Ẋ] ẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "mark": "ᚨ"
+    },
+    "mods.deps.install.done.toast": {
+      "translation": {
+        "one": "[Ẋ Installed the {count} mod it needed. It loads the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ Installed the {count} mods it needed. They load the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "mark": "ᚨ"
+    },
+    "mods.deps.install.partial.toast": {
+      "translation": "[Ẋ {done} of {total} installed. The Mods row still says what is missing. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "done": "number",
+        "total": "number"
+      },
+      "mark": "ᚦ"
+    },
+    "mods.deps.install.none.toast": {
+      "translation": "[Ẋ Nothing installed. The Mods row keeps saying what it needs. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "mark": "ᚨ"
+    },
+    "mods.deps.install.server_running.toast": {
+      "translation": "[Ẋ The server '{name}' is running on this install, so nothing more was installed. Stop it first, then try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.deps.install.realm_changed.toast": {
+      "translation": "[Ẋ Stopped: the server on screen changed, so the rest were not installed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.index.needs": {
+      "translation": {
+        "one": "[Ẋ {count} mod needs something it does not have Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} mods need something they do not have Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count"
+    },
     "mods.menu.reinstall.tip.nested": {
       "translation": "[Ẋ Lays the files out the way a mod manager would Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },

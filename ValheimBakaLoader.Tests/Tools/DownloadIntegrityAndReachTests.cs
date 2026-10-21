@@ -218,6 +218,9 @@ namespace ValheimBakaLoader.Tests.Tools
             public Task<ThunderstoreLiveLookup> LookupLiveAsync(string author, string modName) =>
                 Task.FromResult(new ThunderstoreLiveLookup { Answered = false });
 
+            public Task<ThunderstorePackageVersion> LookupVersionAsync(string author, string modName, string version) =>
+                Task.FromResult<ThunderstorePackageVersion>(null);
+
             public Task<ThunderstoreIndexState> RefreshAsync() =>
                 Task.FromResult<ThunderstoreIndexState>(null);
 

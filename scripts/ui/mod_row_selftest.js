@@ -106,7 +106,7 @@ function page(opts) {
     toast: t => toasts.push(t),
     logLine: () => {},
     scanMods: o => { scans.push(o); return Promise.resolve(); },
-    doAddMod: (url, extra) => { adds.push({ url, extra }); },
+    doAddMod: (url, extra, opts) => { adds.push({ url, extra, opts }); },
     goPage: n => pages.push(n),
     refreshCfgList: () => Promise.resolve(),
     loadCfg: (f, force) => { loads.push(f); return Promise.resolve(); },
@@ -288,10 +288,14 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
     assert.strictEqual(p.adds.length, 1);
     assert.strictEqual(p.adds[0].url, "https://thunderstore.io/c/valheim/p/MathiasDecrock/PlanBuild/v/0.16.4/");
     assert.deepStrictEqual(JSON.parse(JSON.stringify(p.adds[0].extra)), { profile: "Final Sunset", requireStopped: true });
+    /* 1.2.16: doAddMod takes a third argument, and only a pasted link passes it. A Reinstall
+       passes none, so it never opens the dependency dialog whatever the add hands back. */
+    assert.strictEqual(p.adds[0].opts, undefined, "a Reinstall asked for the dependency dialog");
     p.context.reinstallModFlow(mod({ thunderstoreName: null }));
     assert.strictEqual(p.adds.length, 1, "a row with no package was reinstalled");
     /* doAddMod hands the two keys on to the host side. */
-    const add = between("async function doAddMod(url,extra){", "\n$(\"#addModBtn\")");
+    /* The signature grew opts in 1.2.16 (the add-by-link dependency offer); the call it makes is unchanged. */
+    const add = between("async function doAddMod(url,extra,opts){", "\n$(\"#addModBtn\")");
     assert.ok(add.includes('rpc("mods.addFromUrl",Object.assign({url},extra||{}))'), "doAddMod drops the realm and requireStopped");
     /* and the two refusals only a reinstall can meet are worded as a reinstall, not as a Gale walk */
     assert.ok(add.includes('r.Reason==="serverRunning"') && add.includes('T("mods.reinstall.server_running.toast",'), "a running server's refusal is not worded");

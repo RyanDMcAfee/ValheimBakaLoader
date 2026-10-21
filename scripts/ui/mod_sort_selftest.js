@@ -58,8 +58,11 @@ function between(from, to) {
 
 function T(id, params) {
   const entry = KEYS[id];
-  if (!entry || typeof entry.lore !== "string") throw new Error("the catalog has no sentence for " + id);
-  return entry.lore.replace(/\{(\w+)\}/g, (m, k) => (params && k in params ? String(params[k]) : m));
+  /* A plural entry (1.2.16's "Needs {count} mods") is read the way English reads it. */
+  let lore = entry && entry.lore;
+  if (lore && typeof lore === "object") lore = params && Number(params.count) === 1 ? lore.one : lore.other;
+  if (typeof lore !== "string") throw new Error("the catalog has no sentence for " + id);
+  return lore.replace(/\{(\w+)\}/g, (m, k) => (params && k in params ? String(params[k]) : m));
 }
 
 /* A fresh page: the real block and the real shared helpers, over a mod list of its own. */
@@ -70,6 +73,9 @@ function page() {
     cmpText: (a, b) => String(a ?? "").localeCompare(String(b ?? ""), undefined, { sensitivity: "base" }),
     document: { querySelectorAll: () => [] },
     modIsHeld: () => false,
+    /* 1.2.16: the search carries the row's "Needs" pill. The real modNeeds lives in the
+       MODROW block, which this harness does not lift; this is its rule, word for word. */
+    modNeeds: m => (m && Array.isArray(m.missingDependencies)) ? m.missingDependencies.filter(n => n && n.fullName) : [],
     renderMods: () => {},
   };
   /* The S literal in app.js is where the default lives, so it is read from there rather than
@@ -189,6 +195,12 @@ test("6. the search still reaches the author", () => {
   assert.ok(text.includes("JereKuusela"), "the author is no longer searchable: " + text);
   const off = p.modSearchText(Object.assign({}, MODS[1], { disabled: true }));
   assert.ok(off.includes(T("mods.status.off")), "a switched-off mod's Off pill is not searchable");
+  /* 1.2.16: a row that needs a mod is found by the pill's word and by the missing mod's name. */
+  const needs = p.modSearchText(Object.assign({}, MODS[0], { missingDependencies: [{ fullName: "MySix-MySix_Core", name: "MySix_Core", state: "missing" }] }));
+  assert.ok(needs.includes("Needs MySix_Core"), "the Needs pill is not searchable: " + needs);
+  const two = p.modSearchText(Object.assign({}, MODS[0], { missingDependencies: [{ fullName: "A-One", name: "One" }, { fullName: "B-Two", name: "Two" }] }));
+  assert.ok(two.includes("Needs 2 mods") && two.includes("One") && two.includes("Two"), "two needs are not searchable: " + two);
+  assert.ok(!p.modSearchText(MODS[0]).includes("Needs"), "a row that needs nothing reads as needing something");
 });
 
 test("7. the wiring: headers, sentences, and the paint", () => {

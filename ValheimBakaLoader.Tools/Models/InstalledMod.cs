@@ -39,6 +39,21 @@ namespace ValheimBakaLoader.Tools.Models
         /// </summary>
         public string[] Dependencies { get; set; } = Array.Empty<string>();
 
+        /// <summary>
+        /// The manifest's dependencies exactly as it lists them ("Author-ModName-1.0.0"), so the
+        /// lowest version each one asks for is not lost the way <see cref="Dependencies"/> loses
+        /// it. Never null; empty when the manifest declared none or there is no manifest.
+        /// </summary>
+        public string[] DeclaredDependencies { get; set; } = Array.Empty<string>();
+
+        /// <summary>
+        /// What this mod needs that the realm does not give it, worked out by the scan from the
+        /// manifests on disk alone (no site is asked). Never null; empty for a mod that has all
+        /// it asked for and for a hand copy with no manifest.
+        /// </summary>
+        public System.Collections.Generic.IReadOnlyList<DependencyNeed> MissingDependencies { get; set; }
+            = Array.Empty<DependencyNeed>();
+
         /// <summary>Optional Thunderstore dependency string ("Author-Mod-1.0.0"), if known.</summary>
         public string DependencyString { get; set; }
 

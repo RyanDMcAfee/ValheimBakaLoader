@@ -300,6 +300,9 @@ namespace ValheimBakaLoader.Tests.Forms
                     "the Mods search no longer covers " + field);
             }
 
+            // 1.2.16's "Needs" pill is in the haystack too, but its two ids carry a name or a
+            // count, which this reader does not count on either side; mod_sort_selftest drives
+            // that search with the pill's real words.
             var expected = new[]
             {
                 "mods.possibly_outdated.yes", "mods.status.bundled", "mods.status.current",
@@ -343,6 +346,10 @@ namespace ValheimBakaLoader.Tests.Forms
                 // 1.2.15 (issue 20): why a switched-off row says Off, and which site the
                 // installed version came from, both said on hover of what the row draws.
                 "mods.status.off.tip", "mods.tag.installed.hexium.tip", "mods.tag.installed.thunderstore.tip",
+                // 1.2.16: the head of the hover on the "Needs" pill. The names of what it needs
+                // are in the haystack; the sentence above them is what the pill explains, not
+                // what it says.
+                "mods.deps.pill.tip",
             };
             // Words the render draws AROUND the table rather than on a row: the pill above
             // it and the two lines under the heading. Subtracted by name for the same

@@ -364,7 +364,11 @@ namespace ValheimBakaLoader.Tests.Forms
             // listing switch of a test copy refusing to move. The copy's refusals carry no mark of
             // their own: they come back as host sentences, and the toast that prints them leads
             // with its own rune.
-            Assert.Equal(252, marked.Count);
+            // 256 with 1.2.16's four for what a mod needs: fetching the ticked dependencies, all
+            // of them in, some of them in, and nothing ticked. The walk's refusals carry no mark
+            // of their own: one helper words them, and the toast that prints it leads with its
+            // own rune.
+            Assert.Equal(256, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

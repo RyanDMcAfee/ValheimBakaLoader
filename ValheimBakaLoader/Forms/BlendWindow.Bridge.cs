@@ -7387,6 +7387,11 @@ namespace ValheimBakaLoader.Forms
                     // this is wrapped besides.
                     await AddHexiumVersionsAsync(mods, force);
 
+                    // What each mod needs that this realm does not give it, from the manifests
+                    // already read and nothing else: a scan that asked a site per dependency would
+                    // cost a request per mod, every scan, for a list the disk already answers.
+                    MarkMissingDependencies(mods, pluginsDir);
+
                     // Remember this realm's mod set so it's tracked per-profile and reconstructable
                     // on restore/export (kept distinct so servers never cross-contaminate).
                     RecordModManifest(CurrentProfile, mods);
@@ -7805,6 +7810,7 @@ namespace ValheimBakaLoader.Forms
                     // exactly as the same refusal is on the direct call.
                     ErrorParams = errorParams,
                     source = (string)null,
+                    missingDependencies = Array.Empty<object>(),
                 };
 
                 if (_modUpdateInProgress)
@@ -7945,6 +7951,13 @@ namespace ValheimBakaLoader.Forms
                         && (notAvailable || result.Installed))
                         MarkGaleNotAvailable(forProfile.Trim(), $"{reference.Owner}-{reference.Name}", reference.Version, notAvailable);
 
+                    // What the mod that just went in needs and this realm does not have. Worked out
+                    // while the install is still held, so nothing else writes the folder between
+                    // the install and the read. A mod that did not go in needs nothing yet.
+                    var missing = result.Installed
+                        ? await MissingAfterInstallAsync($"{result.Owner}-{result.Name}", result.Dependencies, pluginsDir)
+                        : Array.Empty<Tools.Models.DependencyNeed>();
+
                     return new
                     {
                         result.Installed,
@@ -7968,6 +7981,9 @@ namespace ValheimBakaLoader.Forms
                         // has to guess what it just installed. Additive: a page that does not
                         // read it is unaffected, and a Thunderstore install says so plainly.
                         source = result.Source,
+                        // The add-by-link dialog offers these. The Gale walk, a row's Reinstall and
+                        // the dependency walk itself read nothing here, so their calls are as they were.
+                        missingDependencies = missing.Select(DependencyNeedDto).ToArray(),
                     };
                 }
                 finally
@@ -9720,6 +9736,24 @@ namespace ValheimBakaLoader.Forms
 
             var token = HexiumConsent.Issue(package.Owner, package.Name, chosen.VersionNumber);
 
+            // The dependency list the consent dialog shows, each one marked against what is on
+            // disk: there, missing, older than asked for, or switched off. Local only, the same
+            // rule the Mods table's pill reads, so the dialog and the row never disagree.
+            var hexiumDeps = (chosen.Dependencies ?? new List<string>()).ToArray();
+            var hexiumNeeds = new List<Tools.Models.DependencyNeed>();
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(pluginsDir) && Directory.Exists(pluginsDir))
+                    hexiumNeeds.AddRange(Tools.ModDependencies.Check(hexiumDeps, ModScanner.ScanPlugins(pluginsDir),
+                        BepInExCountsAsThere(pluginsDir), folderName));
+                else
+                    hexiumNeeds.AddRange(Tools.ModDependencies.Check(hexiumDeps, null, false, folderName));
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not mark the Hexium dependencies against the disk: {0}", e.Message);
+            }
+
             return new
             {
                 Installed = false,
@@ -9729,7 +9763,10 @@ namespace ValheimBakaLoader.Forms
                 Name = package.Name,
                 Version = chosen.VersionNumber,
                 FileSize = chosen.FileSize,
-                Dependencies = (chosen.Dependencies ?? new List<string>()).ToArray(),
+                Dependencies = hexiumDeps,
+                // One mark per line of Dependencies that this realm cannot give as it stands.
+                // A line with no mark here is there, on and new enough.
+                DependencyMarks = hexiumNeeds.Select(DependencyNeedDto).ToArray(),
                 PageUrl = Tools.HexiumUrlParser.PageUrl(package.Owner, package.Name),
                 Folder = folderName,
                 Replacing = replacing,
@@ -10026,7 +10063,101 @@ namespace ValheimBakaLoader.Forms
                 // "managed" or "nested" (an old whole-zip install the page can offer to reinstall
                 // at its version); null for a patcher-only row, which has no plugin folder to read.
                 layout = mod.IsPatcher ? null : mod.Layout,
+                // What this mod's manifest asks for that the realm does not give it, from the
+                // disk alone. Empty for a mod that has everything and for a hand copy with no
+                // manifest. The row's warning pill and its "Install what it needs" read this.
+                missingDependencies = (mod.MissingDependencies ?? Array.Empty<Tools.Models.DependencyNeed>())
+                    .Select(DependencyNeedDto).ToArray(),
             };
+        }
+
+        /// <summary>One dependency a mod needs, the way the page reads it.</summary>
+        public static object DependencyNeedDto(Tools.Models.DependencyNeed need) => new
+        {
+            fullName = need.FullName,
+            name = need.Name,
+            minVersion = need.MinVersion,
+            state = need.State,
+            installedVersion = need.InstalledVersion,
+            requiredBy = need.RequiredBy,
+        };
+
+        /// <summary>
+        /// Whether the BepInEx pack a mod lists counts as there: BepInEx is installed on this
+        /// realm's install, or BakaLoader looks after it (and so puts it there before any mod
+        /// loads). Never throws; a status that cannot be read counts as not there.
+        /// </summary>
+        private bool BepInExCountsAsThere(string pluginsDir)
+        {
+            try
+            {
+                var prefs = UserPrefsProvider.LoadPreferences();
+                if (Tools.BepInExConsent.Effective(prefs.BepInExMaintained, prefs.BepInExMaintenanceAsked)) return true;
+                return BepInEx.Status(GetCanonicalBaseServerExe(), pluginsDir, KnownInstalls())?.Installed == true;
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not read whether BepInEx is installed: {0}", e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Sets each scanned mod's MissingDependencies from the manifests on disk. One level, no
+        /// site asked; a failure leaves every list empty rather than failing the scan.
+        /// </summary>
+        private void MarkMissingDependencies(IReadOnlyList<Tools.Models.InstalledMod> mods, string pluginsDir)
+        {
+            try
+            {
+                var bep = BepInExCountsAsThere(pluginsDir);
+                foreach (var mod in mods)
+                    mod.MissingDependencies = Tools.ModDependencies.Check(mod.DeclaredDependencies, mods, bep, mod.FullName);
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not work out the mods' missing dependencies: {0}", e.Message);
+            }
+        }
+
+        /// <summary>
+        /// The whole chain a mod that just went in needs and this realm does not have. Mods on
+        /// disk are followed through their own manifests; one that is not on disk is followed
+        /// through what its newest release says it needs, asked of the package page first and
+        /// the held index after, the order ResolveLatestAsync uses. Never throws.
+        /// </summary>
+        private async Task<IReadOnlyList<Tools.Models.DependencyNeed>> MissingAfterInstallAsync(
+            string fullName, IEnumerable<string> declared, string pluginsDir)
+        {
+            try
+            {
+                var list = declared?.ToList() ?? new List<string>();
+                if (list.Count == 0) return Array.Empty<Tools.Models.DependencyNeed>();
+
+                var mods = ModScanner.ScanPlugins(pluginsDir);
+                return await Tools.ModDependencies.ResolveAsync(fullName, list, mods, BepInExCountsAsThere(pluginsDir),
+                    LatestDependenciesAsync);
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not work out what {0} needs: {1}", fullName, e.Message);
+                return Array.Empty<Tools.Models.DependencyNeed>();
+            }
+        }
+
+        /// <summary>What the newest release of "Owner-Name" says it needs, or null when nobody said.</summary>
+        private async Task<IEnumerable<string>> LatestDependenciesAsync(string fullName)
+        {
+            var hyphen = fullName?.IndexOf('-') ?? -1;
+            if (hyphen <= 0 || hyphen >= fullName.Length - 1) return null;
+            var owner = fullName.Substring(0, hyphen);
+            var name = fullName.Substring(hyphen + 1);
+
+            var live = await ThunderstoreClient.LookupLiveAsync(owner, name);
+            if (live?.Package?.Latest?.Dependencies != null) return live.Package.Latest.Dependencies;
+
+            var held = await ThunderstoreClient.GetLatestAsync(owner, name);
+            return held?.Latest?.Dependencies;
         }
 
         /// <summary>

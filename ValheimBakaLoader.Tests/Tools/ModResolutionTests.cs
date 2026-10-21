@@ -184,17 +184,31 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public async Task A_link_that_names_a_version_is_fetched_without_asking_anybody()
         {
-            // Strict: any lookup at all on this client is a failed test. A link with the
-            // version on it is the workaround that already worked for the host, and it
-            // has to keep working without depending on any list being right.
+            // A link with the version on it is the workaround that already worked for the
+            // host, and it has to keep working without depending on any list being right:
+            // which build to fetch is never asked of anybody.
+            //
+            // Until 1.2.16 this client was Strict and nothing at all was asked. Since then the
+            // build's own page is asked ONE thing, once the files are in: what that build says
+            // it needs, so a pinned install can offer a missing dependency too. The new truth
+            // held here: the latest lookups and the held list are never asked, the per-version
+            // question comes after the download and never before it, and a site that will not
+            // answer it changes nothing about the install.
             var client = new Mock<IThunderstoreClient>(MockBehavior.Strict);
             var provider = Downloads();
+            var downloadsWhenAsked = -1;
+            client.Setup(c => c.LookupVersionAsync("Vapok", "XPortalNetworks", "2.0.3"))
+                .Callback(() => downloadsWhenAsked = provider.Handler.Requests.Count)
+                .ReturnsAsync((ThunderstorePackageVersion)null);
 
             var result = await Service(client.Object, provider).InstallFromThunderstoreAsync(Link("2.0.3"), Plugins);
 
             Assert.True(result.Installed);
             Assert.Equal("2.0.3", result.Version);
             Assert.Equal(new[] { ListUrl }, provider.Handler.Requests.ToArray());
+            client.Verify(c => c.LookupVersionAsync("Vapok", "XPortalNetworks", "2.0.3"), Times.Once);
+            Assert.Equal(1, downloadsWhenAsked);
+            Assert.Empty(result.Dependencies);
         }
 
         [Fact]

@@ -929,5 +929,19 @@ else
   echo "  the flame gate selftest is missing: $FLAME_SELFTEST"; fail=1
 fi
 
+echo "== 58. what a mod needs: the row's pill, its menu entry, the dialog and the walk, the Gale walk left alone =="
+# 1.2.16. A mod installed by link without its core library never loaded, and nothing said so. The
+# quiet ways the fix goes wrong are a pill on a hand copy, an off dependency fetched over instead
+# of switched on, a walk that goes on past a running server, and the Gale walk or a Reinstall
+# opening a dialog nobody is there to answer. The selftest drives the real blocks out of app.js
+# against the real catalog, and holds the host side to the field on the add and on the scan.
+DEPS_SELFTEST="$UI_DIR/mod_deps_selftest.js"
+if [ -f "$DEPS_SELFTEST" ]; then
+  if out=$(node "$DEPS_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the mod deps selftest is missing: $DEPS_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

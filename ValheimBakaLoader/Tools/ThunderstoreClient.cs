@@ -85,6 +85,14 @@ namespace ValheimBakaLoader.Tools
         Task<ThunderstoreLiveLookup> LookupLiveAsync(string author, string modName);
 
         /// <summary>
+        /// Asks Thunderstore about one named version of a package, right now. A pinned link
+        /// fetches its build without a lookup, so this is how it learns what that build says it
+        /// needs. Null when the site did not answer, the version is not there, or the answer
+        /// could not be read; never throws.
+        /// </summary>
+        Task<ThunderstorePackageVersion> LookupVersionAsync(string author, string modName, string version);
+
+        /// <summary>
         /// Reads the index again even when the held copy is still inside its window.
         /// A second call within <see cref="ThunderstoreClient.ForceCooldown"/> is refused
         /// the trip and reuses what was just read, so pressing Scan twice does not knock
@@ -182,6 +190,12 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>The per-package address, which always answers with the current release.</summary>
         public const string PackageUrlFormat = "https://thunderstore.io/api/experimental/package/{0}/{1}/";
+
+        /// <summary>
+        /// The per-version address. The package page above has no list of versions, only its
+        /// "latest", so a pinned build's own dependencies are asked of this one.
+        /// </summary>
+        public const string PackageVersionUrlFormat = "https://thunderstore.io/api/experimental/package/{0}/{1}/{2}/";
 
         /// <summary>Thunderstore's own registrable domain. Nothing else is ever contacted.</summary>
         public const string RootHost = "thunderstore.io";
@@ -413,6 +427,48 @@ namespace ValheimBakaLoader.Tools
                     string.Format(PackageUrlFormat, author?.Trim(), modName?.Trim()),
                     remember: false);
                 return new ThunderstoreLiveLookup { Answered = false };
+            }
+        }
+
+        public async Task<ThunderstorePackageVersion> LookupVersionAsync(string author, string modName, string version)
+        {
+            if (string.IsNullOrWhiteSpace(author) || string.IsNullOrWhiteSpace(modName) || string.IsNullOrWhiteSpace(version))
+                return null;
+
+            // The same memo as the package page: a machine that cannot reach the site cannot
+            // reach this address either, and asking anyway only costs the host a timeout.
+            if (InsideFailureWindow()) return null;
+
+            var url = string.Format(PackageVersionUrlFormat,
+                Uri.EscapeDataString(author.Trim()), Uri.EscapeDataString(modName.Trim()), Uri.EscapeDataString(version.Trim()));
+            try
+            {
+                if (!IsThunderstoreAddress(url))
+                {
+                    Logger.Warning("Refused a package address that is not Thunderstore's: {0}", url);
+                    return null;
+                }
+
+                using var client = NewClient();
+                using var deadline = Deadline(DocumentTimeout, CancellationToken.None);
+                using var response = await client.GetAsync(url, deadline.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Information("Thunderstore did not answer about {0}-{1} {2} (HTTP {3}).",
+                        author, modName, version, (int)response.StatusCode);
+                    return null;
+                }
+
+                var body = JObject.Parse(await response.Content.ReadAsStringAsync());
+                if (string.IsNullOrWhiteSpace(body.Value<string>("version_number"))) return null;
+                return body.ToObject<ThunderstorePackageVersion>();
+            }
+            catch (Exception e)
+            {
+                // Explained and not remembered, for the reason the package page gives: one
+                // address that would not answer says nothing about the index.
+                ExplainFailure("version lookup", e, url, remember: false);
+                return null;
             }
         }
 
