@@ -472,10 +472,13 @@ namespace ValheimBakaLoader.Tests.Forms
                 // the Settings hall's App tab carried the word for a while because its rows came
                 // from the Hearth's Upkeep card, which named the wrong hall. The card head there
                 // has no Norse caption now, and neither does the Language heading under it.
-                ("hearth", 3), ("vikings", 4), ("saga", 3), ("runes", 2), ("world", 2),
+                // Saga, Runes, Herald and Skald each lost one in 1.2.18: they are sections of
+                // other halls now, so the rail item that said the word is gone and the
+                // section heading is the one place left.
+                ("hearth", 3), ("vikings", 4), ("saga", 2), ("runes", 1), ("world", 2),
                 // Herald went from three to two in 1.2.17: the Discord sharing card, whose caption
                 // carried it, left the screen with the app-wide switch.
-                ("atlas", 2), ("herald", 2), ("skald", 2),
+                ("atlas", 2), ("herald", 1), ("skald", 1),
                 ("forge", 1), ("scrolls", 1), ("heimr", 1), ("rites", 1),
             };
 

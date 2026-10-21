@@ -48,9 +48,9 @@ const APP = fs.readFileSync(path.join(WEB, "app.js"), "utf8").replace(/\r\n/g, "
 const CSS = fs.readFileSync(path.join(WEB, "app.css"), "utf8").replace(/\r\n/g, "\n");
 const HTML = fs.readFileSync(path.join(WEB, "index.html"), "utf8").replace(/\r\n/g, "\n");
 const EN = JSON.parse(fs.readFileSync(path.join(WEB, "i18n", "en.json"), "utf8")).keys;
-const PREFS = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Game", "UserPreferences.cs"), "utf8");
-const PREFS_FILE = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Game", "UserPreferencesFile.cs"), "utf8");
-const BRIDGE = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Forms", "BlendWindow.Bridge.cs"), "utf8");
+const PREFS = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Game", "UserPreferences.cs"), "utf8").replace(/\r\n/g, "\n");
+const PREFS_FILE = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Game", "UserPreferencesFile.cs"), "utf8").replace(/\r\n/g, "\n");
+const BRIDGE = fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", "Forms", "BlendWindow.Bridge.cs"), "utf8").replace(/\r\n/g, "\n");
 const MAP = fs.readFileSync(path.join(ROOT, "docs", "sidebar.md"), "utf8").replace(/\r\n/g, "\n");
 
 let passed = 0;

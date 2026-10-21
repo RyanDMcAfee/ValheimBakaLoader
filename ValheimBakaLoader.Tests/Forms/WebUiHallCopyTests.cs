@@ -344,7 +344,14 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_settings_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("world", "<!-- ============ SECTION: HERALD"), new[]
+            // The unsaved notice stands outside the hall, and since 1.2.18 Settings ends with
+            // the Discord section, so the notice is no longer in the stretch that runs up to
+            // the Herald heading. It is read out of its own block and counted with the hall.
+            var html = Html();
+            var noticeAt = html.IndexOf("<div class=\"worldunsaved\" id=\"worldUnsaved\"", StringComparison.Ordinal);
+            Assert.True(noticeAt > 0, "index.html no longer has the unsaved notice");
+            var notice = html.Substring(noticeAt, html.IndexOf("</div>", noticeAt, StringComparison.Ordinal) - noticeAt);
+            TheHallNames(Hall("world", "<!-- ============ SECTION: HERALD") + notice, new[]
             {
                 "world.head.title", "common.norse.world", "world.head.sub", "world.save.label",
                 // The hall's two tabs, added in 1.2.6. Server is everything below and App is

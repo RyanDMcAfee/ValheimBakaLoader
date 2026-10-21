@@ -536,7 +536,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // The path itself is still in app.js, so the looseness is still reachable and
             // the guard above is still load bearing.
             var condition = Between(AppJs(), "function conditionModUpdates(n){", "\n}");
-            Assert.Contains("()=>goPage(\"mods\")", condition);
+            // 1.2.18 routes the button through goSection, which lands on the Mods hall
+            // through goPage all the same.
+            Assert.Contains("()=>goSection(\"mods\")", condition);
         }
     }
 }

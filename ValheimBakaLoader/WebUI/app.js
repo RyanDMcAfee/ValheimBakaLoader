@@ -8802,8 +8802,20 @@ document.addEventListener("keydown",e=>{
    On a hall that carries one, "/" puts the cursor in its search box and selects what is
    already there, the way search works nearly everywhere else. It stands down while a
    dialog or the command palette is open, and while anything is already being typed into,
-   so a slash typed into a field stays a slash. */
-const PAGE_SEARCH_BOX={mods:"#modSearch"};
+   so a slash typed into a field stays a slash.
+   The Mods hall carries two boxes since the Configs became a section under the list, and
+   dropping the second one from here would have left the Configs search with no key at all.
+   The box on screen answers, the mod search when both are; a box in a folded section is
+   not a candidate. */
+const PAGE_SEARCH_BOX={mods:["#modSearch","#runeSearch"]};
+function pageSearchBox(){
+  const boxes=(PAGE_SEARCH_BOX[currentPage]||[]).map(sel=>$(sel)).filter(box=>{
+    if(!box||!box.getClientRects().length) return false;
+    const fold=box.closest(".sect");
+    return !fold||fold.classList.contains("open");
+  });
+  return boxes.find(box=>{const r=box.getBoundingClientRect();return r.bottom>0&&r.top<window.innerHeight;})||boxes[0]||null;
+}
 function typingIntoSomething(){
   const a=document.activeElement;
   if(!a) return false;
@@ -8814,8 +8826,7 @@ document.addEventListener("keydown",e=>{
   if(e.key!=="/"||e.ctrlKey||e.metaKey||e.altKey) return;
   if(palOpen||$("#modalBg")?.classList.contains("open")) return;
   if(typingIntoSomething()) return;
-  const sel=PAGE_SEARCH_BOX[currentPage]; if(!sel) return;
-  const box=$(sel); if(!box) return;
+  const box=pageSearchBox(); if(!box) return;
   e.preventDefault();
   box.focus(); box.select();
 });

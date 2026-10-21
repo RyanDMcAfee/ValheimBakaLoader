@@ -596,7 +596,9 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("  cfgFindClearMark();", js);
             // A resize rewraps the lines, so the mark is painted again where the words went,
             // and the pane is NOT scrolled: resizing a window is not asking to jump.
-            Assert.Contains("if(currentPage===\"runes\"){try{cfgFindPaint(false);}catch(_){}}", js);
+            // The Configs are a section under the Mods list since 1.2.18, so "the Configs
+            // are on screen" is the section's own answer rather than the hall's name.
+            Assert.Contains("if(sectOn(\"runes\")){try{cfgFindPaint(false);}catch(_){}}", js);
         }
 
         [Fact]
@@ -619,7 +621,11 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var js = AppJs();
 
-            Assert.Contains("const PAGE_SEARCH_BOX={mods:\"#modSearch\",runes:\"#runeSearch\"};", js);
+            // Both boxes still answer the key. The Configs search lives under the Mods list
+            // since 1.2.18, so the hall maps to both and the one on screen takes the cursor.
+            Assert.Contains("const PAGE_SEARCH_BOX={mods:[\"#modSearch\",\"#runeSearch\"]};", js);
+            Assert.Contains("const box=pageSearchBox(); if(!box) return;", js);
+            Assert.Contains("return !fold||fold.classList.contains(\"open\");", js);
             Assert.Contains("if(e.key!==\"/\"||e.ctrlKey||e.metaKey||e.altKey) return;", js);
             // It stands down while a dialog or the palette is open, and while something is
             // already being typed into, so a slash typed in a field stays a slash.

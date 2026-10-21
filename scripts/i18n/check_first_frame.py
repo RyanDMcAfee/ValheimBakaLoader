@@ -49,6 +49,48 @@ DEFAULT_APP = os.path.join(REPO, "ValheimBakaLoader", "WebUI", "app.js")
 T_CALL = re.compile(r'(?<![A-Za-z0-9_$])T\(\s*"')
 
 NAME = r"[A-Za-z_$][A-Za-z0-9_$]*"
+NEWLINE = "\n"
+
+
+def skip_template(source, index):
+    """The index of the backtick that closes the template opening at `index`, reading
+    each ${} as code so a string or a template inside it is skipped as a whole."""
+    size = len(source)
+    cursor = index + 1
+    while cursor < size:
+        char = source[cursor]
+        if char == "\\":
+            cursor += 2
+            continue
+        if char == "`":
+            return cursor
+        if source.startswith("${", cursor):
+            cursor = skip_expression(source, cursor + 2) + 1
+            continue
+        cursor += 1
+    return size
+
+
+def skip_expression(source, cursor):
+    """The index of the brace that closes a ${ whose body starts at `cursor`."""
+    size = len(source)
+    depth = 0
+    while cursor < size:
+        char = source[cursor]
+        if char in "\"'":
+            cursor += 1
+            while cursor < size and source[cursor] != char and source[cursor] != NEWLINE:
+                cursor += 2 if source[cursor] == "\\" else 1
+        elif char == "`":
+            cursor = skip_template(source, cursor)
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            if depth == 0:
+                return cursor
+            depth -= 1
+        cursor += 1
+    return size
 
 
 def mask(source):
@@ -81,7 +123,20 @@ def mask(source):
                 out[index] = " "
                 index += 1
                 continue
-            if char in "\"'`":
+            if char == "`":
+                # A template is skipped whole, ${} and all. Read flat, a template nested
+                # inside another one's ${} turned the inside out: the inner backticks
+                # closed and reopened the outer string, and once that happened inside a
+                # callback's braces the rest of the file read as one string, so every
+                # function below it looked like part of the one above.
+                end = skip_template(source, index)
+                for blank in range(index + 1, end):
+                    if out[blank] != NEWLINE:
+                        out[blank] = " "
+                previous = '"'
+                index = end + 1
+                continue
+            if char in "\"'":
                 state = "string"
                 quote = char
                 index += 1              # the quote itself stays, so T(" is still findable

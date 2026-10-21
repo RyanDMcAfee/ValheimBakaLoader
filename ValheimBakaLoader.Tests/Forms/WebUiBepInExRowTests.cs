@@ -246,7 +246,9 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void An_install_nothing_has_looked_at_is_never_called_empty()
         {
-            Assert.Contains("if(!state){el.style.display=\"none\";el.innerHTML=\"\";return;}",
+            // 1.2.18: the strip folds away through the one show/hide helper, and its words
+            // are cleared once it is gone rather than before, so it never shrinks empty.
+            Assert.Contains("if(!state){reveal(el,false,{done:()=>{el.innerHTML=\"\";}});return;}",
                 Body("renderBepInExRow"), StringComparison.Ordinal);
             Assert.Contains("function bepInExMissing(){return !!S.bepinex&&!S.bepinex.installed;}",
                 AppJs(), StringComparison.Ordinal);

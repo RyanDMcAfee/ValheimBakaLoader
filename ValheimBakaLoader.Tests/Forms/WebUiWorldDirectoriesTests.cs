@@ -620,7 +620,9 @@ namespace ValheimBakaLoader.Tests.Forms
             var html = Html();
             var css = Css();
 
-            Assert.Contains("const notice=$(\"#worldUnsaved\"); if(notice) notice.classList.toggle(\"on\",any);", js);
+            // 1.2.18: the toggle only fires on a real change, and a notice going away leaves
+            // a fading copy behind it instead of vanishing.
+            Assert.Contains("const notice=$(\"#worldUnsaved\");\n  if(notice&&notice.classList.contains(\"on\")!==any){if(!any) fadeGhost(notice); notice.classList.toggle(\"on\",any);}", js);
             Assert.Contains("if(save) save.classList.toggle(\"pulse\",any);", js);
             Assert.Contains("if(rail) rail.classList.toggle(\"has-unsaved\",any);", js);
 
@@ -673,9 +675,13 @@ namespace ValheimBakaLoader.Tests.Forms
             var closes = html.IndexOf("</section>", html.IndexOf("id=\"page-world\"", StringComparison.Ordinal),
                 StringComparison.Ordinal);
             var at = html.IndexOf("id=\"worldUnsaved\"", StringComparison.Ordinal);
-            var next = html.IndexOf("<section class=\"page\" id=\"page-atlas\"", StringComparison.Ordinal);
+            // Settings is the last hall since 1.2.18, so its stretch runs to the status bar
+            // rather than to the Atlas, and no other hall may open between the two.
+            var next = html.IndexOf("<!-- STATUSBAR -->", StringComparison.Ordinal);
             Assert.True(at > closes, "the notice is back inside the hall, where the form scrolls under it");
             Assert.True(at < next, "the notice drifted out of the Settings hall's own stretch of markup");
+            Assert.True(html.IndexOf("<section class=\"page\"", closes, StringComparison.Ordinal) < 0,
+                "a hall opens after Settings, so the notice is no longer in Settings' own stretch");
 
             // Pinned to the pane's corner rather than to the form's last line.
             var rule = css.Substring(css.IndexOf(".worldunsaved{", StringComparison.Ordinal), 160);
@@ -782,7 +788,10 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("@keyframes saveCfgPulse{", css);
             Assert.Contains("#saveCfgBtn.pulse{animation:saveCfgPulse", css);
 
-            var at = css.IndexOf("@media (prefers-reduced-motion:reduce){", StringComparison.Ordinal);
+            // The block that holds the pulse, not the first one in the file: 1.2.18 added
+            // reduced motion rules for the sidebar above it.
+            var at = css.LastIndexOf("@media (prefers-reduced-motion:reduce){",
+                css.IndexOf("#saveCfgBtn.pulse{animation:none", StringComparison.Ordinal), StringComparison.Ordinal);
             Assert.True(at > 0, "app.css has no reduced motion rule for the pulse");
             var block = css.Substring(at, css.IndexOf("\n}", at, StringComparison.Ordinal) - at);
             Assert.Contains("#saveCfgBtn.pulse{animation:none;outline:", block);
@@ -824,7 +833,9 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("if(dirty.indexOf(d.input)>=0) return true;", js);
             // A PROBLEM note, not a confirmation: a host who folded the section away is not
             // owed a fold back to be told the path they saved is still fine.
-            Assert.Contains("return !!(note&&note.style.display!==\"none\"&&note.dataset.problem===\"1\");", js);
+            // Shown is the reveal helper's answer since 1.2.18: a note on its way out still
+            // has a display, so the style alone no longer says whether it is up.
+            Assert.Contains("return !!(note&&revealShown(note)&&note.dataset.problem===\"1\");", js);
             Assert.Contains("if(row) el.dataset.problem=\"1\"; else delete el.dataset.problem;", js);
             Assert.Contains("sec.classList.add(\"open\");", js);
             // The folded header's own count follows it open.

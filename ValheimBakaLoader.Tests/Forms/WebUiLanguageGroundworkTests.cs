@@ -329,15 +329,17 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// Nothing in any stack covers the Runic block, so the ten rune spans keep falling
+        /// Nothing in any stack covers the Runic block, so the six rune spans keep falling
         /// through to Segoe UI Historic exactly as they do today. This is only ever visible
         /// in a screenshot, so it is pinned here.
         /// </summary>
         [Fact]
         public void No_language_stack_disturbs_the_runes()
         {
+            // Ten until 1.2.18: the brand mark and nine halls. The rail has five halls now and
+            // the other four are sections inside them, whose headings carry no rail rune.
             var runes = Regex.Matches(AppSourceTree.Web("index.html"), "class=\"rune\"").Count;
-            Assert.Equal(10, runes);
+            Assert.Equal(6, runes);
 
             foreach (Match m in Regex.Matches(Css(), @"html\[data-lang=""[^""]+""\]\{[^}]*\}"))
                 Assert.DoesNotContain("Historic", m.Value);
