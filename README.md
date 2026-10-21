@@ -83,9 +83,12 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ## What is new in 1.2.17
 
-- **The Discord screen is one simple card per realm.** A switch, the webhook it posts through, what the post shows, which messages it also sends, and a preview beside Publish. Every heading has a (?) that says what it does, and the rarely used settings sit in two small dialogs. [Discord (Herald)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-(Herald))
-- **Following a Gale profile is a button** beside Add from Thunderstore, instead of a box that was always in the way. [Gale profiles](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Gale-profiles)
-- **Everything 1.2.16 brought** is in here too: the Herald per realm, dependencies offered at install, Gale configs, test copies of a realm, and the Saga keeping realms apart. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **A simpler sidebar.** Dashboard, Players, Map, Mods and Settings; Statistics and the Log are sections on the Dashboard, Configs sits under the mod list and Discord at the foot of Settings, each folding and remembering how you left it. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **Nothing jumps any more.** What appears when you click rolls or fades in, and everything below moves with it.
+- **The Discord screen is one simple card per realm**, with a preview beside Publish and a (?) on every heading. [Discord (Herald)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Discord-(Herald))
+- **Configs find their mod** by the plugin ID inside its DLL. [Configs (Runes)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Configs-(Runes))
+- **The window snaps** to the edges and corners like any Windows window, with Windows 11 snap layouts.
+- **Following a Gale profile is a button** beside Add from Thunderstore. [Gale profiles](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Gale-profiles)
 
 This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
 
