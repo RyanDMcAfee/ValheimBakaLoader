@@ -616,14 +616,20 @@ namespace ValheimBakaLoader.Forms
         {
             if (WebView == null || WebView.IsDisposed) return;
             var hole = MaxButtonBounds();
+            // The setter keeps the region it is given and lets go of the old one without
+            // freeing it, and this runs many times a second during an edge drag.
+            var old = WebView.Region;
             if (hole.IsEmpty)
             {
-                if (WebView.Region != null) WebView.Region = null;
+                if (old == null) return;
+                WebView.Region = null;
+                old.Dispose();
                 return;
             }
             var region = new Region(new Rectangle(Point.Empty, WebView.Size));
             region.Exclude(hole);
             WebView.Region = region;
+            old?.Dispose();
             Invalidate(hole);
         }
 
