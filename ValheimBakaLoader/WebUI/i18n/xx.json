@@ -8513,6 +8513,45 @@
     },
     "pal.cmd.start_with_windows": {
       "translation": "[Ẋ Start with Windows Ẋ] ẊẊẊẊẊẊ"
+    },
+    "service.login.title": {
+      "translation": "[Ẋ Valheim BakaLoader Ẋ] ẊẊẊẊẊẊ"
+    },
+    "service.login.lead": {
+      "translation": "[Ẋ Sign in to manage your servers. Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "service.login.password": {
+      "translation": "[Ẋ Password Ẋ] ẊẊẊ"
+    },
+    "service.login.button": {
+      "translation": "[Ẋ Sign in Ẋ] ẊẊẊ"
+    },
+    "service.login.wrong": {
+      "translation": "[Ẋ That password is not right. Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "service.login.locked": {
+      "translation": "[Ẋ Too many tries. Wait a minute and try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "service.login.setup.lead": {
+      "translation": "[Ẋ No password is set yet. Paste the setup token from the service journal and choose a password. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "service.login.setup.token": {
+      "translation": "[Ẋ Setup token Ẋ] ẊẊẊẊ"
+    },
+    "service.login.setup.password": {
+      "translation": "[Ẋ New password Ẋ] ẊẊẊẊ"
+    },
+    "service.login.setup.button": {
+      "translation": "[Ẋ Set password and sign in Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "service.login.setup.token_wrong": {
+      "translation": "[Ẋ That setup token is not right. Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "service.login.setup.password_short": {
+      "translation": "[Ẋ A password needs at least {count} characters. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "count": "number"
+      }
     }
   }
 }

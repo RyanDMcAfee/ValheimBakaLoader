@@ -2485,6 +2485,19 @@
     "pal.k.app": { "lore": "app" },
     "pal.cmd.text_size": { "lore": "Text size" },
     "pal.cmd.interface_language": { "lore": "Interface language" },
-    "pal.cmd.start_with_windows": { "lore": "Start with Windows" }
+    "pal.cmd.start_with_windows": { "lore": "Start with Windows" },
+
+    "service.login.title": { "lore": "Valheim BakaLoader" },
+    "service.login.lead": { "lore": "Sign in to manage your servers." },
+    "service.login.password": { "lore": "Password" },
+    "service.login.button": { "lore": "Sign in" },
+    "service.login.wrong": { "lore": "That password is not right." },
+    "service.login.locked": { "lore": "Too many tries. Wait a minute and try again." },
+    "service.login.setup.lead": { "lore": "No password is set yet. Paste the setup token from the service journal and choose a password." },
+    "service.login.setup.token": { "lore": "Setup token" },
+    "service.login.setup.password": { "lore": "New password" },
+    "service.login.setup.button": { "lore": "Set password and sign in" },
+    "service.login.setup.token_wrong": { "lore": "That setup token is not right." },
+    "service.login.setup.password_short": { "lore": "A password needs at least {count} characters.", "params": { "count": "number" } }
   }
 }

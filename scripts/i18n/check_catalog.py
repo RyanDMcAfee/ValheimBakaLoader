@@ -81,6 +81,10 @@ DEFAULT_HOST_DIRS = [
     os.path.join(REPO, "ValheimBakaLoader", "Tools"),
     os.path.join(REPO, "ValheimBakaLoader", "Forms"),
     os.path.join(REPO, "ValheimBakaLoader", "Game"),
+    # The Linux service writes its login page out of the same catalog, through its own
+    # HostCatalog.T, before the page's scripts exist to ask for anything.
+    os.path.join(REPO, "ValheimBakaLoader.Service", "Auth"),
+    os.path.join(REPO, "ValheimBakaLoader.Service", "Web"),
 ]
 
 # An id is a stable dotted name in lower case. Never the English text: keying on

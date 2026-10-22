@@ -1,0 +1,41 @@
+# BakaLoader as a system service. Installed by linux/install.sh into
+# /etc/systemd/system/bakaloader.service; edit the copy there, not this one.
+#
+# The service runs as its own unprivileged user because a login to the page is full
+# control of whatever account the service runs under. The game servers it starts are its
+# children: KillMode=mixed sends SIGTERM to the service alone, which stops each server the
+# gentle way and waits for the world saves, and only at TimeoutStopSec does systemd kill
+# whatever is left. Nice=-5 keeps the game ahead of the box's housekeeping.
+
+[Unit]
+Description=Valheim BakaLoader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=valheim
+Group=valheim
+WorkingDirectory=/opt/bakaloader/current
+ExecStart=/opt/bakaloader/current/ValheimBakaLoader.Service run
+Environment=BAKALOADER_DATA_DIR=/var/lib/bakaloader
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+Environment=DOTNET_NOLOGO=1
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=180
+Restart=on-failure
+RestartSec=5
+Nice=-5
+# A stop that takes a minute is a world save, not a hang; do not let a restart cut it short.
+TimeoutStartSec=60
+
+# The service writes to its data folder and nowhere else on the system.
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/bakaloader
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

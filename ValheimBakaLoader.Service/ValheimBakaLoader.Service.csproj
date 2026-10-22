@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ValheimBakaLoader.Service</AssemblyName>
+    <RootNamespace>ValheimBakaLoader.Service</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- The same number the WinForms app carries, so boot.js hands the page a version that
+         matches the catalogs and the cache stamp it already understands. -->
+    <Version>1.2.17</Version>
+    <IsPackable>false</IsPackable>
+    <!-- No appsettings.json and no launchSettings: everything the service needs comes from
+         the command line, the environment and service.json in the data folder. -->
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The bridge speaks Newtonsoft JObject, the same way the WinForms host does, so the
+         real bridge can be dropped behind IPageBridge without a JSON translation layer. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The login page is the service's own, not the app's: it is served before the page's
+         scripts can run and must look right with nothing but itself. -->
+    <Content Include="Resources\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ValheimBakaLoader.Service.Tests" />
+  </ItemGroup>
+
+</Project>

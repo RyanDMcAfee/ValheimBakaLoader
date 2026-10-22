@@ -444,3 +444,29 @@ ship to Windows users before any Linux release.
 - Docker image in the first Linux release, or after?
 - Kestrel host on Windows too (remote management), and in which release?
 - Supported distros: Ubuntu 22.04 and 24.04, Debian 12? glibc floor?
+
+## 7. Progress
+
+What has landed on the `linux-port` branch, and where it bent the plan above.
+
+- **Phase 1, the split.** `ValheimBakaLoader.Core` is a `net6.0` library of linked sources,
+  not `net10.0`: the Windows app, its frozen launcher and its CI stay exactly as they are,
+  and the core is what the service references. The Linux side is `net10.0` on its own, in
+  `ValheimBakaLoader.Linux.sln`, so the Windows solution never needs the newer SDK.
+- **Phase 2, the bridge.** `BlendWindow` kept its name and its partials and stopped being a
+  Form. `IHostUi` is the seam (the thread, the pushes, the dialogs, the pickers, the shell),
+  `BlendWindowForm` is the WinForms shell that answers it, and `HeadlessHostUi` is the host
+  for a box with no window. The single-reader channel of the plan is the service's
+  `CallSerializer`, in front of the bridge rather than inside it.
+- **MapRenderer** writes its PNG through `Tools/Atlas/PngWriter.cs`; there is no GDI in the
+  core.
+- **Phase 6, the transport.** `Native` in app.js speaks the WebSocket at `/ws` under
+  `window.BAKA_HOST`, with reconnect and the lost-link condition; `html.headless` hides the
+  window chrome before the first paint; `/boot.js` is the host's first word and index.html
+  loads it before anything else.
+- **Phase 5, the host (skeleton).** `ValheimBakaLoader.Service`: Kestrel, a cookie login
+  with a one-time setup token, `/ws` with one reader, `/boot.js`, the static page, loopback
+  by default and TLS beyond it, `passwd`, a systemd unit and `linux/install.sh`. The bridge
+  behind `/ws` is still the unwired stand-in. Wiring the real `BlendWindow` through
+  `IPageBridge` and `HeadlessHostUi.Posted` is the next step, with the platform seam (3) and
+  the Linux game side (4) after it.

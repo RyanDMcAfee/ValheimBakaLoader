@@ -6,6 +6,14 @@
 <title>Valheim BakaLoader</title>
 <link rel="icon" href="data:,">
 <!--
+  THE HOST'S FIRST WORD. A host with a window hands the page its version and its language
+  before any script here runs; a host with no window (the headless service) says the same
+  two things, and that it has no window, through /boot.js, which it answers ahead of the
+  files. First, and at the plain address, because the stamp below reads what it says.
+  Under the window it is the empty file beside this one and costs one small request.
+-->
+<script src="boot.js"></script>
+<!--
   CACHE STAMP. The halls are ordinary web files behind a virtual host, and the embedded
   browser keeps a disk cache that outlives an update: same two addresses, so the window can
   come up showing the interface you just replaced. Both includes therefore carry the version
