@@ -228,6 +228,10 @@ html.lang-pending body>*{visibility:hidden}
 .cmdchip kbd{font-family:var(--mono);font-size:11px;background:#23272D;border:1px solid #33383F;
   border-radius:4px;padding:1px 6px;color:var(--bone-dim)}
 .winbtns{display:flex;gap:2px;margin-left:8px}
+/* The headless service has no window to minimize, drag or resize, so index.html hangs
+   html.headless before the first paint and the buttons and the grips are never drawn: a
+   first-frame state, never a show or hide, which is why it is a class and not reveal(). */
+html.headless .winbtns,html.headless .grip{display:none}
 .winbtn{width:38px;height:30px;display:flex;align-items:center;justify-content:center;
   border-radius:6px;color:var(--bone-dim);cursor:pointer;transition:all .15s var(--ease)}
 .winbtn svg{width:11px;height:11px}

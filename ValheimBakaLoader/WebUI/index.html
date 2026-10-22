@@ -77,6 +77,20 @@
   setTimeout(function(){ window.BAKA_LANG_REVEAL(); }, 1500);
 })();
 </script>
+<!--
+  A HOST WITH NO WINDOW. The headless service says so through window.BAKA_HOST, set by
+  its /boot.js the same road BAKA_VERSION and BAKA_LANG arrive. The window buttons and
+  the resize grips are a first-frame state of the page, so the class that hides them
+  (app.css, html.headless) is hung here, before the body exists, rather than by app.js
+  after the frame is up: a button that is drawn and then taken away is exactly the jump
+  the page promises never to make. WebView2 keeps its window whatever the flag says.
+-->
+<script>
+(function(){
+  if (window.chrome && window.chrome.webview) return;
+  if (window.BAKA_HOST === "service") document.documentElement.classList.add("headless");
+})();
+</script>
 </head>
 <body>
 

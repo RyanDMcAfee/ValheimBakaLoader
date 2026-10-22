@@ -1,11 +1,30 @@
 "use strict";
 
-/* ============ NATIVE BRIDGE (WebView2 host seam) ============ */
+/* NATIVE-BEGIN
+   ============ NATIVE BRIDGE (the host seam) ============
+   Two hosts speak the same frames: the WinForms window through WebView2, and the headless
+   Linux service through a WebSocket at /ws on the page's own origin (docs/linux-port.md,
+   4.3). Page to host is {id, method, params}; host to page is {id, ok, result, error,
+   errorId, errorParams} for an answer and {event, data} for a push. WebView2 stays the
+   first choice whenever it is there. The service is chosen by window.BAKA_HOST, which its
+   /boot.js sets before any script beside BAKA_VERSION and BAKA_LANG, so a page opened off
+   a plain file server with no host at all still lands in the mock preview. Nothing above
+   this block sees the difference: available is true for both hosts, and a handler never
+   learns which pipe its answer came down.
+   The socket can drop (the service restarts, the laptop sleeps, the tunnel goes), and the
+   page lives on: it reconnects with a doubling wait, 1s up to 30s, and tells the page about
+   it with two page-local events the same on() hears. host.lost on every close, so the bar
+   can say so; host.reconnected on every open after the first, so the page can ask again for
+   what it was showing. Every call waiting on the socket when it closes is refused with an
+   Error named host.disconnected, so a handler that awaited gets a reason rather than a
+   promise that never settles. */
 const Native = (() => {
   const wv = window.chrome?.webview;
+  const service = !wv && window.BAKA_HOST === "service";
   let seq = 0; const pending = new Map(); const listeners = new Map();
-  if (wv) wv.addEventListener('message', e => {
-    const m = e.data;
+  const raise = (event, data) => { (listeners.get(event) || []).forEach(fn => fn(data)); };
+  /* One reader for both pipes: an answer settles its call, a push goes to the listeners. */
+  const settle = m => {
     if (m && m.id != null && pending.has(m.id)) {
       const {res, rej} = pending.get(m.id); pending.delete(m.id);
       if (m.ok) { res(m.result); return; }
@@ -18,19 +37,90 @@ const Native = (() => {
       err.errorParams = m.errorParams ?? null;
       rej(err);
     }
-    else if (m && m.event) (listeners.get(m.event) || []).forEach(fn => fn(m.data));
-  });
+    else if (m && m.event) raise(m.event, m.data);
+  };
+  if (wv) wv.addEventListener('message', e => settle(e.data));
+
+  /* The service's socket. ws is the one socket that counts: a handler left on an older
+     socket checks it is still that one before it does anything, so a late close from a
+     socket already replaced cannot drop the calls of the live one. */
+  let ws = null, open = false, wasOpen = false, wait = 1000, timer = null;
+  const WAIT_MAX = 30000;
+  const disconnected = () => {
+    const err = new Error('host disconnected');
+    err.errorId = 'host.disconnected'; err.errorParams = null;
+    return err;
+  };
+  const dropPending = () => {
+    const held = Array.from(pending.values()); pending.clear();
+    held.forEach(({rej}) => rej(disconnected()));
+  };
+  const retry = () => {
+    if (timer) return;
+    timer = setTimeout(connect, wait);
+    wait = Math.min(WAIT_MAX, wait * 2);
+  };
+  function connect() {
+    timer = null;
+    let s;
+    try { s = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); }
+    catch (_) { retry(); return; }
+    ws = s;
+    s.onopen = () => {
+      if (ws !== s) return;
+      open = true; wait = 1000;
+      const again = wasOpen; wasOpen = true;
+      /* Raised last, so a listener that throws cannot leave the socket half opened. */
+      if (again) raise('host.reconnected', {});
+    };
+    s.onmessage = e => {
+      if (ws !== s) return;
+      let m = null;
+      try { m = JSON.parse(e.data); } catch (_) { return; }
+      settle(m);
+    };
+    s.onclose = () => {
+      if (ws !== s) return;
+      ws = null; open = false;
+      dropPending();
+      raise('host.lost', {});
+      retry();
+    };
+    /* A failed socket closes right after it errors, and the close is where the work is. */
+    s.onerror = () => {};
+  }
+  if (service) connect();
+
+  /* A host with no window cannot say when it is in front, so the page reads the tab: a
+     hidden tab is a window nobody is looking at, and the same listener the WinForms host
+     feeds on activate and deactivate hears it. */
+  if (!wv && typeof document !== 'undefined' && document.addEventListener)
+    document.addEventListener('visibilitychange', () => raise('window.active', { active: document.visibilityState !== 'hidden' }));
+
   return {
-    available: !!wv,
-    post(method, params) { if (wv) wv.postMessage({ method, params: params ?? {} }); },
+    available: !!wv || service,
+    /* True only under WebView2: the one host that has a window for the title bar to drive. */
+    windowed: !!wv,
+    post(method, params) {
+      if (wv) { wv.postMessage({ method, params: params ?? {} }); return; }
+      /* The service has no window, so a win.* message has nowhere to go. */
+      if (!service || !open || String(method).startsWith('win.')) return;
+      ws.send(JSON.stringify({ method, params: params ?? {} }));
+    },
     call(method, params) {
-      if (!wv) return Promise.reject(new Error('no native host'));
+      if (!wv && !service) return Promise.reject(new Error('no native host'));
+      if (!wv && !open) return Promise.reject(disconnected());
       const id = ++seq;
-      return new Promise((res, rej) => { pending.set(id, {res, rej}); wv.postMessage({ id, method, params: params ?? {} }); });
+      const frame = { id, method, params: params ?? {} };
+      return new Promise((res, rej) => {
+        pending.set(id, {res, rej});
+        if (wv) wv.postMessage(frame); else ws.send(JSON.stringify(frame));
+      });
     },
     on(event, fn) { const a = listeners.get(event) || []; a.push(fn); listeners.set(event, a); }
   };
 })();
+/* NATIVE-END */
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -239,6 +329,9 @@ window.BAKA_ERR_PARAMS=null;
    out of the catalog in the host's own language; anything not on it keeps the sentence the
    bridge sent, exactly as before. */
 const HOST_SENTENCES=[
+  /* The Native block names this itself when the service's socket closes under a call, so
+     a handler that awaited says the same sentence the condition bar is already carrying. */
+  {named:"host.disconnected",      textId:"service.conn.lost"},
   {named:"bepinex.serversRunning", textId:"bepinex.reason.servers_running"},
   {named:"bepinex.notALoader",     textId:"bepinex.reason.not_a_loader"},
   {named:"bepinex.integrity",      textId:"bepinex.reason.integrity"},
@@ -593,9 +686,12 @@ function parseNetLine(line){
   if(S.net.hist.length>72) S.net.hist.shift(); // ~12h at the 10-min cadence
 }
 
-/* ---------- WINDOW CONTROLS ---------- */
+/* ---------- WINDOW CONTROLS ----------
+   Everything from here to the resize grips drives a window, so it asks Native.windowed
+   rather than Native.available: the headless service is a real host with no window, and
+   index.html hides the buttons and the grips under html.headless before the first paint. */
 $$(".winbtn[data-win]").forEach(b=>b.addEventListener("click",()=>{
-  if(!Native.available) return;
+  if(!Native.windowed) return;
   Native.post("win."+b.dataset.win);
 }));
 
@@ -637,7 +733,7 @@ Native.on("win.state",d=>{
    and paints the same button there. Said again whenever the bar or the button changes size
    (a wider window, a text size, another display's scale). */
 function postWinChrome(){
-  if(!Native.available||!TB_MAXBTN) return;
+  if(!Native.windowed||!TB_MAXBTN) return;
   const bar=$("#titlebar"); if(!bar) return;
   const r=TB_MAXBTN.getBoundingClientRect(), b=bar.getBoundingClientRect(), k=window.devicePixelRatio||1;
   if(!r.width||!r.height) return;
@@ -662,6 +758,39 @@ Native.on("window.active",d=>{
   flameTick();
 });
 
+/* ---------- THE LINK TO A HEADLESS HOST ----------
+   The service's socket can drop and come back (the Native block above does the waiting).
+   While it is down the condition bar carries one row saying so, ahead of every other row,
+   because nothing any other row offers can be pressed until the link is back. The moment
+   it is back the row goes, a toast says so, and the page asks again for the three things
+   that can have moved while it was deaf: the realm strip, BakaLoader's own update, and the
+   active realm's state. Everything else arrives on its own event or on the next walk into
+   a hall. Neither event can fire under WebView2, so the window's page never sees this. */
+let HOST_LOST=false;
+function renderHostLink(){
+  if(!HOST_LOST){clearCondition("hostLost");return;}
+  setCondition("hostLost",{
+    sev:"warn",
+    title:T("service.conn.title"),
+    msg:T("service.conn.lost"),
+    again:renderHostLink,
+  });
+}
+Native.on("host.lost",()=>{
+  /* Said once per outage: every failed retry closes the socket again. */
+  if(HOST_LOST) return;
+  HOST_LOST=true;
+  renderHostLink();
+});
+Native.on("host.reconnected",()=>{
+  HOST_LOST=false;
+  renderHostLink();
+  toast("ᚱ "+T("service.conn.back"));
+  refreshServers();
+  refreshAppUpdateInfo();
+  rpc("server.state").then(st=>{if(st!==FAIL) applyState(st);});
+});
+
 /* How far the pointer has to travel before a press on a maximized window's title bar is
    a drag rather than a click. Small on purpose: Windows' own threshold is this order, and
    anything larger feels like the window is stuck for the first part of the movement. */
@@ -674,7 +803,7 @@ let TB_DRAG=null;
    its name. The three original classes stay listed so nothing existing changes. */
 const TB_NO_DRAG=".cmdchip,.winbtns,.winbtn,.tb-interactive";
 $("#titlebar").addEventListener("mousedown",e=>{
-  if(e.button!==0||!Native.available) return;
+  if(e.button!==0||!Native.windowed) return;
   if(e.target.closest(TB_NO_DRAG)) return;
   Native.post("win.dragStart");
   /* Only a maximized window has anything left to watch. A normal one is already inside
@@ -717,7 +846,7 @@ setLanguageAttributes("en");
 
 /* resize grips */
 $$(".grip").forEach(g=>g.addEventListener("mousedown",e=>{
-  if(e.button!==0||!Native.available) return;
+  if(e.button!==0||!Native.windowed) return;
   e.preventDefault();
   Native.post("win.resizeStart",{edge:g.dataset.edge});
 }));
@@ -11510,7 +11639,9 @@ function renderUpdatePill(){
    changed, nothing on this server is wrong while it stands, and it waits for the host
    without costing anything. It sits above the two plain lists because it is the one of the
    three that changes what the server would load if the host said yes. */
-const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
+/* hostLost sits above all of them: with the service's socket down, no row's button can reach
+   the host, so the one fact worth the bar is that the link is gone and being retried. */
+const CONDITION_ORDER=["hostLost","launchHold","saveFailed","backupFailed","crashRelaunch",
   "bepinexNoMods","bepinexNotLoaded","bepinexMissingFiles","serverUpdate","pluginFailure",
   "bepinexNotice","appUpdate","bepinexAsk","bepinexLeftAlone","bepinexWaiting",
   "bepinexWritten","unsavedStop","saveFolderStray","galeChanged","modUpdates","restartPending"];

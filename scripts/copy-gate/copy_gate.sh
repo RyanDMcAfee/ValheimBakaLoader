@@ -1044,5 +1044,20 @@ else
   echo "  the sidebar sections selftest is missing: $SIDEBAR_SELFTEST"; fail=1
 fi
 
+echo "== 66. the page's transport for a headless host: the same frames over a socket, and nothing above it can tell =="
+# docs/linux-port.md, 4.3. The Native block speaks WebView2 when it is there and otherwise, under
+# window.BAKA_HOST, the service's WebSocket at /ws with the same frames and the same Error shape.
+# The quiet failures (a socket at the wrong address, a call left unsettled by a dropped socket, a
+# reconnect that hammers or never comes, host.reconnected firing on the first open, a win.*
+# message sent to a host with no window, a window button drawn and then taken away, the lost-link
+# sentence missing from the catalog) are each driven here against the real block.
+TRANSPORT_SELFTEST="$UI_DIR/host_transport_selftest.js"
+if [ -f "$TRANSPORT_SELFTEST" ]; then
+  if out=$(node "$TRANSPORT_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the host transport selftest is missing: $TRANSPORT_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

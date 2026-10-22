@@ -4367,6 +4367,15 @@
     "cond.gale.review": {
       "translation": "[Ẋ Review Ẋ] ẊẊ"
     },
+    "service.conn.title": {
+      "translation": "[Ẋ Connection lost Ẋ] ẊẊẊẊẊ"
+    },
+    "service.conn.lost": {
+      "translation": "[Ẋ The connection to BakaLoader's service was lost. Trying again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "service.conn.back": {
+      "translation": "[Ẋ Connected again. Ẋ] ẊẊẊẊẊ"
+    },
     "cond.restart.title": {
       "translation": "[Ẋ Restart pending Ẋ] ẊẊẊẊẊ"
     },
