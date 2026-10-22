@@ -1044,5 +1044,19 @@ else
   echo "  the sidebar sections selftest is missing: $SIDEBAR_SELFTEST"; fail=1
 fi
 
+echo "== 66. the world box answers for the realm on screen, never the last one =="
+# Issue 25. A realm switch lands before the world list is fetched again, and the Editing bar (and
+# Save) read the last realm's world out of the box in that window. The box now says which realm
+# it was filled for, and the refill draws the bar again.
+WORLD_REALM_SELFTEST="$UI_DIR/world_field_realm_selftest.js"
+if [ -f "$WORLD_REALM_SELFTEST" ]; then
+  if out=$(node "$WORLD_REALM_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the world field realm selftest is missing: $WORLD_REALM_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

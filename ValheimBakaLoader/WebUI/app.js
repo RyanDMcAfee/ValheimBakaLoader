@@ -14370,6 +14370,9 @@ function worldNameProblem(name,taken){
 function worldFieldValue(){
   const sel=$("#fWorld");
   if(!sel) return S.prefs?.WorldName||"";
+  // A list still filled for another realm (a switch has landed, the fetch has not) says
+  // nothing about this one: the saved world is the answer until the list is this realm's.
+  if((sel.dataset.realm??null)!==(S.profileName||"")) return S.prefs?.WorldName||"";
   if(sel.value===WORLD_NEW_VALUE){const box=$("#fWorldNew");return box?box.value.trim():"";}
   return sel.value||S.prefs?.WorldName||"";
 }
@@ -14416,6 +14419,11 @@ function syncWorldNew(){
 }
 async function renderWorldSelect(){
   const cur=S.prefs?.WorldName??"";
+  /* The realm this list is being filled for, taken BEFORE the fetch: a realm switch lands
+     while the list is still the last realm's, and anything that read the box in that window
+     read the other realm's world (issue 25: the Editing bar said one realm's name with the
+     other realm's world). worldFieldValue trusts the box only once it says it is this realm's. */
+  const forRealm=S.profileName||"";
   const r=Native.available?await rpc("worlds.list"):WORLD_LIST_MOCK;
   const names=[...new Set([...(Array.isArray(r)&&r!==FAIL?r:[]),...(cur?[cur]:[])])];
   WORLD_NAMES=names;
@@ -14424,9 +14432,12 @@ async function renderWorldSelect(){
      world list alone would answer without it and the field would jump to another world. */
   $("#fWorld").innerHTML=names.map(n=>`<option${n===cur?" selected":""}>${esc(n)}</option>`).join("")
     +`<option value="${WORLD_NEW_VALUE}">${esc(T("world.new.option"))}</option>`;
+  $("#fWorld").dataset.realm=forRealm;
   syncWorldNew();
   renderWorldMods();
   renderWorldSeed();
+  // The bar was drawn when the realm switched, from a list that was still the last realm's.
+  try{renderEditBar()?.catch(()=>{});}catch(_){}
 }
 /* The two words this field paints itself rather than reading out of the markup: the New
    world entry at the end of the list and the line under the box. Repainted rather than
