@@ -163,6 +163,15 @@ namespace ValheimBakaLoader.Tools
             "\"path\"\\s*\"([^\"]*)\"", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         /// <summary>
+        /// Where the Steam client is installed, or null when nobody can say. The client's folder
+        /// is in the registry on Windows, and this file compiles into Core, which asks no
+        /// registry: the Windows app hands the read over in Program.Main (Tools\SteamClientRegistry.cs),
+        /// and anywhere else there is no client to ask, so the two layout rules in ClassifyInstall
+        /// are all there is, which is what IsRegisteredSteamLibrary's catch has always fallen back to.
+        /// </summary>
+        internal static Func<string> SteamClientPath { get; set; } = () => null;
+
+        /// <summary>
         /// Probes the install that owns <paramref name="serverExePath"/>. Never throws: an
         /// unreadable install comes back with a null identity, which the launch guard treats
         /// as "nothing known changed".
@@ -526,8 +535,7 @@ namespace ValheimBakaLoader.Tools
 
             try
             {
-                var steamPath = Microsoft.Win32.Registry.GetValue(
-                    @"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string;
+                var steamPath = SteamClientPath();
                 if (string.IsNullOrWhiteSpace(steamPath)) return false;
 
                 var listing = Path.Combine(steamPath, "config", LibraryFoldersFileName);

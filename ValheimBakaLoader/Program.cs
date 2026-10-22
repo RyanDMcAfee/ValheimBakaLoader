@@ -37,6 +37,10 @@ namespace ValheimBakaLoader
             // anything below runs, so it opens no log, reads no preferences and touches no Run key.
             if (ManagedUpdater.IsApplyUpdate(args))
             {
+                // The updater compiles into Core, which has no WinForms; the progress window a
+                // host watches is this app's, so it is handed over here, before Run decides
+                // whether this run gets one at all.
+                ManagedUpdater.MakeWindow = ManagedUpdaterWindow.Make;
                 Environment.ExitCode = ManagedUpdater.Run(args);
                 return;
             }
@@ -52,6 +56,11 @@ namespace ValheimBakaLoader
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RunApp(string[] args)
         {
+            // The build tracker compiles into Core, which asks no registry; the Steam client's
+            // folder is a registry value here, so this app hands the read over before the
+            // window, which is the only caller, is up.
+            ServerBuildTracker.SteamClientPath = SteamClientRegistry.ClientPath;
+
             var services = new ServiceCollection();
             ConfigureServices(services, args);
             using var container = services.BuildServiceProvider();

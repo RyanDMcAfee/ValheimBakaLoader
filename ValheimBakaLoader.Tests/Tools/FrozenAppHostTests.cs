@@ -223,12 +223,18 @@ namespace ValheimBakaLoader.Tests.Tools
         /// The version the app answers with is the DLL's, so it is checked there: the library
         /// this test is running against carries the csproj's Version in its informational
         /// version, which is the one string AssemblyHelper reads and every surface in the app is
-        /// handed.
+        /// handed. AssemblyHelper compiles into Core now, so the assembly it reads is named
+        /// rather than its own, and it has to be the app's DLL: Core carries no version of its
+        /// own, and the csproj that names one is the app's.
         /// </summary>
         [Fact]
         public void The_library_carries_the_version_the_csproj_names()
         {
-            var informational = typeof(AssemblyHelper).Assembly
+            var library = AssemblyHelper.ApplicationAssembly();
+            Assert.Equal(AssemblyHelper.ApplicationAssemblyName, library.GetName().Name);
+            Assert.Equal(typeof(Program).Assembly, library);
+
+            var informational = library
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
                 .InformationalVersion;
 

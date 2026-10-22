@@ -321,6 +321,13 @@ namespace ValheimBakaLoader.Tests.Tools
 
             Assert.DoesNotContain("Content Include=\"Resources\\Uncheat", csproj);
             Assert.Contains("Compile Remove=\"Resources\\Uncheat\\BakaLoaderUncheat.cs\"", csproj);
+
+            // The payload's content is Core's now, and the plugin half is removed from Core's
+            // compile the same way, so the same two rules hold there.
+            var core = File.ReadAllText(Path.Combine(RepoRoot(), "ValheimBakaLoader.Core", "ValheimBakaLoader.Core.csproj"));
+
+            Assert.DoesNotContain("Resources\\Uncheat\\BakaLoaderUncheat.dll", core);
+            Assert.Contains("Compile Remove=\"..\\ValheimBakaLoader\\Resources\\Uncheat\\BakaLoaderUncheat.cs\"", core);
         }
 
         // ------------------------------------------------------------------ plumbing

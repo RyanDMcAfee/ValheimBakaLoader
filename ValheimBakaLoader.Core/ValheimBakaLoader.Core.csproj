@@ -1,0 +1,139 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+	  THE PORTABLE HALF OF BAKALOADER, as a library of its own: everything under Game\, Tools\,
+	  Properties\ and Resources\ that runs a server, reads a save, talks to GitHub or writes the
+	  log, plus the three WinForms-free files that live in Forms\. It is plain net6.0 and names
+	  no desktop toolkit, so it builds and loads where there is no WinForms, no WebView2, no
+	  GDI and no registry. The Windows app references it and keeps the window, the splash, the
+	  theme and the updater's progress dialog for itself.
+
+	  The sources are LINKED from the app folder rather than moved. Every test, every selftest
+	  and the copy gate read them by their current path (the suite walks ValheimBakaLoader\ and
+	  keys files by name, the copy gate reads ValheimBakaLoader\Tools\*.cs by path), so a move today would be a move
+	  of all of that too. The split of the compile is the step this project takes; the move of
+	  the files is a later one, done when those readers are ready for it.
+	-->
+	<PropertyGroup>
+		<TargetFramework>net6.0</TargetFramework>
+		<OutputType>Library</OutputType>
+		<AssemblyName>ValheimBakaLoader.Core</AssemblyName>
+		<RootNamespace>ValheimBakaLoader</RootNamespace>
+		<!-- Nothing in this folder is compiled on its own; the compile is the linked list below. -->
+		<EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)'=='Release'">
+		<SignAssembly>true</SignAssembly>
+		<AssemblyOriginatorKeyFile>..\SolutionResources\ValheimBakaLoader.snk</AssemblyOriginatorKeyFile>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\ValheimBakaLoader.Tools\ValheimBakaLoader.Tools.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="DeviceId" Version="6.2.0" />
+		<PackageReference Include="Humanizer" Version="2.14.1" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="6.0.1" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
+		<PackageReference Include="Semver" Version="2.2.0" />
+		<PackageReference Include="Serilog" Version="2.12.0" />
+		<PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+	</ItemGroup>
+
+	<!--
+	  The Windows app reaches this assembly's internals the way the suite always has, because
+	  the window code was written beside them and names them everywhere. The suite's own grant
+	  stays where it was, the attribute in Tools\Atlas\AtlasInternals.cs, which compiles in here.
+	-->
+	<ItemGroup>
+		<InternalsVisibleTo Include="ValheimBakaLoader" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Include="..\ValheimBakaLoader\Game\**\*.cs" Link="Game\%(RecursiveDir)%(Filename)%(Extension)" />
+		<Compile Include="..\ValheimBakaLoader\Tools\**\*.cs" Link="Tools\%(RecursiveDir)%(Filename)%(Extension)" />
+		<Compile Include="..\ValheimBakaLoader\Properties\**\*.cs" Link="Properties\%(RecursiveDir)%(Filename)%(Extension)" />
+		<Compile Include="..\ValheimBakaLoader\Resources\**\*.cs" Link="Resources\%(RecursiveDir)%(Filename)%(Extension)" />
+		<Compile Include="..\ValheimBakaLoader\Forms\ConfigFiles.cs" Link="Forms\ConfigFiles.cs" />
+		<Compile Include="..\ValheimBakaLoader\Forms\ServerSession.cs" Link="Forms\ServerSession.cs" />
+		<Compile Include="..\ValheimBakaLoader\Forms\IMainAppWindow.cs" Link="Forms\IMainAppWindow.cs" />
+		<Compile Include="..\SolutionResources\ClientSecrets.cs" Link="Properties\ClientSecrets.cs" Condition="'$(Configuration)'=='Release' Or Exists('..\SolutionResources\ClientSecrets.cs')" />
+		<Compile Include="..\SolutionResources\ClientSecrets.Values.cs" Link="Properties\ClientSecrets.Values.cs" Condition="'$(Configuration)'=='Release' Or Exists('..\SolutionResources\ClientSecrets.Values.cs')" />
+	</ItemGroup>
+
+	<!--
+	  The Windows host's own files, left to the app: each one names WinForms, GDI, the registry
+	  or a window. MapRenderer draws the atlas through System.Drawing and RunKeyRegistry is the
+	  Run key itself, so they stay with the window even though they sit under Tools\.
+	-->
+	<ItemGroup>
+		<Compile Remove="..\ValheimBakaLoader\Tools\FormExtensions.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\FormProvider.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\Theming\**\*.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\TitlebarClicks.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\WindowSnap.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\ExceptionHandler.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\StartupHelper.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\RunKeyRegistry.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\SteamClientRegistry.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\ManagedUpdaterWindow.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Tools\Atlas\MapRenderer.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Properties\AppIcon.cs" />
+		<!-- The plugin entry points name Valheim types and are built elsewhere; the app keeps
+		     them as None items so they stay visible in the tree. -->
+		<Compile Remove="..\ValheimBakaLoader\Resources\SpawnHelper\BakaLoaderSpawnHelper.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Resources\KillAll\BakaKillAll.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Resources\Commander\BakaLoaderCommander.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Resources\MaxPlayers\BakaLoaderMaxPlayers.cs" />
+		<Compile Remove="..\ValheimBakaLoader\Resources\Uncheat\BakaLoaderUncheat.cs" />
+	</ItemGroup>
+
+	<!--
+	  What ships beside whichever host references this: the bundled plugins the installers
+	  copy onto a server, the vanilla item fallback, and the page. They are content of THIS
+	  project so that any host gets Resources\ and WebUI\ beside its own assembly without
+	  listing them again; a referencing project's output takes them along. The item indexer
+	  DLL is optional (built separately), so its wildcard copies nothing until it exists, and
+	  the client companion in Resources\Uncheat is deliberately not here, as the app's own
+	  csproj explains.
+	-->
+	<ItemGroup>
+		<Content Include="..\ValheimBakaLoader\Resources\vanilla-items.json" Link="Resources\vanilla-items.json" Condition="Exists('..\ValheimBakaLoader\Resources\vanilla-items.json')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+		<Content Include="..\ValheimBakaLoader\Resources\ItemIndexer\**\*.dll" Link="Resources\ItemIndexer\%(RecursiveDir)%(Filename)%(Extension)">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+		<Content Include="..\ValheimBakaLoader\Resources\SpawnHelper\BakaLoaderSpawnHelper.dll" Link="Resources\SpawnHelper\BakaLoaderSpawnHelper.dll" Condition="Exists('..\ValheimBakaLoader\Resources\SpawnHelper\BakaLoaderSpawnHelper.dll')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+		<Content Include="..\ValheimBakaLoader\Resources\KillAll\BakaKillAll.dll" Link="Resources\KillAll\BakaKillAll.dll" Condition="Exists('..\ValheimBakaLoader\Resources\KillAll\BakaKillAll.dll')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+		<Content Include="..\ValheimBakaLoader\Resources\Commander\BakaLoaderCommander.dll" Link="Resources\Commander\BakaLoaderCommander.dll" Condition="Exists('..\ValheimBakaLoader\Resources\Commander\BakaLoaderCommander.dll')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+		<Content Include="..\ValheimBakaLoader\Resources\MaxPlayers\BakaLoaderMaxPlayers.dll" Link="Resources\MaxPlayers\BakaLoaderMaxPlayers.dll" Condition="Exists('..\ValheimBakaLoader\Resources\MaxPlayers\BakaLoaderMaxPlayers.dll')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+	</ItemGroup>
+
+	<!--
+	  The page, served to the WebView out of the WebUI output folder. The pseudo locale
+	  xx.json is a test fixture the suite reads out of the source tree, not a language, so it
+	  stays out of what ships. The English catalog goes in a second time as an embedded
+	  resource under the name Tools\HostCatalog.cs asks its own assembly for, so the sentences
+	  that never reach a page (the restart countdown, the Discord post) are read from here
+	  with no fetch and no browser.
+	-->
+	<ItemGroup>
+		<Content Include="..\ValheimBakaLoader\WebUI\**\*" Link="WebUI\%(RecursiveDir)%(Filename)%(Extension)">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+		<Content Remove="..\ValheimBakaLoader\WebUI\i18n\xx.json" />
+		<EmbeddedResource Include="..\ValheimBakaLoader\WebUI\i18n\en.json" Link="WebUI\i18n\en.json" LogicalName="ValheimBakaLoader.WebUI.i18n.en.json" />
+	</ItemGroup>
+
+</Project>

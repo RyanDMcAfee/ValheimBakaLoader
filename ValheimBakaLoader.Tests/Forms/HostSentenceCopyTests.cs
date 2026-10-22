@@ -324,17 +324,23 @@ namespace ValheimBakaLoader.Tests.Forms
 
         /// <summary>
         /// The catalog is embedded rather than only copied beside the exe. The install folder
-        /// can be read only, and a self update robocopies over it.
+        /// can be read only, and a self update robocopies over it. It is embedded in Core,
+        /// the assembly HostCatalog compiles into and asks for it, under the one name that
+        /// file knows; the app project carries it no more, or HostCatalog would find a second
+        /// copy it never reads.
         /// </summary>
         [Fact]
         public void The_project_embeds_the_english_catalog()
         {
-            var csproj = AppSourceTree.Read("ValheimBakaLoader", "ValheimBakaLoader.csproj");
+            var core = AppSourceTree.Read("ValheimBakaLoader.Core", "ValheimBakaLoader.Core.csproj");
 
             Assert.Contains(
-                "<EmbeddedResource Include=\"WebUI\\i18n\\en.json\" LogicalName=\"ValheimBakaLoader.WebUI.i18n.en.json\" />",
-                csproj,
+                "<EmbeddedResource Include=\"..\\ValheimBakaLoader\\WebUI\\i18n\\en.json\" Link=\"WebUI\\i18n\\en.json\" LogicalName=\"ValheimBakaLoader.WebUI.i18n.en.json\" />",
+                core,
                 StringComparison.Ordinal);
+
+            var csproj = AppSourceTree.Read("ValheimBakaLoader", "ValheimBakaLoader.csproj");
+            Assert.DoesNotContain("<EmbeddedResource", csproj, StringComparison.Ordinal);
         }
 
         /// <summary>

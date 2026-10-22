@@ -85,9 +85,33 @@ namespace ValheimBakaLoader.Tools
             CurrentUICulture = CultureInfo.CurrentUICulture?.ToString(),
         };
 
+        /// <summary>The name of the assembly whose version is the product's: the app's DLL.</summary>
+        internal const string ApplicationAssemblyName = "ValheimBakaLoader";
+
+        /// <summary>
+        /// The assembly the version is read from. The app's version is the DLL's (the frozen
+        /// launcher carries none), and the csproj that names it is the app's, not this one's:
+        /// this file compiles into ValheimBakaLoader.Core, so reading its own assembly would
+        /// answer Core's placeholder version and every surface, log line and update check
+        /// would call the host something it is not. The DLL sits beside Core in every host
+        /// that has one, so it is asked for by name; a host without it falls back to this
+        /// assembly's own.
+        /// </summary>
+        internal static Assembly ApplicationAssembly()
+        {
+            try
+            {
+                return Assembly.Load(new AssemblyName(ApplicationAssemblyName));
+            }
+            catch
+            {
+                return typeof(AssemblyHelper).Assembly;
+            }
+        }
+
         private static string ReadVersion()
         {
-            var informational = Assembly.GetExecutingAssembly()
+            var informational = ApplicationAssembly()
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
                 .InformationalVersion ?? "0.0.0";
 

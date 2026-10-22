@@ -1,20 +1,14 @@
-using System.Drawing;
-using System.Resources;
-
 namespace ValheimBakaLoader.Properties
 {
     /// <summary>
     /// App-wide fixed values: branding, dedicated-server defaults, file
-    /// locations, and external URLs. The window icon is the only entry left
-    /// in Resources.resx; everything else lives here as plain constants.
+    /// locations, and external URLs, all plain constants. The window icon,
+    /// the only entry left in Resources.resx, is read by AppIcon in the
+    /// Windows app: it is a GDI object out of the window's own assembly, and
+    /// this file compiles into Core, which has neither.
     /// </summary>
     internal static class Resources
     {
-        private static readonly ResourceManager Embedded =
-            new("ValheimBakaLoader.Properties.Resources", typeof(Resources).Assembly);
-
-        internal static Icon ApplicationIcon => (Icon)Embedded.GetObject("ApplicationIcon");
-
         internal const string ApplicationTitle = "Valheim BakaLoader";
 
         // Dedicated-server defaults, per the Valheim Dedicated Server Manual

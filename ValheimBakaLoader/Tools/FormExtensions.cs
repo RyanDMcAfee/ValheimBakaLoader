@@ -56,7 +56,7 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         public static void AddApplicationIcon(this Form form)
         {
-            form.Icon = Resources.ApplicationIcon;
+            form.Icon = AppIcon.ApplicationIcon;
         }
     }
 }

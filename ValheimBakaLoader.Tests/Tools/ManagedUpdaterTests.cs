@@ -615,7 +615,7 @@ namespace ValheimBakaLoader.Tests.Tools
         public void No_part_of_the_update_is_a_script_a_hidden_window_or_a_Run_key()
         {
             var files = AppSourceTree.Files();
-            foreach (var name in new[] { "AppUpdateService.cs", "ManagedUpdater.cs" })
+            foreach (var name in new[] { "AppUpdateService.cs", "ManagedUpdater.cs", "ManagedUpdaterWindow.cs" })
             {
                 var code = string.Join("\n", AppSourceTree.Lf(files[name]).Split('\n')
                     .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
@@ -769,6 +769,10 @@ namespace ValheimBakaLoader.Tests.Tools
         /// <summary>
         /// Every way the updater could make or show a window sits below the guard in Run, and the
         /// window is only ever built through MakeWindow, which is what lets the next test swap it.
+        /// The window itself is WinForms and lives in the Windows app (ManagedUpdaterWindow.cs),
+        /// not in ManagedUpdater.cs, which compiles into Core and names no toolkit: Core on its
+        /// own answers no window, the app hands its own over in Program.Main, and the one
+        /// construction of the window is in the app's file.
         /// </summary>
         [Fact]
         public void Every_window_the_updater_makes_comes_after_the_guard()
@@ -787,9 +791,21 @@ namespace ValheimBakaLoader.Tests.Tools
                 }
             }
 
-            Assert.Equal(1, Occurrences(code, "new UpdaterWindow("));
+            Assert.Equal(0, Occurrences(code, "new UpdaterWindow("));
+            Assert.Equal(0, Occurrences(code, "Application.Run("));
+            Assert.DoesNotContain("System.Windows.Forms", code);
             Assert.Equal(1, Occurrences(code, "window = MakeWindow();"));
-            Assert.Contains("internal static Func<UpdaterWindow> MakeWindow { get; set; } = () => new UpdaterWindow();", code);
+            Assert.Contains("internal static Func<IUpdaterWindow> MakeWindow { get; set; } = () => null;", code);
+
+            var window = AppSourceTree.Lf(AppSourceTree.Files()["ManagedUpdaterWindow.cs"]);
+            Assert.Equal(1, Occurrences(window, "new UpdaterWindow("));
+            Assert.Contains("internal static ManagedUpdater.IUpdaterWindow Make() => new UpdaterWindow();", window);
+
+            var program = AppSourceTree.Lf(AppSourceTree.Read("ValheimBakaLoader", "Program.cs"));
+            var handed = program.IndexOf("ManagedUpdater.MakeWindow = ManagedUpdaterWindow.Make;", StringComparison.Ordinal);
+            Assert.True(handed > 0, "Program.Main no longer hands the updater its window");
+            Assert.True(handed < program.IndexOf("Environment.ExitCode = ManagedUpdater.Run(args);", StringComparison.Ordinal),
+                "the window is handed over after Run has already decided");
         }
 
         /// <summary>
@@ -803,10 +819,12 @@ namespace ValheimBakaLoader.Tests.Tools
         public void A_run_told_to_show_nothing_never_asks_for_a_window()
         {
             // Checked first, so the last case below cannot reach a real window even if the code
-            // has moved under this test.
+            // has moved under this test: the Core file makes no window of its own, and the one
+            // in the app's file is only reached through the hook swapped below.
             var code = AppSourceTree.Lf(AppSourceTree.Files()["ManagedUpdater.cs"]);
-            Assert.Equal(1, Occurrences(code, "new UpdaterWindow("));
+            Assert.Equal(0, Occurrences(code, "new UpdaterWindow("));
             Assert.Equal(1, Occurrences(code, "window = MakeWindow();"));
+            Assert.Equal(1, Occurrences(AppSourceTree.Lf(AppSourceTree.Files()["ManagedUpdaterWindow.cs"]), "new UpdaterWindow("));
 
             var asked = 0;
             var make = ManagedUpdater.MakeWindow;

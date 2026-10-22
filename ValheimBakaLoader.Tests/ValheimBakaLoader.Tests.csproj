@@ -28,6 +28,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ValheimBakaLoader\ValheimBakaLoader.csproj" />
+    <!-- Named outright rather than left to the app to carry along: the suite reaches Core's
+         internals directly, so its reliance on Core is written where the app's is, and a host
+         built without the window can still build the suite. -->
+    <ProjectReference Include="..\ValheimBakaLoader.Core\ValheimBakaLoader.Core.csproj" />
   </ItemGroup>
 
 </Project>

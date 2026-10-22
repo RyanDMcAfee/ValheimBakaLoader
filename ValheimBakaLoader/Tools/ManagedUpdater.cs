@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -9,7 +8,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace ValheimBakaLoader.Tools
 {
@@ -221,7 +219,7 @@ namespace ValheimBakaLoader.Tools
             if (!ShowsWindow(plan, HoldsTheApp(plan.Pending))) return Apply(plan, null).ExitCode;
 
             UpdateResult result = null;
-            UpdaterWindow window = null;
+            IUpdaterWindow window = null;
             try
             {
                 window = MakeWindow();
@@ -241,13 +239,11 @@ namespace ValheimBakaLoader.Tools
 
             using (window)
             {
-                window.Shown += (_, _) => Task.Run(() =>
+                window.Run(() => Task.Run(() =>
                 {
                     try { result = Apply(plan, window.Say); }
                     finally { window.Finish(); }
-                });
-
-                Application.Run(window);
+                }));
             }
 
             return result?.ExitCode ?? 1;
@@ -262,12 +258,16 @@ namespace ValheimBakaLoader.Tools
         internal static bool ShowsWindow(Plan plan, bool holdsApp) => plan != null && plan.Window && holdsApp;
 
         /// <summary>
-        /// How Run makes its window. Declared after Run on purpose, so the only construction of the
-        /// window in this file sits below the guard that decides whether there is one. The suite
-        /// swaps it for one that throws and records the call, so a guard that stopped working fails
-        /// a test instead of putting a window in front of whoever is using the PC.
+        /// How Run makes its window. Declared after Run on purpose, so the only call for a window
+        /// in this file sits below the guard that decides whether there is one. The window itself
+        /// is WinForms and lives with the Windows host (Tools\ManagedUpdaterWindow.cs), which
+        /// sets this before it calls Run; this assembly has no desktop toolkit, so on its own it
+        /// answers no window and the update runs headless, the same as a run told to show
+        /// nothing. The suite swaps it for one that throws and records the call, so a guard that
+        /// stopped working fails a test instead of putting a window in front of whoever is using
+        /// the PC.
         /// </summary>
-        internal static Func<UpdaterWindow> MakeWindow { get; set; } = () => new UpdaterWindow();
+        internal static Func<IUpdaterWindow> MakeWindow { get; set; } = () => null;
 
         /// <summary>
         /// The whole update, in order: wait for the app to close, copy the staged files over the
@@ -1052,67 +1052,25 @@ namespace ValheimBakaLoader.Tools
         // ------------------------------------------------------------------ the window
 
         /// <summary>
-        /// The updater's window: a title and one line of status, the size of a small dialog, in the
-        /// middle of the screen and in the taskbar. It cannot be closed by hand while files are
-        /// being copied, because a copy stopped half way is the thing the whole updater exists to
-        /// avoid; it closes itself when the work is done.
+        /// What Run needs from the window it shows, and nothing a desktop toolkit would add. The
+        /// window itself is a WinForms Form in the Windows app (Tools\ManagedUpdaterWindow.cs);
+        /// the updater only ever holds it through this, which is what lets the whole update run
+        /// where there is no desktop at all.
         /// </summary>
-        internal sealed class UpdaterWindow : Form
+        internal interface IUpdaterWindow : IDisposable
         {
-            private readonly Label Status;
-            private volatile bool Done;
+            /// <summary>
+            /// Puts the window on screen and pumps it until <see cref="Finish"/> closes it. The
+            /// work is started once the window is showing, never before, so a host always sees
+            /// the window for as long as the copy takes.
+            /// </summary>
+            void Run(Action work);
 
-            public UpdaterWindow()
-            {
-                Text = HostCatalog.T("host.updater.title");
-                FormBorderStyle = FormBorderStyle.FixedDialog;
-                MaximizeBox = false;
-                MinimizeBox = true;
-                ShowInTaskbar = true;
-                StartPosition = FormStartPosition.CenterScreen;
-                AutoScaleMode = AutoScaleMode.Dpi;
-                ClientSize = new Size(380, 64);
+            /// <summary>One line of status, from whichever thread is doing the copy.</summary>
+            void Say(string line);
 
-                Status = new Label
-                {
-                    Dock = DockStyle.Fill,
-                    Padding = new Padding(14, 0, 14, 0),
-                    TextAlign = ContentAlignment.MiddleLeft,
-                    AutoEllipsis = true,
-                    Text = HostCatalog.T("host.updater.waiting"),
-                };
-                Controls.Add(Status);
-
-                FormClosing += (_, e) =>
-                {
-                    if (!Done && e.CloseReason == CloseReason.UserClosing) e.Cancel = true;
-                };
-            }
-
-            public void Say(string line)
-            {
-                try
-                {
-                    if (IsHandleCreated && !IsDisposed) BeginInvoke(new Action(() => Status.Text = line));
-                }
-                catch
-                {
-                    // A window going away is not a reason to stop copying.
-                }
-            }
-
-            public void Finish()
-            {
-                Done = true;
-                try
-                {
-                    if (IsHandleCreated && !IsDisposed) BeginInvoke(new Action(Close));
-                }
-                catch
-                {
-                    // Already closed.
-                }
-            }
+            /// <summary>The work is done: let the window close, and close it.</summary>
+            void Finish();
         }
     }
 

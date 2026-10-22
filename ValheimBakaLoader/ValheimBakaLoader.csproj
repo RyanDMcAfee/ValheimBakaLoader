@@ -98,6 +98,45 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\ValheimBakaLoader.Tools\ValheimBakaLoader.Tools.csproj" />
+		<ProjectReference Include="..\ValheimBakaLoader.Core\ValheimBakaLoader.Core.csproj" />
+	</ItemGroup>
+
+	<!--
+	  The suite reaches the window's internals the way it reaches Core's. The attribute that
+	  granted it lives in Tools\Atlas\AtlasInternals.cs, which compiles into Core these days,
+	  so this assembly names the suite itself.
+	-->
+	<ItemGroup>
+		<InternalsVisibleTo Include="ValheimBakaLoader.Tests" />
+	</ItemGroup>
+
+	<!--
+	  THE SPLIT. Everything portable compiles into ValheimBakaLoader.Core, linked from this
+	  folder (the Core csproj says why the files have not moved). What stays here is the
+	  Windows host: Program, the forms, and the handful of files under Tools\ and Properties\
+	  that name WinForms, GDI, the registry or a window. The Compile Removes hand the rest to
+	  Core; the Includes after them take the host's own files back out of the sweep.
+	-->
+	<ItemGroup>
+		<Compile Remove="Game\**\*.cs" />
+		<Compile Remove="Tools\**\*.cs" />
+		<Compile Remove="Properties\Resources.cs" />
+		<Compile Remove="Resources\**\*.cs" />
+		<Compile Remove="Forms\ConfigFiles.cs" />
+		<Compile Remove="Forms\ServerSession.cs" />
+		<Compile Remove="Forms\IMainAppWindow.cs" />
+		<Compile Include="Tools\FormExtensions.cs" />
+		<Compile Include="Tools\FormProvider.cs" />
+		<Compile Include="Tools\Theming\Theme.cs" />
+		<Compile Include="Tools\Theming\ThemeManager.cs" />
+		<Compile Include="Tools\TitlebarClicks.cs" />
+		<Compile Include="Tools\WindowSnap.cs" />
+		<Compile Include="Tools\ExceptionHandler.cs" />
+		<Compile Include="Tools\StartupHelper.cs" />
+		<Compile Include="Tools\RunKeyRegistry.cs" />
+		<Compile Include="Tools\SteamClientRegistry.cs" />
+		<Compile Include="Tools\ManagedUpdaterWindow.cs" />
+		<Compile Include="Tools\Atlas\MapRenderer.cs" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -111,17 +150,11 @@
 		<PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
 	</ItemGroup>
 
-  <ItemGroup>
-    <Compile Include="..\SolutionResources\ClientSecrets.cs" Link="Properties\ClientSecrets.cs" Condition="'$(Configuration)'=='Release' Or Exists('..\SolutionResources\ClientSecrets.cs')" />
-    <Compile Include="..\SolutionResources\ClientSecrets.Values.cs" Link="Properties\ClientSecrets.Values.cs" Condition="'$(Configuration)'=='Release' Or Exists('..\SolutionResources\ClientSecrets.Values.cs')" />
-  </ItemGroup>
-
 	<!--
-	  Bundled fallback item catalog + companion item-indexer plugin DLL. The JSON ships as the
-	  vanilla fallback that powers the "Spawn X at" picker until the live, mod-aware items.json is
-	  produced on the server. The indexer DLL (built separately via BakaLoaderItemIndexer/build-plugin.bat)
-	  is auto-installed into the server's BepInEx/plugins folder by ItemIndexerInstaller; it's optional,
-	  so the wildcard simply copies nothing when it hasn't been built yet.
+	  The bundled plugins, the vanilla item fallback and the page are content of
+	  ValheimBakaLoader.Core now, and a referencing project's output takes a reference's
+	  content along, so Resources\ and WebUI\ still land beside the exe (and beside the
+	  suite) without being listed here a second time.
 	-->
 	<ItemGroup>
 		<!-- The way in when the launcher is gone. On 2026-10-11 Defender's cloud heuristic took
@@ -135,24 +168,6 @@
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 			<CopyToPublishDirectory Condition="'$(PublishSingleFile)' == 'true'">Never</CopyToPublishDirectory>
-		</Content>
-		<Content Include="Resources\vanilla-items.json" Condition="Exists('Resources\vanilla-items.json')">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</Content>
-		<Content Include="Resources\ItemIndexer\**\*.dll">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</Content>
-		<Content Include="Resources\SpawnHelper\BakaLoaderSpawnHelper.dll" Condition="Exists('Resources\SpawnHelper\BakaLoaderSpawnHelper.dll')">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</Content>
-		<Content Include="Resources\KillAll\BakaKillAll.dll" Condition="Exists('Resources\KillAll\BakaKillAll.dll')">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</Content>
-		<Content Include="Resources\Commander\BakaLoaderCommander.dll" Condition="Exists('Resources\Commander\BakaLoaderCommander.dll')">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</Content>
-		<Content Include="Resources\MaxPlayers\BakaLoaderMaxPlayers.dll" Condition="Exists('Resources\MaxPlayers\BakaLoaderMaxPlayers.dll')">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>
 		<!-- Exclude the .cs source reference files from compilation -->
 		<Compile Remove="Resources\SpawnHelper\BakaLoaderSpawnHelper.cs" />
@@ -179,27 +194,8 @@
 	  Blend UI - the WebView2-hosted HTML/CSS/JS interface (design-mockups/blend.html is the
 	  visual spec). Served to the WebView via SetVirtualHostNameToFolderMapping from the
 	  WebUI output folder; fonts are bundled locally so the app never depends on Google Fonts.
+	  The folder is content of ValheimBakaLoader.Core (with the pseudo locale left out and
+	  the English catalog embedded beside HostCatalog), which is what puts it beside the exe.
 	-->
-	<ItemGroup>
-		<Content Include="WebUI\**\*">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</Content>
-		<!--
-		  The pseudo locale is a test fixture, not a language: every sentence wrapped in
-		  brackets and padded a third longer, so a language switch that misses a surface
-		  shows up on sight. It is driven from the mock preview and read by the suite out
-		  of the source tree, and no host has any use for it, so it stays out of what
-		  ships. The file itself stays in the repository.
-		-->
-		<Content Remove="WebUI\i18n\xx.json" />
-		<!--
-		  The English catalog a second time, inside the assembly. The page fetches the file
-		  beside it; the sentences that never reach a page (the restart countdown a player
-		  reads, the Discord post a community reads) are written on this side, where there is
-		  no fetch and no browser. Tools\HostCatalog.cs reads them out of here, so one catalog
-		  holds every sentence in the product and a translator is handed one document.
-		-->
-		<EmbeddedResource Include="WebUI\i18n\en.json" LogicalName="ValheimBakaLoader.WebUI.i18n.en.json" />
-	</ItemGroup>
 
 </Project>
