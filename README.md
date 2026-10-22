@@ -81,7 +81,11 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.17
+## What is new in 1.2.18
+
+- **The Settings screen names the right world after a realm switch.** The Editing line could show the previous realm's world for a moment, and a Save pressed in that moment could have kept it; both now use the realm on screen.
+
+## What was new in 1.2.17
 
 - **A simpler sidebar.** Dashboard, Players, Map, Mods and Settings; Statistics and the Log are sections on the Dashboard, Configs sits under the mod list and Discord at the foot of Settings, each folding and remembering how you left it. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 - **Nothing jumps any more.** What appears when you click rolls or fades in, and everything below moves with it.
