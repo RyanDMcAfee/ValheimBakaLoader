@@ -98,7 +98,7 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void The_window_and_the_page_both_use_it()
         {
-            var host = AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindow.cs");
+            var host = AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindowForm.cs");
             Assert.Contains("WindowSnap.HitTest(PointToClient(screen), MaxButtonBounds()) == WindowSnap.HTMAXBUTTON", host);
             Assert.Contains("WindowSnap.WithSnapStyles(GetWindowStyle(Handle, GWL_STYLE))", host);
             Assert.Contains("Marshal.WriteInt32(m.LParam, 4, WindowSnap.WithSnapStyles(next));", host);

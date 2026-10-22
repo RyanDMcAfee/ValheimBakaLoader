@@ -61,6 +61,13 @@ namespace ValheimBakaLoader.Tests.Forms
             return Path.Combine(repo, "ValheimBakaLoader", "Forms", "BlendWindow.Bridge.cs");
         }
 
+        /// <summary>The window beside it: the application-wide walk lives there since the bridge lost its Form.</summary>
+        private static string FormSourcePath([CallerFilePath] string thisFile = "")
+        {
+            var repo = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(thisFile), "..", ".."));
+            return Path.Combine(repo, "ValheimBakaLoader", "Forms", "BlendWindowForm.cs");
+        }
+
         // ---------------------------------------------------------------- the close guard
 
         [Fact]
@@ -149,8 +156,11 @@ namespace ValheimBakaLoader.Tests.Forms
                 "the restart hook closes only its own window, so the app stays up under the watchdog");
 
             // And the application-wide close is the thing that reaches every window and then
-            // makes sure the process really ends.
-            var close = Slice(source, "private void RunSelfUpdateShutdown()", "}");
+            // makes sure the process really ends. The bridge posts it through its host; the
+            // walk itself is the window's, because the window list is a WinForms fact.
+            Assert.Contains("Ui.Post(Ui.CloseEveryWindowForSelfUpdate);",
+                Slice(source, "private void CloseEveryWindowForSelfUpdate()", "}"));
+            var close = Slice(File.ReadAllText(FormSourcePath()), "private void RunSelfUpdateShutdown()", "}");
             Assert.Contains("ShutDownAllWindowsForSelfUpdate", close);
             Assert.Contains("OpenServerWindows()", close);
             Assert.Contains("RequestExitForSelfUpdate", close);

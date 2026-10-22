@@ -144,7 +144,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
             // And a window that closes takes its own sessions back out, or the last status a
             // closed window held would pin the update shut for the rest of the process.
-            var closed = BridgeMethodSource("protected override void OnFormClosed(FormClosedEventArgs e)");
+            var closed = BridgeMethodSource("public void OnHostClosed()");
             Assert.Contains("ForgetSession(session)", closed);
         }
 

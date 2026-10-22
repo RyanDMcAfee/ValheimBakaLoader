@@ -288,7 +288,7 @@ namespace ValheimBakaLoader.Tests.Forms
             // face's kind is stated to the browser, which is what makes the five cases above
             // load-bearing rather than belt and braces, and the window must not grow a second
             // owner for the same fact.
-            var serving = AppSourceTree.Files()["BlendWindow.cs"];
+            var serving = AppSourceTree.Files()["BlendWindowForm.cs"];
             Assert.DoesNotContain("font/woff2", serving, StringComparison.Ordinal);
             Assert.DoesNotContain("LanguageContentType", serving, StringComparison.Ordinal);
         }

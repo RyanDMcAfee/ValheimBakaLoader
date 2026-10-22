@@ -564,7 +564,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_host_hands_the_page_its_language_before_the_page_runs()
         {
-            var window = AppSourceTree.Files()["BlendWindow.cs"];
+            var window = AppSourceTree.Files()["BlendWindowForm.cs"];
 
             Assert.Contains("window.BAKA_LANG=", window, StringComparison.Ordinal);
             Assert.Contains("AnnounceLanguageToPageAsync(core)", window, StringComparison.Ordinal);

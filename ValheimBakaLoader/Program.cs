@@ -296,6 +296,9 @@ namespace ValheimBakaLoader
             services.AddSingleton<IServerPreferencesProvider, ServerPreferencesProvider>();
             services.AddSingleton<IWorldPreferencesProvider, WorldPreferencesProvider>();
             services.AddSingleton<IStartupArgsProvider>(new StartupArgsProvider(args));
+            // The Run key, for the bridge: the bridge compiles without WinForms, so it asks
+            // through this rather than naming StartupHelper.
+            services.AddSingleton<IStartupRegistration, WindowsStartupRegistration>();
             services.AddTransient<ValheimServer>();
 
             // Every live server session in the app, across every window. One singleton, because
@@ -303,10 +306,13 @@ namespace ValheimBakaLoader
             // process, and a per-window answer misses the world running in the window next door.
             services.AddSingleton<IServerSessionRegistry, ServerSessionRegistry>();
 
-            // Windows: one splash for the app, one BlendWindow per server profile.
+            // Windows: one splash for the app, one BlendWindow per server profile. The bridge
+            // is registered on its own because it has no window in it any more (the suite and
+            // a headless host resolve it bare); the form takes one and shows it.
             services.AddSingleton<IFormProvider, FormProvider>();
             services.AddSingleton<SplashForm>();
             services.AddTransient<BlendWindow>();
+            services.AddTransient<BlendWindowForm>();
         }
     }
 }

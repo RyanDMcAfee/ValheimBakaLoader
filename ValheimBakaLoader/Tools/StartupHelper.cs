@@ -901,14 +901,41 @@ namespace ValheimBakaLoader.Tools
         /// save open the Run key, every time, for a preference nobody had touched.
         /// </para>
         /// </summary>
-        public static bool ApplySavedValue(Game.UserPreferences prefs, JToken carried)
-        {
-            if (prefs == null || carried == null) return false;
+        public static bool ApplySavedValue(Game.UserPreferences prefs, JToken carried) =>
+            StartupPreference.ApplySavedValue(prefs, carried);
+    }
 
-            var wanted = carried.Value<bool>();
-            var moved = wanted != prefs.StartWithWindows;
-            prefs.StartWithWindows = wanted;
-            return moved;
+    /// <summary>
+    /// The Run key as the bridge asks for it. The bridge compiles without WinForms and cannot
+    /// name <see cref="StartupHelper"/>, so this is the one line between the two: the
+    /// helper's answers, with their two sentences copied into the shape the bridge carries.
+    /// </summary>
+    public sealed class WindowsStartupRegistration : IStartupRegistration
+    {
+        private readonly ILogger Logger;
+
+        public WindowsStartupRegistration(ILogger logger)
+        {
+            Logger = logger;
         }
+
+        public HostStartupNotes Apply(bool userPreference) =>
+            Carry(StartupHelper.ApplyStartupSetting(userPreference, Logger).Notes);
+
+        public HostStartupNotes NotesFor(bool userPreference) =>
+            Carry(StartupHelper.NotesFor(userPreference));
+
+        private static HostStartupNotes Carry(StartupNotes notes)
+        {
+            if (notes == null) return null;
+            return new HostStartupNotes
+            {
+                Notice = Carry(notes.Notice),
+                Also = Carry(notes.Also),
+            };
+        }
+
+        private static HostStartupNotice Carry(StartupNotice notice) =>
+            notice == null ? null : new HostStartupNotice { Id = notice.Id, Path = notice.Path };
     }
 }

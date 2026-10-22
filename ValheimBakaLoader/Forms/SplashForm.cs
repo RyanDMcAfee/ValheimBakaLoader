@@ -30,7 +30,7 @@ namespace ValheimBakaLoader.Forms
         // Raised (marshaled onto the UI thread) each time one launch step ends.
         private event EventHandler<Task> StepCompleted;
 
-        // Slots hold BlendWindow instances; a closed window leaves a null slot so
+        // Slots hold BlendWindowForm instances; a closed window leaves a null slot so
         // the SplashIndex of the remaining windows stays valid.
         private readonly List<Form> MainWindows = new();
 
@@ -127,8 +127,9 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         public Form CreateNewMainWindow(string startProfile, bool startServer)
         {
-            var window = FormProvider.GetForm<BlendWindow>();
-            var contract = (IMainAppWindow)window;
+            var window = FormProvider.GetForm<BlendWindowForm>();
+            // The startup contract lives on the bridge the form shows, not on the form.
+            var contract = (IMainAppWindow)window.Bridge;
 
             window.FormClosed += OnMainWindowClosed;
             contract.StartProfile = startProfile;
@@ -192,7 +193,8 @@ namespace ValheimBakaLoader.Forms
                 return;
             }
 
-            if (sender is not Form window || window is not IMainAppWindow contract) return;
+            if (sender is not BlendWindowForm window) return;
+            IMainAppWindow contract = window.Bridge;
             Logger.Debug("Closed {name} [{index}]", window.GetType().Name, contract.SplashIndex);
 
             // Null the slot rather than removing it, so other windows' indexes hold.

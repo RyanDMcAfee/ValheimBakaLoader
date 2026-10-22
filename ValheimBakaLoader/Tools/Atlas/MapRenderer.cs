@@ -98,6 +98,11 @@ namespace ValheimBakaLoader.Tools.Atlas
         /// <summary>Writes an ARGB pixel buffer as a PNG via LockBits.</summary>
         public static void SavePng(int[] pixels, int sizePx, string path)
         {
+            // GDI+ is what writes the file, and GDI+ is a Windows thing: a host without it
+            // gets a plain refusal here rather than a crash inside the first Bitmap.
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException("The atlas PNG writer draws through GDI+, which this host does not have.");
+
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
             using (var bmp = new Bitmap(sizePx, sizePx, PixelFormat.Format32bppArgb))
             {

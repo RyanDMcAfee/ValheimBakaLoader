@@ -27,7 +27,7 @@ namespace ValheimBakaLoader.Tests.Forms
     {
         private static string Html() => AppSourceTree.Web("index.html");
 
-        private static string BlendWindow() => AppSourceTree.Files()["BlendWindow.cs"];
+        private static string BlendWindow() => AppSourceTree.Files()["BlendWindowForm.cs"];
 
         /// <summary>The version in the csproj, which is what the running build reports.</summary>
         private static string ShippedVersion()

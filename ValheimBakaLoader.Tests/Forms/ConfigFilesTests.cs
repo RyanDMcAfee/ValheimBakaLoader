@@ -275,7 +275,7 @@ namespace ValheimBakaLoader.Tests.Forms
         public async Task Config_list_over_the_real_table_answers_the_walk()
         {
             var (window, rpc) = BuildWindow(ExePath());
-            using (window)
+            // The bridge holds no window to dispose; the block is the test's own scope.
             {
                 var list = JArray.Parse(JsonConvert.SerializeObject(await rpc["config.list"](new JObject())))
                     .Select(t => t.Value<string>()).ToList();
@@ -287,7 +287,7 @@ namespace ValheimBakaLoader.Tests.Forms
         public async Task Config_read_and_write_reach_a_file_in_a_subfolder()
         {
             var (window, rpc) = BuildWindow(ExePath());
-            using (window)
+            // The bridge holds no window to dispose; the block is the test's own scope.
             {
                 const string rel = "ModNameData/com.someModAuthor.ModName.CustomList.yaml";
                 Assert.Equal("text of " + rel, (string)await rpc["config.read"](JObject.FromObject(new { file = rel })));
@@ -300,7 +300,7 @@ namespace ValheimBakaLoader.Tests.Forms
         public async Task Config_write_cannot_make_a_file()
         {
             var (window, rpc) = BuildWindow(ExePath());
-            using (window)
+            // The bridge holds no window to dispose; the block is the test's own scope.
             {
                 await Assert.ThrowsAsync<FileNotFoundException>(() =>
                     rpc["config.write"](JObject.FromObject(new { file = "Brand new.cfg", text = "x" })));
@@ -319,7 +319,7 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             var beside = Path.Combine(Root, "server", "BepInEx", "outside.cfg");
             var (window, rpc) = BuildWindow(ExePath());
-            using (window)
+            // The bridge holds no window to dispose; the block is the test's own scope.
             {
                 await Assert.ThrowsAsync<ArgumentException>(() =>
                     rpc["config.write"](JObject.FromObject(new { file = relative, text = "pwned" })));
@@ -335,7 +335,7 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             Assert.True(MakeJunction(Path.Combine(ConfigDir, "link"), Outside), "a directory junction could not be made in the temp folder");
             var (window, rpc) = BuildWindow(ExePath());
-            using (window)
+            // The bridge holds no window to dispose; the block is the test's own scope.
             {
                 await Assert.ThrowsAsync<ArgumentException>(() =>
                     rpc["config.write"](JObject.FromObject(new { file = "link/evil.cfg", text = "pwned" })));
@@ -353,7 +353,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 "{\"name\":\"ModName\",\"version_number\":\"1.0.0\",\"website_url\":\"\",\"description\":\"\",\"dependencies\":[]}");
 
             var (window, rpc) = BuildWindow(ExePath());
-            using (window)
+            // The bridge holds no window to dispose; the block is the test's own scope.
             {
                 var reply = JObject.Parse(JsonConvert.SerializeObject(
                     await rpc["mods.configs"](JObject.FromObject(new { fullName = "someModAuthor-ModName" }))));
@@ -394,7 +394,7 @@ namespace ValheimBakaLoader.Tests.Forms
         public async Task A_look_saved_through_profiles_save_reaches_the_chip_strip()
         {
             var (window, rpc) = BuildWindow(ExePath(), withProfile: "Looked");
-            using (window)
+            // The bridge holds no window to dispose; the block is the test's own scope.
             {
                 var cur = JObject.FromObject(await rpc["profiles.get"](JObject.FromObject(new { name = "Looked" })));
                 cur["LookRune"] = "raido";
@@ -476,7 +476,8 @@ namespace ValheimBakaLoader.Tests.Forms
             });
 
             var window = (BlendWindow)RuntimeHelpers.GetUninitializedObject(typeof(BlendWindow));
-            typeof(Form).GetConstructor(Type.EmptyTypes)!.Invoke(window, null);
+            // No Form under the bridge any more: the headless host stands in for the window.
+            window.Ui = new HeadlessHostUi(Serilog.Log.Logger);
 
             var serilog = new Mock<Serilog.ILogger>().Object;
             var appLogger = new Mock<IApplicationLogger>().Object;
@@ -491,7 +492,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 [typeof(Serilog.ILogger)] = serilog,
             };
 
-            Fill(window, typeof(Form), known);
+            Fill(window, typeof(object), known);
 
             typeof(BlendWindow).GetMethod("RegisterRpcHandlers", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, null);

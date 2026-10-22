@@ -237,7 +237,7 @@ namespace ValheimBakaLoader.Tests.Forms
             // And it still fits the narrowest window the frame will allow.
             Assert.Contains("DesignMinWidth = 1024",
                 File.ReadAllText(Path.Combine(AppSourceTree.RepoRoot(),
-                    "ValheimBakaLoader", "Forms", "BlendWindow.cs")));
+                    "ValheimBakaLoader", "Forms", "BlendWindowForm.cs")));
         }
 
         /// <summary>

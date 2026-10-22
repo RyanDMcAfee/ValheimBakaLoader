@@ -102,7 +102,6 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             // A planted session's server was never built; it is not the window's to dispose.
             try { Sessions().Clear(); } catch { }
-            try { Window?.Dispose(); } catch { }
             try { Directory.Delete(Root, recursive: true); } catch { /* temp folder, best effort */ }
         }
 
@@ -1294,7 +1293,8 @@ namespace ValheimBakaLoader.Tests.Forms
             IUserPreferencesProvider userPrefs, IGaleSyncClient gale, Dictionary<Type, object> extra)
         {
             var window = (BlendWindow)RuntimeHelpers.GetUninitializedObject(typeof(BlendWindow));
-            typeof(Form).GetConstructor(Type.EmptyTypes)!.Invoke(window, null);
+            // No Form under the bridge any more: the headless host stands in for the window.
+            window.Ui = new HeadlessHostUi(Serilog.Log.Logger);
 
             var serilog = new Mock<Serilog.ILogger>().Object;
             var appLogger = new Mock<IApplicationLogger>().Object;
@@ -1311,7 +1311,7 @@ namespace ValheimBakaLoader.Tests.Forms
             };
             foreach (var pair in extra) known[pair.Key] = pair.Value;
 
-            Fill(window, typeof(Form), known);
+            Fill(window, typeof(object), known);
 
             typeof(BlendWindow).GetMethod("RegisterRpcHandlers", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, null);

@@ -579,24 +579,36 @@ namespace ValheimBakaLoader.Tests.Tools
         public void Both_pickers_open_their_dialog_on_the_windows_own_thread()
         {
             var bridge = AppSourceTree.Files()["BlendWindow.Bridge.cs"];
+            var form = AppSourceTree.Files()["BlendWindowForm.cs"];
 
-            foreach (var rpc in new[] { "shell.pickFile", "shell.pickFolder" })
+            // The bridge asks its host for the path and answers the page from what came back;
+            // the dialog itself is the window's.
+            foreach (var (rpc, ask) in new[] { ("shell.pickFile", "Ui.PickFile("), ("shell.pickFolder", "Ui.PickFolder(") })
             {
                 var start = bridge.IndexOf("RegisterRpc(\"" + rpc + "\"", StringComparison.Ordinal);
                 Assert.True(start > 0, rpc + " is not registered");
                 var body = bridge.Substring(start, 1400);
-                Assert.Contains("Task.FromResult(RunOnUiThread(() =>", body);
-                Assert.Contains("PickReply(dialog.ShowDialog(this)", body);
+                Assert.Contains(ask, body);
+                Assert.Contains("Task.FromResult(PickReply(picked != null, picked));", body);
+            }
+
+            foreach (var picker in new[] { "public string PickFile(string filter, string initialDirectory)", "public string PickFolder(string initialDirectory)" })
+            {
+                var start = form.IndexOf(picker, StringComparison.Ordinal);
+                Assert.True(start > 0, picker + " is gone from the window");
+                var body = form.Substring(start, 900);
+                Assert.Contains("return RunOnUiThread(() =>", body);
+                Assert.Contains("dialog.ShowDialog(this) == DialogResult.OK", body);
             }
 
             // And the marshalling itself is the real thing rather than a comment about it.
-            Assert.Contains("private T RunOnUiThread<T>(Func<T> work)", bridge);
-            Assert.Contains("if (!InvokeRequired) return work();", bridge);
-            Assert.Contains("return (T)Invoke(work);", bridge);
+            Assert.Contains("public T RunOnUiThread<T>(Func<T> work)", form);
+            Assert.Contains("if (!InvokeRequired) return work();", form);
+            Assert.Contains("return (T)Invoke(work);", form);
 
             // The file picker only ever offers the one file name, and only the two closed
             // keywords are accepted: a raw path from the page can reach neither dialog.
-            Assert.Contains("Filter = PathCheck.ServerExeName + \"|\" + PathCheck.ServerExeName,", bridge);
+            Assert.Contains("filter: PathCheck.ServerExeName + \"|\" + PathCheck.ServerExeName,", bridge);
             Assert.Contains("throw new ArgumentException($\"Unknown shell.pickFile kind: {kind}\");", bridge);
             Assert.Contains("throw new ArgumentException($\"Unknown shell.pickFolder kind: {kind}\");", bridge);
         }

@@ -88,7 +88,6 @@ namespace ValheimBakaLoader.Tests.Forms
 
         public void Dispose()
         {
-            try { Window?.Dispose(); } catch { }
             try { DeleteTreeNoFollow(Root); } catch { /* temp folder, best effort */ }
         }
 
@@ -498,7 +497,8 @@ namespace ValheimBakaLoader.Tests.Forms
             IUserPreferencesProvider userPrefs, IInstallIsolationService isolation)
         {
             var window = (BlendWindow)RuntimeHelpers.GetUninitializedObject(typeof(BlendWindow));
-            typeof(Form).GetConstructor(Type.EmptyTypes)!.Invoke(window, null);
+            // No Form under the bridge any more: the headless host stands in for the window.
+            window.Ui = new HeadlessHostUi(Serilog.Log.Logger);
 
             var serilog = new Mock<Serilog.ILogger>().Object;
             var appLogger = new Mock<IApplicationLogger>().Object;
@@ -513,7 +513,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 [typeof(Serilog.ILogger)] = serilog,
             };
 
-            Fill(window, typeof(Form), known);
+            Fill(window, typeof(object), known);
 
             typeof(BlendWindow).GetMethod("RegisterRpcHandlers", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, null);

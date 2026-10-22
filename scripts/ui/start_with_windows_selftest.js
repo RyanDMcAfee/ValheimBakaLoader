@@ -138,7 +138,9 @@ test("the host side answers an id and the page owns the words", () => {
 
   // And the reply carries them, beside every preference it always carried: the ids, the paths
   // that go in the sentences, and the read that answers when no save named one.
-  assert.ok(/var startup = startupNotes \?\? StartupHelper\.NotesFor\(/.test(HOST),
+  // Through the host's registration seam: the bridge compiles without WinForms and cannot
+  // name StartupHelper itself, so the Windows side plugs the helper in behind it.
+  assert.ok(/var startup = startupNotes \?\? StartupRegistration\.NotesFor\(/.test(HOST),
     "the standing notes are no longer read, so only the host who was watching a save go"
     + " through would ever see one");
   assert.ok(/StartupNoticeId = startup\?\.Notice\?\.Id,/.test(HOST),
@@ -217,7 +219,7 @@ test("the card asks for the notes on load and again after a save", () => {
 
 /* ------------------- rule 5: an ordinary save of that card writes nothing to the registry */
 test("the registry is reached only by a save that MOVED the switch", () => {
-  assert.ok(/if \(StartupHelper\.ApplySavedValue\(prefs, v\)\) startWithWindowsMoved = true;/
+  assert.ok(/if \(StartupPreference\.ApplySavedValue\(prefs, v\)\) startWithWindowsMoved = true;/
     .test(HOST),
     "the bridge no longer decides the move by comparing the carried value with the preference");
   assert.ok(/if \(startWithWindowsMoved\)/.test(HOST),

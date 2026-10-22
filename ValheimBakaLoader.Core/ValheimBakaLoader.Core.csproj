@@ -40,6 +40,12 @@
 		<PackageReference Include="Semver" Version="2.2.0" />
 		<PackageReference Include="Serilog" Version="2.12.0" />
 		<PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+		<!-- The one piece of GDI this library carries: the atlas PNG writer in
+		     Tools\Atlas\MapRenderer.cs, which the bridge's atlas.render handler calls. The
+		     Windows app gets the same System.Drawing.Common out of its desktop framework, so
+		     nothing changes there; a host with no libgdiplus cannot write a map until the
+		     writer is a plain PNG encoder, which is a step of its own. -->
+		<PackageReference Include="System.Drawing.Common" Version="6.0.0" />
 	</ItemGroup>
 
 	<!--
@@ -59,14 +65,27 @@
 		<Compile Include="..\ValheimBakaLoader\Forms\ConfigFiles.cs" Link="Forms\ConfigFiles.cs" />
 		<Compile Include="..\ValheimBakaLoader\Forms\ServerSession.cs" Link="Forms\ServerSession.cs" />
 		<Compile Include="..\ValheimBakaLoader\Forms\IMainAppWindow.cs" Link="Forms\IMainAppWindow.cs" />
+		<!-- The bridge: every RPC the page can call and every push it gets, with no window in
+		     it. What a handler needs from a host (a thread, a dialog, a push) goes through
+		     IHostUi, and HeadlessHostUi is the host for a box with no window. The Windows form
+		     that shows it, Forms\BlendWindowForm.cs, stays with the app. -->
+		<Compile Include="..\ValheimBakaLoader\Forms\IHostUi.cs" Link="Forms\IHostUi.cs" />
+		<Compile Include="..\ValheimBakaLoader\Forms\HeadlessHostUi.cs" Link="Forms\HeadlessHostUi.cs" />
+		<Compile Include="..\ValheimBakaLoader\Forms\BlendWindow.cs" Link="Forms\BlendWindow.cs" />
+		<Compile Include="..\ValheimBakaLoader\Forms\BlendWindow.Bridge.cs" Link="Forms\BlendWindow.Bridge.cs" />
+		<Compile Include="..\ValheimBakaLoader\Forms\BlendWindow.Gale.cs" Link="Forms\BlendWindow.Gale.cs" />
+		<Compile Include="..\ValheimBakaLoader\Forms\BlendWindow.GaleConfigs.cs" Link="Forms\BlendWindow.GaleConfigs.cs" />
+		<Compile Include="..\ValheimBakaLoader\Forms\BlendWindow.TestCopy.cs" Link="Forms\BlendWindow.TestCopy.cs" />
 		<Compile Include="..\SolutionResources\ClientSecrets.cs" Link="Properties\ClientSecrets.cs" Condition="'$(Configuration)'=='Release' Or Exists('..\SolutionResources\ClientSecrets.cs')" />
 		<Compile Include="..\SolutionResources\ClientSecrets.Values.cs" Link="Properties\ClientSecrets.Values.cs" Condition="'$(Configuration)'=='Release' Or Exists('..\SolutionResources\ClientSecrets.Values.cs')" />
 	</ItemGroup>
 
 	<!--
-	  The Windows host's own files, left to the app: each one names WinForms, GDI, the registry
-	  or a window. MapRenderer draws the atlas through System.Drawing and RunKeyRegistry is the
-	  Run key itself, so they stay with the window even though they sit under Tools\.
+	  The Windows host's own files, left to the app: each one names WinForms, the registry or
+	  a window. RunKeyRegistry is the Run key itself and StartupHelper knows it runs inside a
+	  Windows Forms application, so they stay with the window even though they sit under
+	  Tools\; the bridge reaches the Run key through IStartupRegistration instead. MapRenderer
+	  compiles in here since the bridge joined this library (see the package note above).
 	-->
 	<ItemGroup>
 		<Compile Remove="..\ValheimBakaLoader\Tools\FormExtensions.cs" />
@@ -79,7 +98,6 @@
 		<Compile Remove="..\ValheimBakaLoader\Tools\RunKeyRegistry.cs" />
 		<Compile Remove="..\ValheimBakaLoader\Tools\SteamClientRegistry.cs" />
 		<Compile Remove="..\ValheimBakaLoader\Tools\ManagedUpdaterWindow.cs" />
-		<Compile Remove="..\ValheimBakaLoader\Tools\Atlas\MapRenderer.cs" />
 		<Compile Remove="..\ValheimBakaLoader\Properties\AppIcon.cs" />
 		<!-- The plugin entry points name Valheim types and are built elsewhere; the app keeps
 		     them as None items so they stay visible in the tree. -->

@@ -294,7 +294,8 @@ namespace ValheimBakaLoader.Tests.Tools
             // The one place every road writes its results, driven for real on a window that is
             // never shown: a run that moved mods posts once, a run that moved none posts nothing.
             var window = (BlendWindow)RuntimeHelpers.GetUninitializedObject(typeof(BlendWindow));
-            typeof(Form).GetConstructor(Type.EmptyTypes)!.Invoke(window, null);
+            // No Form under the bridge any more: the headless host stands in for the window.
+            window.Ui = new HeadlessHostUi(Serilog.Log.Logger);
             try
             {
                 var hooks = new Mock<IDiscordWebhookService>();
@@ -323,7 +324,7 @@ namespace ValheimBakaLoader.Tests.Tools
             }
             finally
             {
-                try { window.Dispose(); } catch { }
+                // Nothing to dispose: the bridge holds no window.
             }
 
             // Every road that updates mods writes through it: Update all, one row's Update and a

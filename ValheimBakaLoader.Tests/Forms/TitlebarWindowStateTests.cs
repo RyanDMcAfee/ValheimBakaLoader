@@ -29,7 +29,7 @@ namespace ValheimBakaLoader.Tests.Forms
     {
         private static string AppJs() => AppSourceTree.Web("app.js");
 
-        private static string BlendWindow() => AppSourceTree.Files()["BlendWindow.cs"];
+        private static string BlendWindow() => AppSourceTree.Files()["BlendWindowForm.cs"];
 
         /// <summary>The text between two markers, so a gate can ask about order inside one case.</summary>
         private static string Between(string text, string from, string to)

@@ -597,7 +597,7 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("field-dirty", probe);
             Assert.Contains("1440", probe);
             // The narrowest the window can be, which is where a 9px shove costs the most.
-            var min = AppSourceTree.Files()["BlendWindow.cs"];
+            var min = AppSourceTree.Files()["BlendWindowForm.cs"];
             Assert.Contains("private const int DesignMinWidth = 1024;", min);
             Assert.Contains("{ width: 1024, height: 680 }", probe);
             // It measures the CONTROL and not only the field: the padding left the field's

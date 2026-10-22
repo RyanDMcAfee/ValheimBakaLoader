@@ -125,6 +125,15 @@
 		<Compile Remove="Forms\ConfigFiles.cs" />
 		<Compile Remove="Forms\ServerSession.cs" />
 		<Compile Remove="Forms\IMainAppWindow.cs" />
+		<!-- The bridge compiles into Core; Forms\BlendWindowForm.cs is the window that shows it
+		     and is the only BlendWindow file left here. -->
+		<Compile Remove="Forms\IHostUi.cs" />
+		<Compile Remove="Forms\HeadlessHostUi.cs" />
+		<Compile Remove="Forms\BlendWindow.cs" />
+		<Compile Remove="Forms\BlendWindow.Bridge.cs" />
+		<Compile Remove="Forms\BlendWindow.Gale.cs" />
+		<Compile Remove="Forms\BlendWindow.GaleConfigs.cs" />
+		<Compile Remove="Forms\BlendWindow.TestCopy.cs" />
 		<Compile Include="Tools\FormExtensions.cs" />
 		<Compile Include="Tools\FormProvider.cs" />
 		<Compile Include="Tools\Theming\Theme.cs" />
@@ -136,7 +145,6 @@
 		<Compile Include="Tools\RunKeyRegistry.cs" />
 		<Compile Include="Tools\SteamClientRegistry.cs" />
 		<Compile Include="Tools\ManagedUpdaterWindow.cs" />
-		<Compile Include="Tools\Atlas\MapRenderer.cs" />
 	</ItemGroup>
 
 	<ItemGroup>

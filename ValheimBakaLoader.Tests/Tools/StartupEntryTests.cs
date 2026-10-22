@@ -555,7 +555,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
             Assert.Contains(
                 "Apply(\"StartWithWindows\", v =>\n                    {\n"
-                + "                        if (StartupHelper.ApplySavedValue(prefs, v)) startWithWindowsMoved = true;",
+                + "                        if (StartupPreference.ApplySavedValue(prefs, v)) startWithWindowsMoved = true;",
                 bridge);
             Assert.Contains("if (startWithWindowsMoved)\n", bridge);
 
@@ -568,7 +568,7 @@ namespace ValheimBakaLoader.Tests.Tools
             // does, so a page that asks for the preferences already has them. Two of them,
             // because the machine wide key and this account's own key can be wrong at once and
             // the first must not hide the second.
-            Assert.Contains("var startup = startupNotes ?? StartupHelper.NotesFor(", bridge);
+            Assert.Contains("var startup = startupNotes ?? StartupRegistration.NotesFor(", bridge);
             Assert.Contains("StartupNoticeId = startup?.Notice?.Id,", bridge);
             Assert.Contains("StartupNoticePath = startup?.Notice?.Path,", bridge);
             Assert.Contains("StartupAlsoNoticeId = startup?.Also?.Id,", bridge);

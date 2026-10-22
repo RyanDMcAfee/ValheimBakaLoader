@@ -27,7 +27,11 @@ namespace ValheimBakaLoader.Tests.Forms
     /// </summary>
     public class LanguagePackServingTests
     {
+        /// <summary>The bridge, which owns the hosts' names and the address shape.</summary>
         private static string BlendWindowSource() => AppSourceTree.Files()["BlendWindow.cs"];
+
+        /// <summary>The window, which maps the folders onto the WebView.</summary>
+        private static string BlendWindowFormSource() => AppSourceTree.Files()["BlendWindowForm.cs"];
 
         // ------------------------------------------------------------------ A. the route
 
@@ -59,7 +63,7 @@ namespace ValheimBakaLoader.Tests.Forms
         {
             Assert.Contains(
                 "LangVirtualHost, LanguagesDir, CoreWebView2HostResourceAccessKind.Allow);",
-                BlendWindowSource(), StringComparison.Ordinal);
+                BlendWindowFormSource(), StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -71,7 +75,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_mapping_sits_after_the_folder_is_resolved_and_before_the_page_loads()
         {
-            var source = BlendWindowSource();
+            var source = BlendWindowFormSource();
 
             var resolve = source.IndexOf("LanguagesDir = GetLanguagesDir();", StringComparison.Ordinal);
             var mapping = source.IndexOf(
@@ -93,7 +97,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void A_languages_folder_that_cannot_be_served_still_lets_the_window_come_up()
         {
-            var source = BlendWindowSource();
+            var source = BlendWindowFormSource();
             var mapping = source.IndexOf(
                 "LangVirtualHost, LanguagesDir, CoreWebView2HostResourceAccessKind.Allow);", StringComparison.Ordinal);
             Assert.True(mapping > 0);
@@ -118,12 +122,15 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void Nothing_answers_a_request_by_hand_on_a_folder_mapped_host()
         {
-            var source = BlendWindowSource();
-
-            Assert.DoesNotContain("AddWebResourceRequestedFilter", source, StringComparison.Ordinal);
-            Assert.DoesNotContain("WebResourceRequested +=", source, StringComparison.Ordinal);
-            Assert.DoesNotContain("CreateWebResourceResponse", source, StringComparison.Ordinal);
-            Assert.DoesNotContain("OnLanguageResourceRequested", source, StringComparison.Ordinal);
+            // Both halves: the window that holds the WebView, and the bridge that must not
+            // grow one of its own.
+            foreach (var source in new[] { BlendWindowFormSource(), BlendWindowSource() })
+            {
+                Assert.DoesNotContain("AddWebResourceRequestedFilter", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("WebResourceRequested +=", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("CreateWebResourceResponse", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("OnLanguageResourceRequested", source, StringComparison.Ordinal);
+            }
         }
 
         // ------------------------------------------------------------------ B. the addresses

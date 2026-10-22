@@ -714,7 +714,8 @@ namespace ValheimBakaLoader.Tests.Tools
                 };
 
                 Window = (BlendWindow)RuntimeHelpers.GetUninitializedObject(typeof(BlendWindow));
-                typeof(Form).GetConstructor(Type.EmptyTypes)!.Invoke(Window, null);
+                // No Form under the bridge any more: the headless host stands in for the window.
+                Window.Ui = new HeadlessHostUi(Serilog.Log.Logger);
                 var serilog = new Mock<Serilog.ILogger>().Object;
                 var appLogger = new Mock<IApplicationLogger>().Object;
                 var known = new Dictionary<Type, object>
@@ -726,7 +727,7 @@ namespace ValheimBakaLoader.Tests.Tools
                     [typeof(IApplicationLogger)] = appLogger,
                     [typeof(Serilog.ILogger)] = serilog,
                 };
-                Fill(Window, typeof(Form), known);
+                Fill(Window, typeof(object), known);
                 typeof(BlendWindow).GetMethod("RegisterRpcHandlers", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(Window, null);
                 Rpc = (Dictionary<string, Func<JObject, Task<object>>>)typeof(BlendWindow)
                     .GetField("RpcHandlers", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Window);
@@ -744,7 +745,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
             public void Dispose()
             {
-                try { Window?.Dispose(); } catch { }
+                // Nothing to dispose: the bridge holds no window.
             }
         }
 

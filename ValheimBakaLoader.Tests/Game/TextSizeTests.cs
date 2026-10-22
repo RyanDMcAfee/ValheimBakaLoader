@@ -108,7 +108,7 @@ namespace ValheimBakaLoader.Tests.Game
         [Fact]
         public void The_window_zooms_and_its_minimum_grows_with_the_zoom()
         {
-            var window = AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindow.cs");
+            var window = AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindowForm.cs");
 
             Assert.Contains("internal void ApplyTextSize(string size)", window);
             Assert.Contains("WebView.ZoomFactor = TextZoom;", window);

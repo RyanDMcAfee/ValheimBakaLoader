@@ -230,7 +230,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
             var switchCheck = open.IndexOf("UseHexiumSource", StringComparison.Ordinal);
             var address = open.IndexOf("HexiumUrlParser.PageUrl", StringComparison.Ordinal);
-            var start = open.IndexOf("Process.Start", StringComparison.Ordinal);
+            var start = open.IndexOf("Ui.OpenUrl", StringComparison.Ordinal);
 
             Assert.True(switchCheck > 0, "opening a Hexium page no longer checks the switch");
             Assert.True(address > switchCheck, "the address is built before the switch is checked");

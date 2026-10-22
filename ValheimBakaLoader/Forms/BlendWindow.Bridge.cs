@@ -8,7 +8,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 using ValheimBakaLoader.Game;
 using ValheimBakaLoader.Properties;
 using ValheimBakaLoader.Tools;
@@ -56,6 +55,9 @@ namespace ValheimBakaLoader.Forms
         private IServerSessionRegistry SessionRegistry;
         private ILanguagePackService LanguagePacks;
         private IApplicationLogger AppLogger;
+
+        /// <summary>The host's start-at-login entry: the Run key on Windows, nothing on a service.</summary>
+        private IStartupRegistration StartupRegistration;
 
         /// <summary>The Detailed log dial, so the switch on the Upkeep card can move it.</summary>
         private ILogLevelControl LogLevel;
@@ -190,7 +192,7 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private bool OnUiThread
         {
-            get { try { return !InvokeRequired; } catch { return true; } }
+            get { try { return Ui?.IsUiThread ?? true; } catch { return true; } }
         }
 
         /// <summary>Hands the slot back. Safe to call once per successful take and no more.</summary>
@@ -362,6 +364,9 @@ namespace ValheimBakaLoader.Forms
             SessionRegistry = serviceProvider.GetRequiredService<IServerSessionRegistry>();
             LanguagePacks = serviceProvider.GetRequiredService<ILanguagePackService>();
             AppLogger = appLogger;
+            // The Run key, through the host that has one. A host that registered none has no
+            // login entry to write, and the card has nothing to say under the switch.
+            StartupRegistration = serviceProvider.GetService<IStartupRegistration>() ?? new NoStartupRegistration();
             // Resolved rather than taken through the window's constructor, for the same
             // reason the Hexium reader is: nothing else in the app has to know it is there.
             LogLevel = serviceProvider.GetRequiredService<ILogLevelControl>();
@@ -463,9 +468,9 @@ namespace ValheimBakaLoader.Forms
         /// <summary>
         /// The window is gone, so its sessions are nobody's business any more. Leaving them in
         /// the registry would mean a closed window's last status pinned the self update shut for
-        /// the rest of the process.
+        /// the rest of the process. The host calls this once it has closed.
         /// </summary>
-        protected override void OnFormClosed(FormClosedEventArgs e)
+        public void OnHostClosed()
         {
             try
             {
@@ -475,8 +480,6 @@ namespace ValheimBakaLoader.Forms
             {
                 Logger.Warning(ex, "Could not drop this window's sessions from the registry");
             }
-
-            base.OnFormClosed(e);
         }
 
         /// <summary>
@@ -787,14 +790,13 @@ namespace ValheimBakaLoader.Forms
                 // This instance must bow out - adopting the server here would put it in
                 // BOTH instances' kill-on-close job objects, so closing EITHER window
                 // would kill it. Exiting the new instance is the only safe move.
-                // The form may already be tearing down (e.g. the WebView failed to
-                // initialize and its error path called Close first), and BeginInvoke on
-                // a disposed / handle-less form throws - guard it (live-crash 2026-07-07).
+                // The host may already be tearing down (e.g. the WebView failed to
+                // initialize and its error path called Close first), and a post to a
+                // disposed / handle-less form throws - guard it (live-crash 2026-07-07).
                 try
                 {
-                    if (IsDisposed || Disposing) return;
-                    if (IsHandleCreated) BeginInvoke(new Action(Close));
-                    else Close();
+                    if (!Ui.IsAlive) return;
+                    Ui.Post(Ui.RequestClose);
                 }
                 catch (InvalidOperationException)
                 {
@@ -920,41 +922,31 @@ namespace ValheimBakaLoader.Forms
                     "Server PID {serverPid} is managed by another BakaLoader instance (PID {otherPid}), so this instance will close",
                     existing.Id, other.Id);
 
-                var page = new TaskDialogPage
-                {
-                    Caption = Resources.ApplicationTitle,
-                    Heading = "Another BakaLoader is already running",
-                    Text =
-                        $"A Valheim dedicated server (PID {existing.Id}) is already running and " +
-                        $"{otherLabel} is managing it.{nl}{nl}" +
-                        $"That BakaLoader stays in charge. It cannot be closed automatically, because " +
-                        $"closing it shuts down the server it is running.{nl}{nl}" +
-                        $"This new window will close. To switch to this version, stop the server in the " +
-                        $"old BakaLoader, close it, then launch this one again.",
-                    Icon = TaskDialogIcon.Warning,
-                    AllowCancel = false,
-                };
-                page.Buttons.Clear();
-                page.Buttons.Add(new TaskDialogButton("Close this"));
-
-                TaskDialog.ShowDialog(this, page);
+                // One Close button and no way to cancel: there is nothing to cancel into.
+                Ui.NoticeOtherInstance(
+                    Resources.ApplicationTitle,
+                    "Another BakaLoader is already running",
+                    $"A Valheim dedicated server (PID {existing.Id}) is already running and " +
+                    $"{otherLabel} is managing it.{nl}{nl}" +
+                    $"That BakaLoader stays in charge. It cannot be closed automatically, because " +
+                    $"closing it shuts down the server it is running.{nl}{nl}" +
+                    $"This new window will close. To switch to this version, stop the server in the " +
+                    $"old BakaLoader, close it, then launch this one again.");
                 return false;
             }
 
             // No other BakaLoader instance: this is a genuine orphan (BakaLoader crashed or
             // was closed without stopping the server) - offer adoption as before.
             Logger.Warning("Found an already-running Valheim server process (PID {pid})", existing.Id);
-            var result = MessageBox.Show(
+            var result = Ui.AskAdoptOrKill(
+                "Server Already Running",
                 $"A Valheim dedicated server is already running (PID {existing.Id}).{nl}{nl}" +
                 $"This can happen if BakaLoader was closed without stopping the server, " +
                 $"or if the server was started outside of BakaLoader.{nl}{nl}" +
                 $"Yes = Adopt this server (monitor and manage it){nl}" +
-                $"No  = Kill it so you can start fresh",
-                "Server Already Running",
-                MessageBoxButtons.YesNoCancel,
-                MessageBoxIcon.Warning);
+                $"No  = Kill it so you can start fresh");
 
-            if (result == DialogResult.Yes)
+            if (result == OrphanServerChoice.Adopt)
             {
                 // Adopt: track the process so Stop/Restart/exit-detection work.
                 // No log capture (stdout was not redirected by us).
@@ -974,7 +966,7 @@ namespace ValheimBakaLoader.Forms
                     CloseStartAttempt();
                 }
             }
-            else if (result == DialogResult.No)
+            else if (result == OrphanServerChoice.Kill)
             {
                 try
                 {
@@ -1108,9 +1100,10 @@ namespace ValheimBakaLoader.Forms
         /// server down gracefully (close request, not /F - Valheim flushes a final world
         /// save on the way down) and only close BakaLoader once it has stopped.
         /// </summary>
-        private void OnCloseRequested(object sender, FormClosingEventArgs e)
+        /// <returns>True when the close has to be cancelled: the host sets e.Cancel from it.</returns>
+        public bool OnCloseRequested()
         {
-            if (_closeGuardPassed) return;
+            if (_closeGuardPassed) return false;
 
             // An update comes first, and it refuses harder than a running server does. Closing
             // takes the app's child processes with it, so a close during a steamcmd run kills
@@ -1122,20 +1115,12 @@ namespace ValheimBakaLoader.Forms
 
             if (choice == UpdateCloseChoice.Wait)
             {
-                e.Cancel = true;
                 CloseWhenUpdatesFinish = true;
 
                 Logger.Information("Close held: an update is running. The window will close when it finishes.");
                 try
                 {
-                    TaskDialog.ShowDialog(this, new TaskDialogPage
-                    {
-                        Caption = Resources.ApplicationTitle,
-                        Heading = "An update is running",
-                        Text = UpdateCloseMessage,
-                        Icon = TaskDialogIcon.Information,
-                        AllowCancel = true,
-                    });
+                    Ui.NoticeUpdateRunning(Resources.ApplicationTitle, "An update is running", UpdateCloseMessage);
                 }
                 catch (Exception ex)
                 {
@@ -1146,7 +1131,7 @@ namespace ValheimBakaLoader.Forms
                 // this notice up: the notice is modal, so anything measured from before it would
                 // be spending the host's ten seconds on a dialog they cannot click past yet.
                 CloseFirstAskedUtc = DateTime.UtcNow;
-                return;
+                return true;
             }
 
             if (choice == UpdateCloseChoice.Force)
@@ -1157,10 +1142,11 @@ namespace ValheimBakaLoader.Forms
                 Logger.Warning("Closing while an update is running: the host asked a second time.");
             }
 
-            if (Sessions.Values.All(s => s.Server.Status == ServerStatus.Stopped)) return;
+            if (Sessions.Values.All(s => s.Server.Status == ServerStatus.Stopped)) return false;
 
-            e.Cancel = true;
-            if (_closeShutdownInProgress) return; // already saving + shutting down
+            // Cancelled from here on: the close that goes through is the one the graceful
+            // shutdown asks for itself, once the servers are down.
+            if (_closeShutdownInProgress) return true; // already saving + shutting down
 
             // Vikings on ANY running server count - closing the app shuts them all down.
             var online = PlayerDataProvider.Data
@@ -1173,26 +1159,24 @@ namespace ValheimBakaLoader.Forms
 
             var runningCount = Sessions.Values.Count(s => s.Server.Status != ServerStatus.Stopped);
 
-            var page = new TaskDialogPage
-            {
-                Caption = Resources.ApplicationTitle,
-                Heading = online > 0
+            // Warning when vikings are online, information otherwise; the cancel button is the
+            // platform's own (null), and the other one keeps the wording it always had.
+            var shutDown = Ui.AskSaveAndShutDown(
+                Resources.ApplicationTitle,
+                online > 0
                     ? "Vikings are still online"
                     : runningCount > 1 ? "Servers are still running" : "The server is still running",
-                Text = playersLine + (runningCount > 1
+                playersLine + (runningCount > 1
                     ? $"All {runningCount} running servers will save their worlds and shut down gracefully before BakaLoader closes."
                     : "The world will be saved and the server shut down gracefully before BakaLoader closes."),
-                Icon = online > 0 ? TaskDialogIcon.Warning : TaskDialogIcon.Information,
-                AllowCancel = true,
-            };
-            var shutdown = new TaskDialogButton("Save && shut down");
-            page.Buttons.Clear();
-            page.Buttons.Add(shutdown);
-            page.Buttons.Add(TaskDialogButton.Cancel);
+                warn: online > 0,
+                shutDownButton: "Save && shut down",
+                cancelButton: null);
 
-            if (TaskDialog.ShowDialog(this, page) != shutdown) return;
+            if (!shutDown) return true;
 
             ShutDownAllServersThenClose();
+            return true;
         }
 
         private async void ShutDownAllServersThenClose()
@@ -1229,7 +1213,7 @@ namespace ValheimBakaLoader.Forms
             finally
             {
                 _closeGuardPassed = true;
-                Close();
+                Ui.RequestClose();
             }
         }
 
@@ -1237,20 +1221,13 @@ namespace ValheimBakaLoader.Forms
         /// The self update's way in to this window: stop whatever it is holding and close, on
         /// this window's own UI thread. Posted rather than run inline, exactly as the close
         /// always was, because the caller is either an RPC whose answer still has to reach the
-        /// page or a restart hook that has to return before the app goes down.
+        /// page or a restart hook that has to return before the app goes down. A host with no
+        /// thread of its own runs it here, which for a window that has never been shown is a
+        /// window holding no server and better closed than left to hold the process open.
         /// </summary>
         public void BeginShutDownAndClose()
         {
-            if (IsHandleCreated)
-            {
-                BeginInvoke(new Action(ShutDownAllServersThenClose));
-                return;
-            }
-
-            // No handle means no UI thread of its own to post to. A window in that state has
-            // never been shown and holds no running server, so closing it directly is safe and
-            // is better than leaving it behind to hold the process open.
-            ShutDownAllServersThenClose();
+            Ui.Post(ShutDownAllServersThenClose);
         }
 
         /// <summary>
@@ -1268,33 +1245,10 @@ namespace ValheimBakaLoader.Forms
         {
             // Posted onto the UI thread, which is where the window list lives: one caller is an
             // RPC whose answer still has to reach the page, and the other is a restart hook that
-            // runs on whichever thread the server exited on.
-            if (IsHandleCreated)
-            {
-                BeginInvoke(new Action(RunSelfUpdateShutdown));
-                return;
-            }
-
-            RunSelfUpdateShutdown();
+            // runs on whichever thread the server exited on. The walk over the windows is the
+            // host's own (every open form on Windows, itself when it is the only host there is).
+            Ui.Post(Ui.CloseEveryWindowForSelfUpdate);
         }
-
-        /// <summary>The shutdown itself, on the UI thread. Idempotent: the second ask is a no-op.</summary>
-        private void RunSelfUpdateShutdown()
-        {
-            AppShutdown.Current.ShutDownAllWindowsForSelfUpdate(
-                OpenServerWindows(),
-                () => (ServiceProvider?.GetService(typeof(SplashForm)) as SplashForm)?.RequestExitForSelfUpdate(),
-                Application.Exit,
-                (ex, what) => Logger.Warning(ex, what));
-        }
-
-        /// <summary>
-        /// Every open window that can hold a live server, this one included. Read off the
-        /// application's own list rather than off anything a window keeps, so a window opened
-        /// by a path nobody remembers is still asked to close.
-        /// </summary>
-        private static IReadOnlyList<ISelfUpdateClosable> OpenServerWindows()
-            => Application.OpenForms.OfType<ISelfUpdateClosable>().ToList();
 
         #endregion
 
@@ -2910,7 +2864,7 @@ namespace ValheimBakaLoader.Forms
             {
                 try
                 {
-                    if (IsDisposed) return;
+                    if (!Ui.IsAlive) return;
                     if (session.Server.Status != ServerStatus.Running) return;
                     PostEvent("server.status", BuildServerState(session));
                 }
@@ -4262,7 +4216,7 @@ namespace ValheimBakaLoader.Forms
 
             if (result.Ok && result.StartAfter)
             {
-                try { BeginInvoke(new Action(() => StartAfterUpdate(profile))); }
+                try { Ui.Post(() => StartAfterUpdate(profile)); }
                 catch (Exception ex)
                 {
                     Logger.Warning(ex, "Could not start profile {profile} after its update", profile);
@@ -4273,7 +4227,7 @@ namespace ValheimBakaLoader.Forms
             // close when it finished. It has finished.
             if (CloseWhenUpdatesFinish && !AnyServerUpdateRunning())
             {
-                try { BeginInvoke(new Action(CloseAfterUpdate)); }
+                try { Ui.Post(CloseAfterUpdate); }
                 catch (Exception ex)
                 {
                     Logger.Warning(ex, "Could not close the window after the update finished");
@@ -4295,7 +4249,7 @@ namespace ValheimBakaLoader.Forms
             if (!CloseWhenUpdatesFinish) return;
             CloseWhenUpdatesFinish = false;
 
-            try { Close(); }
+            try { Ui.RequestClose(); }
             catch (Exception ex) { Logger.Warning(ex, "Could not close the window after the update finished"); }
         }
 
@@ -5416,7 +5370,7 @@ namespace ValheimBakaLoader.Forms
                     Apply("ForceIPv4", v => prefs.ForceIPv4 = v.Value<bool>());
                     Apply("StartWithWindows", v =>
                     {
-                        if (StartupHelper.ApplySavedValue(prefs, v)) startWithWindowsMoved = true;
+                        if (StartupPreference.ApplySavedValue(prefs, v)) startWithWindowsMoved = true;
                     });
                     Apply("ShareAnonymousStats", v => prefs.ShareAnonymousStats = v.Value<bool>());
                     Apply("StartMinimized", v => prefs.StartMinimized = v.Value<bool>());
@@ -5538,10 +5492,10 @@ namespace ValheimBakaLoader.Forms
                 // The Run key, and only when the switch actually MOVED. The card posts every
                 // switch on it together, so a save that came from any of the other ten used to
                 // open the registry for a preference the host never touched.
-                StartupNotes startupNotes = null;
+                HostStartupNotes startupNotes = null;
                 if (startWithWindowsMoved)
                 {
-                    try { startupNotes = StartupHelper.ApplyStartupSetting(prefs.StartWithWindows, Logger).Notes; }
+                    try { startupNotes = StartupRegistration.Apply(prefs.StartWithWindows); }
                     catch (Exception e) { AppLogger.Error(e, "Failed to apply the 'start with Windows' setting."); }
                 }
 
@@ -5558,7 +5512,7 @@ namespace ValheimBakaLoader.Forms
                 // does nothing. The window minimum moves with it for the same reason.
                 if (textSizeMoved)
                 {
-                    try { ApplyTextSize(prefs.TextSize); }
+                    try { Ui.ApplyTextSize(prefs.TextSize); }
                     catch (Exception e) { AppLogger.Debug("Could not apply the text size: {0}", e.Message); }
                 }
 
@@ -8536,11 +8490,7 @@ namespace ValheimBakaLoader.Forms
                 if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
                     throw new DirectoryNotFoundException($"Folder not found: {path ?? "(unset)"}");
 
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = path,
-                    UseShellExecute = true,
-                });
+                Ui.OpenPath(path);
                 return Task.FromResult<object>(true);
             });
 
@@ -8564,11 +8514,7 @@ namespace ValheimBakaLoader.Forms
                     _ => throw new ArgumentException($"Unknown shell.openUrl target: {target}"),
                 };
 
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = url,
-                    UseShellExecute = true,
-                });
+                Ui.OpenUrl(url);
                 return Task.FromResult<object>(true);
             });
 
@@ -8580,11 +8526,7 @@ namespace ValheimBakaLoader.Forms
             {
                 var url = AppReleaseNotesUrl(SoftwareUpdates?.LatestAvailable?.NotesUrl);
 
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = url,
-                    UseShellExecute = true,
-                });
+                Ui.OpenUrl(url);
                 return Task.FromResult<object>(true);
             });
 
@@ -8606,11 +8548,7 @@ namespace ValheimBakaLoader.Forms
                 var url = Tools.HexiumUrlParser.PageUrl(p.Value<string>("owner"), p.Value<string>("name"))
                     ?? throw new ArgumentException("That mod has no Hexium page to open.");
 
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = url,
-                    UseShellExecute = true,
-                });
+                Ui.OpenUrl(url);
                 return Task.FromResult<object>(true);
             });
 
@@ -8619,11 +8557,7 @@ namespace ValheimBakaLoader.Forms
                 var url = ThunderstorePageUrl(p.Value<string>("namespace"), p.Value<string>("name"))
                     ?? throw new ArgumentException("That mod has no Thunderstore page to open.");
 
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = url,
-                    UseShellExecute = true,
-                });
+                Ui.OpenUrl(url);
                 return Task.FromResult<object>(true);
             });
 
@@ -8639,20 +8573,14 @@ namespace ValheimBakaLoader.Forms
                 if (!string.Equals(kind, PathCheck.KindExe, StringComparison.Ordinal))
                     throw new ArgumentException($"Unknown shell.pickFile kind: {kind}");
 
-                return Task.FromResult(RunOnUiThread(() =>
-                {
-                    using var dialog = new OpenFileDialog
-                    {
-                        // No title and no filter label: both would be English in a window
-                        // the catalog cannot reach. The file name IS the label, and it is a
-                        // name rather than a word, so it reads the same in every language.
-                        Filter = PathCheck.ServerExeName + "|" + PathCheck.ServerExeName,
-                        CheckFileExists = true,
-                        Multiselect = false,
-                        InitialDirectory = PickerStartFolder(PathCheck.KindExe),
-                    };
-                    return PickReply(dialog.ShowDialog(this) == DialogResult.OK, dialog.FileName);
-                }));
+                // The host opens the dialog on its own thread. No title and no filter label:
+                // both would be English in a window the catalog cannot reach. The file name IS
+                // the label, and it is a name rather than a word, so it reads the same in every
+                // language.
+                var picked = Ui.PickFile(
+                    filter: PathCheck.ServerExeName + "|" + PathCheck.ServerExeName,
+                    initialDirectory: PickerStartFolder(PathCheck.KindExe));
+                return Task.FromResult(PickReply(picked != null, picked));
             });
 
             // The same for the save folder. A folder that is not there yet can be made from
@@ -8663,15 +8591,8 @@ namespace ValheimBakaLoader.Forms
                 if (!string.Equals(kind, PathCheck.KindDir, StringComparison.Ordinal))
                     throw new ArgumentException($"Unknown shell.pickFolder kind: {kind}");
 
-                return Task.FromResult(RunOnUiThread(() =>
-                {
-                    using var dialog = new FolderBrowserDialog
-                    {
-                        ShowNewFolderButton = true,
-                        SelectedPath = PickerStartFolder(PathCheck.KindDir),
-                    };
-                    return PickReply(dialog.ShowDialog(this) == DialogResult.OK, dialog.SelectedPath);
-                }));
+                var picked = Ui.PickFolder(initialDirectory: PickerStartFolder(PathCheck.KindDir));
+                return Task.FromResult(PickReply(picked != null, picked));
             });
 
             // Whether a build before 1.2.9 left this realm's worlds in a folder literally named
@@ -10376,23 +10297,6 @@ namespace ValheimBakaLoader.Forms
                 : (object)new { cancelled = true };
 
         /// <summary>
-        /// Runs a piece of work on the window's own thread and hands the answer back.
-        /// <para>
-        /// A modal Windows dialog has to be opened on the thread that owns the window, and
-        /// an RPC handler is not reliably on it: WebView2 raises the message there, but the
-        /// handler before this one may have awaited, and a continuation lands wherever the
-        /// scheduler puts it. Opening a picker off that thread either throws or puts up a
-        /// window with no owner that the app can be closed behind.
-        /// </para>
-        /// </summary>
-        private T RunOnUiThread<T>(Func<T> work)
-        {
-            if (work == null) return default;
-            if (!InvokeRequired) return work();
-            return (T)Invoke(work);
-        }
-
-        /// <summary>
         /// How long <c>paths.check</c> waits for the disk before it answers that the path
         /// could not be checked in time.
         /// <para>
@@ -10902,10 +10806,10 @@ namespace ValheimBakaLoader.Forms
         /// is the sentence the next open of the card shows.
         /// </para>
         /// </param>
-        private object BuildUserPrefsDto(StartupNotes startupNotes = null)
+        private object BuildUserPrefsDto(HostStartupNotes startupNotes = null)
         {
             var prefs = UserPrefsProvider.LoadPreferences();
-            var startup = startupNotes ?? StartupHelper.NotesFor(prefs.StartWithWindows);
+            var startup = startupNotes ?? StartupRegistration.NotesFor(prefs.StartWithWindows);
             return new
             {
                 prefs.ServerExePath,
@@ -11577,8 +11481,9 @@ namespace ValheimBakaLoader.Forms
             // 1. The Steam install dir from the registry + all libraries in libraryfolders.vdf.
             try
             {
-                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
-                var steamPath = key?.GetValue("SteamPath") as string;
+                // The registry is a Windows fact; anywhere else the drive sweep below is the
+                // whole of the search.
+                var steamPath = OperatingSystem.IsWindows() ? SteamPathFromRegistry() : null;
                 if (!string.IsNullOrWhiteSpace(steamPath))
                 {
                     steamPath = steamPath.Replace('/', '\\');
@@ -11612,6 +11517,14 @@ namespace ValheimBakaLoader.Forms
             catch { /* drive enumeration failed - return whatever we have */ }
 
             return found;
+        }
+
+        /// <summary>Where Steam says it is installed, straight off its own registry key.</summary>
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+        private static string SteamPathFromRegistry()
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
+            return key?.GetValue("SteamPath") as string;
         }
 
         /// <summary>
