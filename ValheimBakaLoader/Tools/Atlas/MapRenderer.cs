@@ -1,8 +1,4 @@
 using System;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.IO;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -95,40 +91,14 @@ namespace ValheimBakaLoader.Tools.Atlas
             SavePng(pixels, sizePx, path);
         }
 
-        /// <summary>Writes an ARGB pixel buffer as a PNG via LockBits.</summary>
+        /// <summary>
+        /// Writes an ARGB pixel buffer as a PNG. This used to go through System.Drawing,
+        /// which is Windows-only on .NET 6 and up, so the bytes are now produced by our own
+        /// encoder on every platform.
+        /// </summary>
         public static void SavePng(int[] pixels, int sizePx, string path)
         {
-            // GDI+ is what writes the file, and GDI+ is a Windows thing: a host without it
-            // gets a plain refusal here rather than a crash inside the first Bitmap.
-            if (!OperatingSystem.IsWindows())
-                throw new PlatformNotSupportedException("The atlas PNG writer draws through GDI+, which this host does not have.");
-
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
-            using (var bmp = new Bitmap(sizePx, sizePx, PixelFormat.Format32bppArgb))
-            {
-                var rect = new Rectangle(0, 0, sizePx, sizePx);
-                BitmapData data = bmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-                try
-                {
-                    // Stride can exceed width*4; copy row by row when it does.
-                    if (data.Stride == sizePx * 4)
-                    {
-                        Marshal.Copy(pixels, 0, data.Scan0, pixels.Length);
-                    }
-                    else
-                    {
-                        for (int y = 0; y < sizePx; y++)
-                        {
-                            Marshal.Copy(pixels, y * sizePx, IntPtr.Add(data.Scan0, y * data.Stride), sizePx);
-                        }
-                    }
-                }
-                finally
-                {
-                    bmp.UnlockBits(data);
-                }
-                bmp.Save(path, ImageFormat.Png);
-            }
+            PngWriter.Write(path, pixels, sizePx, sizePx);
         }
 
         private static int SamplePixel(WorldGen gen, float wx, float wy, float extent, float worldStretch, float biomeStretch)

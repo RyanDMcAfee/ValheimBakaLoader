@@ -40,12 +40,6 @@
 		<PackageReference Include="Semver" Version="2.2.0" />
 		<PackageReference Include="Serilog" Version="2.12.0" />
 		<PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
-		<!-- The one piece of GDI this library carries: the atlas PNG writer in
-		     Tools\Atlas\MapRenderer.cs, which the bridge's atlas.render handler calls. The
-		     Windows app gets the same System.Drawing.Common out of its desktop framework, so
-		     nothing changes there; a host with no libgdiplus cannot write a map until the
-		     writer is a plain PNG encoder, which is a step of its own. -->
-		<PackageReference Include="System.Drawing.Common" Version="6.0.0" />
 	</ItemGroup>
 
 	<!--
@@ -85,7 +79,8 @@
 	  a window. RunKeyRegistry is the Run key itself and StartupHelper knows it runs inside a
 	  Windows Forms application, so they stay with the window even though they sit under
 	  Tools\; the bridge reaches the Run key through IStartupRegistration instead. MapRenderer
-	  compiles in here since the bridge joined this library (see the package note above).
+	  compiles in here since the bridge joined this library: its PNG goes out through
+	  Tools\Atlas\PngWriter.cs, our own encoder, so there is no GDI in it any more.
 	-->
 	<ItemGroup>
 		<Compile Remove="..\ValheimBakaLoader\Tools\FormExtensions.cs" />
