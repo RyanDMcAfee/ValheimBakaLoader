@@ -453,6 +453,8 @@ What has landed on the `linux-port` branch, and where it bent the plan above.
   not `net10.0`: the Windows app, its frozen launcher and its CI stay exactly as they are,
   and the core is what the service references. The Linux side is `net10.0` on its own, in
   `ValheimBakaLoader.Linux.sln`, so the Windows solution never needs the newer SDK.
+  `ValheimBakaLoader.Core.Tests` (plain `net6.0`) is the suite that runs with no window:
+  the seam's proofs live there and the portable tests of the Windows suite are linked in.
 - **Phase 2, the bridge.** `BlendWindow` kept its name and its partials and stopped being a
   Form. `IHostUi` is the seam (the thread, the pushes, the dialogs, the pickers, the shell),
   `BlendWindowForm` is the WinForms shell that answers it, and `HeadlessHostUi` is the host

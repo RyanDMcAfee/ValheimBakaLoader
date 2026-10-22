@@ -11,6 +11,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ValheimBakaLoader.Service",
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ValheimBakaLoader.Service.Tests", "ValheimBakaLoader.Service.Tests\ValheimBakaLoader.Service.Tests.csproj", "{C5E1A9D3-2B7F-4F6E-8A4D-1E9B3C7F2A05}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ValheimBakaLoader.Core.Tests", "ValheimBakaLoader.Core.Tests\ValheimBakaLoader.Core.Tests.csproj", "{E7A4C1F2-3B8D-4D5E-A9C6-2F1B7E8D4A36}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +35,10 @@ Global
 		{C5E1A9D3-2B7F-4F6E-8A4D-1E9B3C7F2A05}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C5E1A9D3-2B7F-4F6E-8A4D-1E9B3C7F2A05}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C5E1A9D3-2B7F-4F6E-8A4D-1E9B3C7F2A05}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E7A4C1F2-3B8D-4D5E-A9C6-2F1B7E8D4A36}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E7A4C1F2-3B8D-4D5E-A9C6-2F1B7E8D4A36}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E7A4C1F2-3B8D-4D5E-A9C6-2F1B7E8D4A36}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E7A4C1F2-3B8D-4D5E-A9C6-2F1B7E8D4A36}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

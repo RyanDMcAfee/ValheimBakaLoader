@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    THE SUITE THAT RUNS WHERE THERE IS NO WINDOW. ValheimBakaLoader.Tests is net6.0-windows
+    and needs the desktop runtime, so nothing in it can run on a Linux box or in a Linux CI
+    job. This project is plain net6.0 against Core and Tools: the platform seam's proofs
+    (signals, links, /proc, the XDG roots) live here because they have to RUN on Linux to
+    prove anything, and the portable tests of the Windows suite are LINKED in below so the
+    same test runs on both, written once.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>ValheimBakaLoader.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.4.0" />
+    <PackageReference Include="Moq" Version="4.18.2" />
+    <PackageReference Include="xunit" Version="2.4.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.5">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <!-- Only for the linked PNG test's GDI+ round trip, which runs on Windows and returns
+         early anywhere else; Core itself names no System.Drawing. -->
+    <PackageReference Include="System.Drawing.Common" Version="6.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ValheimBakaLoader.Core\ValheimBakaLoader.Core.csproj" />
+    <ProjectReference Include="..\ValheimBakaLoader.Tools\ValheimBakaLoader.Tools.csproj" />
+  </ItemGroup>
+
+  <!--
+    Portable tests of the Windows suite, linked rather than copied so there is one file to
+    keep true. A test belongs here when it names no window, no registry and no Windows path.
+  -->
+  <ItemGroup>
+    <Compile Include="..\ValheimBakaLoader.Tests\Tools\Atlas\PngWriterTests.cs" Link="Linked\Tools\Atlas\PngWriterTests.cs" />
+  </ItemGroup>
+
+</Project>
