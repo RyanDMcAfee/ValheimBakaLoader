@@ -434,13 +434,33 @@ namespace ValheimBakaLoader.Forms
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
+            var minimized = WindowState == FormWindowState.Minimized;
+            KeepWebViewWithWindow(minimized);
             // A minimized window is not a state the page can do anything with, and it comes
             // back to whichever of the other two it left, which raises this again.
-            if (WindowState == FormWindowState.Minimized) return;
+            if (minimized) return;
             PostWindowState();
             // The button keeps its distance from the right edge, so the cut follows the size
             // at once rather than waiting for the page to measure it again.
             ApplyMaxButtonCut();
+        }
+
+        /// <summary>Whether the WebView was hidden because the window went to the taskbar.</summary>
+        private bool WebViewHiddenForMinimize;
+
+        /// <summary>
+        /// The WebView is a child window, and a child hears nothing when its top-level window
+        /// is minimized or restored, so Microsoft asks the host to hide it on the way down and
+        /// show it on the way up. Left to itself the page could come back blank until the
+        /// window was moved (issue 26), because a move was the first thing that told the
+        /// WebView it was on screen again. Focus goes back to the page, which hiding took.
+        /// </summary>
+        private void KeepWebViewWithWindow(bool minimized)
+        {
+            if (WebView == null || WebView.IsDisposed || minimized == WebViewHiddenForMinimize) return;
+            WebViewHiddenForMinimize = minimized;
+            WebView.Visible = !minimized;
+            if (!minimized) ActiveControl = WebView;
         }
 
         /// <summary>

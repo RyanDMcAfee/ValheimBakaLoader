@@ -116,6 +116,20 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Contains("if(TB_MAXBTN) ro.observe(TB_MAXBTN);", page);
         }
 
+        /// <summary>Issue 26: a child WebView hears nothing when its window is minimized or
+        /// restored, and the page came back blank on some machines until the window moved.
+        /// The host hides it on the way down and shows it on the way up.</summary>
+        [Fact]
+        public void The_page_goes_to_the_taskbar_with_the_window_and_comes_back_with_it()
+        {
+            var host = AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindow.cs");
+            var resize = host.Substring(host.IndexOf("protected override void OnResize(EventArgs e)"));
+            resize = resize.Substring(0, resize.IndexOf("if (minimized) return;"));
+            Assert.Contains("KeepWebViewWithWindow(minimized);", resize);
+            Assert.Contains("WebView.Visible = !minimized;", host);
+            Assert.Contains("if (!minimized) ActiveControl = WebView;", host);
+        }
+
         [Fact]
         public void A_snapped_window_remembers_the_size_it_had_before_the_edge()
         {
