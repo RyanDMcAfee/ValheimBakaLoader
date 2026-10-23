@@ -2,7 +2,7 @@
   "_meta": {
     "language": "en",
     "appVersion": "1.2.18",
-    "catalog": 17
+    "catalog": 18
   },
   "keys": {
     "pal.cmd.restart_server": { "lore": "Restart server" },
@@ -321,7 +321,7 @@
     "app.textsize.saved.toast": { "lore": "The interface text size is now {size}.", "params": { "size": "text" }, "mark": "ᛖ" },
     "app.textsize.preview.toast": { "lore": "This is a preview of the window, so nothing was saved and nothing changes size. In the app the whole window follows this, the map included.", "mark": "ᛖ" },
     "hearth.upkeep.share_stats": { "lore": "Share anonymous usage stats" },
-    "hearth.upkeep.share_stats.note": { "lore": "Every five minutes BakaLoader posts three things: a one-way hash that stands for this computer, the version it is running, and whether a server is up right now. It also posts how many times each command was pressed since the last one, counted per server under a one-way key, so a count of kicks travels and never a name. No names, no addresses, no world data, nothing about the people playing, and no argument off any command. It is how many installs there are, which versions are still out there and which parts of the window get used. Turn this off and nothing is sent at all." },
+    "hearth.upkeep.share_stats.note": { "lore": "Every five minutes BakaLoader posts four things: a one-way hash that stands for this computer, the version it is running, whether a server is up right now, and how it is set up. The setup is the interface language, the two update switches and Start with Windows, whether Discord posts are on, and how many servers and test copies there are. It also posts how many times each command was pressed since the last one, counted per server under a one-way key, so a count of kicks travels and never a name. No names, no addresses, no world data, nothing about the people playing, and no argument off any command. It is how many installs there are, which versions and languages are still out there and which parts of the window get used. Turn this off and nothing is sent at all." },
     "hearth.upkeep.norse_names": { "lore": "Show Norse names" },
     "hearth.upkeep.norse_names.title": { "lore": "On: every plain label keeps its Norse name as a caption. Off: plain English only." },
     "hearth.upkeep.norse_names.note": { "lore": "Keeps Hearth, Vikings and Saga beside their plain names." },

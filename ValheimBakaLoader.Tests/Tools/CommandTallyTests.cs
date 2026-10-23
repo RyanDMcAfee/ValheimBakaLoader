@@ -362,7 +362,63 @@ namespace ValheimBakaLoader.Tests.Tools
 
             var body = JObject.Parse(Assert.Single(sent));
             Assert.Null(body["commands"]);
-            Assert.Equal(3, body.Properties().Count());
+            Assert.Equal(
+                new[] { "deviceHash", "appVersion", "serverRunning", "setup" },
+                body.Properties().Select(p => p.Name));
+        }
+
+        /// <summary>
+        /// The setup block: the language and the switches the owner asked to see, as switches,
+        /// counts and a code from the app's own list. No realm name, webhook or path rides along.
+        /// </summary>
+        [Fact]
+        public async Task The_beat_says_how_the_install_is_set_up_and_nothing_typed()
+        {
+            var prefs = UserPreferences.GetDefault();
+            prefs.ShareAnonymousStats = true;
+            prefs.Language = "ja";
+            prefs.AutoUpdateBakaLoader = false;
+            prefs.AutoUpdateMods = true;
+            prefs.StartWithWindows = true;
+            prefs.DiscordSharingEnabled = true;
+            var realms = new[]
+            {
+                new ServerPreferences { ProfileName = "Secret Realm", HeraldOn = true, HeraldWebhookUrl = "https://discord.com/api/webhooks/1/abc" },
+                new ServerPreferences { ProfileName = "Other" },
+                new ServerPreferences { ProfileName = "Secret Realm_bakaT", TestCopyOf = "Secret Realm" },
+            };
+
+            var (service, sent) = Beat(new CommandTally(), prefs, realms);
+            await service.Beat();
+
+            var body = JObject.Parse(Assert.Single(sent));
+            var setup = Assert.IsType<JObject>(body["setup"]);
+            Assert.Equal("ja", setup["language"].Value<string>());
+            Assert.False(setup["autoUpdateApp"].Value<bool>());
+            Assert.True(setup["autoUpdateMods"].Value<bool>());
+            Assert.True(setup["startWithWindows"].Value<bool>());
+            Assert.True(setup["discord"].Value<bool>());
+            Assert.Equal(2, setup["realms"].Value<int>());
+            Assert.Equal(1, setup["testCopies"].Value<int>());
+
+            Assert.DoesNotContain("Secret", body.ToString());
+            Assert.DoesNotContain("webhooks", body.ToString());
+        }
+
+        [Theory]
+        [InlineData("en", "en")]
+        [InlineData("zh-hans", "zh-Hans")] // the app's own spelling, whatever the file says
+        [InlineData("xx", "other")]        // the pseudo locale is a test tool, not a language
+        [InlineData("Klingon", "other")]   // nothing typed by hand reaches the backend
+        [InlineData(null, "other")]
+        public void The_language_is_a_code_from_the_list_or_other(string saved, string sent)
+        {
+            var prefs = UserPreferences.GetDefault();
+            prefs.Language = saved;
+            var setup = JObject.FromObject(HeartbeatService.Setup(prefs, null));
+            Assert.Equal(sent, setup["language"].Value<string>());
+            Assert.Equal(0, setup["realms"].Value<int>());
+            Assert.False(setup["discord"].Value<bool>());
         }
 
         /// <summary>
@@ -437,18 +493,38 @@ namespace ValheimBakaLoader.Tests.Tools
         private (HeartbeatService Service, List<string> Sent) Beat(
             ICommandTally tally, bool sharing, HttpStatusCode answer = HttpStatusCode.OK)
         {
-            var sent = new List<string>();
             var prefs = UserPreferences.GetDefault();
             prefs.ShareAnonymousStats = sharing;
+            return Beat(tally, prefs, null, answer);
+        }
 
+        private (HeartbeatService Service, List<string> Sent) Beat(
+            ICommandTally tally, UserPreferences prefs, IEnumerable<ServerPreferences> realms,
+            HttpStatusCode answer = HttpStatusCode.OK)
+        {
+            var sent = new List<string>();
             var service = new HeartbeatService(
                 new FixedPrefs(prefs),
                 new RecordingClients(sent, answer),
                 GetService<ValheimBakaLoader.Tools.Logging.IApplicationLogger>(),
-                tally);
+                tally,
+                realms == null ? null : new FixedRealms(realms));
 
             service.ServerRunningProvider = () => false;
             return (service, sent);
+        }
+
+        private sealed class FixedRealms : IServerPreferencesProvider
+        {
+            private readonly List<ServerPreferences> Held;
+            public FixedRealms(IEnumerable<ServerPreferences> held) => Held = held.ToList();
+            public event EventHandler<List<ServerPreferences>> PreferencesSaved;
+            public ServerPreferences LoadPreferences(string profileName) =>
+                Held.FirstOrDefault(r => r.ProfileName == profileName);
+            public IEnumerable<ServerPreferences> LoadPreferences() => Held;
+            public void SavePreferences(ServerPreferences preferences) =>
+                PreferencesSaved?.Invoke(this, Held);
+            public void RemovePreferences(string profileName) { }
         }
 
         private sealed class FixedPrefs : IUserPreferencesProvider

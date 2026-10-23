@@ -1,5 +1,7 @@
 using Newtonsoft.Json;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -23,9 +25,10 @@ namespace ValheimBakaLoader.Tools
     /// Sends a tiny anonymous usage heartbeat every few minutes so aggregate install and
     /// live-server counts can be tracked.
     /// <para>
-    /// The payload is three fields, and a fourth whenever the command tally is not empty:
-    /// { deviceHash, appVersion, serverRunning } plus { commands }. deviceHash is a one-way MD5
-    /// of MAC address + machine name (the same anonymous install ID used for crash reports).
+    /// The payload is four fields, and a fifth whenever the command tally is not empty:
+    /// { deviceHash, appVersion, serverRunning, setup } plus { commands }. deviceHash is a one-way
+    /// MD5 of MAC address + machine name (the same anonymous install ID used for crash reports).
+    /// setup is the interface language and a few switches and counts: see <see cref="Setup"/>.
     /// commands is a count per command per server profile, each profile keyed under a one-way
     /// hash over this install's own random salt and the profile name, counts only, capped at 64
     /// keys a profile with console verbs cut to 24 characters: see <see cref="CommandTally"/>.
@@ -59,6 +62,7 @@ namespace ValheimBakaLoader.Tools
         private readonly IHttpClientProvider HttpClientProvider;
         private readonly IApplicationLogger Logger;
         private readonly ICommandTally Commands;
+        private readonly IServerPreferencesProvider ServerPrefsProvider;
 
         private Timer BeatTimer;
 
@@ -68,12 +72,14 @@ namespace ValheimBakaLoader.Tools
             IUserPreferencesProvider userPrefsProvider,
             IHttpClientProvider httpClientProvider,
             IApplicationLogger logger,
-            ICommandTally commands = null)
+            ICommandTally commands = null,
+            IServerPreferencesProvider serverPrefsProvider = null)
         {
             UserPrefsProvider = userPrefsProvider;
             HttpClientProvider = httpClientProvider;
             Logger = logger;
             Commands = commands;
+            ServerPrefsProvider = serverPrefsProvider;
         }
 
         public void Start()
@@ -93,26 +99,23 @@ namespace ValheimBakaLoader.Tools
         {
             try
             {
-                if (!UserPrefsProvider.LoadPreferences().ShareAnonymousStats) return;
+                var prefs = UserPrefsProvider.LoadPreferences();
+                if (!prefs.ShareAnonymousStats) return;
+
+                var beat = new Dictionary<string, object>
+                {
+                    ["deviceHash"] = AssemblyHelper.GetClientCorrelationId(),
+                    ["appVersion"] = AssemblyHelper.GetApplicationVersion(),
+                    ["serverRunning"] = ServerRunningProvider?.Invoke() ?? false,
+                    ["setup"] = Setup(prefs, ServerPrefsProvider?.LoadPreferences()),
+                };
 
                 // Since the last beat the backend took: how many times each host command ran,
                 // per server profile, counts only. Left OUT of the payload when nothing was
-                // issued, so an idle install sends the same three fields it always did.
+                // issued.
                 var commands = Commands?.Snapshot();
-                var payload = JsonConvert.SerializeObject(commands == null || commands.Count == 0
-                    ? new
-                    {
-                        deviceHash = AssemblyHelper.GetClientCorrelationId(),
-                        appVersion = AssemblyHelper.GetApplicationVersion(),
-                        serverRunning = ServerRunningProvider?.Invoke() ?? false,
-                    }
-                    : (object)new
-                    {
-                        deviceHash = AssemblyHelper.GetClientCorrelationId(),
-                        appVersion = AssemblyHelper.GetApplicationVersion(),
-                        serverRunning = ServerRunningProvider?.Invoke() ?? false,
-                        commands,
-                    });
+                if (commands != null && commands.Count > 0) beat["commands"] = commands;
+                var payload = JsonConvert.SerializeObject(beat);
 
                 using var client = HttpClientProvider.CreateClient();
                 // A budget's clocks, not HttpClient.Timeout. The old fifteen second timeout is
@@ -140,6 +143,27 @@ namespace ValheimBakaLoader.Tools
                 // write too.
                 Logger.Debug(e, "Usage heartbeat skipped: {0}", Http.WireTrace.Innermost(e));
             }
+        }
+
+        /// <summary>
+        /// How the install is set up: the interface language and a handful of switches, so the
+        /// owner can see which languages and options are actually used. Every value is a
+        /// switch, a count or a code from the app's own list (anything else is "other"), so
+        /// nothing typed by the host can ride along.
+        /// </summary>
+        internal static object Setup(UserPreferences prefs, IEnumerable<ServerPreferences> realms)
+        {
+            var list = realms?.Where(r => r != null).ToList() ?? new List<ServerPreferences>();
+            return new
+            {
+                language = LanguageCodes.Normalize(prefs.Language) ?? "other",
+                autoUpdateApp = prefs.AutoUpdateBakaLoader,
+                autoUpdateMods = prefs.AutoUpdateMods,
+                startWithWindows = prefs.StartWithWindows,
+                discord = HeraldRealms.MasterOn(prefs) && list.Any(r => r.HeraldOn),
+                realms = list.Count(r => r.TestCopyOf == null),
+                testCopies = list.Count(r => r.TestCopyOf != null),
+            };
         }
     }
 }

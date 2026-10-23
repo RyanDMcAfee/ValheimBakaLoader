@@ -916,15 +916,16 @@
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.share_stats">Share anonymous usage stats</span><span class="toggle" id="tShareStats" data-t></span></div>
                 <!-- What this switch actually does, spelled out because it is the one privacy
                      control on the card and it was the only row here with no paragraph under
-                     it. The sentence names the three fields, the five minutes, and the fact
+                     it. The sentence names the four fields, the five minutes, and the fact
                      that turning the switch off stops the post entirely. Keep it true against
                      Tools/HeartbeatService.cs: it sends deviceHash, appVersion,
-                     serverRunning and, since 1.2.6, a commands map of counts per profile key,
+                     serverRunning, since 1.2.19 a setup block (HeartbeatService.Setup) and,
+                     since 1.2.6, a commands map of counts per profile key,
                      every five minutes, and returns without sending anything at all when
                      ShareAnonymousStats is off. The same preference gates the COUNTING in
                      Tools/CommandTally.cs, so with the switch off nothing is even held in
                      memory. -->
-                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.share_stats.note">Every five minutes BakaLoader posts three things: a one-way hash that stands for this computer, the version it is running, and whether a server is up right now. It also posts how many times each command was pressed since the last one, counted per server under a one-way key, so a count of kicks travels and never a name. No names, no addresses, no world data, nothing about the people playing, and no argument off any command. It is how many installs there are, which versions are still out there and which parts of the window get used. Turn this off and nothing is sent at all.</div>
+                <div class="subval" style="margin:2px 0 4px" data-i18n="hearth.upkeep.share_stats.note">Every five minutes BakaLoader posts four things: a one-way hash that stands for this computer, the version it is running, whether a server is up right now, and how it is set up. The setup is the interface language, the two update switches and Start with Windows, whether Discord posts are on, and how many servers and test copies there are. It also posts how many times each command was pressed since the last one, counted per server under a one-way key, so a count of kicks travels and never a name. No names, no addresses, no world data, nothing about the people playing, and no argument off any command. It is how many installs there are, which versions and languages are still out there and which parts of the window get used. Turn this off and nothing is sent at all.</div>
                 <div class="togglerow"><span class="tl" data-i18n="hearth.upkeep.norse_names">Show Norse names</span><span class="toggle on" id="tPlainTerms" data-t title="On: every plain label keeps its Norse name as a caption. Off: plain English only." data-i18n-title="hearth.upkeep.norse_names.title"></span></div>
                 <div class="subval" style="margin:2px 0 0" data-i18n="hearth.upkeep.norse_names.note">Keeps Hearth, Vikings and Saga beside their plain names.</div>
                 <!-- Messages to players. It sits beside the Norse-names switch because it is
