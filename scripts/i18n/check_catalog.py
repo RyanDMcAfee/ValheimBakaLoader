@@ -449,6 +449,9 @@ def table_english_drift(keys, app_path, findings):
 # and this list is what tells the orphan rule the sentence is kept on purpose. Keep it
 # short; an id goes on it only when no reworded sentence under the same id could be true.
 RETIRED_IDS = {
+    # 1.3.0: the horn of mead at the foot of the rail reads three lines, Donate over the horn
+    # split in two, one id per line, so the one-line label names nothing on screen.
+    "side.mead.label": "1.3.0",
     # 1.2.18: the rail lists five halls. Configs, the Log, Discord and Statistics became
     # sections of the Mods, Dashboard and Settings halls and keep their own headings (the
     # *.head.title ids), so the rail's four labels for them name nothing on screen.

@@ -498,6 +498,15 @@
     "side.mead.label": {
       "translation": "[Ẋ a horn of mead Ẋ] ẊẊẊẊẊ"
     },
+    "side.mead.donate": {
+      "translation": "[Ẋ Donate Ẋ] ẊẊ"
+    },
+    "side.mead.line1": {
+      "translation": "[Ẋ a horn Ẋ] ẊẊ"
+    },
+    "side.mead.line2": {
+      "translation": "[Ẋ of mead Ẋ] ẊẊẊ"
+    },
     "side.mead.opening.toast": {
       "translation": "[Ẋ Skål! Opening the mead hall… Ẋ] ẊẊẊẊẊẊẊẊẊ",
       "mark": "ᛥ"

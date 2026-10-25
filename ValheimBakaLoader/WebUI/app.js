@@ -4493,10 +4493,15 @@ function emberize(el){
 /* The link's words come out of the catalog and the embers are lit over them,
    in that order: emberize wraps every letter in its own span, and a textContent
    write afterwards would throw those spans away and leave the link dead. The rune
-   and the pennant either side are ornament, so they stay here. */
+   and the pennant either side are ornament, so they stay here. Since 1.3.0 the link
+   reads three lines, Donate over the horn of mead split in two, so the foot reads as
+   what it is; a pack may leave a line empty to keep its phrase whole. */
 function renderMead(){
   const el=$("#meadLink"); if(!el) return;
-  el.textContent="ᛥ\u00a0"+T("side.mead.label")+"\u00a0⚑";
+  el.textContent="ᛥ\u00a0"+T("side.mead.donate")+"\u00a0⚑";
+  for(const w of [T("side.mead.line1"),T("side.mead.line2")]){
+    if(w) el.append(document.createElement("br"),w);
+  }
   emberize(el);
 }
 renderMead();

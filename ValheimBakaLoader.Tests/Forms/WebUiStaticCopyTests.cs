@@ -343,8 +343,11 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("data-i18n-title=\"side.mead.title\"", tag);
             Assert.DoesNotContain("data-i18n=\"", tag);
 
-            var painter = js.Substring(js.IndexOf("function renderMead()", StringComparison.Ordinal), 320);
-            Assert.Contains("T(\"side.mead.label\")", painter);
+            var painter = js.Substring(js.IndexOf("function renderMead()", StringComparison.Ordinal), 460);
+            // three lines since 1.3.0: Donate, then the horn of mead split in two
+            Assert.Contains("T(\"side.mead.donate\")", painter);
+            Assert.Contains("side.mead.line1", painter);
+            Assert.Contains("side.mead.line2", painter);
             // the write first, the embers after it, or the spans are thrown away
             Assert.True(painter.IndexOf("textContent=", StringComparison.Ordinal)
                         < painter.IndexOf("emberize(", StringComparison.Ordinal),
