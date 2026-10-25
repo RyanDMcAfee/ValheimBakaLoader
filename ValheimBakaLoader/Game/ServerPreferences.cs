@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using ValheimBakaLoader.Properties;
 
 namespace ValheimBakaLoader.Game
@@ -308,6 +309,51 @@ namespace ValheimBakaLoader.Game
         public List<string> GaleConfigUnticked { get; set; } = new();
 
         /// <summary>
+        /// The "Namespace-Name" of every mod the host ticked in the approval dialog (1.3.0). From
+        /// 1.3.0 a mod starts ticked only when it is on this list, so a first review ticks nothing.
+        /// Null until 1.3.0 first stores a choice for this realm; an empty list is a stored choice
+        /// and is written as one. See <see cref="GaleStartsTicked"/> for a realm that still has
+        /// only the older untick list.
+        /// </summary>
+        public List<string> GaleTicked { get; set; }
+
+        /// <summary>
+        /// The config files the host ticked in the configs part of the Gale dialog (1.3.0), the
+        /// same way <see cref="GaleTicked"/> keeps the mods. Null until 1.3.0 first stores a choice.
+        /// </summary>
+        public List<string> GaleConfigTicked { get; set; }
+
+        /// <summary>
+        /// Whether a row the Gale dialog offers starts ticked. From 1.3.0 a row is ticked only when
+        /// the host ticked it before, so a first review starts with nothing ticked. A realm whose
+        /// file has the older untick list and no ticked list yet keeps the older rule until the
+        /// next choice is stored: everything not unticked starts ticked, so no choice made before
+        /// 1.3.0 is lost.
+        /// </summary>
+        public static bool GaleStartsTicked(string key, List<string> ticked, List<string> unticked)
+        {
+            var k = key?.Trim();
+            if (string.IsNullOrEmpty(k)) return false;
+            if (ticked == null)
+                return unticked != null && unticked.Count > 0 && !unticked.Contains(k, StringComparer.OrdinalIgnoreCase);
+            return ticked.Contains(k, StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// A ticked list after a choice: what was kept, less the ones unticked now, plus the ones
+        /// ticked now. Never null, so the realm reads by the 1.3.0 rule from then on.
+        /// </summary>
+        public static List<string> GaleTicksAfter(IEnumerable<string> kept, IEnumerable<string> on, IEnumerable<string> off)
+        {
+            var dropped = new HashSet<string>(NormalizeUnticked(off), StringComparer.OrdinalIgnoreCase);
+            var ticked = new HashSet<string>(NormalizeUnticked(on), StringComparer.OrdinalIgnoreCase);
+            return NormalizeUnticked(NormalizeUnticked(kept).Where(n => !dropped.Contains(n) || ticked.Contains(n)).Concat(ticked));
+        }
+
+        /// <summary>A ticked list as it is kept: null stays null (no choice stored yet), anything else normalised.</summary>
+        public static List<string> NormalizeTicked(IEnumerable<string> names) => names == null ? null : NormalizeUnticked(names);
+
+        /// <summary>
         /// Puts the Gale fields of <paramref name="stored"/> onto this profile. The
         /// settings form has no Gale fields: it fetches the profile, changes what it has boxes
         /// for, and sends the whole object back, so whatever Gale state it carries is a copy of
@@ -323,6 +369,8 @@ namespace ValheimBakaLoader.Game
             GaleUnticked = NormalizeUnticked(stored.GaleUnticked);
             GaleNotAvailable = NormalizeUnticked(stored.GaleNotAvailable);
             GaleConfigUnticked = NormalizeUnticked(stored.GaleConfigUnticked);
+            GaleTicked = NormalizeTicked(stored.GaleTicked);
+            GaleConfigTicked = NormalizeTicked(stored.GaleConfigTicked);
             return this;
         }
 
@@ -340,6 +388,8 @@ namespace ValheimBakaLoader.Game
             GaleUnticked = NormalizeUnticked(GaleUnticked);
             GaleNotAvailable = NormalizeUnticked(GaleNotAvailable);
             GaleConfigUnticked = NormalizeUnticked(GaleConfigUnticked);
+            GaleTicked = NormalizeTicked(GaleTicked);
+            GaleConfigTicked = NormalizeTicked(GaleConfigTicked);
             return this;
         }
 
@@ -544,6 +594,8 @@ namespace ValheimBakaLoader.Game
                 GaleUnticked = NormalizeUnticked(file.GaleUnticked),
                 GaleNotAvailable = NormalizeUnticked(file.GaleNotAvailable),
                 GaleConfigUnticked = NormalizeUnticked(file.GaleConfigUnticked),
+                GaleTicked = NormalizeTicked(file.GaleTicked),
+                GaleConfigTicked = NormalizeTicked(file.GaleConfigTicked),
             };
         }
 
@@ -625,6 +677,10 @@ namespace ValheimBakaLoader.Game
             GaleUnticked = NormalizeUnticked(GaleUnticked) is { Count: > 0 } kept ? kept : null,
             GaleNotAvailable = NormalizeUnticked(GaleNotAvailable) is { Count: > 0 } gone ? gone : null,
             GaleConfigUnticked = NormalizeUnticked(GaleConfigUnticked) is { Count: > 0 } left ? left : null,
+            // Unlike the untick lists, an empty ticked list is written as one: it says a choice
+            // was stored under the 1.3.0 rule, where null says none has been yet.
+            GaleTicked = NormalizeTicked(GaleTicked),
+            GaleConfigTicked = NormalizeTicked(GaleConfigTicked),
         };
     }
 }

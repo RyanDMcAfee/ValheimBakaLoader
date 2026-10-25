@@ -181,7 +181,6 @@ namespace ValheimBakaLoader.Forms
             {
                 var comparison = GaleProfileConfigs.Compare(memo.Files, SafeConfigDirectoryFor(profile));
                 memo.LastChanges = comparison.Added + comparison.Changed;
-                var unticked = new HashSet<string>(prefs?.GaleConfigUnticked ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
                 configs = new
                 {
                     ok = true,
@@ -196,7 +195,9 @@ namespace ValheimBakaLoader.Forms
                         path = r.Rel,
                         realmPath = r.RealmPath,
                         state = GaleConfigStateWord(r.State),
-                        ticked = r.State != GaleConfigState.Same && !unticked.Contains(r.Rel),
+                        // From 1.3.0 only a file the host ticked before starts ticked.
+                        ticked = r.State != GaleConfigState.Same
+                            && ServerPreferences.GaleStartsTicked(r.Rel, prefs?.GaleConfigTicked, prefs?.GaleConfigUnticked),
                         preview = r.Preview.Select(l => new { k = l.Kind.ToString(), t = l.Text }).ToList(),
                         more = r.More,
                     }).ToList(),
@@ -303,13 +304,17 @@ namespace ValheimBakaLoader.Forms
             }
 
             // The ticks are the host's answer whatever happens next. A file offered and left
-            // unticked is remembered; one ticked now comes off the list.
+            // unticked is remembered; one ticked now comes off the list. From 1.3.0 the ticked
+            // ones are remembered too, since a file starts ticked only when it was ticked before.
             var offered = GaleProfileConfigs.Compare(memo.Files, configDir).Rows
                 .Where(r => r.State != GaleConfigState.Same)
-                .Select(r => r.Rel);
+                .Select(r => r.Rel)
+                .ToList();
             prefs.GaleConfigUnticked = ServerPreferences.NormalizeUnticked(
                 ServerPreferences.NormalizeUnticked(prefs.GaleConfigUnticked).Concat(offered)
                     .Where(r => !asked.Contains(r, StringComparer.OrdinalIgnoreCase)));
+            prefs.GaleConfigTicked = ServerPreferences.GaleTicksAfter(prefs.GaleConfigTicked, asked,
+                offered.Where(r => !asked.Contains(r, StringComparer.OrdinalIgnoreCase)));
             ServerPrefsProvider.SavePreferences(prefs);
 
             asked.Sort(ConfigFiles.ComparePaths);

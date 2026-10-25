@@ -1011,7 +1011,8 @@ namespace ValheimBakaLoader.Tests.Forms
             // CRLF against LF, and no newline at the end, is the same file.
             Assert.Equal("same", files["BepInEx.cfg"].Value<string>("state"));
             Assert.False(files["BepInEx.cfg"].Value<bool>("ticked"));
-            Assert.True(files["Jotunn/jotunn.cfg"].Value<bool>("ticked"));
+            // 1.3.0: a first review ticks nothing, a changed file included.
+            Assert.False(files["Jotunn/jotunn.cfg"].Value<bool>("ticked"));
             Assert.Equal("BepInEx/config/Jotunn/jotunn.cfg", files["Jotunn/jotunn.cfg"].Value<string>("realmPath"));
             var preview = files["Jotunn/jotunn.cfg"]["preview"]!.Select(l => l.Value<string>("k") + l.Value<string>("t")).ToList();
             Assert.Contains("-Speed = 1", preview);
@@ -1068,8 +1069,10 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal("[General]\r\nSpeed = 1\r\n", File.ReadAllText(Path.Combine(stamp, "Jotunn", "jotunn.cfg")));
             Assert.Single(Directory.GetFiles(stamp, "*", SearchOption.AllDirectories));
 
-            // The one offered and left unticked is remembered, and shown unticked next time.
+            // The one offered and left unticked is remembered, and shown unticked next time; the
+            // two ticked are remembered as ticked (1.3.0).
             Assert.Equal(new[] { "second.cfg" }, Stored().GaleConfigUnticked);
+            Assert.Equal(new[] { "Azumatt.AzuCraftyBoxes.yml", "Jotunn/jotunn.cfg" }, Stored().GaleConfigTicked.OrderBy(x => x, StringComparer.Ordinal));
             var after = FilesOf(await Configs());
             Assert.False(after["second.cfg"].Value<bool>("ticked"));
             Assert.Equal("same", after["Jotunn/jotunn.cfg"].Value<string>("state"));
@@ -1079,6 +1082,7 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.True(again.Value<bool>("ok"));
             Assert.Equal("b = 2\n", RealmText("second.cfg"));
             Assert.Empty(Stored().GaleConfigUnticked);
+            Assert.Contains("second.cfg", Stored().GaleConfigTicked);
             Assert.Equal(2, Directory.GetDirectories(BackupRoot).Length);
         }
 
@@ -1091,6 +1095,9 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.True(applied.Value<bool>("ok"));
             Assert.Equal(0, applied.Value<int>("written"));
             Assert.Equal(new[] { "Azumatt.AzuCraftyBoxes.yml", "Jotunn/jotunn.cfg", "second.cfg" }, Stored().GaleConfigUnticked.OrderBy(x => x, StringComparer.Ordinal));
+            // A stored choice of nothing is still a choice: an empty ticked list, not "never asked".
+            Assert.NotNull(Stored().GaleConfigTicked);
+            Assert.Empty(Stored().GaleConfigTicked);
             Assert.False(File.Exists(Path.Combine(ConfigDir, "Azumatt.AzuCraftyBoxes.yml")));
             Assert.False(Directory.Exists(BackupRoot));
         }
@@ -1197,6 +1204,135 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Empty(ServerPreferences.FromFile(new ServerPreferencesFile()).GaleConfigUnticked);
             // A settings save that comes back with no Gale fields keeps what is on disk.
             Assert.Equal(new[] { "a.cfg" }, new ServerPreferences().KeepGaleFollowFrom(basePrefs).GaleConfigUnticked);
+        }
+
+        // ------------------------------------------------------------------ the ticks a review starts with (1.3.0)
+
+        private void StoredGaleLists(List<string> unticked, List<string> ticked, List<string> configUnticked, List<string> configTicked)
+        {
+            ((IUserPreferencesProvider)UserPrefs).Mutate(prefs =>
+            {
+                var realm = prefs.Servers.First(x => x.ProfileName == Profile);
+                realm.GaleUnticked = unticked ?? new List<string>();
+                realm.GaleTicked = ticked;
+                realm.GaleConfigUnticked = configUnticked ?? new List<string>();
+                realm.GaleConfigTicked = configTicked;
+            });
+        }
+
+        private static Dictionary<string, JToken> ModRowsOf(JObject state) =>
+            state["check"]!["rows"]!.ToDictionary(r => r.Value<string>("name")!, r => r);
+
+        [Fact]
+        public async Task A_first_review_ticks_nothing_and_a_tick_is_remembered_for_the_next()
+        {
+            Handler.Body = Meta(Stamp1, ("Azumatt-AzuCraftyBoxes", true, 1, 8, 4), ("ValheimModding-Jotunn", true, 2, 21, 0));
+            await Follow();
+            var rows = ModRowsOf(await Check());
+            Assert.False(rows["Azumatt-AzuCraftyBoxes"].Value<bool>("ticked"));
+            Assert.False(rows["ValheimModding-Jotunn"].Value<bool>("ticked"));
+            Assert.Null(Stored().GaleTicked);
+
+            var after = await Call("gale.untick", new { profile = Profile, unticked = new[] { "Azumatt-AzuCraftyBoxes" }, ticked = new[] { "ValheimModding-Jotunn" } });
+            rows = ModRowsOf((JObject)after["state"]!);
+            Assert.True(rows["ValheimModding-Jotunn"].Value<bool>("ticked"));
+            Assert.False(rows["Azumatt-AzuCraftyBoxes"].Value<bool>("ticked"));
+            Assert.Equal(new[] { "ValheimModding-Jotunn" }, Stored().GaleTicked);
+            Assert.Equal(new[] { "Azumatt-AzuCraftyBoxes" }, Stored().GaleUnticked);
+
+            // Changing its mind moves a name from one list to the other, never onto both.
+            await Call("gale.untick", new { profile = Profile, unticked = new[] { "ValheimModding-Jotunn" }, ticked = new[] { "Azumatt-AzuCraftyBoxes" } });
+            Assert.Equal(new[] { "Azumatt-AzuCraftyBoxes" }, Stored().GaleTicked);
+            Assert.Equal(new[] { "ValheimModding-Jotunn" }, Stored().GaleUnticked);
+            Assert.True(ModRowsOf(await Call("gale.get", new { profile = Profile }))["Azumatt-AzuCraftyBoxes"].Value<bool>("ticked"));
+
+            // A choice of nothing is still stored, so the realm stays on the 1.3.0 rule.
+            await Call("gale.untick", new { profile = Profile, unticked = new[] { "Azumatt-AzuCraftyBoxes" }, ticked = Array.Empty<string>() });
+            Assert.NotNull(Stored().GaleTicked);
+            Assert.Empty(Stored().GaleTicked);
+        }
+
+        [Fact]
+        public async Task A_realm_with_only_the_older_untick_list_keeps_the_older_rule_until_a_choice_is_stored()
+        {
+            Handler.Body = Meta(Stamp1, ("Azumatt-AzuCraftyBoxes", true, 1, 8, 4), ("ValheimModding-Jotunn", true, 2, 21, 0), ("shudnal-ExtraSlots", true, 1, 0, 0));
+            await Follow();
+            // A file written before 1.3.0: an untick list, no ticked lists.
+            StoredGaleLists(new List<string> { "shudnal-ExtraSlots" }, null, new List<string> { "second.cfg" }, null);
+            var rows = ModRowsOf(await Check());
+            Assert.True(rows["Azumatt-AzuCraftyBoxes"].Value<bool>("ticked"));
+            Assert.True(rows["ValheimModding-Jotunn"].Value<bool>("ticked"));
+            Assert.False(rows["shudnal-ExtraSlots"].Value<bool>("ticked"));
+
+            // The first choice stored under 1.3.0 moves the realm onto the new rule.
+            await Call("gale.untick", new { profile = Profile, unticked = new[] { "ValheimModding-Jotunn" }, ticked = new[] { "Azumatt-AzuCraftyBoxes" } });
+            Assert.Equal(new[] { "Azumatt-AzuCraftyBoxes" }, Stored().GaleTicked);
+            rows = ModRowsOf(await Call("gale.get", new { profile = Profile }));
+            Assert.True(rows["Azumatt-AzuCraftyBoxes"].Value<bool>("ticked"));
+            Assert.False(rows["ValheimModding-Jotunn"].Value<bool>("ticked"));
+            Assert.False(rows["shudnal-ExtraSlots"].Value<bool>("ticked"));
+        }
+
+        [Fact]
+        public async Task The_configs_start_by_the_same_two_rules()
+        {
+            await FollowWithConfigs();
+            StoredGaleLists(null, null, new List<string> { "second.cfg" }, null);
+            var files = FilesOf(await Configs());
+            // The older rule: everything offered and not unticked starts ticked.
+            Assert.True(files["Azumatt.AzuCraftyBoxes.yml"].Value<bool>("ticked"));
+            Assert.True(files["Jotunn/jotunn.cfg"].Value<bool>("ticked"));
+            Assert.False(files["second.cfg"].Value<bool>("ticked"));
+            Assert.False(files["BepInEx.cfg"].Value<bool>("ticked"));
+
+            // The 1.3.0 rule: only what was ticked before.
+            StoredGaleLists(null, null, new List<string> { "second.cfg" }, new List<string> { "Jotunn/jotunn.cfg" });
+            files = FilesOf(await Configs());
+            Assert.False(files["Azumatt.AzuCraftyBoxes.yml"].Value<bool>("ticked"));
+            Assert.True(files["Jotunn/jotunn.cfg"].Value<bool>("ticked"));
+            Assert.False(files["second.cfg"].Value<bool>("ticked"));
+        }
+
+        [Fact]
+        public async Task The_ticked_lists_keep_null_apart_from_empty_and_go_with_Forget_a_new_code_and_a_new_realm()
+        {
+            var basePrefs = new ServerPreferences
+            {
+                ProfileName = "Base",
+                GaleTicked = new List<string> { "A-Mod", " a-mod ", "" },
+                GaleConfigTicked = new List<string>(),
+            };
+            var file = basePrefs.ToFile();
+            Assert.Equal(new[] { "A-Mod" }, file.GaleTicked);
+            Assert.NotNull(file.GaleConfigTicked);
+            Assert.Empty(file.GaleConfigTicked);
+            var json = JsonConvert.SerializeObject(file);
+            Assert.Contains("\"galeTicked\":[\"A-Mod\"]", json);
+            Assert.Contains("\"galeConfigTicked\":[]", json);
+            var back = ServerPreferences.FromFile(JsonConvert.DeserializeObject<ServerPreferencesFile>(json));
+            Assert.Equal(new[] { "A-Mod" }, back.GaleTicked);
+            Assert.NotNull(back.GaleConfigTicked);
+            Assert.Empty(back.GaleConfigTicked);
+            // A file from before 1.3.0 has neither, and reads as never asked.
+            Assert.Null(ServerPreferences.FromFile(new ServerPreferencesFile()).GaleTicked);
+            Assert.Null(new ServerPreferences().ToFile().GaleConfigTicked);
+            Assert.Null(BlendWindow.SeedNewRealm(basePrefs).GaleTicked);
+            Assert.Null(BlendWindow.SeedNewRealm(basePrefs).GaleConfigTicked);
+            // A settings save that comes back with no Gale fields keeps what is on disk.
+            var kept = new ServerPreferences().KeepGaleFollowFrom(basePrefs);
+            Assert.Equal(new[] { "A-Mod" }, kept.GaleTicked);
+            Assert.NotNull(kept.GaleConfigTicked);
+
+            Handler.Body = WorkMeta(Stamp1);
+            await Follow();
+            StoredGaleLists(null, new List<string> { "Azumatt-AzuCraftyBoxes" }, null, new List<string> { "a.cfg" });
+            Assert.True((await Call("gale.set", new { profile = Profile, id = "zz99ZZ" })).Value<bool>("ok"));
+            Assert.Null(Stored().GaleTicked);
+            Assert.Null(Stored().GaleConfigTicked);
+            StoredGaleLists(null, new List<string> { "Azumatt-AzuCraftyBoxes" }, null, new List<string> { "a.cfg" });
+            await Call("gale.forget", new { profile = Profile });
+            Assert.Null(Stored().GaleTicked);
+            Assert.Null(Stored().GaleConfigTicked);
         }
 
         // ------------------------------------------------------------------ on this server only (1.2.16)

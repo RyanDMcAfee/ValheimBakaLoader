@@ -11430,6 +11430,8 @@ namespace ValheimBakaLoader.Forms
             created.GaleUnticked = new List<string>();
             created.GaleNotAvailable = new List<string>();
             created.GaleConfigUnticked = new List<string>();
+            created.GaleTicked = null;
+            created.GaleConfigTicked = null;
             // Nor whether the realm is a test copy: a duplicate of a test copy is a realm of its
             // own, and servers.create marks a test copy itself.
             created.TestCopyOf = null;

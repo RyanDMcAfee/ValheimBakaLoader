@@ -7232,11 +7232,14 @@ async function modDepsInstall(list){
  * The installs are the Mods hall's own add, one mod at a time, with the version pinned in the
  * address, so the download, its checks and its failure sentences are the ones that road has.
  *
- * The dialog has two more parts. Config files from the profile: the profile's zip is fetched
- * when the dialog opens (and on its Refresh), never at the three moments, and each file is
- * listed against this server's own with a preview, applied apart from the mods by its own
- * button. On this server only: the server's mods the profile does not name, for information,
- * each with the Mods hall's own switch off and on. Nothing in either part removes anything.
+ * The dialog is two sections that fold under a chevron (1.3.0, issue 27). Mods: one table of
+ * the mods to add, the mods to update, the mods only this server has (a tick switches one off
+ * through the Mods hall's own switch) and, folded under one line, the ones already the same.
+ * Configs: the profile's zip is fetched when the dialog opens (and on its Refresh), never at the
+ * three moments, and each file is listed against this server's own with a preview. Nothing is
+ * ticked on a first review; each section has Tick all and Untick all, and the host side
+ * remembers what was ticked for the next one. One button does everything ticked, in order:
+ * the switches, the installs, then the configs. Nothing in either section removes anything.
  * The selftest scripts/ui/gale_profile_selftest.js drives this block for real.
  */
 /* Every sentence the host side can name for the status line. The host side names them by
@@ -7271,14 +7274,15 @@ let GALE=null;            // this realm's follow, as the host side last answered
 let GALE_BUSY=false;      // a check is out
 let GALE_REFUSED=null;    // the sentence id a refused paste gets, until the box is used again
 let GALE_INSTALLING=false;
-let GALE_DLG=null;        // the dialog on screen, so its configs and only-here parts can be drawn again in place
-let GALE_DLG_ST=null;     // the state the dialog was opened with, kept fresh by the only-here switch
+let GALE_DLG=null;        // the dialog on screen, so its configs section can be drawn again in place
+let GALE_DLG_ST=null;     // the state the dialog was opened with
 let GALE_CFG=null;        // the configs part's last answer from the host side
 let GALE_CFG_LOADING=false;
 let GALE_CFG_APPLYING=false;
 let GALE_CFG_TICKS={};    // ticks the host changed in the open dialog, by path, so a redraw keeps them
 let GALE_CFG_SHOWN={};    // previews open in the open dialog, by path
-let GALE_SWITCHING=false; // a switch from the only-here list is out
+let GALE_MOD_TICKS={};    // ticks the host changed in the open dialog's Mods section, by mod name
+let GALE_SECT={mods:true,cfg:true,cfgMoved:false}; // the dialog's sections, open or folded, and whether the host moved Configs
 function galeSentence(id,params,fallback){
   const row=GALE_STATUS.find(r=>r.textId===id);
   return T(row?row.textId:(fallback||"mods.gale.check.network"),params);
@@ -7436,23 +7440,26 @@ async function galeForget(){
    of those carries the scan's own FullName, which the switch looks it up by. */
 function galeDialogRows(st){
   const c=st&&st.check;
-  const rows=[], disabled=[], onlyHere=[];
-  if(!c||!c.ok) return {rows,disabled,onlyHere};
+  const rows=[], disabled=[], onlyHere=[], same=[];
+  if(!c||!c.ok) return {rows,disabled,onlyHere,same};
   for(const r of c.rows||[]){
     const kind=r.kind==="unticked"?r.untickedFrom:r.kind;
     if(r.kind==="disabled"){disabled.push(String(r.name));continue;}
+    /* A mod only this server has is never ticked to start with: a tick switches it off. */
     if(r.kind==="notInProfile"){
-      onlyHere.push({name:String(r.name),version:r.serverVersion||"",fullName:String(r.fullName||r.name),off:!!r.off});
+      onlyHere.push({name:String(r.name),version:r.serverVersion||"",fullName:String(r.fullName||r.name),off:!!r.off,here:true,ticked:false});
       continue;
     }
+    if(r.kind==="same"){same.push({name:String(r.name),version:String(r.serverVersion||r.profileVersion||"")});continue;}
     if(kind!=="add"&&kind!=="update") continue;
-    /* A pinned build Thunderstore no longer has keeps its mark and starts unticked, so it is
+    /* From 1.3.0 a row starts ticked only when the host side says the host ticked it before.
+       A pinned build Thunderstore no longer has keeps its mark and starts unticked, so it is
        not offered as a plain add again; ticking it tries it once more. */
     const gone=!!r.notAvailable;
-    rows.push({name:String(r.name),profileVersion:r.profileVersion,serverVersion:r.serverVersion,
-      ticked:r.kind!=="unticked"&&!gone,downgrade:!!r.downgrade,notAvailable:gone});
+    rows.push({name:String(r.name),kind,profileVersion:r.profileVersion,serverVersion:r.serverVersion,
+      ticked:r.ticked===true&&r.kind!=="unticked"&&!gone,downgrade:!!r.downgrade,notAvailable:gone});
   }
-  return {rows,disabled,onlyHere};
+  return {rows,disabled,onlyHere,same};
 }
 /* BepInEx on the realm, as the last check read it: missing (the install was looked at and
    has none) and whether the profile carries the pack, which is what lets Install put it in
@@ -7461,53 +7468,156 @@ function galeBepInEx(st){
   const b=st&&st.check&&st.check.bepinex;
   return {missing:!!(b&&b.missing),inProfile:!!(b&&b.inProfile)};
 }
-function galeDialogHtml(st){
-  const {rows,disabled,onlyHere}=galeDialogRows(st);
-  const held=galeHeldBy(st);
-  const body=rows.length
+/* A row's tick as it stands in the open dialog: the host's own change if they made one, else
+   the tick the host side started it with. */
+function galeModTicked(r){
+  return Object.prototype.hasOwnProperty.call(GALE_MOD_TICKS,r.name)?!!GALE_MOD_TICKS[r.name]:!!r.ticked;
+}
+/* Every row of the Mods section that has a tick: the adds and updates, then the mods only this
+   server has that are still on. One switched off already has nothing to tick. */
+function galeModTicks(st){
+  const {rows,onlyHere}=galeDialogRows(st);
+  return rows.concat(onlyHere.filter(r=>!r.off)).map(r=>({row:r,ticked:galeModTicked(r)}));
+}
+/* The config files that have a tick, with the open dialog's ticks laid over the host side's. */
+function galeCfgTicks(st){
+  const cfg=galeCfgFor(st);
+  if(!cfg||GALE_CFG_LOADING) return [];
+  return galeConfigFiles(cfg).filter(f=>f.state!=="same");
+}
+/* A section head's count: how many of its rows are ticked. Nothing to tick says nothing. */
+function galeCountText(list){
+  const total=list.length, ticked=list.filter(x=>x.ticked).length;
+  return total?T("mods.gale.dialog.sect.count",{ticked,total}):"";
+}
+/* What the one button would do, split the way it does it: the switches first, then the
+   installs (the unticked rows go with them, as the host's no), then the configs. */
+function galePlan(st){
+  const {rows,onlyHere}=galeDialogRows(st);
+  return {
+    here:onlyHere.filter(r=>!r.off&&galeModTicked(r)),
+    ticked:rows.filter(r=>galeModTicked(r)),
+    /* A not available row left unticked is the host leaving it, not saying no to it: it is
+       not written to the unticks, so it is offered again when the profile pins another. */
+    unticked:rows.filter(r=>!galeModTicked(r)&&!r.notAvailable),
+    paths:galeCfgTicks(st).filter(f=>f.ticked).map(f=>f.path),
+    /* Config files offered at all: a press with none of them ticked still stores that choice. */
+    cfgOffered:galeCfgTicks(st).length>0,
+  };
+}
+/* The one button is off with the server up, with nothing ticked, and with a mod ticked on a
+   server that has no BepInEx when the profile does not carry it either. */
+function galeRunOff(st){
+  const cfg=galeCfgFor(st);
+  if(galeHeldBy(st)||(cfg&&cfg.heldBy)) return true;
+  const plan=galePlan(st);
+  if(!plan.here.length&&!plan.ticked.length&&!plan.paths.length) return true;
+  const bep=galeBepInEx(st);
+  return bep.missing&&!bep.inProfile&&plan.ticked.length>0;
+}
+/* The dialog's head: what the changes come from. Kept in one place so a feed other than a
+   Gale profile can name itself here. */
+function galeDialogHead(st){
+  return T("mods.gale.dialog.title");
+}
+/* A section's head: the chevron the halls' sections have (the same look, turned by the
+   dialog's own open class, so it never joins SECTIONS), the rune, the name, the count, and the
+   section's own buttons. */
+const GALE_CHEV='<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.2 6 7.7l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function galeSectHead(key,rune,title,count,tools){
+  const mods=key==="mods", open=!!GALE_SECT[key];
+  return `<div class="galesech"><button type="button" class="sectchev" data-gale-sect="${key}" aria-controls="${mods?"galeModsBody":"galeCfg"}"`+
+    ` aria-expanded="${open?"true":"false"}" title="${esc(T("common.section.toggle.title"))}" aria-label="${esc(T("common.section.toggle.title"))}">${GALE_CHEV}</button>`+
+    `<span class="r">${rune}</span><span class="galesectname">${esc(title)}</span>`+
+    `<span class="galecount" id="${mods?"galeModsCount":"galeCfgCount"}">${esc(count)}</span>`+
+    `<span class="grow"></span><span class="galetools" id="${mods?"galeModsTools":"galeCfgTools"}">${tools}</span></div>`;
+}
+function galeTickBtns(key,off){
+  const dis=off?" disabled":"";
+  return `<button type="button" class="btn btn-ghost btn-sm" data-gale-tick="${key}:on"${dis}>${esc(T("mods.gale.dialog.tick_all"))}</button>`+
+    `<button type="button" class="btn btn-ghost btn-sm" data-gale-tick="${key}:off"${dis}>${esc(T("mods.gale.dialog.untick_all"))}</button>`;
+}
+/* The Configs head's buttons, drawn again whenever the section is: Refresh waits for an answer. */
+function galeCfgToolsHtml(st){
+  const cfg=galeCfgFor(st);
+  const wait=!cfg||!cfg.configs||GALE_CFG_LOADING||GALE_CFG_APPLYING;
+  return galeTickBtns("cfg",!galeCfgTicks(st).length)+
+    `<button type="button" class="btn btn-ghost btn-sm" data-gale-cfg-refresh title="${esc(T("mods.gale.configs.refresh.title"))}"`+
+    `${wait?" disabled":""}>${esc(T("mods.gale.configs.refresh"))}</button>`;
+}
+const GALE_COLS='<colgroup><col class="galecoltick"><col><col class="galecolstate"><col class="galecolver"></colgroup>';
+function galeVersionHtml(r){
+  const v=r.kind==="update"
+    ?esc(T("mods.gale.dialog.version.update",{from:String(r.serverVersion||""),to:String(r.profileVersion||"")}))
+    :esc(r.profileVersion||"");
+  return v+
+    (r.downgrade?` <span class="galeold" title="${esc(T("mods.gale.dialog.older.title"))}">${esc(T("mods.gale.dialog.older"))}</span>`:"")+
+    (r.notAvailable?` <span class="galeold" title="${esc(T("mods.gale.dialog.not_available.title"))}">${esc(T("mods.gale.dialog.not_available"))}</span>`:"");
+}
+/* The Mods section: one table, ticks first, the mod, its state and its version or versions. */
+function galeModsHtml(st){
+  const {rows,disabled,onlyHere,same}=galeDialogRows(st);
+  const tick=(r,label)=>`<input type="checkbox" data-gale-row="${esc(r.name)}"${galeModTicked(r)?" checked":""} aria-label="${esc(label)}">`;
+  const work=rows.map(r=>
+    `<tr><td>${tick(r,T("mods.gale.dialog.tick.aria",{name:r.name}))}</td><td class="mono">${esc(r.name)}</td>`+
+    `<td><span class="galestate ${r.kind==="update"?"update":"add"}">${esc(r.kind==="update"?T("mods.gale.dialog.state.update"):T("mods.gale.dialog.state.add"))}</span></td>`+
+    `<td class="mono">${galeVersionHtml(r)}</td></tr>`).join("");
+  const here=onlyHere.map(r=>
+    `<tr><td>${r.off?"":tick(r,T("mods.gale.only_here.off.aria",{name:r.name}))}</td><td class="mono">${esc(r.name)}</td>`+
+    `<td><span class="galestate here" title="${esc(T("mods.gale.dialog.state.only_here.title"))}">${esc(T("mods.gale.dialog.state.only_here"))}</span>`+
+    (r.off?` <span class="pill grey" title="${esc(T("mods.status.off.tip"))}">${esc(T("mods.status.off"))}</span>`:"")+`</td>`+
+    `<td class="mono">${esc(r.version)}</td></tr>`).join("");
+  const table=rows.length||onlyHere.length
     ?`<div class="mbody-note">${esc(T("mods.gale.dialog.intro"))}</div>`+
-      `<table class="galetbl"><thead><tr><th></th>`+
+      `<table class="galetbl">${GALE_COLS}<thead><tr><th></th>`+
       `<th>${esc(T("mods.gale.dialog.col.mod"))}</th>`+
-      `<th>${esc(T("mods.gale.dialog.col.profile"))}</th>`+
-      `<th>${esc(T("mods.gale.dialog.col.server"))}</th></tr></thead><tbody>`+
-      rows.map((r,i)=>
-        `<tr><td><input type="checkbox" data-gale-row="${i}"${r.ticked?" checked":""}`+
-          ` aria-label="${esc(T("mods.gale.dialog.tick.aria",{name:r.name}))}"></td>`+
-        `<td class="mono">${esc(r.name)}</td>`+
-        `<td class="mono">${esc(r.profileVersion||"")}`+
-          (r.downgrade?` <span class="galeold" title="${esc(T("mods.gale.dialog.older.title"))}">${esc(T("mods.gale.dialog.older"))}</span>`:"")+
-          (r.notAvailable?` <span class="galeold" title="${esc(T("mods.gale.dialog.not_available.title"))}">${esc(T("mods.gale.dialog.not_available"))}</span>`:"")+`</td>`+
-        `<td class="mono">${esc(r.serverVersion||T("mods.gale.dialog.not_installed"))}</td></tr>`).join("")+
-      `</tbody></table>`
-    :`<div class="mbody-note">${esc(T("mods.gale.dialog.empty"))}</div>`;
+      `<th>${esc(T("mods.gale.dialog.col.state"))}</th>`+
+      `<th>${esc(T("mods.gale.dialog.col.version"))}</th></tr></thead><tbody>${work}${here}</tbody></table>`
+    :"";
+  const empty=rows.length?"":`<div class="mbody-note">${esc(T("mods.gale.dialog.empty"))}</div>`;
+  const folded=same.length
+    ?`<details class="galecfgsame"><summary>${esc(T("mods.gale.dialog.same.show",{count:same.length}))}</summary>`+
+      `<table class="galetbl">${GALE_COLS}<tbody>`+same.map(r=>
+        `<tr><td></td><td class="mono">${esc(r.name)}</td><td><span class="galestate">${esc(T("mods.gale.dialog.state.same"))}</span></td>`+
+        `<td class="mono">${esc(r.version)}</td></tr>`).join("")+`</tbody></table></details>`
+    :"";
   const note=disabled.length
     ?`<div class="mbody-note" style="margin-top:8px">${esc(T("mods.gale.dialog.disabled",{names:disabled.join(", ")}))}</div>`:"";
-  const warn=held?`<div class="mwarn">⚠ ${esc(T("mods.gale.dialog.running",{name:held}))}</div>`:"";
-  /* No BepInEx on this server: one note when the profile carries the pack and Install puts it
-     in first, and with no pack in the profile Install is off and the sentence says why. */
+  /* No BepInEx on this server: one note when the profile carries the pack and the walk puts it
+     in first, and with no pack in the profile the sentence says why no mod can go in. */
   const bep=galeBepInEx(st);
-  const bepBlocked=bep.missing&&!bep.inProfile;
   const bepNote=!rows.length||!bep.missing?""
     :bep.inProfile
       ?`<div class="mbody-note" style="margin-top:8px">${esc(T("mods.gale.dialog.bepinex_first"))}</div>`
       :`<div class="mwarn">⚠ ${esc(T("mods.gale.dialog.bepinex_missing"))}</div>`;
-  const off=held||!rows.length||bepBlocked?" disabled":"";
-  /* The mods part never blocks the other two: with nothing to install it says so in one line
-     and the configs and the only-here list are still there under it. */
-  const mods=`<div class="galesec"><div class="galesech">${esc(T("mods.gale.dialog.mods.title"))}</div>${body}${note}${bepNote}${warn}</div>`;
-  const cfg=`<div class="galesec" id="galeCfg">${galeConfigsHtml(st)}</div>`;
-  const here=onlyHere.length?`<div class="galesec" id="galeHere">${galeOnlyHereHtml(st)}</div>`:"";
-  return `<div class="mtitle">${esc(T("mods.gale.dialog.title"))}</div>`+
-    `<div class="mbody">${mods}${cfg}${here}</div>`+
+  return empty+table+folded+note+bepNote;
+}
+function galeDialogHtml(st){
+  const held=galeHeldBy(st);
+  const mods=galeModTicks(st);
+  const shut=k=>GALE_SECT[k]?"":' style="display:none"';
+  const open=k=>GALE_SECT[k]?" open":"";
+  /* With the server up, one sentence under both sections, and the button is off. */
+  const warn=held?`<div class="mwarn">⚠ ${esc(T("mods.gale.dialog.running",{name:held}))}</div>`:"";
+  return `<div class="mtitle">${esc(galeDialogHead(st))}</div>`+
+    `<div class="mbody">`+
+    `<div class="galesec${open("mods")}" id="galeModsSect">`+
+      galeSectHead("mods","ᚱ",T("mods.gale.dialog.mods.title"),galeCountText(mods),galeTickBtns("mods",!mods.length))+
+      `<div class="galesectbody" id="galeModsBody"${shut("mods")}>${galeModsHtml(st)}</div></div>`+
+    `<div class="galesec${open("cfg")}" id="galeCfgSect">`+
+      galeSectHead("cfg","ᚲ",T("mods.gale.configs.title"),galeCountText(galeCfgTicks(st)),galeCfgToolsHtml(st))+
+      `<div class="galesectbody" id="galeCfg"${shut("cfg")}>${galeConfigsHtml(st)}</div></div>`+
+    `${warn}</div>`+
     `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="galeNotNow">${esc(T("guard.btn.not_now"))}</button>`+
-    `<button class="btn btn-ember btn-sm" id="galeInstall"${off}>${esc(T("common.button.install"))}</button></div>`;
+    `<button class="btn btn-ember btn-sm" id="galeInstall" title="${esc(T("mods.gale.dialog.run.title"))}"${galeRunOff(st)?" disabled":""}>`+
+    `${esc(T("mods.gale.dialog.run"))}</button></div>`;
 }
 /* ---- Config files from the profile ----
    The host side fetches the profile's zip and answers each config file it carries with its
    state against this server's own copy (added, changed, the same), a preview, and the tick
    the host left it at last time. Only added and changed files can be ticked; the same ones are
-   counted and listed folded away. Apply configs is its own button, so the mods and the configs
-   are approved apart. */
+   counted and listed folded away. The dialog's one button writes the ticked ones after the
+   mods. */
 function galeCfgFor(st){
   return GALE_CFG&&st&&galeSameRealm(GALE_CFG.profile,st.profile)?GALE_CFG:null;
 }
@@ -7558,19 +7668,14 @@ function galeCfgRowHtml(f){
     (open&&f.state!=="same"?galeDiffHtml(f):"");
 }
 function galeConfigsHtml(st){
-  const head=`<div class="galesech">${esc(T("mods.gale.configs.title"))}</div>`;
   const cfg=galeCfgFor(st);
-  if(!cfg||GALE_CFG_LOADING) return head+`<div class="mbody-note galecfgloading">${esc(T("mods.gale.configs.loading"))}</div>`;
-  const refresh=`<button class="btn btn-ghost btn-sm" data-gale-cfg-refresh title="${esc(T("mods.gale.configs.refresh.title"))}"`+
-    `${GALE_CFG_APPLYING?" disabled":""}>${esc(T("mods.gale.configs.refresh"))}</button>`;
+  if(!cfg||GALE_CFG_LOADING) return `<div class="mbody-note galecfgloading">${esc(T("mods.gale.configs.loading"))}</div>`;
   const c=cfg.configs;
-  if(!c) return head+`<div class="mbody-note">${esc(galeSentence(cfg.statusId,{},"mods.gale.configs.not_following"))}</div>`;
-  if(!c.ok) return head+`<div class="mbody-note">${esc(galeSentence(c.statusId,{},"mods.gale.configs.fetch.network"))}</div>`+
-    `<div class="galecfgbtns">${refresh}</div>`;
+  if(!c) return `<div class="mbody-note">${esc(galeSentence(cfg.statusId,{},"mods.gale.configs.not_following"))}</div>`;
+  if(!c.ok) return `<div class="mbody-note">${esc(galeSentence(c.statusId,{},"mods.gale.configs.fetch.network"))}</div>`;
   const files=galeConfigFiles(cfg);
   const work=files.filter(f=>f.state!=="same"), same=files.filter(f=>f.state==="same");
-  const held=galeHeldBy(cfg.heldBy?cfg:st);
-  let out=head+`<div class="mbody-note">${esc(T("mods.gale.configs.intro"))}</div>`;
+  let out=`<div class="mbody-note">${esc(T("mods.gale.configs.intro"))}</div>`;
   if(!files.length) out+=`<div class="mbody-note">${esc(T("mods.gale.configs.none"))}</div>`;
   else{
     out+=`<div class="mbody-note galecfgcounts">${esc(T("mods.gale.configs.counts",{added:Number(c.added)||0,changed:Number(c.changed)||0,same:Number(c.same)||0}))}</div>`;
@@ -7580,37 +7685,63 @@ function galeConfigsHtml(st){
   out+=work.map(galeCfgRowHtml).join("");
   if(same.length) out+=`<details class="galecfgsame"><summary>${esc(T("mods.gale.configs.same.show",{count:same.length}))}</summary>`+
     same.map(galeCfgRowHtml).join("")+`</details>`;
-  if(held) out+=`<div class="mwarn">⚠ ${esc(T("mods.gale.configs.running",{name:held}))}</div>`;
-  const off=held||!work.length||GALE_CFG_APPLYING?" disabled":"";
-  out+=`<div class="galecfgbtns">${refresh}<button class="btn btn-ember btn-sm" data-gale-cfg-apply${off}>${esc(T("mods.gale.configs.apply"))}</button></div>`;
+  /* The configs answer can be the first to know the server came up; the sentence under both
+     sections only knows what the dialog opened with, so this one says it here. */
+  if(cfg.heldBy&&!galeHeldBy(st)) out+=`<div class="mwarn">⚠ ${esc(T("mods.gale.configs.running",{name:String(cfg.heldBy)}))}</div>`;
   return out;
 }
-/* ---- On this server only ----
-   Information, and the Mods hall's own switch. Nothing here removes a mod: a switch renames
-   its .dll files to .dll.old and back. */
-function galeOnlyHereHtml(st){
-  const {onlyHere}=galeDialogRows(st);
-  if(!onlyHere.length) return "";
-  const held=galeHeldBy(st);
-  const off=held||GALE_SWITCHING?" disabled":"";
-  const rows=onlyHere.map((r,i)=>
-    `<div class="galeherow"><span class="mono">${esc(r.name)}</span>`+
-    `<span class="mono galeherever">${esc(r.version)}</span>`+
-    (r.off?`<span class="pill grey" title="${esc(T("mods.status.off.tip"))}">${esc(T("mods.status.off"))}</span>`:"")+
-    `<button class="btn btn-ghost btn-sm" data-gale-here="${i}"${off}`+
-      ` aria-label="${esc(r.off?T("mods.gale.only_here.on.aria",{name:r.name}):T("mods.gale.only_here.off.aria",{name:r.name}))}">`+
-      `${esc(r.off?T("mods.gale.only_here.on"):T("mods.gale.only_here.off"))}</button></div>`).join("");
-  const warn=held?`<div class="mwarn">⚠ ${esc(T("mods.gale.only_here.running",{name:held}))}</div>`:"";
-  return `<div class="galesech">${esc(T("mods.gale.only_here.title"))}</div>`+
-    `<div class="mbody-note">${esc(T("mods.gale.only_here.intro"))}</div>${rows}${warn}`;
-}
+/* The Configs section drawn again in place: its body, its head's buttons, and the counts and the
+   one button, which read the same answer. */
 function galeCfgRedraw(){
-  const box=GALE_DLG&&GALE_DLG.querySelector?GALE_DLG.querySelector("#galeCfg"):null;
+  const m=GALE_DLG&&GALE_DLG.querySelector?GALE_DLG:null;
+  if(!m) return;
+  const box=m.querySelector("#galeCfg");
   if(box) box.innerHTML=galeConfigsHtml(GALE_DLG_ST);
+  const tools=m.querySelector("#galeCfgTools");
+  if(tools) tools.innerHTML=galeCfgToolsHtml(GALE_DLG_ST);
+  galeTicksShow();
 }
-function galeHereRedraw(){
-  const box=GALE_DLG&&GALE_DLG.querySelector?GALE_DLG.querySelector("#galeHere"):null;
-  if(box) box.innerHTML=galeOnlyHereHtml(GALE_DLG_ST);
+/* After a tick: the two counts fade to their new words and the one button follows. */
+function galeTicksShow(){
+  const m=GALE_DLG&&GALE_DLG.querySelector?GALE_DLG:null, st=GALE_DLG_ST;
+  if(!m||!st) return;
+  revealText(m.querySelector("#galeModsCount"),galeCountText(galeModTicks(st)));
+  revealText(m.querySelector("#galeCfgCount"),galeCountText(galeCfgTicks(st)));
+  const run=m.querySelector("#galeInstall");
+  if(run) run.disabled=galeRunOff(st);
+}
+/* Folds a section or opens it again: the chevron turns with the open class and the body rolls
+   through reveal, the way the halls' sections do. */
+function galeSectSet(key,open){
+  if(key!=="mods"&&key!=="cfg") return;
+  open=!!open;
+  GALE_SECT[key]=open;
+  const m=GALE_DLG&&GALE_DLG.querySelector?GALE_DLG:null;
+  if(!m) return;
+  const sect=m.querySelector(key==="mods"?"#galeModsSect":"#galeCfgSect");
+  if(sect&&sect.classList) sect.classList.toggle("open",open);
+  const chev=sect&&sect.querySelector?sect.querySelector(".sectchev"):null;
+  if(chev) chev.setAttribute("aria-expanded",open?"true":"false");
+  reveal(m.querySelector(key==="mods"?"#galeModsBody":"#galeCfg"),open);
+}
+/* Configs starts open, with its loading line; an answer that is whole and has nothing to tick
+   folds it, unless the host has moved its chevron. A failure stays open to be read. */
+function galeCfgFold(){
+  if(GALE_SECT.cfgMoved) return;
+  const cfg=galeCfgFor(GALE_DLG_ST);
+  if(!cfg||!cfg.configs||!cfg.configs.ok) return;
+  galeSectSet("cfg",galeCfgTicks(GALE_DLG_ST).length>0);
+}
+/* Tick all or Untick all in one section: the ticks are set on screen as they are, no redraw. */
+function galeTickAll(key,on){
+  const st=GALE_DLG_ST, m=GALE_DLG&&GALE_DLG.querySelectorAll?GALE_DLG:null;
+  if(!st||!m) return;
+  on=!!on;
+  if(key==="mods") for(const x of galeModTicks(st)) GALE_MOD_TICKS[x.row.name]=on;
+  else if(key==="cfg") for(const f of galeCfgTicks(st)) GALE_CFG_TICKS[f.path]=on;
+  else return;
+  for(const box of m.querySelectorAll(key==="mods"?"[data-gale-row]":"[data-gale-cfg]")) box.checked=on;
+  galeTicksShow();
 }
 /* Asks the host side for the configs. On open it fetches only what it does not hold for this
    profile as it is now; Refresh fetches again whatever it holds. */
@@ -7624,6 +7755,7 @@ async function galeConfigsLoad(refresh){
   if(r&&galeSameRealm(r.profile,profile)) GALE_CFG=r;
   else if(!r) GALE_CFG={profile,heldBy:null,configs:{ok:false,statusId:"mods.gale.configs.fetch.network"}};
   galeCfgRedraw();
+  galeCfgFold();
   /* The box's Review link reads what the configs part found, through the stored state. */
   await galeRefresh();
 }
@@ -7666,69 +7798,85 @@ function galeCfgFailSentence(r){
   if(r.Reason==="writeFailed") return T("mods.gale.configs.failed.toast",{file:p.file||"",done:Number(p.done)||0,detail:r.Error||""});
   return T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")});
 }
-async function galeApplyConfigs(){
+/* The ticked config files, written by the host side after the mods. The dialog is closed by
+   then, so the paths were read off it when the button was pressed. */
+async function galeApplyConfigs(st,paths){
   if(!Native.available||GALE_CFG_APPLYING||GALE_CFG_LOADING) return;
-  const st=GALE_DLG_ST, cfg=galeCfgFor(st);
-  if(!st||!cfg||!cfg.configs||!cfg.configs.ok) return;
+  const cfg=galeCfgFor(st);
+  if(!st||!cfg||!cfg.configs||!cfg.configs.ok||!paths) return;
   const held=galeHeldBy(cfg.heldBy?cfg:st);
   if(held){toast("ᚦ "+T("mods.gale.configs.running",{name:held}));return;}
-  const paths=galeConfigFiles(cfg).filter(f=>f.state!=="same"&&f.ticked).map(f=>f.path);
-  GALE_CFG_APPLYING=true; galeCfgRedraw();
+  GALE_CFG_APPLYING=true;
   const r=await Native.call("gale.configs.apply",{profile:st.profile,paths}).catch(()=>null);
   GALE_CFG_APPLYING=false;
   /* The ticks are on the host side now, unticks included, so its answer is the one to draw. */
   if(r&&r.state&&galeSameRealm(r.state.profile,st.profile)){GALE_CFG=r.state; GALE_CFG_TICKS={};}
-  galeCfgRedraw();
   if(!r) toast("ᚦ "+T("mods.add.failed.toast",{detail:T("common.error.unknown")}));
   else if(!r.ok) toast("ᚦ "+galeCfgFailSentence(r));
-  else if(!paths.length) toast("ᚨ "+T("mods.gale.configs.applied.none.toast"));
-  else if(!r.written) toast("ᚨ "+T("mods.gale.configs.applied.same.toast"));
+  /* Nothing ticked writes nothing and only stores the choice, so it has nothing to say. */
+  else if(!r.written){ if(paths.length) toast("ᚨ "+T("mods.gale.configs.applied.same.toast")); }
   else if(r.replaced) toast("ᚨ "+T("mods.gale.configs.applied.toast",{added:Number(r.added)||0,replaced:Number(r.replaced)||0,folder:String(r.backup||"")}));
   else toast("ᚨ "+T("mods.gale.configs.applied.new.toast",{count:Number(r.added)||0}));
   await galeRefresh();
 }
-/* Switch one only-here mod off or on through the Mods hall's own switch, then have the host
-   side read the folder again (gale.rescan, which asks Gale nothing), so the list shows the
-   mod's new state. */
-async function galeOnlyHereSwitch(i){
-  const st=GALE_DLG_ST;
-  const r=galeDialogRows(st).onlyHere[i];
-  if(!r||GALE_SWITCHING) return;
+/* The one button: everything ticked, in order. The ticked mods only this server has go off
+   first through the Mods hall's own switch, and the host side reads the folder again (it asks
+   Gale nothing) so the walk and the next review see them off. Then the walk, which writes the
+   mod ticks first. Then the configs (with none ticked, only the choice is stored), unless the walk stopped for a reason that stops them too
+   (the server came up, the realm on screen changed). */
+async function galeRunTicked(st,plan){
+  if(!Native.available||GALE_INSTALLING||S.modsUpdating||S.modsScanning) return;
   const held=galeHeldBy(st);
-  if(held){toast("ᚦ "+T("mods.gale.only_here.running",{name:held}));return;}
-  GALE_SWITCHING=true; galeHereRedraw();
-  try{
-    await setModEnabled({FullName:r.fullName,ModName:r.name},r.off);
-  }finally{
-    GALE_SWITCHING=false;
+  if(held){toast("ᚦ "+T("mods.gale.dialog.running",{name:held}));return;}
+  const profile=st.profile;
+  if(plan.here.length){
+    for(const r of plan.here){
+      if(!isActiveProfile(profile)) return;
+      await setModEnabled({FullName:r.fullName,ModName:r.name},false);
+    }
+    const re=await Native.call("gale.rescan",{profile}).catch(()=>null);
+    if(re&&re.state) galeApply(re.state);
   }
-  const re=Native.available?await Native.call("gale.rescan",{profile:st.profile}).catch(()=>null):null;
-  if(re&&re.state&&galeApply(re.state)) GALE_DLG_ST=re.state;
-  galeHereRedraw();
+  let walk={stopped:false};
+  if(plan.ticked.length||plan.unticked.length) walk=await galeInstall(st,plan.ticked,plan.unticked)||walk;
+  if(plan.cfgOffered&&!walk.stopped) await galeApplyConfigs(st,plan.paths);
 }
-/* One listener each for the whole dialog, so a part drawn again in place keeps working. */
+/* One listener each for the whole dialog, so a section drawn again in place keeps working. */
 function galeDialogClick(e){
   const t=e&&e.target;
   if(!t||typeof t.closest!=="function") return;
+  const sect=t.closest("[data-gale-sect]");
+  if(sect){
+    const key=sect.getAttribute("data-gale-sect");
+    if(key==="cfg") GALE_SECT.cfgMoved=true;
+    galeSectSet(key,!GALE_SECT[key]);
+    return;
+  }
+  const tick=t.closest("[data-gale-tick]");
+  if(tick){
+    if(!tick.disabled){const [key,how]=String(tick.getAttribute("data-gale-tick")||"").split(":"); galeTickAll(key,how==="on");}
+    return;
+  }
   const show=t.closest("[data-gale-cfg-show]");
   if(show){galeCfgToggle(show.getAttribute("data-gale-cfg-show"));return;}
   const refresh=t.closest("[data-gale-cfg-refresh]");
-  if(refresh){if(!refresh.disabled) galeConfigsLoad(true);return;}
-  const apply=t.closest("[data-gale-cfg-apply]");
-  if(apply){if(!apply.disabled) galeApplyConfigs();return;}
-  const here=t.closest("[data-gale-here]");
-  if(here&&!here.disabled) galeOnlyHereSwitch(Number(here.getAttribute("data-gale-here")));
+  if(refresh&&!refresh.disabled) galeConfigsLoad(true);
 }
 function galeDialogChange(e){
   const t=e&&e.target;
   if(!t||typeof t.getAttribute!=="function") return;
   const path=t.getAttribute("data-gale-cfg");
-  if(path!=null) galeCfgTick(path,!!t.checked);
+  if(path!=null){galeCfgTick(path,!!t.checked);galeTicksShow();return;}
+  const name=t.getAttribute("data-gale-row");
+  if(name!=null){GALE_MOD_TICKS[name]=!!t.checked;galeTicksShow();}
 }
 function galeDialog(){
   const st=GALE;
   if(!st||!st.check||!st.check.ok) return;
-  GALE_DLG_ST=st; GALE_CFG_TICKS={}; GALE_CFG_SHOWN={};
+  GALE_DLG_ST=st; GALE_CFG_TICKS={}; GALE_CFG_SHOWN={}; GALE_MOD_TICKS={};
+  GALE_SECT={mods:true,cfg:true,cfgMoved:false};
+  /* Drawn again on a language switch from the same state, with the ticks and the sections as
+     the host left them, since both live outside the markup. */
   const again=()=>{
     const m=modalOpen(galeDialogHtml(GALE_DLG_ST||st),again);
     GALE_DLG=m;
@@ -7739,21 +7887,11 @@ function galeDialog(){
     }
     m.querySelector("#galeNotNow").addEventListener("click",modalClose);
     m.querySelector("#galeInstall").addEventListener("click",()=>{
-      /* The state the list on screen was drawn from: the only-here switch may have read the
-         folder again since the dialog opened. */
       const shown=GALE_DLG_ST||st;
-      const {rows}=galeDialogRows(shown);
-      const ticks=Array.from(m.querySelectorAll("[data-gale-row]"));
-      const ticked=[], unticked=[];
-      for(const box of ticks){
-        const r=rows[Number(box.getAttribute("data-gale-row"))]; if(!r) continue;
-        /* A not available row left unticked is the host leaving it, not saying no to it: it is
-           not written to the unticks, so it is offered again when the profile pins another. */
-        if(box.checked) ticked.push(r);
-        else if(!r.notAvailable) unticked.push(r);
-      }
+      if(galeRunOff(shown)) return;
+      const plan=galePlan(shown);
       modalClose();
-      galeInstall(shown,ticked,unticked);
+      galeRunTicked(shown,plan);
     });
     return m;
   };
@@ -7788,21 +7926,23 @@ function modNotAvailableText(r){
   const mod=p.mod||(r.Owner&&r.Name?r.Owner+"-"+r.Name:"");
   return T("mods.add.not_available.toast",{mod,version:p.version||r.Version||""});
 }
+/* Answers {stopped} so the configs after it know whether the walk was cut short. */
 async function galeInstall(st,ticked,unticked){
-  if(!Native.available||GALE_INSTALLING||S.modsUpdating||S.modsScanning) return;
+  if(!Native.available||GALE_INSTALLING||S.modsUpdating||S.modsScanning) return {stopped:true};
   const profile=st.profile, seq=st.check.seq;
-  if(galeHeldBy(st)){toast("ᚦ "+T("mods.gale.dialog.running",{name:galeHeldBy(st)}));return;}
+  if(galeHeldBy(st)){toast("ᚦ "+T("mods.gale.dialog.running",{name:galeHeldBy(st)}));return {stopped:true};}
   const bep=galeBepInEx(st);
-  if(bep.missing&&!bep.inProfile&&ticked.length){toast("ᚦ "+T("mods.gale.dialog.bepinex_missing"));return;}
+  if(bep.missing&&!bep.inProfile&&ticked.length){toast("ᚦ "+T("mods.gale.dialog.bepinex_missing"));return {stopped:true};}
   /* The ticks are the host's answer whatever happens next, so they are written first. */
   const u=await Native.call("gale.untick",{profile,
     unticked:unticked.map(r=>r.name),ticked:ticked.map(r=>r.name)}).catch(()=>null);
   if(u&&u.state) galeApply(u.state);
+  /* No mod ticked: the choices are saved and the review is answered. The button only ran
+     because something else was ticked, and that says its own toast. */
   if(!ticked.length){
     const d=await Native.call("gale.dismiss",{profile,seq}).catch(()=>null);
     if(d&&d.state) galeApply(d.state);
-    toast("ᚨ "+T("mods.gale.install.none.toast"));
-    return;
+    return {stopped:false};
   }
   GALE_INSTALLING=true; renderGaleBox();
   S.modsUpdating=true; S.modRowStatus=S.modRowStatus||{};
@@ -7867,6 +8007,7 @@ async function galeInstall(st,ticked,unticked){
     if(!r||!r.state||!galeApply(r.state)) renderGaleBox();
   }
   if(isActiveProfile(profile)) await scanMods({force:false});
+  return {stopped};
 }
 /* The Follow button. With a code saved it opens and closes the line below; with none it opens
    the paste dialog, whose Follow saves the code for this realm and runs the check. */

@@ -372,7 +372,10 @@ namespace ValheimBakaLoader.Tests.Forms
             // that is no longer the one on screen.
             // 258 with 1.2.16's one for a forum channel: the remove toast saying the forum post
             // stays in Discord with the news in it.
-            Assert.Equal(258, marked.Count);
+            // 256 with 1.3.0's Gale dialog: one button installs the mods and writes the configs,
+            // so the two toasts for pressing Install or Apply configs with nothing ticked are gone
+            // (the button is off until something is ticked).
+            Assert.Equal(256, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

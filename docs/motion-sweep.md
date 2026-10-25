@@ -52,6 +52,7 @@ Each line: where, what it is, how it moves now.
 | 7052 `renderGaleBox` | the Gale profile box under its button | rolls |
 | 7069 | the Review button in that box | fade (a button in a row) |
 | 7344, 7350 `galeCfgToggle` | a config preview in the Gale review dialog | drawn hidden and rolled in; rolls shut before the part is drawn again without it |
+| 7713 `galeSectSet` (added 1.3.0) | the Gale review dialog's two sections, Mods and Configs, through their chevrons and the Configs answer that has nothing to tick | rolls through reveal like the halls' sections; a folded body starts hidden in the dialog's markup; the head counts fade to their new words (`galeTicksShow`, 7703, through revealText) |
 | 7621 `closePal` | the command palette | fades in by the stylesheet, leaves through fadeGhost |
 | 8432, 8539, 10563 | the refusal lines in the Kill, Clear drops and prompt dialogs | roll away |
 | 9087, 9088 `renderCaps` | the missing-mods banner | rolls |

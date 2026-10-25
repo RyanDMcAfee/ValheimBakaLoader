@@ -449,6 +449,25 @@ def table_english_drift(keys, app_path, findings):
 # and this list is what tells the orphan rule the sentence is kept on purpose. Keep it
 # short; an id goes on it only when no reworded sentence under the same id could be true.
 RETIRED_IDS = {
+    # 1.3.0 (issue 27): the Gale dialog is two sections with one button that does everything
+    # ticked. The mods table's columns are the mod, its state and its versions, so the profile
+    # and server columns and the "not installed" mark name nothing; Apply configs is gone into
+    # the one button, and so are the two "nothing ticked" toasts (the button is off with nothing
+    # ticked). The list of mods only this server has became rows of the mods table, ticked to
+    # switch off, so its heading, intro, Switch off and Switch on buttons, the on label and its
+    # running sentence are gone (the off label is the new tick's).
+    "mods.gale.dialog.col.profile": "1.3.0",
+    "mods.gale.dialog.col.server": "1.3.0",
+    "mods.gale.dialog.not_installed": "1.3.0",
+    "mods.gale.configs.apply": "1.3.0",
+    "mods.gale.configs.applied.none.toast": "1.3.0",
+    "mods.gale.install.none.toast": "1.3.0",
+    "mods.gale.only_here.title": "1.3.0",
+    "mods.gale.only_here.intro": "1.3.0",
+    "mods.gale.only_here.off": "1.3.0",
+    "mods.gale.only_here.on": "1.3.0",
+    "mods.gale.only_here.on.aria": "1.3.0",
+    "mods.gale.only_here.running": "1.3.0",
     # 1.3.0: the horn of mead at the foot of the rail reads three lines, Donate over the horn
     # split in two, one id per line, so the one-line label names nothing on screen.
     "side.mead.label": "1.3.0",

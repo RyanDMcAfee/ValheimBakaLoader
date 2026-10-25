@@ -2317,19 +2317,10 @@
       "translation": "[Ẋ Changes in the Gale profile Ẋ] ẊẊẊẊẊẊẊẊẊ"
     },
     "mods.gale.dialog.intro": {
-      "translation": "[Ẋ Each ticked mod is installed at the version the profile pins, one at a time. Untick a mod to leave it out, and BakaLoader remembers that until you tick it again. Nothing on this server is removed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Tick a mod to install it at the version the profile pins, one at a time. A tick on a mod only this server has switches it off, and nothing is ever removed. BakaLoader remembers what you ticked and what you left unticked for the next review. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "mods.gale.dialog.col.mod": {
       "translation": "[Ẋ Mod Ẋ] Ẋ"
-    },
-    "mods.gale.dialog.col.profile": {
-      "translation": "[Ẋ Profile Ẋ] ẊẊẊ"
-    },
-    "mods.gale.dialog.col.server": {
-      "translation": "[Ẋ This server Ẋ] ẊẊẊẊ"
-    },
-    "mods.gale.dialog.not_installed": {
-      "translation": "[Ẋ not installed Ẋ] ẊẊẊẊ"
     },
     "mods.gale.dialog.older": {
       "translation": "[Ẋ older Ẋ] ẊẊ"
@@ -2381,10 +2372,6 @@
       },
       "mark": "ᚦ"
     },
-    "mods.gale.install.none.toast": {
-      "translation": "[Ẋ Nothing was ticked, so nothing was installed. Your choices are saved. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
-      "mark": "ᚨ"
-    },
     "mods.gale.install.server_running.toast": {
       "translation": "[Ẋ Stopped: the server '{name}' is running on this install. Stop it, then press Review again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "params": {
@@ -2434,10 +2421,10 @@
       }
     },
     "mods.gale.dialog.mods.title": {
-      "translation": "[Ẋ Mods from the profile Ẋ] ẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Mods Ẋ] ẊẊ"
     },
     "mods.gale.configs.title": {
-      "translation": "[Ẋ Config files from the profile Ẋ] ẊẊẊẊẊẊẊẊẊ"
+      "translation": "[Ẋ Configs Ẋ] ẊẊẊ"
     },
     "mods.gale.configs.intro": {
       "translation": "[Ẋ Each ticked file is written into this server's BepInEx\\config exactly as the profile has it, and a file it replaces is copied into BepInEx\\.bakaloader-config-backups first. A config the profile does not carry is never touched, and nothing is deleted. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
@@ -2515,9 +2502,6 @@
     },
     "mods.gale.configs.refresh.title": {
       "translation": "[Ẋ Fetches the profile's config files from Gale again and compares them with this server's. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
-    },
-    "mods.gale.configs.apply": {
-      "translation": "[Ẋ Apply configs Ẋ] ẊẊẊẊ"
     },
     "mods.gale.configs.running": {
       "translation": "[Ẋ The server '{name}' is running on this install. Stop it first, then apply: a running server can write its configs back over the new ones. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
@@ -2605,10 +2589,6 @@
       },
       "mark": "ᚨ"
     },
-    "mods.gale.configs.applied.none.toast": {
-      "translation": "[Ẋ Nothing was ticked, so no config was written. Your choices are saved. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
-      "mark": "ᚨ"
-    },
     "mods.gale.configs.applied.same.toast": {
       "translation": "[Ẋ The ticked configs are already the same on this server, so nothing needed writing. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "mark": "ᚨ"
@@ -2621,35 +2601,68 @@
         "detail": "text"
       }
     },
-    "mods.gale.only_here.title": {
-      "translation": "[Ẋ On this server only Ẋ] ẊẊẊẊẊẊ"
-    },
-    "mods.gale.only_here.intro": {
-      "translation": "[Ẋ Gale does not have these. BakaLoader never removes them. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
-    },
-    "mods.gale.only_here.off": {
-      "translation": "[Ẋ Switch off Ẋ] ẊẊẊẊ"
-    },
-    "mods.gale.only_here.on": {
-      "translation": "[Ẋ Switch on Ẋ] ẊẊẊ"
-    },
     "mods.gale.only_here.off.aria": {
       "translation": "[Ẋ Switch {name} off Ẋ] ẊẊẊẊ",
       "params": {
         "name": "text"
       }
     },
-    "mods.gale.only_here.on.aria": {
-      "translation": "[Ẋ Switch {name} on Ẋ] ẊẊẊẊ",
+    "mods.gale.dialog.sect.count": {
+      "translation": "[Ẋ {ticked} of {total} ticked Ẋ] ẊẊẊẊ",
       "params": {
-        "name": "text"
+        "ticked": "number",
+        "total": "number"
       }
     },
-    "mods.gale.only_here.running": {
-      "translation": "[Ẋ The server '{name}' is running on this install. Stop it first to switch a mod off or on. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+    "mods.gale.dialog.tick_all": {
+      "translation": "[Ẋ Tick all Ẋ] ẊẊẊ"
+    },
+    "mods.gale.dialog.untick_all": {
+      "translation": "[Ẋ Untick all Ẋ] ẊẊẊẊ"
+    },
+    "mods.gale.dialog.col.state": {
+      "translation": "[Ẋ State Ẋ] ẊẊ"
+    },
+    "mods.gale.dialog.col.version": {
+      "translation": "[Ẋ Version Ẋ] ẊẊẊ"
+    },
+    "mods.gale.dialog.state.add": {
+      "translation": "[Ẋ Add Ẋ] Ẋ"
+    },
+    "mods.gale.dialog.state.update": {
+      "translation": "[Ẋ Update Ẋ] ẊẊ"
+    },
+    "mods.gale.dialog.state.only_here": {
+      "translation": "[Ẋ Only here Ẋ] ẊẊẊ"
+    },
+    "mods.gale.dialog.state.only_here.title": {
+      "translation": "[Ẋ The profile does not have this mod. Tick it to switch it off on this server: its files are renamed .dll.old and nothing is removed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.state.same": {
+      "translation": "[Ẋ Same Ẋ] ẊẊ"
+    },
+    "mods.gale.dialog.same.show": {
+      "translation": {
+        "one": "[Ẋ {count} mod already the same Ẋ] ẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} mods already the same Ẋ] ẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
       "params": {
-        "name": "text"
+        "count": "number"
       }
+    },
+    "mods.gale.dialog.version.update": {
+      "translation": "[Ẋ {from} → {to} Ẋ] Ẋ",
+      "params": {
+        "from": "text",
+        "to": "text"
+      }
+    },
+    "mods.gale.dialog.run": {
+      "translation": "[Ẋ Install what is ticked Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.run.title": {
+      "translation": "[Ẋ Switches off the ticked mods only this server has, installs the ticked mods one at a time at the version the profile pins, then writes the ticked config files. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
     "mods.add.not_available.toast": {
       "translation": "[Ẋ {mod} {version} is no longer on Thunderstore (the package is deprecated or that version was removed); Gale on the players' machines may still carry it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",

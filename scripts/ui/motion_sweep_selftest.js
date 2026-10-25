@@ -25,8 +25,9 @@
  *      laid out the same way, {now} sets a box with no roll, {done} runs after the roll or at
  *      once without one, and not when a later call turns the roll around.
  *   6. The Settings tabs swap by taking the old one down at once and fading the new one in,
- *      the unsaved band leaves through fadeGhost, and a Gale config preview rolls shut before
- *      the part is drawn again without it.
+ *      the unsaved band leaves through fadeGhost, a Gale config preview rolls shut before the
+ *      part is drawn again without it, and the Gale dialog's two sections (1.3.0) roll through
+ *      reveal with the chevron turning and their counts fading.
  *   7. The Log (1.3.0): the "new lines" chip floats over the lines and fades rather than being
  *      shown and hidden by display, and the Pause button cross-fades its two stacked words, so
  *      a press changes no width in the head row.
@@ -230,6 +231,15 @@ test("6. the tab swap, the unsaved band and a Gale preview", () => {
   const gale = body("function galeCfgToggle(path){");
   assert.ok(gale.includes("reveal(pre,false,{done:close})"), "a Gale preview is torn out before it has rolled shut");
   assert.ok(gale.includes('pre.style.display="none";reveal(pre,true);'), "a Gale preview pops in with the redraw");
+  /* 1.3.0: the Gale dialog's two sections fold through reveal under the halls' chevron look,
+     a folded body starts hidden in its markup, and the counts fade to their new words. */
+  const sect = body("function galeSectSet(key,open){");
+  assert.ok(sect.includes('sect.classList.toggle("open",open);') && sect.includes('reveal(m.querySelector(key==="mods"?"#galeModsBody":"#galeCfg"),open);'),
+    "a Gale dialog section pops open or shut instead of rolling");
+  assert.ok(body("function galeDialogHtml(st){").includes(`const shut=k=>GALE_SECT[k]?"":' style="display:none"';`), "a folded Gale section is not hidden in its markup");
+  assert.ok(/\.modal \.galesec\.open>\.galesech \.sectchev svg\{transform:none\}/.test(CSS), "the Gale chevron does not turn with its section");
+  const counts = body("function galeTicksShow(){");
+  assert.ok(counts.includes('revealText(m.querySelector("#galeModsCount")') && counts.includes('revealText(m.querySelector("#galeCfgCount")'), "a Gale count jumps to its new words");
 });
 
 test("7. the Log's chip fades over the lines and the Pause button cross-fades its words", () => {

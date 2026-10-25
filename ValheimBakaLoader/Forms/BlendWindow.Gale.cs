@@ -119,6 +119,8 @@ namespace ValheimBakaLoader.Forms
                     prefs.GaleUnticked = new List<string>();
                     prefs.GaleNotAvailable = new List<string>();
                     prefs.GaleConfigUnticked = new List<string>();
+                    prefs.GaleTicked = null;
+                    prefs.GaleConfigTicked = null;
                     ServerPrefsProvider.SavePreferences(prefs);
                     GaleMemos.TryRemove(profile, out _);
                     GaleConfigMemos.TryRemove(profile, out _);
@@ -190,6 +192,8 @@ namespace ValheimBakaLoader.Forms
 
             // The ticks in the approval dialog. A name unticked is remembered until the host
             // ticks it again; a ticked one is taken off the list. Only "Namespace-Name" is kept.
+            // From 1.3.0 the ticked ones are remembered as well, because a review starts with
+            // nothing ticked and only a mod the host ticked before starts ticked.
             RegisterRpc("gale.untick", p =>
             {
                 var profile = GaleProfileOf(p);
@@ -203,6 +207,7 @@ namespace ValheimBakaLoader.Forms
                     .Concat(off)
                     .ToList();
                 prefs.GaleUnticked = ServerPreferences.NormalizeUnticked(kept);
+                prefs.GaleTicked = ServerPreferences.GaleTicksAfter(prefs.GaleTicked, on, off);
                 ServerPrefsProvider.SavePreferences(prefs);
 
                 return Task.FromResult<object>(new { ok = true, state = GaleState(profile) });
@@ -321,6 +326,8 @@ namespace ValheimBakaLoader.Forms
             prefs.GaleUnticked = new List<string>();
             prefs.GaleNotAvailable = new List<string>();
             prefs.GaleConfigUnticked = new List<string>();
+            prefs.GaleTicked = null;
+            prefs.GaleConfigTicked = null;
             ServerPrefsProvider.SavePreferences(prefs);
             GaleMemos.TryRemove(prefs.ProfileName ?? "", out _);
             GaleConfigMemos.TryRemove(prefs.ProfileName ?? "", out _);
@@ -505,6 +512,11 @@ namespace ValheimBakaLoader.Forms
                 // mark, and neither counts nor raises the row until the profile pins another.
                 var gone = new HashSet<string>(prefs?.GaleNotAvailable ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
                 bool Gone(GaleDiffRow r) => gone.Contains(GaleNotAvailableKey(r.Name, r.ProfileVersion));
+                // The tick a row starts with: only an add or an update has one, and from 1.3.0
+                // only one the host ticked before starts ticked (GaleStartsTicked keeps the older
+                // rule for a realm that has only the untick list so far).
+                bool Ticked(GaleDiffRow r) => (r.Kind == GaleDiffKind.Add || r.Kind == GaleDiffKind.Update)
+                    && ServerPreferences.GaleStartsTicked(r.Name, prefs?.GaleTicked, prefs?.GaleUnticked);
                 var addCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Add && !Gone(r)) ?? 0;
                 var updateCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Update && !Gone(r)) ?? 0;
                 // The framework rows are the BepInEx row's, so the list and its count are the
@@ -528,7 +540,7 @@ namespace ValheimBakaLoader.Forms
                     onlyHereCount,
                     rows = diff == null
                         ? new List<object>()
-                        : diff.Rows.Select(r => GaleRowDto(r, Gone(r),
+                        : diff.Rows.Select(r => GaleRowDto(r, Gone(r), Ticked(r),
                             r.Kind == GaleDiffKind.NotInProfile && here.TryGetValue(r.Name ?? "", out var m) ? m : null)).ToList(),
                     // What the configs part last found, so the Review link knows whether the
                     // dialog has anything there. Null until the configs part has been opened.
@@ -580,10 +592,11 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
-        private static object GaleRowDto(GaleDiffRow r, bool notAvailable, GaleInstalledMod? onServer) => new
+        private static object GaleRowDto(GaleDiffRow r, bool notAvailable, bool ticked, GaleInstalledMod? onServer) => new
         {
             name = r.Name,
             notAvailable,
+            ticked,
             // For a server-only row: the scan's own FullName, which the switch looks the mod up
             // by, and whether it is switched off now. Null and false on every other row.
             fullName = onServer?.FullName,

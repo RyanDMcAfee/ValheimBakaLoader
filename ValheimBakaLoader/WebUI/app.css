@@ -1971,13 +1971,32 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 .modal .galetbl td{padding:4px 6px;color:var(--bone);overflow-wrap:anywhere}
 .modal .galetbl input{accent-color:var(--ember)}
 .modal .galetbl .galeold{color:var(--amber);font-size:10px;margin-left:4px}
-/* The Gale dialog's three parts (mods, the profile's config files, the mods only this server
-   has). Wider than a plain dialog, because a config path and a preview line are long and a
-   preview that wraps every line reads as a different file. */
+/* The Gale dialog's two sections (1.3.0: Mods, and the profile's config files), each folding
+   under a chevron. Wider than a plain dialog, because a config path and a preview line are long
+   and a preview that wraps every line reads as a different file. */
 .modal.galedlg{width:620px;max-width:calc(100vw - 40px)}
 .modal .galesec+.galesec{margin-top:14px;padding-top:10px;border-top:1px solid var(--bronze)}
-.modal .galesech{font-family:var(--serif-small);font-size:11px;font-weight:700;letter-spacing:1.6px;
+.modal .galesech{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;
+  font-family:var(--serif-small);font-size:11px;font-weight:700;letter-spacing:1.6px;
   text-transform:uppercase;color:var(--bone);margin-bottom:4px}
+/* The chevron is the halls' own .sectchev; the dialog turns it with its own open class, so it
+   never joins the halls' SECTIONS and their stack. */
+.modal .galesec.open>.galesech .sectchev svg{transform:none}
+.modal .galesech .r{color:var(--ember);text-shadow:0 0 8px rgba(255,122,26,.6)}
+.modal .galesech .grow{flex:1}
+.modal .galecount{font-family:var(--sans);font-size:10.5px;font-weight:400;letter-spacing:.3px;
+  text-transform:none;color:var(--bone-dim)}
+.modal .galetools{display:flex;flex-wrap:wrap;gap:6px;text-transform:none;letter-spacing:normal}
+.modal .galesectbody>.mbody-note:first-child{margin-top:2px}
+.modal .galetbl{table-layout:fixed}
+.modal .galetbl .galecoltick{width:26px}
+.modal .galetbl .galecolstate{width:118px}
+.modal .galetbl .galecolver{width:150px}
+.modal .galestate{font-size:10px;color:var(--bone-dim)}
+.modal .galestate.add{color:var(--moss-text)}
+.modal .galestate.update{color:var(--amber)}
+.modal .galestate.here{color:var(--cold-hi)}
+.modal .galecfgsame .galetbl{margin-top:2px}
 .modal .galecfgrow,.modal .galeherow{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;color:var(--bone)}
 .modal .galecfgrow input{accent-color:var(--ember);flex:none}
 .modal .galecfgpath{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}

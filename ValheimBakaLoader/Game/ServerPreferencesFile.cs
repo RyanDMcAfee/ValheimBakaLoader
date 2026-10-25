@@ -130,5 +130,7 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("galeUnticked")] public List<string> GaleUnticked { get; set; }
         [JsonProperty("galeNotAvailable")] public List<string> GaleNotAvailable { get; set; }
         [JsonProperty("galeConfigUnticked")] public List<string> GaleConfigUnticked { get; set; }
+        [JsonProperty("galeTicked")] public List<string> GaleTicked { get; set; }
+        [JsonProperty("galeConfigTicked")] public List<string> GaleConfigTicked { get; set; }
     }
 }
