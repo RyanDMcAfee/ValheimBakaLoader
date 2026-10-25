@@ -129,7 +129,10 @@ namespace ValheimBakaLoader.Tests.Forms
         // locked reason with its toast; the taken name; the character step's label, choices,
         // notes and refusals; the chip's T with its two tips; the title bar's two lines; and the
         // seven refusals the host side words (a gone source, and six for the character copy).
-        [InlineData("realm.", 176)]
+        // 1.3.0: the Source line and its same-name form, the reason the two separate switches
+        // stay on and the refusal of a save that would share them, the Steam Cloud character
+        // choice and the note on where characters come from, and the taken name said with it.
+        [InlineData("realm.", 183)]
         [InlineData("barrow.", 54)]
         [InlineData("waystone.wiz.", 46)]
         [InlineData("world.wg.", 65)]

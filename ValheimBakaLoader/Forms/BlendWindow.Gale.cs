@@ -227,7 +227,7 @@ namespace ValheimBakaLoader.Forms
                     .Concat(off)
                     .ToList();
                 prefs.SetGaleFeedUnticked(kept);
-                prefs.GaleTicked = ServerPreferences.GaleTicksAfter(prefs.GaleTicked, on, off);
+                prefs.SetGaleFeedTicked(ServerPreferences.GaleTicksAfter(prefs.GaleFeedTicked(), on, off));
                 ServerPrefsProvider.SavePreferences(prefs);
 
                 return Task.FromResult<object>(new { ok = true, state = GaleState(profile) });
@@ -548,11 +548,12 @@ namespace ValheimBakaLoader.Forms
                 // mark, and neither counts nor raises the row until the profile pins another.
                 var gone = new HashSet<string>(prefs?.GaleNotAvailable ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
                 bool Gone(GaleDiffRow r) => gone.Contains(GaleNotAvailableKey(r.Name, r.ProfileVersion));
-                // The tick a row starts with: only an add or an update has one, and from 1.3.0
-                // only one the host ticked before starts ticked (GaleStartsTicked keeps the older
-                // rule for a realm that has only the untick list so far).
-                bool Ticked(GaleDiffRow r) => (r.Kind == GaleDiffKind.Add || r.Kind == GaleDiffKind.Update)
-                    && ServerPreferences.GaleStartsTicked(r.Name, prefs?.GaleTicked, prefs?.GaleFeedUnticked());
+                // The tick a row starts with: only an add, an update or a rebuilt mod has one, and
+                // from 1.3.0 only one the host ticked before starts ticked (GaleStartsTicked keeps
+                // the older rule for a realm that has only the untick list so far). The ticked list
+                // is the feed's own, so a tick given under a test copy never pre-ticks the Gale row.
+                bool Ticked(GaleDiffRow r) => (r.Kind == GaleDiffKind.Add || r.Kind == GaleDiffKind.Update || r.Kind == GaleDiffKind.Changed)
+                    && ServerPreferences.GaleStartsTicked(r.Name, prefs?.GaleFeedTicked(), prefs?.GaleFeedUnticked());
                 var addCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Add && !Gone(r)) ?? 0;
                 // A mod rebuilt on a test copy under the same version is an update to the host,
                 // and is counted with them; changedCount says how many of them it is.

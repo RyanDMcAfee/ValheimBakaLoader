@@ -250,6 +250,104 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Equal("gale", set["state"]!.Value<string>("feed"));
         }
 
+        /// <summary>
+        /// P6, carried from H1: a rename of the copy that changes only its case keeps the
+        /// source's follow. MarkTestCopiesSourceGone(newName) on that road would let it go.
+        /// </summary>
+        [Fact]
+        public async Task A_case_only_rename_of_the_copy_keeps_the_follow()
+        {
+            await MakePair();
+            await Follow();
+
+            var upper = Copy.ToUpperInvariant();
+            await Call("profiles.rename", new { name = Copy, newName = upper });
+
+            Assert.Equal(upper, ServerPrefs().LoadPreferences(Source).FollowTestCopy);
+            Assert.False(ServerPrefs().LoadPreferences(upper).TestSourceGone);
+            var state = await CallJson("gale.get", new { profile = Source });
+            Assert.Equal("testcopy", state.Value<string>("feed"));
+            Assert.Equal(upper, state.Value<string>("testCopy"));
+        }
+
+        /// <summary>
+        /// P6 merge fact: the ticked lists are per feed, like the untick lists. A tick given
+        /// while the realm follows its test copy never starts a Gale row ticked, a Gale tick
+        /// never starts a copy row ticked, and a rebuilt mod (kind changed) can start ticked.
+        /// </summary>
+        [Fact]
+        public async Task The_copy_ticks_and_the_Gale_ticks_are_kept_apart()
+        {
+            await MakePair();
+            WorkOnTheCopy();
+            File.WriteAllText(Path.Combine(CopyBep, "config", "new.mod.cfg"), "[New]\n");
+            var source = ServerPrefs().LoadPreferences(Source);
+            source.GaleProfileId = "ab12CD";
+            source.GaleTicked = new List<string> { "Someone-NewMod" };
+            source.GaleConfigTicked = new List<string> { "new.mod.cfg" };
+            ServerPrefs().SavePreferences(source);
+
+            await Follow();
+            await Call("profiles.get", new { name = Source });
+            var check = (JObject)(await CallJson("gale.check", new { profile = Source }))["check"]!;
+            bool Ticked(JToken c, string name) => c["rows"]!.Single(r => r.Value<string>("name") == name).Value<bool>("ticked");
+            Assert.False(Ticked(check, "Someone-NewMod"), "a Gale tick started a test copy row ticked");
+
+            var after = await CallJson("gale.untick", new { profile = Source, ticked = new[] { "SourceOnly", "Someone-Bumped" }, unticked = new[] { "Someone-NewMod" } });
+            var rows = after["state"]!["check"]!;
+            Assert.True(Ticked(rows, "SourceOnly"), "a rebuilt mod the host ticked does not start ticked");
+            Assert.True(Ticked(rows, "Someone-Bumped"));
+            var stored = ServerPrefs().LoadPreferences(Source);
+            Assert.Equal(new[] { "Someone-Bumped", "SourceOnly" }, stored.FollowTestCopyTicked.OrderBy(n => n, StringComparer.Ordinal));
+            Assert.Equal(new[] { "Someone-NewMod" }, stored.GaleTicked);
+
+            var configs = await CallJson("gale.configs", new { profile = Source });
+            Assert.False(configs["configs"]!["files"]!.Single(f => f.Value<string>("path") == "new.mod.cfg").Value<bool>("ticked"),
+                "a Gale config tick started a test copy file ticked");
+            var applied = await CallJson("gale.configs.apply", new { profile = Source, paths = Array.Empty<string>() });
+            Assert.True(applied.Value<bool>("ok"), applied.ToString());
+            stored = ServerPrefs().LoadPreferences(Source);
+            Assert.Empty(stored.FollowTestCopyConfigTicked);
+            Assert.Equal(new[] { "new.mod.cfg" }, stored.GaleConfigTicked);
+            Assert.Contains("\"followTestCopyTicked\":[", UserPrefs.Raw);
+
+            // Letting go of the copy takes its ticks with it, and the Gale ones are as they were.
+            await Follow(null);
+            stored = ServerPrefs().LoadPreferences(Source);
+            Assert.Null(stored.FollowTestCopyTicked);
+            Assert.Null(stored.FollowTestCopyConfigTicked);
+            Assert.Equal(new[] { "Someone-NewMod" }, stored.GaleTicked);
+            Gale.VerifyNoOtherCalls();
+        }
+
+        /// <summary>
+        /// P6, found by H2: Run first-time setup again clears the shared paths only. An isolated
+        /// realm and its test copy keep the install and the save folder made for each of them,
+        /// and a realm that pinned the shared install and the app wide saves goes back to the
+        /// wizard's answers as before.
+        /// </summary>
+        [Fact]
+        public async Task Run_setup_again_keeps_the_own_install_and_save_folder_of_an_isolated_realm_and_its_test_copy()
+        {
+            await MakePair();
+            var pinned = new ServerPreferences { ProfileName = "Pinned", Name = "Pinned", WorldName = "Pinned", Password = "pinned99", ServerExePath = BaseExe, SaveDataFolderPath = SaveRoot };
+            ServerPrefs().SavePreferences(pinned);
+            var source = ServerPrefs().LoadPreferences(Source);
+            var copy = ServerPrefs().LoadPreferences(Copy);
+            Assert.False(string.IsNullOrWhiteSpace(source.SaveDataFolderPath));
+            Assert.False(string.IsNullOrWhiteSpace(copy.SaveDataFolderPath));
+
+            await Call("setup.reset", new { });
+
+            Assert.Equal(source.ServerExePath, ServerPrefs().LoadPreferences(Source).ServerExePath);
+            Assert.Equal(source.SaveDataFolderPath, ServerPrefs().LoadPreferences(Source).SaveDataFolderPath);
+            Assert.Equal(copy.ServerExePath, ServerPrefs().LoadPreferences(Copy).ServerExePath);
+            Assert.Equal(copy.SaveDataFolderPath, ServerPrefs().LoadPreferences(Copy).SaveDataFolderPath);
+            Assert.Null(ServerPrefs().LoadPreferences("Pinned").ServerExePath);
+            Assert.Null(ServerPrefs().LoadPreferences("Pinned").SaveDataFolderPath);
+            Assert.False(UserPrefs.LoadPreferences().SetupCompleted);
+        }
+
         // ------------------------------------------------------------------ the check
 
         [Fact]

@@ -692,7 +692,8 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_pages_pairing_table_names_no_refusal_that_is_gone()
         {
-            var thrown = Service() + Bridge() + WorldStore() + IsolatedSaveFolder() + CharacterCopy();
+            var thrown = Service() + Bridge() + WorldStore() + IsolatedSaveFolder() + CharacterCopy()
+                + AppSourceTree.Files()["BlendWindow.TestCopy.cs"] + AppSourceTree.Files()["BlendWindow.TestCopyFeed.cs"];
             var table = HostSentencesTable();
             var named = Regex.Matches(table, "named:\"([^\"]+)\"")
                 .Cast<Match>()

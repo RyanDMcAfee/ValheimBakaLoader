@@ -625,6 +625,9 @@
                  one; with one saved it reads "Following a Gale profile" and opens the status
                  line, Check now, Review and Forget below. app.js words it (renderGaleBox). -->
             <button class="btn btn-ghost btn-sm" id="galeFollowBtn" style="margin-left:8px" aria-expanded="false" aria-controls="galeBox" title="Keep this server's mods in step with a Gale profile. Nothing installs until you approve it." data-i18n-title="mods.gale.button.title">Follow a Gale profile</button>
+            <!-- Follow my test copy: one button per test copy of this realm, drawn by app.js
+                 (renderGaleBox) and hidden while the realm follows one. -->
+            <span id="tcFollow" style="display:none"></span>
             <!-- Reads this realm's plugins folder again, off the disk, with the listing already held. -->
             <button class="btn btn-ghost btn-sm" id="modsRefreshBtn" style="margin-left:8px" title="Reads this realm's mod folder again from disk. The Thunderstore listing already held is reused, so no site is asked unless it is more than fifteen minutes old." data-i18n="mods.refresh.label" data-i18n-title="mods.refresh.title">ᛇ&nbsp; Refresh</button>
             <button class="btn btn-ghost btn-sm" id="scanBtn" style="margin-left:8px">ᛋ&nbsp; Scan Thunderstore</button>

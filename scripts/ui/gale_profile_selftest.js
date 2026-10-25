@@ -70,6 +70,15 @@
  *      opens a dialog to paste one, a valid code is saved for the realm and the check runs, and
  *      with a code saved it reads Following and opens the status line, Check now, Review and
  *      Forget; Check now with the paste box closed checks the saved code and never forgets it.
+ *  17. Follow my test copy (1.3.0, P6): a realm with no test copy shows no control, one with a
+ *      copy shows it (a copy whose source is gone is not offered); set, the button, the status
+ *      line, the bar row, Check now, Review and the dialog all read the local feed (the head
+ *      names the copy, a rebuilt mod is an update with its own word, the world sentence is
+ *      there, an approval fingerprint is never printed as a date); Install sends the ticks,
+ *      then testcopy.pullMods with the ticked names, then the approval, then gale.configs.apply,
+ *      and never the Thunderstore add; a copyFailed reply names the mod and stores no
+ *      approval; Forget lets go of the copy alone; a copy that is gone is its sentence, not a
+ *      blank.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -92,6 +101,7 @@ const FORMS = path.join(ROOT, "ValheimBakaLoader", "Forms");
 const BRIDGE = fs.readFileSync(path.join(FORMS, "BlendWindow.Bridge.cs"), "utf8");
 const GALE_CS = fs.readFileSync(path.join(FORMS, "BlendWindow.Gale.cs"), "utf8");
 const GALE_CFG_CS = fs.readFileSync(path.join(FORMS, "BlendWindow.GaleConfigs.cs"), "utf8");
+const FEED_CS = fs.readFileSync(path.join(FORMS, "BlendWindow.TestCopyFeed.cs"), "utf8");
 const TOOLS = path.join(ROOT, "ValheimBakaLoader", "Tools");
 
 let passed = 0;
@@ -685,6 +695,13 @@ function fnBody(source, head) {
     assert.ok(/RegisterGaleConfigRpcs\(\);/.test(GALE_CS), "the configs RPCs are never registered");
     const registered = (GALE_CS + GALE_CFG_CS).match(/RegisterRpc\("gale\.[a-z.]+"/g) || [];
     assert.strictEqual(registered.length, 10, "the host side registers " + registered.length + " Gale RPCs, not ten");
+    /* 1.3.0 (P6): ten Gale RPCs plus the two the test copy feed adds, named, in their own file. */
+    for (const rpc of ["testcopy.follow", "testcopy.pullMods"])
+      assert.ok(FEED_CS.includes('RegisterRpc("' + rpc + '"'), "the host side has no " + rpc);
+    const feedRpcs = (GALE_CS + GALE_CFG_CS + FEED_CS).match(/RegisterRpc\("(?:gale|testcopy)\.[A-Za-z.]+"/g) || [];
+    assert.strictEqual(feedRpcs.length, 12, "the Gale and test copy files register " + feedRpcs.length + " RPCs, not ten plus two");
+    assert.ok(/RegisterTestCopyFeedRpcs\(\);/.test(fs.readFileSync(path.join(FORMS, "BlendWindow.TestCopy.cs"), "utf8")),
+      "the test copy feed RPCs are never registered");
     assert.ok(/RegisterGaleRpcs\(\);/.test(BRIDGE), "the Gale RPCs are never registered");
     assert.ok(/Task\.Run\(\(\) => RunGaleCheckAsync/.test(GALE_CS), "the check does not run on a worker");
     const add = BRIDGE.slice(BRIDGE.indexOf('RegisterRpc("mods.addFromUrl"'), BRIDGE.indexOf('RegisterRpc("mods.hexiumPrepare"'));
@@ -714,9 +731,13 @@ function fnBody(source, head) {
       assert.ok(!/\bAI\b/.test(words), id + " says AI");
     }
     /* Every sentence the host side can name is in the table the status line reads. */
-    for (const id of (GALE_CS + GALE_CFG_CS + fs.readFileSync(path.join(TOOLS, "GaleSyncClient.cs"), "utf8")
+    /* 1.3.0 (P6): and the test copy feed's, from its two files, under mods.testcopy as well. */
+    const hostIds = (GALE_CS + GALE_CFG_CS + FEED_CS + fs.readFileSync(path.join(TOOLS, "GaleSyncClient.cs"), "utf8")
       + fs.readFileSync(path.join(TOOLS, "GaleProfileConfigs.cs"), "utf8")
-      + fs.readFileSync(path.join(TOOLS, "GaleProfileId.cs"), "utf8")).match(/"mods\.gale\.[a-z_.]+"/g) || [])
+      + fs.readFileSync(path.join(TOOLS, "GaleProfileId.cs"), "utf8")
+      + fs.readFileSync(path.join(TOOLS, "TestCopyGaleFeed.cs"), "utf8")).match(/"mods\.(?:gale|testcopy)\.[a-z_.]+"/g) || [];
+    assert.ok(hostIds.filter(id => id.startsWith('"mods.testcopy.')).length >= 7, "the test copy feed's seven sentences were not found");
+    for (const id of hostIds)
       assert.ok(src.includes('{textId:' + id + '}'), "the status line cannot say " + id);
   });
 
@@ -1199,6 +1220,123 @@ function fnBody(source, head) {
     const after = p.sent.slice(before).map(x => x.method);
     assert.ok(!after.includes("gale.set") && !after.includes("gale.forget"), "Check now read the missing box as a cleared code");
     assert.ok(after.includes("gale.check"), "Check now did not check");
+  });
+
+  await test("17. follow my test copy: the control, the local feed, the pull, Forget (1.3.0, P6)", async () => {
+    const COPY = "Final Sunset_bakaT";
+    const local = over => state(Object.assign({ feed: "testcopy", testCopy: COPY, id: null, lastApproved: "testcopy-0123abcd", unticked: [],
+      check: { addCount: 1, updateCount: 1, changedCount: 1, onlyHereCount: 1, rows: [
+        { name: "Someone-NewMod", kind: "add", untickedFrom: null, profileVersion: "1.0.0", serverVersion: null, downgrade: false, ticked: true },
+        { name: "SourceOnly", kind: "changed", untickedFrom: null, profileVersion: "2.0.0", serverVersion: "2.0.0", downgrade: false, ticked: true },
+        { name: "Someone-Kept", kind: "notInProfile", untickedFrom: null, profileVersion: null, serverVersion: "1.0.0", downgrade: false, fullName: "Someone-Kept", off: false },
+      ] } }, over));
+    const withControl = p => {
+      p.els["#tcFollow"] = Object.assign(el(), { innerHTML: "", style: { display: "none" } });
+      p.els["#galeFollowBtn"] = Object.assign(el(), { setAttribute() {} });
+      return p;
+    };
+
+    /* c. No test copy: no control. A copy whose source is gone is not offered either. */
+    let p = withControl(page());
+    p.context.S.servers = [{ name: "Final Sunset" }, { name: "Elsewhere_bakaT", testCopyOf: "Elsewhere" },
+      { name: "Lost_bakaT", testCopyOf: "Final Sunset", testSourceGone: true }];
+    p.context.galeApply(state({ following: false, id: null, check: null }));
+    assert.strictEqual(p.els["#tcFollow"].style.display, "none", "a realm with no test copy shows the follow control");
+    assert.ok(!p.els["#tcFollow"].innerHTML.includes("data-tc-follow"));
+
+    /* With one, the control, named; pressing it sends testcopy.follow for this realm and checks. */
+    p = withControl(page({ replies: { "testcopy.follow": local(), "gale.check": local() } }));
+    p.context.S.servers = [{ name: "Final Sunset" }, { name: COPY, testCopyOf: "final sunset" }];
+    p.context.galeApply(state({ following: false, id: null, check: null }));
+    const tc = p.els["#tcFollow"];
+    assert.notStrictEqual(tc.style.display, "none", "a realm with a test copy shows no follow control");
+    assert.ok(tc.innerHTML.includes('data-tc-follow="' + COPY + '"'), "the control does not name the copy");
+    assert.ok(tc.innerHTML.includes(p.context.esc(T("mods.testcopy.follow", { name: COPY }))));
+    assert.ok(await p.context.galeFollowCopy(COPY));
+    assert.deepStrictEqual(p.sent.map(s => s.method), ["testcopy.follow", "gale.check"]);
+    assert.strictEqual(JSON.stringify(p.sent[0].params), JSON.stringify({ profile: "Final Sunset", copy: COPY }));
+
+    /* Set: the button names the copy, the control steps aside, the status line and the bar row
+       read the copy, and the approval fingerprint is never printed. */
+    assert.strictEqual(p.els["#galeFollowBtn"].textContent, T("mods.testcopy.button.following", { name: COPY }));
+    assert.strictEqual(tc.style.display, "none", "the follow control stays up while the realm follows the copy");
+    const line = p.els["#galeStatus"].textContent;
+    assert.ok(line.includes(T("mods.testcopy.status.approved")) && !line.includes("testcopy-0123abcd"), line);
+    assert.strictEqual(p.conditions.get("galeChanged").title, T("mods.testcopy.cond.title"));
+    p.sent.length = 0;
+    await p.context.galeCheckNow();
+    assert.deepStrictEqual(p.sent.map(s => s.method), ["gale.check"], "Check now on the copy asked for something else");
+
+    /* d. The dialog: the head names the copy, the rebuilt mod is an update with its word, the
+       world sentence is there; Install sends the ticks, the pull, the approval, then the configs. */
+    const replies = {
+      "gale.configs": configs(),
+      "gale.untick": { ok: true, state: local() },
+      "testcopy.pullMods": prm => ({ ok: true, pulled: prm.mods, backup: "BepInEx/.bakaloader-mod-backups", state: local() }),
+      "gale.dismiss": { ok: true, state: local({ check: { due: false } }) },
+      "gale.configs.apply": { ok: true, written: 2, added: 1, replaced: 1, backup: "BepInEx/.bakaloader-config-backups/x", state: configs() },
+      "gale.get": local(),
+    };
+    p = withControl(page({ replies }));
+    p.context.galeApply(local());
+    p.context.galeDialog();
+    await settle();
+    const m = p.modals[0];
+    assert.ok(m.html.includes(p.context.esc(T("mods.testcopy.dialog.title", { name: COPY }))), "the head does not name the test copy");
+    assert.ok(!m.html.includes(p.context.esc(T("mods.gale.dialog.title"))), "the head still says the Gale profile");
+    assert.ok(m.html.includes(p.context.esc(T("mods.testcopy.dialog.world"))), "the dialog does not say the world stays");
+    const rebuilt = m.html.slice(m.html.indexOf('data-gale-row="SourceOnly"'));
+    assert.ok(m.html.includes('data-gale-row="SourceOnly"'), "a rebuilt mod is not offered");
+    assert.ok(rebuilt.slice(0, 600).includes(T("mods.gale.dialog.state.update")) && rebuilt.slice(0, 900).includes(T("mods.testcopy.dialog.changed")),
+      "a rebuilt mod is not an update with its own word");
+    assert.ok(m.html.includes(p.context.esc(T("mods.testcopy.dialog.intro"))));
+    m.handlers.galeInstall();
+    await settle();
+    const order = p.methods().filter(x => x !== "gale.get");
+    assert.deepStrictEqual(order.filter(x => x !== "gale.rescan"), ["gale.untick", "testcopy.pullMods", "gale.dismiss", "gale.configs.apply"], order.join(", "));
+    assert.ok(!order.includes("mods.addFromUrl"), "a test copy row went to Thunderstore");
+    const pull = p.walk().find(s => s.method === "testcopy.pullMods");
+    assert.deepStrictEqual(Array.from(pull.params.mods), ["Someone-NewMod", "SourceOnly"]);
+    assert.strictEqual(pull.params.profile, "Final Sunset");
+    assert.ok(p.toasts.some(t => t.includes(T("mods.testcopy.pull.done.toast", { name: COPY, count: 2, folder: "BepInEx/.bakaloader-mod-backups" }))), p.toasts.join(" | "));
+
+    /* A copyFailed reply: the mod is named, no approval is stored, the counts are made again,
+       and the configs still go (only a stop reason stops them). */
+    const failed = Object.assign({}, replies, {
+      "testcopy.pullMods": { ok: false, pulled: ["Someone-NewMod"], backup: "BepInEx/.bakaloader-mod-backups", Reason: "copyFailed",
+        Error: "Could not copy SourceOnly: locked.", ErrorParams: { mod: "SourceOnly", done: 1, detail: "locked." }, state: local() },
+      "gale.rescan": { ok: true, state: local() },
+    });
+    p = withControl(page({ replies: failed }));
+    p.context.galeApply(local());
+    p.context.galeDialog();
+    await settle();
+    p.modals[0].handlers.galeInstall();
+    await settle();
+    const after = p.methods();
+    assert.ok(!after.includes("gale.dismiss"), "a pull that stopped short stored the approval");
+    assert.ok(after.includes("gale.rescan") && after.includes("gale.configs.apply"), after.join(", "));
+    assert.ok(p.toasts.some(t => t.includes(T("mods.testcopy.pull.reason.copy_failed", { mod: "SourceOnly", detail: "locked.", done: 1 }))),
+      "the failed mod is not named: " + p.toasts.join(" | "));
+    /* A stop reason stops the configs. */
+    p = withControl(page({ replies: Object.assign({}, failed, { "testcopy.pullMods": { ok: false, pulled: [], Reason: "serverRunning", ErrorParams: { name: "Final Sunset" }, state: local() } }) }));
+    p.context.galeApply(local());
+    p.context.galeDialog();
+    await settle();
+    p.modals[0].handlers.galeInstall();
+    await settle();
+    assert.ok(!p.methods().includes("gale.configs.apply"), "the configs went in after the server came up");
+
+    /* Forget lets go of the copy alone. A copy that is gone is its sentence on the line. */
+    p = withControl(page({ replies: { "testcopy.follow": state({ id: "ab12CD", feed: "gale" }) } }));
+    p.context.galeApply(local());
+    await p.context.galeForget();
+    assert.deepStrictEqual(p.sent.map(s => [s.method, s.params && s.params.copy]), [["testcopy.follow", null]]);
+    p.context.galeApply(local({ check: { ok: false, statusId: "mods.testcopy.check.gone", rows: [] } }));
+    assert.ok(p.els["#galeStatus"].textContent.includes(T("mods.testcopy.check.gone")), "a copy that is gone is a blank");
+
+    /* Every id the two local tables name is in the catalog. */
+    for (const hit of block().matchAll(/(?:localId|galeId|textId):"([^"]+)"/g)) assert.ok(KEYS[hit[1]], hit[1] + " is not in en.json");
   });
 
   console.log("");

@@ -42,6 +42,10 @@ Each line: where, what it is, how it moves now.
 | 2345 `renderTestCopyHead` | the title bar's test-copy line | fade (a span in a row) |
 | 2715 `dupMark` | the source value under a dial in the Duplicate realm dialog | rolls; the words go after the roll |
 | 2833, 3069, 3102 | the locked-listing note and the copy notes in the realm dialogs | roll |
+| `testCopyLockIsolation` (added 1.3.0) | the note under the two held isolation switches of a test copy | rolls, like the locked-listing note |
+| `addServerProfile` character list (1.3.0) | the test copy's character drop down when the list arrives | `revealSwap` on the field, so its height eases |
+| `renameServer` (1.3.0) | the title bar's name after a rename | `revealText` fades the new name in |
+| `renderGaleBox` Follow my test copy (1.3.0) | the buttons beside Follow a Gale profile | fade (`#tcFollow`, a span in a row) |
 | 3649, 3652 `renderHearthVersion` | the Server card's version line | fade |
 | 3998, 4003 `renderSaveBars` | the saves chart's caption | rolls |
 | 4131, 4150, 4153 `renderWaystone`/`renderNet` | the Network card's domain, invite and RCON lines | roll |

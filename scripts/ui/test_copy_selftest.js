@@ -33,6 +33,20 @@
  *      can throw is worded in HOST_SENTENCES.
  *   8. The settings page's listing switch shows off for a test copy and is stopped before the
  *      shared switch handler can flip it.
+ *   9. (1.3.0, P6) The name is cleaned the host's way (Tools/TestCopyNaming.cs): the source's
+ *      in-game name, or its profile name when that cleans to nothing, numbered with no cap; a
+ *      typed name is cleaned before it is sent; the dialog moves to the reply's ProfileName and
+ *      a refusal the host names (servers.create.nameTaken) is said with the dialog left open.
+ *  10. The Source line, the dialog's title, the chip and the title bar name the source by its
+ *      in-game name, with the profile beside it on the Source line, falling back to the profile.
+ *  11. The two isolation switches are held on with the reason under them; a settings save the
+ *      host refuses with servers.save.testCopyIsolated is said and puts the two boxes back.
+ *  12. Steam Cloud characters: a cloud row and a local row of the same name both list, the cloud
+ *      one with its suffix; a cloud row whose copy is there is refused like a local one; the list
+ *      lands through revealSwap, and the note under it says where characters come from.
+ *  13. A rename moves the page to the reply's names: the stored one for the realm and the
+ *      in-game one for the title bar, which fades to it, and the app bar follows.
+ *  14. Every refusal the test copy follow, the save and the forge can name is in HOST_SENTENCES.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -55,6 +69,8 @@ const KEYS = JSON.parse(fs.readFileSync(path.join(WEB, "i18n", "en.json"), "utf8
 const read = rel => fs.readFileSync(path.join(ROOT, "ValheimBakaLoader", rel), "utf8").replace(/\r\n/g, "\n");
 const BRIDGE = read("Forms/BlendWindow.Bridge.cs");
 const TESTCOPY_CS = read("Forms/BlendWindow.TestCopy.cs");
+const FEED_CS = read("Forms/BlendWindow.TestCopyFeed.cs");
+const NAMING_CS = read("Tools/TestCopyNaming.cs");
 const COPIER = read("Tools/CharacterCopy.cs");
 const PREFS = read("Game/ServerPreferences.cs");
 const OPTIONS = read("Game/ValheimServerOptions.cs");
@@ -131,7 +147,8 @@ function page() {
   vm.runInContext(code, context, { filename: "app.js#testcopy" });
   for (const name of ["testCopyName", "testCopyWorld", "testCopyNameProblem", "testCopyLockPublic",
     "testCopyCharacterOptions", "testCopyCharacterProblem", "testCopyCharacterNote", "testCopyPayload",
-    "testCopyHead", "chipTestBadge", "chipHtml"])
+    "testCopyHead", "chipTestBadge", "chipHtml", "testCopyClean", "testCopySend", "testCopySourceLabel",
+    "testCopyLockIsolation", "testCopyRenamed", "testCopyIsolatedRestore"])
     assert.strictEqual(typeof context[name], "function", name + " did not come out of the blocks");
   return context;
 }
@@ -283,15 +300,15 @@ test("6. the wiring: the menu, the dialog, and the character after the realm", (
   const dialog = fn("async function addServerProfile(source)");
   for (const needle of [
     "const testing=duplicating&&!!source.test;",
-    'T("realm.test.title",{name:source.profile})',
+    'T("realm.test.title",{name:testSrcName})',
     'T("realm.test.ok")',
-    "nameI.value=testCopyName(source.profile,S.servers);",
+    "nameI.value=testCopyName(testSrc,S.servers);",
     "worldI.value=testCopyWorld(source.world);",
     'testCopyLockPublic(pubT,m.querySelector("#wsPublicLock"));',
     "if(duplicating&&!testing&&pubT&&source.listed)",
-    "const takenTest=testing?testCopyNameProblem(name,S.servers):null;",
+    "const takenTest=testing?testCopyNameProblem(testCopySend(name,testSrc,S.servers),S.servers):null;",
     "const charProblem=testing?testCopyCharacterProblem(chars,charPick):null;",
-    "if(testing) testCopyPayload(payload,source);",
+    "if(testing) testCopyPayload(payload,source,S.servers);",
     'rpc("characters.list",{})',
     'rpc("characters.copy",{folder:pickedChar.folder,file:pickedChar.file})',
     'toast("ᛇ "+T("realm.test.character.done.toast"',
@@ -303,7 +320,7 @@ test("6. the wiring: the menu, the dialog, and the character after the realm", (
   assert.ok(dialog.indexOf('rpc("characters.copy"') > dialog.indexOf("await switchServer(created.ProfileName)"),
     "the character is copied before the realm stands");
   /* And the payload's public is the switch's, then held off: the line Duplicate sends is unchanged. */
-  assert.ok(dialog.indexOf("password, public:!!(pubT&&on(pubT))") < dialog.indexOf("testCopyPayload(payload,source)"));
+  assert.ok(dialog.indexOf("password, public:!!(pubT&&on(pubT))") < dialog.indexOf("testCopyPayload(payload,source,"));
 });
 
 test("7. the host side: create, list, save, rename, and every refusal worded", () => {
@@ -349,6 +366,132 @@ test("8. the settings switch shows off for a test copy and refuses to move", () 
     "the settings switch can be flipped on a test copy");
   assert.ok(guard.includes('toast("ᚦ "+T("realm.test.public.locked.toast"))'));
   assert.strictEqual(KEYS["realm.test.public.locked.toast"].mark, "ᚦ");
+});
+
+test("9. the name is cleaned the host's way, numbered with no cap, and the reply's name wins", () => {
+  const p = page();
+  assert.strictEqual(p.testCopyClean("Second Sunset!"), "Second Sunset");
+  assert.strictEqual(p.testCopyClean("  Bjorn's  Keep?  "), "Bjorns  Keep");
+  assert.strictEqual(p.testCopyClean("a\u0301 b"), "\u00e1 b", "the name is not composed first");
+  assert.strictEqual(p.testCopyClean("Ünï_x-1"), "Ünï_x-1");
+  assert.strictEqual(p.testCopyClean(null), "");
+  // The host rule this mirrors: space, underscore and dash kept, letters, marks and digits kept, spaces trimmed.
+  assert.ok(NAMING_CS.includes("rune.Value == ' ' || rune.Value == '_' || rune.Value == '-'") && NAMING_CS.includes(".Trim(' ')")
+    && NAMING_CS.includes("NormalizationForm.FormC") && NAMING_CS.includes("UnicodeCategory.DecimalDigitNumber"),
+    "Tools/TestCopyNaming.cs no longer cleans the way testCopyClean does");
+  assert.strictEqual(p.testCopyName({ Name: "Second Sunset", ProfileName: "Default" }, SERVERS), "Second Sunset_bakaT");
+  // a. a Name that cleans to nothing proposes the profile name.
+  assert.strictEqual(p.testCopyName({ Name: "!!!", ProfileName: "Default" }, SERVERS), "Default_bakaT");
+  assert.strictEqual(p.testCopyName({ Name: null, ProfileName: "Second Sunset" }, SERVERS), "Second Sunset_bakaT");
+  const many = [{ name: "Home_bakaT" }];
+  for (let n = 2; n <= 120; n++) many.push({ name: "Home_bakaT" + n });
+  assert.strictEqual(p.testCopyName({ Name: "Home", ProfileName: "Home" }, many), "Home_bakaT121", "the numbering stops where the host's does not");
+  assert.strictEqual(p.testCopySend("My copy?", { Name: "Home", ProfileName: "Home" }, SERVERS), "My copy");
+  assert.strictEqual(p.testCopySend("???", { Name: "Home", ProfileName: "Home" }, SERVERS), "Home_bakaT");
+  const payload = p.testCopyPayload({ name: "Bjorn's copy", public: true }, { profile: "Default", gameName: "Second Sunset", test: true }, SERVERS);
+  assert.strictEqual(payload.name, "Bjorns copy");
+  assert.strictEqual(payload.testCopyOf, "Default");
+  const dialog = fn("async function addServerProfile(source)");
+  assert.ok(dialog.includes("await switchServer(created.ProfileName)") && !/switchServer\(name\)|switchServer\(payload\.name\)/.test(dialog),
+    "the dialog switches to what it sent rather than the reply's name");
+  const fail = dialog.slice(dialog.indexOf("if(created===FAIL||!created){"), dialog.indexOf("modalClose();", dialog.indexOf("if(created===FAIL||!created){")));
+  assert.ok(fail.includes("statusN.textContent=hostSentence(window.BAKA_ERR_ID,window.BAKA_ERR_PARAMS)||T(\"realm.new.failed\");") && fail.includes("return;"),
+    "a refused forge does not say the host's reason, or closes the dialog");
+  assert.strictEqual(T("realm.new.name.taken.named", { name: "Home_bakaT" }), "There is already a realm named Home_bakaT. Pick another name.");
+});
+
+test("10. the Source line, the title, the chip and the title bar name the source by its in-game name", () => {
+  const p = page();
+  assert.strictEqual(p.testCopySourceLabel("Second Sunset", "Default"), T("realm.test.source", { name: "Second Sunset", profile: "Default" }));
+  assert.strictEqual(T("realm.test.source", { name: "Second Sunset", profile: "Default" }), "Source: Second Sunset (profile Default)");
+  assert.strictEqual(p.testCopySourceLabel("Home", "Home"), T("realm.test.source.same", { name: "Home" }));
+  assert.strictEqual(p.testCopySourceLabel("", "Home"), T("realm.test.source.same", { name: "Home" }));
+  const copy = { name: "Second Sunset_bakaT", testCopyOf: "Default", testCopyOfName: "Second Sunset", testSourceGone: false, status: "Stopped", running: false, playersOnline: 0, active: true };
+  assert.strictEqual(p.testCopyHead(copy), "test copy of Second Sunset");
+  assert.strictEqual(p.testCopyHead(Object.assign({}, copy, { testCopyOfName: null })), "test copy of Default");
+  assert.ok(p.chipHtml(copy).includes('title="' + T("realm.test.badge.title", { source: "Second Sunset" }) + '"'), "the chip names the profile, not the name");
+  const dialog = fn("async function addServerProfile(source)");
+  assert.ok(dialog.includes('id="wsTestSource">${esc(testCopySourceLabel(source.gameName,source.profile))}'), "the dialog has no Source line");
+  assert.ok(dialog.includes('T("realm.test.note",{name:testSrcName})'));
+  assert.ok(fn("async function testCopyServer(name){").includes('gameName:(S.prefs&&S.prefs.Name)||""'), "the dialog is not told the source's in-game name");
+});
+
+test("11. the isolation switches are held on, and a refused settings save puts the boxes back", () => {
+  const p = page();
+  const iso = new El(["toggle", "on"]), saveIso = new El(["toggle"]), note = new El();
+  note.style.display = "none";
+  assert.strictEqual(p.testCopyLockIsolation(iso, saveIso, note), true);
+  for (const t of [iso, saveIso]) {
+    assert.ok(t.classList.contains("on"), "an isolation switch of a test copy is off");
+    assert.strictEqual(t.style.pointerEvents, "none");
+    assert.strictEqual(t.getAttribute("tabindex"), "-1");
+    assert.strictEqual(t.getAttribute("aria-disabled"), "true");
+    assert.strictEqual(t.getAttribute("aria-checked"), "true");
+  }
+  assert.strictEqual(note.textContent, T("realm.test.iso.locked"));
+  assert.strictEqual(note.style.display, "");
+  const dialog = fn("async function addServerProfile(source)");
+  assert.ok(dialog.includes('testCopyLockIsolation(iso,saveIso,m.querySelector("#wsIsoLock"));') && dialog.includes('id="wsIsoLock"'));
+  // e. the save the host refuses: said by the toast, the boxes back to what is stored.
+  const exe = { value: "D:/elsewhere/valheim_server.exe" }, save = { value: "D:/shared" };
+  p.testCopyIsolatedRestore({ ServerExePath: "C:/own/valheim_server.exe", SaveDataFolderPath: null }, exe, save);
+  assert.strictEqual(exe.value, "C:/own/valheim_server.exe");
+  assert.strictEqual(save.value, "");
+  assert.ok(APP.includes('if(window.BAKA_ERR_ID==="servers.save.testCopyIsolated") testCopyIsolatedRestore(cur,$("#fServerExe"),$("#fSaveDir"));'),
+    "a refused settings save leaves the refused paths in the boxes");
+  assert.ok(TESTCOPY_CS.includes('throw new HostFacingException("servers.save.testCopyIsolated"'));
+  assert.ok(/T\("realm\.test\.reason\.isolated"|textId:"realm\.test\.reason\.isolated"/.test(APP));
+  assert.strictEqual(T("realm.test.reason.isolated", { name: "X_bakaT" }).startsWith("X_bakaT is a test copy"), true);
+});
+
+test("12. Steam Cloud characters list beside the local ones, and the list lands without a jump", () => {
+  const p = page();
+  const list = [
+    { folder: "characters_local", source: "local", file: "ragnar.fch", name: "Ragnar", copyName: "Ragnar_bakaT", copyFile: "ragnar_bakat.fch", copyExists: false, problem: null },
+    { folder: "cloud:76561198000000001", source: "cloud", file: "ragnar.fch", name: "Ragnar", copyName: "Ragnar_bakaT", copyFile: "ragnar_bakat.fch", copyExists: false, problem: null },
+    { folder: "cloud:76561198000000001", source: "cloud", file: "ylva.fch", name: "Ylva", copyName: "Ylva_bakaT", copyFile: "ylva_bakat.fch", copyExists: true, problem: null },
+  ];
+  const options = p.testCopyCharacterOptions(list);
+  assert.deepStrictEqual(Array.from(options, o => o.value), ["", "characters_local/ragnar.fch", "cloud:76561198000000001/ragnar.fch", "cloud:76561198000000001/ylva.fch"]);
+  assert.strictEqual(options[1].label, T("realm.test.character.option", { name: "Ragnar", copy: "Ragnar_bakaT" }));
+  assert.strictEqual(options[2].label, T("realm.test.character.option.cloud", { option: T("realm.test.character.option", { name: "Ragnar", copy: "Ragnar_bakaT" }) }));
+  assert.ok(options[2].label.endsWith("(Steam Cloud)"));
+  assert.strictEqual(p.testCopyCharacterProblem(list, "cloud:76561198000000001/ylva.fch"),
+    T("realm.test.character.exists", { file: "ylva_bakat.fch", copy: "Ylva_bakaT" }), "a cloud row whose copy is there offers a second copy");
+  assert.strictEqual(p.testCopyCharacterProblem(list, "cloud:76561198000000001/ragnar.fch"), null);
+  const dialog = fn("async function addServerProfile(source)");
+  assert.ok(/revealSwap\(m\.querySelector\("#wsCharField"\),\(\)=>\{[\s\S]*charSel\.innerHTML=testCopyCharacterOptions\(chars\)/.test(dialog), "the list lands with a jump");
+  assert.ok(dialog.includes('id="wsCharWhere">${esc(T("realm.test.character.where"))}'));
+  assert.ok(/Steam Cloud/.test(T("realm.test.character.where")) && /another PC/.test(T("realm.test.character.where")));
+  assert.ok(dialog.includes('rpc("characters.copy",{folder:pickedChar.folder,file:pickedChar.file})'), "a cloud row is not sent by its own folder");
+  assert.ok(COPIER.includes("characters_local"), "a cloud copy does not land in characters_local");
+});
+
+test("13. a rename moves the page to the reply's names and the title bar fades to the new one", () => {
+  const p = page();
+  const r = p.testCopyRenamed({ ProfileName: "home", Name: "Home Prime", TestCopyOf: null }, "Home", "home ");
+  assert.strictEqual(r.profile, "home");
+  assert.strictEqual(r.name, "Home Prime");
+  const old = p.testCopyRenamed(true, "Home", "Homestead");
+  assert.strictEqual(old.profile, "Homestead");
+  assert.strictEqual(old.name, null);
+  const rename = fn("async function renameServer(name){");
+  for (const needle of ["const done=testCopyRenamed(r,name,v);", "S.profileName=done.profile;", "if(done.name!=null) S.prefs.Name=done.name;",
+    "revealText(tb,S.prefs.Name.toUpperCase());", "renderAppBar();", "sagaRenameRealm(name,done.profile);", 'T("realm.renamed.toast",{name:done.profile})'])
+    assert.ok(rename.includes(needle), "the rename no longer carries: " + needle);
+  assert.ok(BRIDGE.includes("return Task.FromResult<object>(BuildProfilePrefsDto(renamed, UserPrefsProvider.LoadPreferences()));"),
+    "profiles.rename no longer answers with the profile");
+});
+
+test("14. every refusal the follow, the save and the forge can name is in HOST_SENTENCES", () => {
+  const table = APP.slice(APP.indexOf("const HOST_SENTENCES=["), APP.indexOf("];", APP.indexOf("const HOST_SENTENCES=[")));
+  const thrown = [...(FEED_CS + TESTCOPY_CS + BRIDGE).matchAll(/HostFacingException\("((?:testcopy\.|servers\.save\.testCopy|servers\.create\.nameTaken)[^"]*)"/g)].map(m => m[1]);
+  assert.ok(thrown.length >= 4, "only " + thrown.length + " refusals found");
+  for (const id of new Set(thrown)) {
+    const row = new RegExp('named:"' + id.replace(/\./g, "\\.") + '",\\s*textId:"([^"]+)"').exec(table);
+    assert.ok(row, id + " has no row in HOST_SENTENCES");
+    assert.ok(KEYS[row[1]], "the catalog has no " + row[1]);
+  }
 });
 
 console.log("");

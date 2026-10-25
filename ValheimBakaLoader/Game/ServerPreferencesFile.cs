@@ -141,5 +141,7 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("followTestCopyLastApproved")] public string FollowTestCopyLastApproved { get; set; }
         [JsonProperty("followTestCopyUnticked")] public List<string> FollowTestCopyUnticked { get; set; }
         [JsonProperty("followTestCopyConfigUnticked")] public List<string> FollowTestCopyConfigUnticked { get; set; }
+        [JsonProperty("followTestCopyTicked")] public List<string> FollowTestCopyTicked { get; set; }
+        [JsonProperty("followTestCopyConfigTicked")] public List<string> FollowTestCopyConfigTicked { get; set; }
     }
 }

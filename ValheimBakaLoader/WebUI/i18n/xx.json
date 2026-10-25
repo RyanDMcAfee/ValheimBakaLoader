@@ -2665,6 +2665,169 @@
     "mods.gale.dialog.state.same": {
       "translation": "[Ẋ Same Ẋ] ẊẊ"
     },
+    "mods.testcopy.check.gone": {
+      "translation": "[Ẋ The test copy this server follows is not there any more. Press Forget, or follow another copy. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.check.not_a_copy": {
+      "translation": "[Ẋ That server is not a test copy of this one any more, so it has nothing to hand back. Press Forget. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.check.shares_install": {
+      "translation": "[Ẋ The test copy runs on this server's own install, so there is nothing to copy back. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.check.unreadable": {
+      "translation": "[Ẋ The test copy's mod folder could not be read. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.configs.too_many": {
+      "translation": "[Ẋ The test copy has more config files than BakaLoader reads at once, so they are not listed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.configs.too_large": {
+      "translation": "[Ẋ The test copy's config files come to more than BakaLoader reads at once, so they are not listed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.configs.unreadable": {
+      "translation": "[Ẋ The test copy's config folder could not be read. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.follow": {
+      "translation": "[Ẋ Follow my test copy {name} Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.testcopy.follow.title": {
+      "translation": "[Ẋ Take back the mods and configs you tried on the test copy {name}. Nothing is copied until you approve it, and the world stays where it is. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.testcopy.button.following": {
+      "translation": "[Ẋ Following the test copy {name} Ẋ] ẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.testcopy.follow.reason.no_such_realm": {
+      "translation": "[Ẋ There is no realm named {profile}. Ẋ] ẊẊẊẊẊẊẊẊ",
+      "params": {
+        "profile": "text"
+      }
+    },
+    "mods.testcopy.follow.reason.not_a_copy": {
+      "translation": "[Ẋ {copy} is not a test copy of {profile}, so it cannot hand anything back to it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "copy": "text",
+        "profile": "text"
+      }
+    },
+    "mods.testcopy.status.checking": {
+      "translation": "[Ẋ Reading the test copy… Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.status.current": {
+      "translation": "[Ẋ Checked {at}: this server has every mod the test copy has. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "at": "text"
+      }
+    },
+    "mods.testcopy.status.waved": {
+      "translation": "[Ẋ Checked {at}: {add} to add, {update} to update. You waved these away, so the notice comes back when the test copy changes again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "at": "text",
+        "add": "number",
+        "update": "number"
+      }
+    },
+    "mods.testcopy.status.approved": {
+      "translation": "[Ẋ Approved before: the notice comes back only when the test copy's mods change. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.status.only_here": {
+      "translation": {
+        "one": "[Ẋ {count} mod on this server is not on the test copy. Review lists it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} mods on this server are not on the test copy. Review lists them. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      }
+    },
+    "mods.testcopy.cond.title": {
+      "translation": "[Ẋ Test copy changed Ẋ] ẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.dialog.title": {
+      "translation": "[Ẋ From the test copy {name} Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.testcopy.dialog.intro": {
+      "translation": "[Ẋ Tick a mod to copy its folder from the test copy into this server. What this server had of it is moved into BepInEx\\.bakaloader-mod-backups first, and a mod you did not tick is never touched. BakaLoader remembers what you ticked for the next review. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.dialog.changed": {
+      "translation": "[Ẋ new files Ẋ] ẊẊẊ"
+    },
+    "mods.testcopy.dialog.changed.title": {
+      "translation": "[Ẋ The same version number, but the files on the test copy are not the ones on this server. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.dialog.world": {
+      "translation": "[Ẋ The world is not copied back; keep the test world or copy the save by hand. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.configs.intro": {
+      "translation": "[Ẋ Each ticked file is written into this server's BepInEx\\config exactly as the test copy has it, and a file it replaces is copied into BepInEx\\.bakaloader-config-backups first. Nothing is deleted. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.pull.done.toast": {
+      "translation": "[Ẋ Copied from the test copy {name}: {count}. What this server had of them is in {folder}. They load the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "count": "number",
+        "folder": "text"
+      },
+      "mark": "ᚨ"
+    },
+    "mods.testcopy.pull.reason.not_following": {
+      "translation": "[Ẋ This server does not follow a test copy any more, so nothing was copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.pull.reason.copy_gone": {
+      "translation": "[Ẋ The test copy {copy} is not there any more, so nothing was copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "copy": "text"
+      }
+    },
+    "mods.testcopy.pull.reason.not_a_copy": {
+      "translation": "[Ẋ {copy} is not a test copy of this server any more, so nothing was copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "copy": "text"
+      }
+    },
+    "mods.testcopy.pull.reason.shares_install": {
+      "translation": "[Ẋ The test copy {copy} runs on this server's own install, so there is nothing to copy back. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "copy": "text"
+      }
+    },
+    "mods.testcopy.pull.reason.copy_unreadable": {
+      "translation": "[Ẋ The mods of the test copy {copy} could not be read, so nothing was copied. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "copy": "text"
+      }
+    },
+    "mods.testcopy.pull.reason.not_in_copy": {
+      "translation": "[Ẋ {mod} is not on the test copy {copy} any more, so nothing was copied. Press Check now and look again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text",
+        "copy": "text"
+      }
+    },
+    "mods.testcopy.pull.reason.copy_failed": {
+      "translation": "[Ẋ {mod} could not be copied: {detail} It was put back as it was, and the {done} copied before it stay in. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text",
+        "detail": "text",
+        "done": "number"
+      }
+    },
+    "mods.testcopy.pull.reason.busy": {
+      "translation": "[Ẋ A mod update is already running. Try again in a moment. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.testcopy.pull.reason.no_server_path": {
+      "translation": "[Ẋ This server's BepInEx plugins folder was not found. Set a valid server .exe path first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "mods.gale.dialog.same.show": {
       "translation": {
         "one": "[Ẋ {count} mod already the same Ẋ] ẊẊẊẊẊẊẊ",
@@ -5641,6 +5804,43 @@
       "params": {
         "name": "text",
         "detail": "text"
+      }
+    },
+    "realm.test.source": {
+      "translation": "[Ẋ Source: {name} (profile {profile}) Ẋ] ẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "profile": "text"
+      }
+    },
+    "realm.test.source.same": {
+      "translation": "[Ẋ Source: {name} Ẋ] ẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "realm.test.iso.locked": {
+      "translation": "[Ẋ A test copy always gets an install and a save folder of its own, so these two stay on. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.character.option.cloud": {
+      "translation": "[Ẋ {option} (Steam Cloud) Ẋ] ẊẊẊẊẊ",
+      "params": {
+        "option": "text"
+      }
+    },
+    "realm.test.character.where": {
+      "translation": "[Ẋ Characters saved on this PC and in Steam Cloud are listed. A character you do not see here was last saved on another PC; open Valheim once on this one so it is downloaded. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "realm.test.reason.isolated": {
+      "translation": "[Ẋ {name} is a test copy, so it keeps an install and a save folder of its own. Pick another folder that is only this realm's, or leave it as it is. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "realm.new.name.taken.named": {
+      "translation": "[Ẋ There is already a realm named {name}. Pick another name. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
       }
     },
     "realm.new.working": {

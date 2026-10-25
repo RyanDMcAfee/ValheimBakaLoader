@@ -296,6 +296,11 @@ const HOST_SENTENCES=[
   /* Make a test copy of a realm that was deleted while the dialog was open, and the six ways
      the character copy can be refused. Every one of them leaves the character untouched. */
   {named:"servers.create.testCopySourceMissing", textId:"realm.test.reason.source_missing"},
+  /* 1.3.0: a name taken is said with the name, and a test copy keeps its own folders. */
+  {named:"servers.create.nameTaken",       textId:"realm.new.name.taken.named"},
+  {named:"servers.save.testCopyIsolated",  textId:"realm.test.reason.isolated"},
+  {named:"testcopy.follow.noSuchRealm",    textId:"mods.testcopy.follow.reason.no_such_realm"},
+  {named:"testcopy.follow.notACopy",       textId:"mods.testcopy.follow.reason.not_a_copy"},
   {named:"characters.copy.badRef",         textId:"realm.test.character.reason.bad_ref"},
   {named:"characters.copy.missing",        textId:"realm.test.character.reason.missing"},
   {named:"characters.copy.unreadable",     textId:"realm.test.character.reason.unreadable"},
@@ -2639,9 +2644,10 @@ function chipLookClass(s){
    source was deleted keeps its T as an outline, and says the source is gone. */
 function chipTestBadge(s){
   if(!s||!s.testCopyOf) return "";
+  const source=s.testCopyOfName||s.testCopyOf;
   const tip=s.testSourceGone
-    ?T("realm.test.badge.title.gone",{source:s.testCopyOf})
-    :T("realm.test.badge.title",{source:s.testCopyOf});
+    ?T("realm.test.badge.title.gone",{source})
+    :T("realm.test.badge.title",{source});
   return `<span class="srvtest${s.testSourceGone?" gone":""}" title="${esc(tip)}">${esc(T("realm.test.badge"))}</span>`;
 }
 function chipHtml(s){
@@ -2821,9 +2827,19 @@ async function renameServer(name){
     v=(v||"").trim(); if(!v||v===name) return;
     const r=await rpc("profiles.rename",{name,newName:v});
     if(r===FAIL) return;
-    if(S.profileName===name){S.profileName=v;if(S.prefs)S.prefs.ProfileName=v;}
-    sagaRenameRealm(name,v);
-    await refreshServers(); toast("ᚱ "+T("realm.renamed.toast",{name:v}));
+    /* The reply is the profile as it now stands (1.3.0): its stored name, which can differ
+       from what was typed, and the in-game name the title bar shows, carried when it was
+       the old name or blank. */
+    const done=testCopyRenamed(r,name,v);
+    if(S.profileName===name){
+      S.profileName=done.profile;
+      if(S.prefs){S.prefs.ProfileName=done.profile;if(done.name!=null) S.prefs.Name=done.name;}
+      const tb=$("#tbSrv");
+      if(tb&&S.prefs&&S.prefs.Name) revealText(tb,S.prefs.Name.toUpperCase());
+      renderAppBar();
+    }
+    sagaRenameRealm(name,done.profile);
+    await refreshServers(); toast("ᚱ "+T("realm.renamed.toast",{name:done.profile}));
   });
 }
 async function duplicateServer(name){
@@ -2853,6 +2869,7 @@ async function testCopyServer(name){
   addServerProfile({profile:name,world,
     password:(S.prefs&&S.prefs.Password)||"",
     listed:!!(S.prefs&&S.prefs.Public),
+    gameName:(S.prefs&&S.prefs.Name)||"",
     test:true});
 }
 /* The title bar's line for the realm on screen, from the strip's own list. */
@@ -3315,14 +3332,65 @@ function dupSameWorldProblem(m,source,sourceDials,copying,world,name){
 /* The suffix a test copy's realm, world and character are offered under. Truncated asked for
    something a host would never type by chance, which "_test" is not. */
 const TEST_COPY_SUFFIX="_bakaT";
-/* The name a test copy of `source` is offered under: source_bakaT, or source_bakaT2, 3 and on
+/* A name as the host side cleans a test copy's (Tools/TestCopyNaming.cs, 1.3.0): letters, marks,
+   digits, space, underscore and dash, composed first and trimmed of spaces. The name becomes the
+   copy's install and save folder names, so the two sides have to agree to the character. */
+function testCopyClean(s){
+  return String(s??"").normalize("NFC").replace(/[^\p{L}\p{M}\p{Nd} _-]/gu,"").replace(/^ +| +$/g,"");
+}
+/* The name a test copy of `source` ({Name, ProfileName}) is offered under: the source's in-game
+   name cleaned, or its profile name when that cleans to nothing, then _bakaT, or _bakaT2, 3 and on
    when a realm already has that name, so the dialog never opens on a name it would refuse. */
 function testCopyName(source,servers){
-  const taken=new Set((servers||[]).map(s=>String(s&&s.name).toLowerCase()));
-  const base=String(source||"").trim()+TEST_COPY_SUFFIX;
+  const src=source&&typeof source==="object"?source:{ProfileName:source};
+  const taken=new Set((servers||[]).map(s=>String(s&&s.name).trim().toLowerCase()));
+  const base=(testCopyClean(src.Name)||testCopyClean(src.ProfileName))+TEST_COPY_SUFFIX;
   if(!taken.has(base.toLowerCase())) return base;
-  for(let n=2;n<100;n++){const next=base+n;if(!taken.has(next.toLowerCase())) return next;}
-  return base;
+  for(let n=2;;n++){const next=base+n;if(!taken.has(next.toLowerCase())) return next;}
+}
+/* What servers.create is sent as the copy's name: the typed one cleaned the host's way, or the
+   offered one when nothing of it is left. The reply's ProfileName is still the one to trust. */
+function testCopySend(typed,source,servers){
+  return testCopyClean(typed)||testCopyName(source,servers);
+}
+/* The Source line of the dialog: the in-game name with the profile it is saved as beside it, or
+   the one name when the two are the same. */
+function testCopySourceLabel(name,profile){
+  const n=String(name||"").trim(), p=String(profile||"").trim();
+  if(!n||n===p) return T("realm.test.source.same",{name:p||n});
+  return T("realm.test.source",{name:n,profile:p});
+}
+/* The two isolation switches of the dialog held on, out of the pointer's and the keyboard's
+   reach, with the reason under them: the host side makes a test copy's install and save folder
+   its own whatever arrives. */
+function testCopyLockIsolation(iso,saveIso,note){
+  let held=false;
+  for(const t of [iso,saveIso]){
+    if(!t) continue;
+    t.classList.add("on");
+    t.style.opacity=".4";
+    t.style.pointerEvents="none";
+    t.title=T("realm.test.iso.locked");
+    gateDialogSwitch(t);
+    markSwitch(t);
+    held=true;
+  }
+  if(held&&note){note.textContent=T("realm.test.iso.locked");reveal(note,true);}
+  return held;
+}
+/* What a profiles.rename reply says the realm is now: its stored name (the reply's, never what
+   was typed) and its in-game name, or null when the reply did not carry one. */
+function testCopyRenamed(reply,oldName,typed){
+  const r=reply&&typeof reply==="object"?reply:null;
+  return {profile:String((r&&r.ProfileName)||typed||oldName||""),name:r&&typeof r.Name==="string"?r.Name:null};
+}
+/* A settings save the host side refused because the realm is a test copy: the two folder boxes go
+   back to what is stored, so the form does not go on showing a path that was never saved. */
+function testCopyIsolatedRestore(cur,exeBox,saveBox){
+  if(!cur) return false;
+  if(exeBox) exeBox.value=cur.ServerExePath||"";
+  if(saveBox) saveBox.value=cur.SaveDataFolderPath||"";
+  return true;
 }
 /* The world a test copy's world is offered under, or "" when the source has none. A source
    world near the length limit has its end cut so the suffix still fits, so the dialog never
@@ -3365,9 +3433,12 @@ function testCopyCharacterOptions(list){
   for(const c of list||[]){
     if(!c||!c.folder||!c.file) continue;
     const value=c.folder+"/"+c.file;
-    if(c.problem||!c.name) out.push({value,label:T("realm.test.character.option.unreadable",{file:c.file}),disabled:true});
-    else if(c.copyExists) out.push({value,label:T("realm.test.character.option.exists",{name:c.name,copy:c.copyName}),disabled:false});
-    else out.push({value,label:T("realm.test.character.option",{name:c.name,copy:c.copyName}),disabled:false});
+    /* A character kept in Steam Cloud says so, so a cloud one and a local one of the same name
+       can be told apart. Its copy is written to characters_local. */
+    const where=label=>c.source==="cloud"?T("realm.test.character.option.cloud",{option:label}):label;
+    if(c.problem||!c.name) out.push({value,label:where(T("realm.test.character.option.unreadable",{file:c.file})),disabled:true});
+    else if(c.copyExists) out.push({value,label:where(T("realm.test.character.option.exists",{name:c.name,copy:c.copyName})),disabled:false});
+    else out.push({value,label:where(T("realm.test.character.option",{name:c.name,copy:c.copyName})),disabled:false});
   }
   return out;
 }
@@ -3395,7 +3466,8 @@ function testCopyCharacterProblem(list,value){
 }
 /* What servers.create is sent for a test copy, on top of what the Duplicate dialog sends: the
    source by name, and the listing off whatever the switch says. */
-function testCopyPayload(payload,source){
+function testCopyPayload(payload,source,servers){
+  payload.name=testCopySend(payload.name,{Name:source.gameName,ProfileName:source.profile},servers);
   payload.testCopyOf=source.profile;
   payload.public=false;
   return payload;
@@ -3404,7 +3476,7 @@ function testCopyPayload(payload,source){
    that the source is gone. "" for a realm that is not a test copy. */
 function testCopyHead(s){
   if(!s||!s.testCopyOf) return "";
-  return s.testSourceGone?T("realm.test.head.gone"):T("realm.test.head",{source:s.testCopyOf});
+  return s.testSourceGone?T("realm.test.head.gone"):T("realm.test.head",{source:s.testCopyOfName||s.testCopyOf});
 }
 /* TEST-COPY-END */
 async function addServerProfile(source){
@@ -3419,6 +3491,9 @@ async function addServerProfile(source){
      off, and a character to copy as well if the host wants one. */
   const testing=duplicating&&!!source.test;
   const okLabel=()=>testing?T("realm.test.ok"):duplicating?T("realm.duplicate.ok"):T("realm.new.ok");
+  /* A test copy is named after the source's in-game name (1.3.0), the name the host knows it by. */
+  const testSrc=testing?{Name:source.gameName,ProfileName:source.profile}:null;
+  const testSrcName=testing?(String(source.gameName||"").trim()||source.profile):"";
   // The realm-forge dials for a brand-new world: their own ids so they never collide with the
   // settings-page fMod* dials. Every dial opens on Normal (""); a duplicate that copies the
   // world moves them to the source's values once those are read.
@@ -3430,10 +3505,11 @@ async function addServerProfile(source){
       `<select id="wsMod_${key}">${wgOptions(key,"")}</select>`+
       `<div class="fieldnote wgnote" id="wsNote_${key}"></div>`+srcNote("wsSrc_"+key)+`</div>`).join("");
   const m=modalOpen(
-    `<div class="mtitle">${esc(testing?T("realm.test.title",{name:source.profile}):duplicating
+    `<div class="mtitle">${esc(testing?T("realm.test.title",{name:testSrcName}):duplicating
       ?T("realm.duplicate.title",{name:source.profile}):T("realm.new.title"))}</div>`+
     `<div class="mbody" style="display:flex;flex-direction:column;gap:2px">`+
-      (testing?`<div class="mbody-note" id="wsTestNote">${esc(T("realm.test.note",{name:source.profile}))}</div>`:"")+
+      (testing?`<div class="mbody-note" id="wsTestNote">${esc(T("realm.test.note",{name:testSrcName}))}</div>`+
+        `<div class="fieldnote" id="wsTestSource">${esc(testCopySourceLabel(source.gameName,source.profile))}</div>`:"")+
       `<div class="field"><label>${esc(T("realm.new.name.label"))}</label>`+
         `<input type="text" id="wsName" placeholder="${esc(T("realm.new.name.placeholder"))}" spellcheck="false" autocomplete="off">`+
         `<div class="fieldnote" id="wsNameNote"></div>`+srcNote("wsNameSrc")+`</div>`+
@@ -3479,12 +3555,14 @@ async function addServerProfile(source){
         `<div class="toggle on" id="wsSeed"></div></div>`+
       `<div class="togglerow" title="${esc(T("realm.new.savedir.title"))}"><span class="tl">${esc(T("realm.new.savedir.label"))}</span>`+
         `<div class="toggle on" id="wsSaveIso"></div></div>`+
+      (testing?`<div class="fieldnote" id="wsIsoLock" style="display:none"></div>`:"")+
       /* The character step of a test copy. Optional, and read only until the copy is made:
          the copy is a new file beside the character, never the character itself. */
       (testing
         ?`<div class="field" id="wsCharField"><label>${esc(T("realm.test.character.label"))}</label>`+
            `<select id="wsChar"><option value="">${esc(T("realm.test.character.none"))}</option></select>`+
-           `<div class="fieldnote" id="wsCharNote">${esc(Native.available?T("realm.test.character.loading"):T("realm.test.character.none.note"))}</div></div>`
+           `<div class="fieldnote" id="wsCharNote">${esc(Native.available?T("realm.test.character.loading"):T("realm.test.character.none.note"))}</div>`+
+           `<div class="fieldnote" id="wsCharWhere">${esc(T("realm.test.character.where"))}</div></div>`
         :"")+
       `<div class="mbody-note" id="wsStatus"></div>`+
     `</div>`+
@@ -3529,9 +3607,10 @@ async function addServerProfile(source){
   /* A test copy opens on its own names, the realm's and the world's, and with the listing
      held off. The names stay editable; the listing does not. */
   if(testing){
-    nameI.value=testCopyName(source.profile,S.servers);
+    nameI.value=testCopyName(testSrc,S.servers);
     if(worldI) worldI.value=testCopyWorld(source.world);
     testCopyLockPublic(pubT,m.querySelector("#wsPublicLock"));
+    testCopyLockIsolation(iso,saveIso,m.querySelector("#wsIsoLock"));
   }
   /* This PC's characters for the test copy's drop down, read when the dialog opens. */
   const charSel=m.querySelector("#wsChar"), charNote=m.querySelector("#wsCharNote");
@@ -3544,10 +3623,13 @@ async function addServerProfile(source){
         if(!m.isConnected) return;
         chars=Array.isArray(list)?list:[];
         const keep=charSel.value;
-        charSel.innerHTML=testCopyCharacterOptions(chars).map(o=>
-          `<option value="${esc(o.value)}"${o.disabled?" disabled":""}>${esc(o.label)}</option>`).join("");
-        if(keep&&testCopyCharacter(chars,keep)) charSel.value=keep;
-        if(charNote) charNote.textContent=chars.length?testCopyCharacterNote(chars,charSel.value):T("realm.test.character.empty");
+        /* The list lands as one eased change of the field's height, never a jump. */
+        revealSwap(m.querySelector("#wsCharField"),()=>{
+          charSel.innerHTML=testCopyCharacterOptions(chars).map(o=>
+            `<option value="${esc(o.value)}"${o.disabled?" disabled":""}>${esc(o.label)}</option>`).join("");
+          if(keep&&testCopyCharacter(chars,keep)) charSel.value=keep;
+          if(charNote) charNote.textContent=chars.length?testCopyCharacterNote(chars,charSel.value):T("realm.test.character.empty");
+        });
       });
     }
   }
@@ -3665,7 +3747,7 @@ async function addServerProfile(source){
     nameI.classList.remove("bad");
     /* A test copy names the realm that already has the name, because the name it was
        offered under is the source's own with the suffix, and the host may have typed it. */
-    const takenTest=testing?testCopyNameProblem(name,S.servers):null;
+    const takenTest=testing?testCopyNameProblem(testCopySend(name,testSrc,S.servers),S.servers):null;
     if(takenTest){statusN.textContent=takenTest;nameI.focus();return;}
     if((S.servers||[]).some(s=>String(s.name).toLowerCase()===name.toLowerCase())){
       statusN.textContent=T("realm.new.name.taken"); return;
@@ -3722,11 +3804,13 @@ async function addServerProfile(source){
        the decision on the far side of the wire, where a handler that read the pair and not
        the flag would copy a world the host had just said not to copy. */
     if(copyable&&copyT&&on(copyT)) payload.copyWorldFrom={profile:source.profile,world:source.world};
-    if(testing) testCopyPayload(payload,source);
+    if(testing) testCopyPayload(payload,source,S.servers);
     const created=await rpc("servers.create",payload);
     if(created===FAIL||!created){
       okB.disabled=false; okB.textContent=okLabel();
-      statusN.textContent=T("realm.new.failed");
+      /* A refusal the host side named (a name another realm took meanwhile) is said here too,
+         and the dialog stays open on what was typed. */
+      statusN.textContent=hostSentence(window.BAKA_ERR_ID,window.BAKA_ERR_PARAMS)||T("realm.new.failed");
       return;
     }
     modalClose();
@@ -7506,7 +7590,38 @@ const GALE_STATUS=[
   {textId:"mods.gale.configs.refused.too_many"},
   {textId:"mods.gale.configs.refused.unsafe"},
   {textId:"mods.gale.configs.refused.too_large"},
+  /* A realm that follows one of its own test copies (1.3.0): the copy is read off this PC, and
+     these are the ways that read can come back. */
+  {textId:"mods.testcopy.check.gone"},
+  {textId:"mods.testcopy.check.not_a_copy"},
+  {textId:"mods.testcopy.check.shares_install"},
+  {textId:"mods.testcopy.check.unreadable"},
+  {textId:"mods.testcopy.configs.too_many"},
+  {textId:"mods.testcopy.configs.too_large"},
+  {textId:"mods.testcopy.configs.unreadable"},
 ];
+/* The sentences that name Gale or a profile, and the ones said in their place while the realm
+   follows a test copy (feed "testcopy"): the same line, about the copy on this PC. */
+const GALE_LOCAL=[
+  {galeId:"mods.gale.status.checking",  localId:"mods.testcopy.status.checking"},
+  {galeId:"mods.gale.status.current",   localId:"mods.testcopy.status.current"},
+  {galeId:"mods.gale.status.waved",     localId:"mods.testcopy.status.waved"},
+  {galeId:"mods.gale.status.only_here", localId:"mods.testcopy.status.only_here"},
+  {galeId:"mods.gale.dialog.intro",     localId:"mods.testcopy.dialog.intro"},
+  {galeId:"mods.gale.configs.intro",    localId:"mods.testcopy.configs.intro"},
+];
+function galeLocal(st){return !!(st&&st.feed==="testcopy");}
+function galeWord(st,id,params){
+  const row=galeLocal(st)?GALE_LOCAL.find(r=>r.galeId===id):null;
+  return T(row?row.localId:id,params);
+}
+/* The test copies of a realm a follow can be set to: still copies of it, not archived. */
+function galeTestCopies(servers,profile){
+  const p=String(profile||"").toLowerCase();
+  if(!p) return [];
+  return (servers||[]).filter(s=>s&&s.testCopyOf&&!s.testSourceGone&&!s.archived
+    &&String(s.testCopyOf).toLowerCase()===p&&String(s.name).toLowerCase()!==p).map(s=>String(s.name));
+}
 let GALE=null;            // this realm's follow, as the host side last answered it
 let GALE_BUSY=false;      // a check is out
 let GALE_REFUSED=null;    // the sentence id a refused paste gets, until the box is used again
@@ -7544,20 +7659,21 @@ function galeStampText(stamp){
    a whole entry, so no language has to glue fragments in English order. */
 function galeStatusLine(st,busy,refused){
   if(refused) return galeSentence(refused);
-  if(busy) return T("mods.gale.status.checking");
+  if(busy) return galeWord(st,"mods.gale.status.checking");
   if(!st||!st.following) return T("mods.gale.status.off");
-  const approved=st.lastApproved
-    ?T("mods.gale.status.approved",{when:galeStampText(st.lastApproved)})
-    :T("mods.gale.status.approved.never");
+  /* A test copy's approval is a fingerprint of its mods, not a date, so it is never printed. */
+  const approved=!st.lastApproved?T("mods.gale.status.approved.never")
+    :galeLocal(st)?T("mods.testcopy.status.approved")
+    :T("mods.gale.status.approved",{when:galeStampText(st.lastApproved)});
   const c=st.check;
   let first;
   if(!c) first=T("mods.gale.status.never");
   else if(!c.ok) first=T("mods.gale.status.failed",{reason:galeSentence(c.statusId,{game:String(c.statusGame||"")}),at:agoAt(c.at)});
-  else if(c.addCount+c.updateCount===0) first=T("mods.gale.status.current",{at:agoAt(c.at)});
+  else if(c.addCount+c.updateCount===0) first=galeWord(st,"mods.gale.status.current",{at:agoAt(c.at)});
   else if(c.due) first=T("mods.gale.status.due",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
-  else first=T("mods.gale.status.waved",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
+  else first=galeWord(st,"mods.gale.status.waved",{at:agoAt(c.at),add:c.addCount,update:c.updateCount});
   const skipped=c&&c.ok&&c.skipped>0?" "+T("mods.gale.status.skipped",{count:c.skipped}):"";
-  const here=c&&c.ok&&c.onlyHereCount>0?" "+T("mods.gale.status.only_here",{count:c.onlyHereCount}):"";
+  const here=c&&c.ok&&c.onlyHereCount>0?" "+galeWord(st,"mods.gale.status.only_here",{count:c.onlyHereCount}):"";
   return first+skipped+here+" "+approved;
 }
 /* Whether Review has anything to open on: mods to add or update, mods only this server has, or
@@ -7587,10 +7703,21 @@ function renderGaleBox(){
   const following=!!(GALE&&GALE.following);
   const btn=$("#galeFollowBtn"), box=$("#galeBox");
   if(btn){
-    btn.textContent=following?T("mods.gale.button.following"):T("mods.gale.box.label");
+    btn.textContent=galeLocal(GALE)?T("mods.testcopy.button.following",{name:String(GALE.testCopy||"")})
+      :following?T("mods.gale.button.following"):T("mods.gale.box.label");
     btn.setAttribute("aria-expanded",following&&GALE_BOX_OPEN?"true":"false");
   }
   reveal(box,following&&GALE_BOX_OPEN);
+  /* Follow my test copy: offered on a realm that has a test copy of its own, and not while it
+     follows one already (the button above names it then, and Forget lets it go). */
+  const tc=$("#tcFollow");
+  if(tc){
+    const copies=galeLocal(GALE)?[]:galeTestCopies(S.servers,S.profileName);
+    const html=copies.map(n=>`<button class="btn btn-ghost btn-sm" style="margin-left:8px" data-tc-follow="${esc(n)}"`+
+      ` title="${esc(T("mods.testcopy.follow.title",{name:n}))}">${esc(T("mods.testcopy.follow",{name:n}))}</button>`).join("");
+    if(copies.length&&tc.innerHTML!==html) tc.innerHTML=html;
+    reveal(tc,copies.length>0,{fade:true});
+  }
   /* The paste dialog's own line, while it is open: the refusal, or what following does. */
   const dlg=$("#galeDlgStat");
   if(dlg){
@@ -7619,7 +7746,7 @@ function conditionGale(){
   const st=GALE, c=st&&st.check;
   if(!c||!c.ok||!c.due){clearCondition("galeChanged");return;}
   const seq=c.seq, profile=st.profile;
-  setCondition("galeChanged",{sev:"info",title:T("cond.gale.title"),
+  setCondition("galeChanged",{sev:"info",title:galeLocal(st)?T("mods.testcopy.cond.title"):T("cond.gale.title"),
     msg:T("cond.gale.msg",{add:c.addCount,update:c.updateCount}),
     actionsHtml:`<button class="btn btn-ember btn-sm" id="cbGaleReview">${esc(T("cond.gale.review"))}</button>`,
     again:()=>conditionGale(),
@@ -7649,6 +7776,8 @@ async function galeCheck(){
 async function galeCheckNow(){
   if(!Native.available){toast("ᛋ "+T("mods.gale.preview.toast"));return;}
   if(GALE_BUSY||GALE_INSTALLING) return;
+  /* A followed test copy has no code to store: Check now reads the copy again. */
+  if(galeLocal(GALE)){GALE_REFUSED=null;await galeCheck();return;}
   const stored=GALE&&GALE.id?GALE.id:"";
   /* The code box lives in the paste dialog now; with the dialog closed, Check now checks the
      code that is saved, and never reads a missing box as a cleared one. */
@@ -7667,7 +7796,10 @@ async function galeCheckNow(){
 async function galeForget(){
   if(!Native.available||GALE_BUSY||GALE_INSTALLING) return;
   GALE_REFUSED=null;
-  const st=await Native.call("gale.forget",{profile:S.profileName||null}).catch(()=>null);
+  /* Forget on a followed test copy lets go of the copy alone; a Gale code the realm had is kept. */
+  const st=galeLocal(GALE)
+    ?await Native.call("testcopy.follow",{profile:S.profileName||null,copy:null}).catch(()=>null)
+    :await Native.call("gale.forget",{profile:S.profileName||null}).catch(()=>null);
   const input=$("#galeId"); if(input) input.value="";
   if(st) galeApply(st); else renderGaleBox();
 }
@@ -7688,7 +7820,9 @@ function galeDialogRows(st){
       continue;
     }
     if(r.kind==="same"){same.push({name:String(r.name),version:String(r.serverVersion||r.profileVersion||"")});continue;}
-    if(kind!=="add"&&kind!=="update") continue;
+    /* A rebuilt mod on a test copy (kind changed: the same version, other files) is offered
+       the way an update is, with its own word beside it. */
+    if(kind!=="add"&&kind!=="update"&&kind!=="changed") continue;
     /* From 1.3.0 a row starts ticked only when the host side says the host ticked it before.
        A pinned build Thunderstore no longer has keeps its mark and starts unticked, so it is
        not offered as a plain add again; ticking it tries it once more. */
@@ -7755,7 +7889,7 @@ function galeRunOff(st){
 /* The dialog's head: what the changes come from. Kept in one place so a feed other than a
    Gale profile can name itself here. */
 function galeDialogHead(st){
-  return T("mods.gale.dialog.title");
+  return galeLocal(st)?T("mods.testcopy.dialog.title",{name:String(st.testCopy||"")}):T("mods.gale.dialog.title");
 }
 /* A section's head: the chevron the halls' sections have (the same look, turned by the
    dialog's own open class, so it never joins SECTIONS), the rune, the name, the count, and the
@@ -7787,7 +7921,9 @@ function galeVersionHtml(r){
   const v=r.kind==="update"
     ?esc(T("mods.gale.dialog.version.update",{from:String(r.serverVersion||""),to:String(r.profileVersion||"")}))
     :esc(r.profileVersion||"");
-  return v+
+  const rebuilt=r.kind==="changed"
+    ?` <span class="galeold" title="${esc(T("mods.testcopy.dialog.changed.title"))}">${esc(T("mods.testcopy.dialog.changed"))}</span>`:"";
+  return v+rebuilt+
     (r.downgrade?` <span class="galeold" title="${esc(T("mods.gale.dialog.older.title"))}">${esc(T("mods.gale.dialog.older"))}</span>`:"")+
     (r.notAvailable?` <span class="galeold" title="${esc(T("mods.gale.dialog.not_available.title"))}">${esc(T("mods.gale.dialog.not_available"))}</span>`:"");
 }
@@ -7797,7 +7933,7 @@ function galeModsHtml(st){
   const tick=(r,label)=>`<input type="checkbox" data-gale-row="${esc(r.name)}"${galeModTicked(r)?" checked":""} aria-label="${esc(label)}">`;
   const work=rows.map(r=>
     `<tr><td>${tick(r,T("mods.gale.dialog.tick.aria",{name:r.name}))}</td><td class="mono">${esc(r.name)}</td>`+
-    `<td><span class="galestate ${r.kind==="update"?"update":"add"}">${esc(r.kind==="update"?T("mods.gale.dialog.state.update"):T("mods.gale.dialog.state.add"))}</span></td>`+
+    `<td><span class="galestate ${r.kind==="add"?"add":"update"}">${esc(r.kind==="add"?T("mods.gale.dialog.state.add"):T("mods.gale.dialog.state.update"))}</span></td>`+
     `<td class="mono">${galeVersionHtml(r)}</td></tr>`).join("");
   const here=onlyHere.map(r=>
     `<tr><td>${r.off?"":tick(r,T("mods.gale.only_here.off.aria",{name:r.name}))}</td><td class="mono">${esc(r.name)}</td>`+
@@ -7805,7 +7941,7 @@ function galeModsHtml(st){
     (r.off?` <span class="pill grey" title="${esc(T("mods.status.off.tip"))}">${esc(T("mods.status.off"))}</span>`:"")+`</td>`+
     `<td class="mono">${esc(r.version)}</td></tr>`).join("");
   const table=rows.length||onlyHere.length
-    ?`<div class="mbody-note">${esc(T("mods.gale.dialog.intro"))}</div>`+
+    ?`<div class="mbody-note">${esc(galeWord(st,"mods.gale.dialog.intro"))}</div>`+
       `<table class="galetbl">${GALE_COLS}<thead><tr><th></th>`+
       `<th>${esc(T("mods.gale.dialog.col.mod"))}</th>`+
       `<th>${esc(T("mods.gale.dialog.col.state"))}</th>`+
@@ -7827,7 +7963,9 @@ function galeModsHtml(st){
     :bep.inProfile
       ?`<div class="mbody-note" style="margin-top:8px">${esc(T("mods.gale.dialog.bepinex_first"))}</div>`
       :`<div class="mwarn">⚠ ${esc(T("mods.gale.dialog.bepinex_missing"))}</div>`;
-  return empty+table+folded+note+bepNote;
+  /* The world never travels back from a test copy, and the dialog says so in so many words. */
+  const world=galeLocal(st)?`<div class="mbody-note" id="galeWorldNote" style="margin-top:8px">${esc(T("mods.testcopy.dialog.world"))}</div>`:"";
+  return empty+table+folded+note+bepNote+world;
 }
 function galeDialogHtml(st){
   const held=galeHeldBy(st);
@@ -7912,7 +8050,7 @@ function galeConfigsHtml(st){
   if(!c.ok) return `<div class="mbody-note">${esc(galeSentence(c.statusId,{},"mods.gale.configs.fetch.network"))}</div>`;
   const files=galeConfigFiles(cfg);
   const work=files.filter(f=>f.state!=="same"), same=files.filter(f=>f.state==="same");
-  let out=`<div class="mbody-note">${esc(T("mods.gale.configs.intro"))}</div>`;
+  let out=`<div class="mbody-note">${esc(galeWord(st,"mods.gale.configs.intro"))}</div>`;
   if(!files.length) out+=`<div class="mbody-note">${esc(T("mods.gale.configs.none"))}</div>`;
   else{
     out+=`<div class="mbody-note galecfgcounts">${esc(T("mods.gale.configs.counts",{added:Number(c.added)||0,changed:Number(c.changed)||0,same:Number(c.same)||0}))}</div>`;
@@ -8181,6 +8319,8 @@ async function galeInstall(st,ticked,unticked){
     if(d&&d.state) galeApply(d.state);
     return {stopped:false};
   }
+  /* A followed test copy hands its mod folders over in one call, never through Thunderstore. */
+  if(galeLocal(st)) return galePullLocal(st,ticked);
   GALE_INSTALLING=true; renderGaleBox();
   S.modsUpdating=true; S.modRowStatus=S.modRowStatus||{};
   let done=0, failed=0, missing=0, stopped=false;
@@ -8246,6 +8386,65 @@ async function galeInstall(st,ticked,unticked){
   if(isActiveProfile(profile)) await scanMods({force:false});
   return {stopped};
 }
+/* The ways testcopy.pullMods says no, each with its sentence. A server that came up and a realm
+   switch are the walk's own two, said the way the Gale walk says them. */
+const GALE_PULL_REASONS=[
+  {reason:"notFollowing",   textId:"mods.testcopy.pull.reason.not_following"},
+  {reason:"copyGone",       textId:"mods.testcopy.pull.reason.copy_gone"},
+  {reason:"notACopy",       textId:"mods.testcopy.pull.reason.not_a_copy"},
+  {reason:"sharesInstall",  textId:"mods.testcopy.pull.reason.shares_install"},
+  {reason:"copyUnreadable", textId:"mods.testcopy.pull.reason.copy_unreadable"},
+  {reason:"notInCopy",      textId:"mods.testcopy.pull.reason.not_in_copy"},
+  {reason:"copyFailed",     textId:"mods.testcopy.pull.reason.copy_failed"},
+  {reason:"busy",           textId:"mods.testcopy.pull.reason.busy"},
+  {reason:"noServerPath",   textId:"mods.testcopy.pull.reason.no_server_path"},
+];
+/* The ones that stop the configs after it too: nothing was copied and the realm is not as shown. */
+const GALE_PULL_STOPS=["serverRunning","realmChanged","busy","notFollowing","copyGone","notACopy","sharesInstall","copyUnreadable","noServerPath"];
+function galePullSentence(r){
+  const p=(r&&r.ErrorParams)||{};
+  if(r&&r.Reason==="serverRunning") return T("mods.gale.install.server_running.toast",{name:p.name||S.profileName||""});
+  if(r&&r.Reason==="realmChanged") return T("mods.gale.install.realm_changed.toast");
+  const row=r?GALE_PULL_REASONS.find(x=>x.reason===r.Reason):null;
+  if(row) return T(row.textId,{copy:String(p.copy||""),mod:String(p.mod||""),done:Number(p.done)||0,detail:String(p.detail||"")});
+  return T("mods.add.failed.toast",{detail:(r&&r.Error)||T("common.error.unknown")});
+}
+/* The ticked rows from a followed test copy: one testcopy.pullMods with their names, the realm
+   named. A clean pull stores the approval; one that stopped short has the counts made again
+   against the disk, so what went in is not offered twice. */
+async function galePullLocal(st,ticked){
+  const profile=st.profile, seq=st.check.seq;
+  GALE_INSTALLING=true; renderGaleBox();
+  S.modsUpdating=true;
+  const r=await rpc("testcopy.pullMods",{profile,mods:ticked.map(x=>x.name)});
+  S.modsUpdating=false; GALE_INSTALLING=false;
+  if(r===FAIL||!r){renderGaleBox();return {stopped:true};}
+  if(r.state) galeApply(r.state);
+  if(r.ok){
+    const d=await Native.call("gale.dismiss",{profile,seq}).catch(()=>null);
+    if(d&&d.state) galeApply(d.state);
+    toast("ᚨ "+T("mods.testcopy.pull.done.toast",{count:(r.pulled||[]).length,name:String(st.testCopy||""),folder:String(r.backup||"")}));
+  }else{
+    toast("ᚦ "+galePullSentence(r));
+    const re=await Native.call("gale.rescan",{profile}).catch(()=>null);
+    if(!re||!re.state||!galeApply(re.state)) renderGaleBox();
+  }
+  if(isActiveProfile(profile)) await scanMods({force:false});
+  return {stopped:!r.ok&&GALE_PULL_STOPS.includes(r.Reason)};
+}
+/* Follow my test copy: the realm takes its mods and configs from that copy from now on, and the
+   check runs at once, the way a pasted code's does. A refusal is the host side's sentence. */
+async function galeFollowCopy(copy){
+  if(!Native.available){toast("ᛋ "+T("mods.gale.preview.toast"));return false;}
+  if(GALE_BUSY||GALE_INSTALLING||!copy) return false;
+  GALE_REFUSED=null;
+  const st=await rpc("testcopy.follow",{profile:S.profileName||null,copy});
+  if(st===FAIL||!st) return false;
+  GALE_BOX_OPEN=true;
+  galeApply(st);
+  await galeCheck();
+  return true;
+}
 /* The Follow button. With a code saved it opens and closes the line below; with none it opens
    the paste dialog, whose Follow saves the code for this realm and runs the check. */
 function galeFollowClick(){
@@ -8287,6 +8486,10 @@ async function galeFollowSubmit(){
 }
 /* GALE-END */
 $("#galeFollowBtn")?.addEventListener("click",()=>galeFollowClick());
+$("#tcFollow")?.addEventListener("click",e=>{
+  const b=e.target&&e.target.closest?e.target.closest("[data-tc-follow]"):null;
+  if(b) galeFollowCopy(b.getAttribute("data-tc-follow"));
+});
 $("#galeCheckBtn")?.addEventListener("click",()=>galeCheckNow());
 $("#galeForgetBtn")?.addEventListener("click",()=>galeForget());
 $("#galeReviewBtn")?.addEventListener("click",()=>galeDialog());
@@ -16017,7 +16220,12 @@ async function saveConfigPress(opts){
   delete prefs.EffectiveServerExePath; delete prefs.ServerExePathSource;
   delete prefs.EffectiveSaveDataFolderPath; delete prefs.SaveDataFolderPathSource;
   const r=await rpc("profiles.save",{name,prefs});
-  if(r===FAIL) return;
+  if(r===FAIL){
+    /* A test copy keeps its own install and save folder: the refusal is said by the toast, and
+       the two boxes go back to what is stored. */
+    if(window.BAKA_ERR_ID==="servers.save.testCopyIsolated") testCopyIsolatedRestore(cur,$("#fServerExe"),$("#fSaveDir"));
+    return;
+  }
   // World dials ride along with Save Config, keyed to the selected world. Only write them
   // when S.worldMods actually holds THIS world's dials AND they were really read back off
   // the host side: that way an unpopulated, a stale-world or an unanswered dial set can

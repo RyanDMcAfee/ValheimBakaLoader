@@ -9046,6 +9046,16 @@ namespace ValheimBakaLoader.Forms
             // Server files on disk are never touched.
             RegisterRpc("setup.reset", p =>
             {
+                // Only the shared paths go back to the wizard's answers. An install BakaLoader made
+                // for one realm alone, and a save folder only that realm keeps its worlds in, are
+                // that realm's own: cleared, an isolated realm or a test copy would wake up on the
+                // base install and the shared saves, the very thing it was made to stay apart from.
+                // The app wide save folder is read before the reset, so a realm that pinned it is
+                // still read as sharing it.
+                var all = ServerPrefsProvider.LoadPreferences().ToList();
+                var appSaves = UserPrefsProvider.LoadPreferences().SaveDataFolderPath;
+                var own = all.Select(x => (Prefs: x, Install: RunsOnOwnInstall(x, all), Saves: HasOwnSaveFolder(x, all, appSaves))).ToList();
+
                 UserPrefsProvider.Mutate(prefs =>
                 {
                     prefs.ServerExePath = Resources.DefaultServerPath;
@@ -9053,13 +9063,14 @@ namespace ValheimBakaLoader.Forms
                     prefs.SetupCompleted = false;
                 });
 
-                foreach (var profile in ServerPrefsProvider.LoadPreferences().ToList())
+                foreach (var (profile, ownInstall, ownSaves) in own)
                 {
-                    if (string.IsNullOrWhiteSpace(profile.ServerExePath)
-                        && string.IsNullOrWhiteSpace(profile.SaveDataFolderPath)) continue;
+                    var clearExe = !ownInstall && !string.IsNullOrWhiteSpace(profile.ServerExePath);
+                    var clearSaves = !ownSaves && !string.IsNullOrWhiteSpace(profile.SaveDataFolderPath);
+                    if (!clearExe && !clearSaves) continue;
 
-                    profile.ServerExePath = null;
-                    profile.SaveDataFolderPath = null;
+                    if (clearExe) profile.ServerExePath = null;
+                    if (clearSaves) profile.SaveDataFolderPath = null;
                     ServerPrefsProvider.SavePreferences(profile);
                 }
 

@@ -342,6 +342,16 @@ namespace ValheimBakaLoader.Game
         /// <summary>The config files the host unticked while following the test copy. Kept apart from the Gale profile's. Never null on a loaded profile.</summary>
         public List<string> FollowTestCopyConfigUnticked { get; set; } = new();
 
+        /// <summary>
+        /// The mods the host ticked while following the test copy (1.3.0), kept apart from
+        /// <see cref="GaleTicked"/> so a tick given on one feed never starts a row ticked on the
+        /// other. Null until a choice is stored under the follow.
+        /// </summary>
+        public List<string> FollowTestCopyTicked { get; set; }
+
+        /// <summary>The config files the host ticked while following the test copy, kept apart from <see cref="GaleConfigTicked"/>. Null until a choice is stored.</summary>
+        public List<string> FollowTestCopyConfigTicked { get; set; }
+
         /// <summary>What a test copy follow's key starts with, so it can never equal a Gale profile id.</summary>
         public const string TestCopyFollowPrefix = "testcopy:";
 
@@ -388,13 +398,35 @@ namespace ValheimBakaLoader.Game
             else GaleConfigUnticked = NormalizeUnticked(paths);
         }
 
-        /// <summary>Stops following a test copy: the copy's name, its approval and its unticks go. A Gale profile id, if any, is left as it was.</summary>
+        /// <summary>The ticked mods of whatever this realm follows now, or null when none has been stored for it yet.</summary>
+        public List<string> GaleFeedTicked() => FollowsTestCopy() ? FollowTestCopyTicked : GaleTicked;
+
+        /// <summary>Stores the ticked mods for whatever this realm follows now, and leaves the other feed's alone.</summary>
+        public void SetGaleFeedTicked(List<string> names)
+        {
+            if (FollowsTestCopy()) FollowTestCopyTicked = NormalizeTicked(names);
+            else GaleTicked = NormalizeTicked(names);
+        }
+
+        /// <summary>The ticked config files of whatever this realm follows now, or null when none has been stored for it yet.</summary>
+        public List<string> GaleFeedConfigTicked() => FollowsTestCopy() ? FollowTestCopyConfigTicked : GaleConfigTicked;
+
+        /// <summary>Stores the ticked config files for whatever this realm follows now, and leaves the other feed's alone.</summary>
+        public void SetGaleFeedConfigTicked(List<string> paths)
+        {
+            if (FollowsTestCopy()) FollowTestCopyConfigTicked = NormalizeTicked(paths);
+            else GaleConfigTicked = NormalizeTicked(paths);
+        }
+
+        /// <summary>Stops following a test copy: the copy's name, its approval, its unticks and its ticks go. A Gale profile id, if any, is left as it was.</summary>
         public void ForgetTestCopyFollow()
         {
             FollowTestCopy = null;
             FollowTestCopyLastApproved = null;
             FollowTestCopyUnticked = new List<string>();
             FollowTestCopyConfigUnticked = new List<string>();
+            FollowTestCopyTicked = null;
+            FollowTestCopyConfigTicked = null;
         }
 
         /// <summary>
@@ -465,6 +497,8 @@ namespace ValheimBakaLoader.Game
             FollowTestCopyLastApproved = stored.FollowTestCopyLastApproved;
             FollowTestCopyUnticked = NormalizeUnticked(stored.FollowTestCopyUnticked);
             FollowTestCopyConfigUnticked = NormalizeUnticked(stored.FollowTestCopyConfigUnticked);
+            FollowTestCopyTicked = NormalizeTicked(stored.FollowTestCopyTicked);
+            FollowTestCopyConfigTicked = NormalizeTicked(stored.FollowTestCopyConfigTicked);
             return this;
         }
 
@@ -488,6 +522,8 @@ namespace ValheimBakaLoader.Game
             FollowTestCopyLastApproved = null;
             FollowTestCopyUnticked = NormalizeUnticked(FollowTestCopyUnticked);
             FollowTestCopyConfigUnticked = NormalizeUnticked(FollowTestCopyConfigUnticked);
+            FollowTestCopyTicked = NormalizeTicked(FollowTestCopyTicked);
+            FollowTestCopyConfigTicked = NormalizeTicked(FollowTestCopyConfigTicked);
             return this;
         }
 
@@ -701,6 +737,8 @@ namespace ValheimBakaLoader.Game
                 FollowTestCopyLastApproved = BlankAsNull(file.FollowTestCopyLastApproved),
                 FollowTestCopyUnticked = NormalizeUnticked(file.FollowTestCopyUnticked),
                 FollowTestCopyConfigUnticked = NormalizeUnticked(file.FollowTestCopyConfigUnticked),
+                FollowTestCopyTicked = NormalizeTicked(file.FollowTestCopyTicked),
+                FollowTestCopyConfigTicked = NormalizeTicked(file.FollowTestCopyConfigTicked),
             };
         }
 
@@ -791,6 +829,9 @@ namespace ValheimBakaLoader.Game
             FollowTestCopyLastApproved = BlankAsNull(FollowTestCopyLastApproved),
             FollowTestCopyUnticked = NormalizeUnticked(FollowTestCopyUnticked) is { Count: > 0 } copyOff ? copyOff : null,
             FollowTestCopyConfigUnticked = NormalizeUnticked(FollowTestCopyConfigUnticked) is { Count: > 0 } copyCfgOff ? copyCfgOff : null,
+            // Written as the Gale ticked lists are: an empty one is a stored choice.
+            FollowTestCopyTicked = NormalizeTicked(FollowTestCopyTicked),
+            FollowTestCopyConfigTicked = NormalizeTicked(FollowTestCopyConfigTicked),
         };
     }
 }

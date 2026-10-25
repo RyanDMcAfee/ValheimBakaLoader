@@ -219,7 +219,7 @@ namespace ValheimBakaLoader.Forms
                         state = GaleConfigStateWord(r.State),
                         // From 1.3.0 only a file the host ticked before starts ticked.
                         ticked = r.State != GaleConfigState.Same
-                            && ServerPreferences.GaleStartsTicked(r.Rel, prefs?.GaleConfigTicked, prefs?.GaleFeedConfigUnticked()),
+                            && ServerPreferences.GaleStartsTicked(r.Rel, prefs?.GaleFeedConfigTicked(), prefs?.GaleFeedConfigUnticked()),
                         preview = r.Preview.Select(l => new { k = l.Kind.ToString(), t = l.Text }).ToList(),
                         more = r.More,
                     }).ToList(),
@@ -340,8 +340,8 @@ namespace ValheimBakaLoader.Forms
             prefs.SetGaleFeedConfigUnticked(
                 ServerPreferences.NormalizeUnticked(prefs.GaleFeedConfigUnticked()).Concat(offered)
                     .Where(r => !asked.Contains(r, StringComparer.OrdinalIgnoreCase)));
-            prefs.GaleConfigTicked = ServerPreferences.GaleTicksAfter(prefs.GaleConfigTicked, asked,
-                offered.Where(r => !asked.Contains(r, StringComparer.OrdinalIgnoreCase)));
+            prefs.SetGaleFeedConfigTicked(ServerPreferences.GaleTicksAfter(prefs.GaleFeedConfigTicked(), asked,
+                offered.Where(r => !asked.Contains(r, StringComparer.OrdinalIgnoreCase))));
             ServerPrefsProvider.SavePreferences(prefs);
 
             asked.Sort(ConfigFiles.ComparePaths);

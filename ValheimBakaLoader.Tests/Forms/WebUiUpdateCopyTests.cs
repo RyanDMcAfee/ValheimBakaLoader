@@ -375,7 +375,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // 256 with 1.3.0's Gale dialog: one button installs the mods and writes the configs,
             // so the two toasts for pressing Install or Apply configs with nothing ticked are gone
             // (the button is off until something is ticked).
-            Assert.Equal(256, marked.Count);
+            // 257 with 1.3.0's toast for mods taken back from a test copy: how many came over and
+            // where what this realm had of them was moved.
+            Assert.Equal(257, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the
