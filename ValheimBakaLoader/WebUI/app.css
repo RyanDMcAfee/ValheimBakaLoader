@@ -90,7 +90,12 @@
   --lh:1.5;
   /* tonal ladder: ground → cards → raised/hover → menus and modals */
   --surface-0:#0E1012; --surface-1:#191D22; --surface-2:#232830; --surface-3:#2C323B;
+  /* the sidebar's forged bronze ring (1.3.0): its size, its band, and the metal light to dark */
+  --ring:34px; --band:3.5px;
+  --bz-hi:#F0CB8A; --bz-lit:#D9AE6A; --bz-mid:#A87638; --bz-warm:#7E5526; --bz-low:#6E4A1E; --bz-deep:#3E2810; --bz-edge:#1A1006;
 }
+/* The ring's light, an angle the browser can ease (a plain custom property would flick). */
+@property --sheen{syntax:'<angle>';inherits:false;initial-value:0deg}
 
 /* ============ LANGUAGE STACKS ============
    app.js sets both documentElement.lang and dataset.lang together; these blocks hang off
@@ -374,6 +379,140 @@ html.lang-pending body>*{visibility:hidden}
 .navitem.active{color:var(--ember-hi);background:var(--ember-dim)}
 .navitem.active .rune{text-shadow:0 0 12px rgba(255,122,26,.9);transform:scale(1.08)}
 .navitem.active::before{background:var(--ember);box-shadow:0 0 12px rgba(255,122,26,.8)}
+/* ============ SIDEBAR SUB-MENUS (1.3.0, the owner's feature) ============
+   app.js wraps each rail item in a .navgroup with its menu (SUBMENU block): a column of ring
+   buttons under the item of the hall on screen, and a flyout beside any other item. A button
+   is laid out like a rail item (glyph over a plain name over a Norse caption, the same sizes
+   and colours), only the glyph sits on a forged bronze ring. */
+.navgroup{width:100%;display:flex;flex-direction:column;align-items:center;flex:none}
+.navitem:focus-visible{outline:1px solid var(--ember);outline-offset:-1px}
+.subnav{width:100%;display:flex;flex-direction:column;align-items:center;flex:none}
+/* a shallow recessed well that ties the rings to the item above them */
+.subwell{width:76px;margin:4px 0 2px;padding:3px 0;border-radius:9px;
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  background:linear-gradient(180deg,rgba(0,0,0,.22),rgba(0,0,0,.10));
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.5),inset 0 0 0 1px rgba(140,109,63,.15)}
+.subitem{position:relative;width:76px;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:6px 2px 5px;margin:0;border:0;border-radius:9px;background:transparent;cursor:pointer;
+  font:inherit;color:var(--bone-dim);line-height:1.3;
+  transition:background .2s var(--ease),color .2s var(--ease)}
+.subitem .ring{margin-bottom:2px}
+/* The rail item's own label and caption, allowed to wrap: a rail label too long for its box is
+   clipped (see .side), but these sit in a box of their own and a longer language takes a
+   second line instead of losing its last letters. */
+.subitem .lbl{font-size:8.5px;letter-spacing:1.2px;text-transform:uppercase;font-weight:600;line-height:1.1;
+  max-width:100%;text-align:center;overflow-wrap:anywhere}
+.subitem .norse{font-family:var(--serif-small);font-size:10px;letter-spacing:.4px;font-weight:500;line-height:1.1;
+  color:var(--ember);max-width:100%;text-align:center;overflow-wrap:anywhere}
+/* Mods has no Norse name: its caption keeps an empty line so both rows hold the same rhythm */
+.subitem .norse:empty::before{content:"\00a0"}
+.subitem:hover,.subitem:focus-visible{color:var(--bone);background:rgba(255,255,255,.035)}
+.subitem:focus-visible{outline:1px solid var(--ember);outline-offset:-1px}
+.subitem.sel{color:var(--ember-hi)}
+.subitem.sel .norse{color:var(--ember-hi)}
+
+/* THE FORGED BRONZE RING (the owner's pick, ring B). One element, four layers of background
+   painted as a disc; ::before lays the dark face over the middle so only a band of metal shows:
+     1. a broad conic light, bright at the upper left and dark at the lower right, so it reads
+        as one piece of metal under one lamp rather than a gradient stripe;
+     2. and 3. two repeating conic patterns at unrelated periods (24 and 37 degrees): each facet
+        gets a lit edge, a flat and a dark seam, and because the two periods never line up no
+        two facets look alike, which is what makes it read as hammered and not machined;
+     4. a soft specular spot where the lamp catches it.
+   The facets all start from --sheen, a registered angle, so hover turns the light across the
+   hammer marks in 0.2 s rather than flicking a colour. .heat is the forge glow laid over the band
+   in overlay mode, off until the section is open. Every state carries the same five shadows, so
+   each change is a transition and never a swap. */
+.ring{
+  --sheen:0deg;
+  position:relative;width:var(--ring);height:var(--ring);border-radius:50%;flex:none;
+  display:grid;place-items:center;
+  background:
+    radial-gradient(circle at 30% 16%, rgba(255,238,200,.62), rgba(255,238,200,0) 36%),
+    repeating-conic-gradient(from calc(var(--sheen) + 7deg),
+      rgba(255,226,170,.34) 0 4deg, rgba(255,226,170,0) 4deg 12deg,
+      rgba(34,18,4,.42) 12deg 16deg, rgba(34,18,4,0) 16deg 24deg),
+    repeating-conic-gradient(from calc(3deg - var(--sheen)),
+      rgba(255,240,205,.18) 0 3deg, rgba(255,240,205,0) 3deg 18deg,
+      rgba(0,0,0,.22) 18deg 22deg, rgba(0,0,0,0) 22deg 37deg),
+    conic-gradient(from calc(var(--sheen) + 200deg),
+      var(--bz-low), var(--bz-mid) 16%, var(--bz-hi) 29%, var(--bz-lit) 38%, var(--bz-mid) 48%,
+      var(--bz-low) 60%, var(--bz-deep) 72%, var(--bz-warm) 86%, var(--bz-low));
+  box-shadow:
+    0 0 0 1px var(--bz-edge),
+    0 2px 4px rgba(0,0,0,.6),
+    0 0 0 0 rgba(255,150,60,0),
+    inset 0 1px 0 rgba(255,232,186,.5),
+    inset 0 -1px 1px rgba(0,0,0,.55);
+  transition:box-shadow .2s var(--ease),filter .2s var(--ease),--sheen .2s var(--ease);
+}
+.ring::before{content:"";position:absolute;inset:var(--band);border-radius:50%;z-index:1;
+  background:radial-gradient(circle at 50% 30%,#2B2822,#17150F 62%,#0F0D09);
+  box-shadow:0 0 0 1px rgba(26,14,4,.95),inset 0 2px 4px rgba(0,0,0,.85),inset 0 -1px 0 rgba(255,214,150,.12)}
+.ring::after{content:"";position:absolute;inset:var(--band);border-radius:50%;z-index:2;
+  background:radial-gradient(circle at 50% 58%,rgba(255,122,26,.34),rgba(255,122,26,0) 70%);
+  opacity:0;transition:opacity .2s var(--ease)}
+.ring .heat{position:absolute;inset:0;border-radius:50%;z-index:0;pointer-events:none;
+  background:conic-gradient(from 210deg,#FF7A1A,#FFB35C 22%,#E8560F 44%,#FFC27A 64%,#FF8A2A 82%,#FF7A1A);
+  mix-blend-mode:overlay;opacity:0;transition:opacity .2s var(--ease)}
+/* the idle rune is the rail's own colour, one colour for every resting glyph on the rail */
+.ring .rune{position:relative;z-index:3;font-size:16px;line-height:1;
+  color:var(--bone-dim);text-shadow:0 1px 0 rgba(0,0,0,.85);
+  transition:color .2s var(--ease),text-shadow .2s var(--ease),transform .2s var(--ease)}
+/* hover: the light swings across the hammer marks, the metal warms, an amber halo */
+.subitem:hover .ring,.subitem:focus-visible .ring{
+  --sheen:26deg;filter:brightness(1.1) saturate(1.08);
+  box-shadow:
+    0 0 0 1px var(--bz-edge),
+    0 2px 4px rgba(0,0,0,.6),
+    0 0 11px 1px rgba(255,179,92,.5),
+    inset 0 1px 0 rgba(255,240,205,.65),
+    inset 0 -1px 1px rgba(0,0,0,.55)}
+.subitem:hover .ring .rune,.subitem:focus-visible .ring .rune{color:var(--ember-hi);text-shadow:0 0 8px rgba(255,179,92,.6),0 1px 0 rgba(0,0,0,.85)}
+/* open: the band is fresh from the forge, the face holds an ember that breathes like the
+   rail's other embers, the rune burns. The lit ring is the only mark; the rail item above it
+   keeps the one ember bar. */
+.subitem.sel .ring{
+  box-shadow:
+    0 0 0 1px #3A1806,
+    0 2px 4px rgba(0,0,0,.6),
+    0 0 13px 2px rgba(255,122,26,.5),
+    inset 0 1px 0 rgba(255,214,150,.7),
+    inset 0 -1px 1px rgba(60,16,0,.6)}
+.subitem.sel .ring .heat{opacity:.95}
+.subitem.sel .ring::after{opacity:1;animation:ringEmber 4.8s ease-in-out infinite}
+.subitem.sel .ring .rune{color:var(--ember-hi);text-shadow:0 0 12px rgba(255,122,26,.9),0 1px 0 rgba(0,0,0,.6);transform:scale(1.06)}
+.subitem.sel:hover .ring,.subitem.sel:focus-visible .ring{filter:brightness(1.14) saturate(1.1);
+  box-shadow:
+    0 0 0 1px #3A1806,
+    0 2px 4px rgba(0,0,0,.6),
+    0 0 16px 3px rgba(255,140,50,.58),
+    inset 0 1px 0 rgba(255,226,170,.8),
+    inset 0 -1px 1px rgba(60,16,0,.6)}
+@keyframes ringEmber{0%,100%{opacity:1}46%{opacity:.62}78%{opacity:.86}}
+
+/* THE FLYOUT, beside a rail item that is not the hall on screen. It lives in .body because the
+   rail clips, sits flush against the rail's edge and is clipped at that edge only, so the panel
+   slides out from behind the rail (8px, 0.2 s) rather than appearing beside it. Above the halls
+   and their heads, under the palette, the dialogs, the toasts and the realm strip's own menu. */
+.subfly{position:fixed;left:0;top:0;z-index:30;display:none;clip-path:inset(-40px -80px -60px 0)}
+.subfly.open{display:block}
+.subfly-panel{display:flex;flex-direction:row;gap:2px;padding:5px;
+  background:
+    repeating-linear-gradient(2deg,rgba(0,0,0,.14) 0 3px,transparent 3px 9px),
+    repeating-linear-gradient(88deg,rgba(255,255,255,.012) 0 1px,transparent 1px 7px),
+    linear-gradient(180deg,#1D1B17,#15140F);
+  border:1px solid var(--bronze-hi);border-left:0;border-radius:0 10px 10px 0;
+  box-shadow:0 18px 40px rgba(0,0,0,.55),0 0 24px rgba(255,122,26,.06),inset 1px 0 0 rgba(0,0,0,.4)}
+.subfly.open .subfly-panel{animation:subFlyIn .2s ease-out}
+@keyframes subFlyIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+/* reduced motion: the flyout is a plain fade, the sheen holds still, the ember stops breathing */
+@media (prefers-reduced-motion:reduce){
+  .subfly.open .subfly-panel{animation:fadeIn .2s ease-out}
+  .ring{transition:box-shadow .2s var(--ease),filter .2s var(--ease)}
+  .subitem:hover .ring,.subitem:focus-visible .ring{--sheen:0deg}
+  .subitem.sel .ring::after{animation:none}
+}
 /* Footer: one tidy stack pinned to the bottom. flex:none so it never eats a nav
    item, and the moon rides on the same line as the version so the rail keeps
    its height down on short windows. */
@@ -628,6 +767,7 @@ html.lang-pending body>*{visibility:hidden}
    block is the whole of what CSS has to do about the switch: hide the captions, and
    let applyLanguage() draw the rest again. */
 .plain-terms .navitem .norse,
+.plain-terms .subitem .norse,
 .plain-terms .hnorse,
 .plain-terms .cnorse{display:none}
 .card.hov:hover{border-color:rgba(255,122,26,.55);transform:translateY(-2px);
@@ -1828,6 +1968,9 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
   .navitem .rune{font-size:17px}
   .navitem .lbl{font-size:8px;letter-spacing:1.1px}
   .navitem .norse{font-size:9px}
+  .subitem{padding:4px 2px 3px;gap:2px}
+  .subitem .lbl{font-size:8px;letter-spacing:1.1px}
+  .subitem .norse{font-size:9px}
   .side-foot{gap:3px}
   .side-foot .moon{font-size:12px}
   .side-foot .mead{padding-top:5px;margin-top:1px}
@@ -1840,6 +1983,14 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
   /* shortest tier: the Norse caption folds away, the plain label always stays */
   .navitem .norse{display:none}
   .navitem::before{top:7px;bottom:7px}
+  /* the sub-menu's rings come down to 30px here and its captions fold away with the rail's,
+     so a hall's two buttons and the three-line foot still fit the 680px window */
+  :root{--ring:30px;--band:3px}
+  .ring .rune{font-size:14px}
+  .subwell{margin:2px 0 1px}
+  .subitem{padding:3px 2px 2px;gap:1px}
+  .subitem .lbl{font-size:7.5px;letter-spacing:.9px}
+  .subitem .norse{display:none}
   .side-foot{gap:2px;font-size:9px}
   .side-foot .moon{font-size:11px}
   .side-foot .mead{padding-top:4px;margin-top:0;font-size:8.5px;line-height:1.25}
@@ -2225,6 +2376,12 @@ html[data-lang="ja"], html[data-lang="zh-Hans"], html[data-lang="zh-Hant"]{
 html[data-lang="ja"] .navitem .lbl,
 html[data-lang="zh-Hans"] .navitem .lbl,
 html[data-lang="zh-Hant"] .navitem .lbl{
+  font-size:12px; letter-spacing:0; text-transform:none; font-weight:500;
+}
+/* The sub-menu's labels are the rail's labels and take the same floor. */
+html[data-lang="ja"] .subitem .lbl,
+html[data-lang="zh-Hans"] .subitem .lbl,
+html[data-lang="zh-Hant"] .subitem .lbl{
   font-size:12px; letter-spacing:0; text-transform:none; font-weight:500;
 }
 /* The rail steps down at short viewports, to 8px and then 7.5px. Both are below the
@@ -2615,6 +2772,7 @@ html[data-lang="ja"] .cfg-editor, html[data-lang="zh-Hans"] .cfg-editor, html[da
 html[data-lang="ru"] .navitem .lbl{
   font-size:10px; letter-spacing:.6px;
 }
+html[data-lang="ru"] .subitem .lbl{ font-size:10px; letter-spacing:.6px; }
 /* The two short-viewport step-downs are GONE, and the 10px floor holds at every height.
    They were written on the assumption that the widest Russian rail label would not fit
    the 76px box at 10px; it does, with room. СТАТИСТИКА, the longest of the nine, is the
@@ -2658,6 +2816,7 @@ body.idle .updpill.ember .mc,
 body.idle .formsec.collapsible .r,
 body.idle .microlabel .r.glowr,
 body.idle .sectchev,
+body.idle .subitem.sel .ring::after,
 body.idle .caret,
 body.idle #saveCfgBtn.pulse,
 body.idle .holdbar .hbprog.indet i,body.idle .modprog .hbprog.indet i{animation-play-state:paused}

@@ -81,6 +81,8 @@ Each line: where, what it is, how it moves now.
 | 16320, 16321 `atlasRenderMap` | the worldgen-mods warning pill on the map | fade |
 | 16488, 16494 | the chunk note and the shape note slot under the map | roll; the shape note's words go after the roll |
 | 16704, 16705 `renderWeather` | the Skies box | rolls |
+| 2364 `subSync` (1.3.0) | the sidebar's sub-menu under the rail item of the hall on screen | drawn hidden (`style="display:none"` in the markup `subWire` writes) and rolled out of its item through reveal on the walk in, rolled shut on the walk out; the items below slide with it. Each item and its menu sit in a `.navgroup`, so the roll starts at nothing rather than at the rail's gap. A plain fade under reduced motion |
+| 2421 `subFlyClose` (1.3.0) | the sidebar's hover flyout beside any other rail item | slides 8px out from behind the rail and fades in by the stylesheet (`.subfly.open .subfly-panel`, 0.2 s ease-out), clipped at the rail's edge only; leaves through fadeGhost. A plain fade under reduced motion, and the ring's sheen holds still |
 | 9114 `renderTermStream` (1.3.0) | the "N new lines, back to the top" chip over the Log, and the Log's Pause button | the chip floats over the top of the lines (`.termpane #termNew`) and fades in and out by its `hidden` class (opacity, then visibility, 0.2 s); it used to sit in the head row as `display:none` and shove the search box aside each time. The Pause button holds both of its words, Pause and Live, stacked in one cell and cross-fades between them, so it never changes width and nothing beside it moves. Neither moves, so reduced motion has nothing to take out |
 
 Stylesheet entrances brought to the rule (app.css): `.modal-bg` and `.palette-bg` fade in over

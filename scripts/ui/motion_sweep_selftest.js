@@ -31,6 +31,9 @@
  *   7. The Log (1.3.0): the "new lines" chip floats over the lines and fades rather than being
  *      shown and hidden by display, and the Pause button cross-fades its two stacked words, so
  *      a press changes no width in the head row.
+ *   8. The sidebar's sub-menus (1.3.0): the dropdown under the hall on screen is drawn hidden and
+ *      rolls through reveal; the hover flyout slides out from behind the rail and leaves through
+ *      fadeGhost; under reduced motion both are plain fades and the ring's sheen holds still.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -254,6 +257,19 @@ test("7. the Log's chip fades over the lines and the Pause button cross-fades it
   const stream = body("function renderTermStream(){");
   assert.ok(!/\.style\.display|textContent=T\("saga\.hold/.test(stream), "the Pause button or the chip is swapped by display or by rewriting the words");
   assert.ok(RECORD.includes("the Log's Pause button"), "docs/motion-sweep.md does not record the Log's chip and Pause button");
+});
+
+test("8. the sidebar's sub-menus: the dropdown rolls, the flyout slides out and fades away, both fades under reduced motion", () => {
+  const sync = body("function subSync(page,opts){");
+  assert.ok(sync.includes("reveal(nav,on,opts&&opts.now?{now:true}:undefined);"), "the sub-menu pops in and out instead of rolling");
+  assert.ok(body("function subWire(){").includes('style="display:none"><div class="subwell">'), "the sub-menu is not drawn hidden for its roll");
+  assert.ok(/\.navgroup\{[^}]*flex:none\}/.test(CSS), "the sub-menu sits in the rail's gap, so the gap appears at once when it rolls");
+  assert.ok(body("function subFlyClose(){").includes("fadeGhost(f.el);"), "the flyout vanishes rather than fading");
+  assert.ok(CSS.includes(".subfly.open .subfly-panel{animation:subFlyIn .2s ease-out}") && CSS.includes("@keyframes subFlyIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}"),
+    "the flyout does not slide 8px out over 0.2 s");
+  const rm = CSS.slice(CSS.indexOf("@media (prefers-reduced-motion:reduce){\n  .subfly.open .subfly-panel"));
+  assert.ok(rm.slice(0, rm.indexOf("\n}")).includes(".subfly.open .subfly-panel{animation:fadeIn .2s ease-out}"), "the flyout slides under reduced motion");
+  assert.ok(RECORD.includes("`subSync` (1.3.0)") && RECORD.includes("`subFlyClose` (1.3.0)"), "docs/motion-sweep.md does not record the sub-menus");
 });
 
 console.log(failures.length === 0

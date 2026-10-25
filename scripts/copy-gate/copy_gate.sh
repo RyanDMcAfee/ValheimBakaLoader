@@ -1099,5 +1099,42 @@ else
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 fi
 
+echo "== 69. the sidebar's sub-menus: one list, a press that opens one section alone, the ring and its motion =="
+# 1.3.0, the owner's feature. Ring buttons under the rail item of the hall on screen and a hover
+# flyout beside the others; a press folds the hall's other sections, opens that one and lands it.
+# The quiet ways that goes wrong: a second list that drifts from SECTIONS, a press that folds with
+# every road in, a landing aimed while the sections above are still rolling shut or lost while the
+# window is hidden, a ring left lit after a chevron folds its section, a flyout that opens on a
+# passing pointer or never closes, the ring drifting from the owner's pick, motion under reduced
+# motion, and embers burning behind a game.
+SUBMENU_SELFTEST="$UI_DIR/sidebar_submenu_selftest.js"
+if [ -f "$SUBMENU_SELFTEST" ]; then
+  if out=$(node "$SUBMENU_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the sidebar submenu selftest is missing: $SUBMENU_SELFTEST"; fail=1
+fi
+
+echo "== 70. the sidebar's sub-menus, in a real browser: hover timing, rolls, keys, the fit at 680 px =="
+# The same feature asked of the real page in headless chromium: a passing pointer opens nothing
+# and one that stays opens the flyout, it holds across the rail's margin and goes 150 ms after the
+# pointer leaves (at once on Escape or a click), two fast rail clicks leave one dropdown and no
+# stray node, the flyout keeps level with its item through a roll and a resize, reduced motion is
+# a fade, every label fits the 76 px rail in English and in the pseudo catalog and the rail fits
+# the 680 px window with the three-line foot, the keyboard reaches everything, a press on the only
+# open section still lands, the lit ring rests while idle, and the chevrons keep several open.
+# Same readiness question as 40 asks.
+SUBMENU_PROBE="$UI_DIR/sidebar_submenu_probe.js"
+if [ ! -f "$SUBMENU_PROBE" ]; then
+  echo "  the sidebar submenu probe is missing: $SUBMENU_PROBE"; fail=1
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  NOT RUN: there is no node on this box, so nothing read the page in a browser."
+elif ! ready=$(node "$SWITCH_PROBE" --check); then
+  printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
+else
+  if out=$(node "$SUBMENU_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

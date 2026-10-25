@@ -888,6 +888,7 @@ function repaintBootCopy(){
   try{renderWxBiomes();}catch(_){}        /* the weather box's nine biome pills */
   try{syncCollapsibleTerms();}catch(_){}  /* every folded header's "n settings" hint */
   try{sectWords();}catch(_){}             /* the section chevrons' tooltip */
+  try{subWords();}catch(_){}              /* the sidebar's sub-menu buttons */
   try{renderCfgRunningNote();}catch(_){}  /* the Settings hall's running-server note */
   try{renderStatusRconPreview();}catch(_){}  /* the status bar's RCON word in the preview */
   try{updAdvLabels();}catch(_){}          /* the three Advanced labels that carry a number */
@@ -2066,14 +2067,14 @@ function wireCollapsible(headId,body,targetEl){
    The defaults below apply only until a host has moved one. docs/sidebar.md maps the old rail
    to the new. */
 const SECTIONS=[
-  {key:"hearth",page:"hearth",head:"#page-hearth>.pagehead",body:"#page-hearth>.bento",open:true},
-  {key:"saga",page:"hearth",head:"#sect-saga>.pagehead",body:"#sectBody-saga",open:false,enter:()=>{try{sagaToTop();}catch(_){}}},
-  {key:"atlas",page:"atlas",head:"#page-atlas>.pagehead",body:"#page-atlas>.atlas-grid",open:true},
-  {key:"skald",page:"atlas",head:"#sect-skald>.pagehead",body:"#sectBody-skald",open:false,enter:()=>{try{skaldRefresh();}catch(_){}}},
-  {key:"mods",page:"mods",head:"#page-mods>.pagehead",body:"#sectBody-mods",open:true},
-  {key:"runes",page:"mods",head:"#sect-runes>.pagehead",body:"#sectBody-runes",open:false,enter:()=>{if(Native.available) refreshCfgList(false);}},
-  {key:"world",page:"world",head:"#page-world>.pagehead",body:"#sectBody-world",open:true},
-  {key:"herald",page:"world",head:"#sect-herald>.pagehead",body:"#sectBody-herald",open:false,enter:()=>{if(Native.available) refreshHerald();}},
+  {key:"hearth",page:"hearth",head:"#page-hearth>.pagehead",body:"#page-hearth>.bento",open:true,subId:"side.sub.hearth.label",norseId:"common.norse.hearth"},
+  {key:"saga",page:"hearth",head:"#sect-saga>.pagehead",body:"#sectBody-saga",open:false,enter:()=>{try{sagaToTop();}catch(_){}},subId:"side.sub.saga.label",norseId:"common.norse.saga"},
+  {key:"atlas",page:"atlas",head:"#page-atlas>.pagehead",body:"#page-atlas>.atlas-grid",open:true,subId:"side.sub.atlas.label",norseId:"common.norse.atlas"},
+  {key:"skald",page:"atlas",head:"#sect-skald>.pagehead",body:"#sectBody-skald",open:false,enter:()=>{try{skaldRefresh();}catch(_){}},subId:"side.sub.skald.label",norseId:"common.norse.skald"},
+  {key:"mods",page:"mods",head:"#page-mods>.pagehead",body:"#sectBody-mods",open:true,subId:"side.sub.mods.label"},
+  {key:"runes",page:"mods",head:"#sect-runes>.pagehead",body:"#sectBody-runes",open:false,enter:()=>{if(Native.available) refreshCfgList(false);},subId:"side.sub.runes.label",norseId:"common.norse.runes"},
+  {key:"world",page:"world",head:"#page-world>.pagehead",body:"#sectBody-world",open:true,subId:"side.sub.world.label",norseId:"common.norse.world"},
+  {key:"herald",page:"world",head:"#sect-herald>.pagehead",body:"#sectBody-herald",open:false,enter:()=>{if(Native.available) refreshHerald();},subId:"side.sub.herald.label",norseId:"common.norse.herald"},
 ];
 const UI_SECTIONS={};          // key -> open, as it stands on screen
 let UI_SECTIONS_LOADED=false;  // the saved answer has been read, so a move is worth writing
@@ -2087,6 +2088,7 @@ function sectSet(key,open,opts){
   open=!!open;
   const was=sectIsOpen(key);
   UI_SECTIONS[key]=open;
+  try{subLight(key);}catch(_){}   /* the sidebar's ring for this section lights or rests with it */
   const head=$(s.head), body=$(s.body), box=head?head.parentElement:null;
   if(box) box.classList.toggle("open",open);
   const chev=head&&head.querySelector(".sectchev");
@@ -2096,10 +2098,14 @@ function sectSet(key,open,opts){
      fold never scrolls the hall. The head stack is read again either way, because the heads
      under a rolling section have moved without the hall scrolling. */
   const land=open&&!!(opts&&opts.land);
+  /* {done}, from the sidebar's sub-menus (1.3.0): told once this section's roll is over, so a
+     landing that waits on several sections rolling at once runs after the last of them. */
+  const then=opts&&typeof opts.done==="function"?opts.done:null;
   const done=()=>{
     try{rescanScrollCues();}catch(_){}
     try{sectStackRead(s.page);}catch(_){}
     if(land){try{sectLand(key);}catch(_){}}
+    if(then){try{then();}catch(_){}}
   };
   reveal(body,open,opts&&opts.now?{now:true,done}:{done});
   /* The hall used to do this on the walk in; the section does it on the way open. */
@@ -2145,11 +2151,22 @@ function sectWords(){
    it up once it has rolled open (sectLand, through sectSet's {land}) and lights it. The ember
    glow is 0.5 s in, three soft pulses over 3 s, 0.5 s out, a steady glow under reduced motion
    (.sect-glow in app.css), on the section's body. A key that names a hall with no section of
-   that name is a plain walk. */
-function goSection(key){
+   that name is a plain walk.
+   {solo:true} is the sidebar's sub-menu buttons (1.3.0): every other section of the hall folds
+   and the chosen one alone stands open. Its landing waits for every one of those rolls, the
+   folds included, because a section folding above the chosen one moves it up the hall as it
+   goes, and a landing measured before that is aimed at where the section used to be. A road
+   without it leaves the other sections as they stand, as before. */
+function goSection(key,opts){
   const s=sectRec(key); if(!s){goPage(key);return;}
   goPage(s.page);
-  sectSet(key,true,{land:true});
+  if(opts&&opts.solo){
+    const others=SECTIONS.filter(o=>o.page===s.page&&o.key!==key&&sectIsOpen(o.key));
+    let left=others.length+1;
+    const settled=()=>{if(--left===0){try{sectLand(key);}catch(_){}}};
+    others.forEach(o=>sectSet(o.key,false,{silent:true,done:settled}));
+    sectSet(key,true,{done:settled});   /* not silent: this one writes the whole answer, folds and all */
+  }else sectSet(key,true,{land:true});
   const body=$(s.body);
   requestAnimationFrame(()=>{
     if(!body) return;
@@ -2286,6 +2303,224 @@ function sectStackWire(){
   pages.forEach(p=>{try{sectStackSize(p);}catch(_){}});
 }
 
+/* SUBMENU-BEGIN
+   THE SIDEBAR SUB-MENUS (1.3.0, the owner's feature). Under the rail item of the hall on screen
+   stands a column of ring buttons, one per section of that hall, rolled out of the item; over
+   any other item a flyout holds the same buttons in a row. A press walks to the hall, folds its
+   other sections, opens that one alone and lands it (goSection with {solo}). The chevrons and
+   the hall's own scrolling are left exactly as they were, so several sections may still stand
+   open; only these buttons fold anything. The entries come off SECTIONS (each row's subId and
+   norseId), so a section added to the table gets its button without a second list to keep in
+   step, and the ring carries the rune its section's head carries. The flyout cannot live in the
+   rail, which clips (overflow:hidden), so it is one element in .body placed from the item's
+   rect, again on every frame while it is open: a dropdown rolling shut above an item moves the
+   item, and the flyout belongs beside it. docs/sidebar.md, "Sub-menus (1.3.0)", is the map. */
+const SUB_OPEN_MS=120;    /* a pointer that only passes over an item on its way somewhere opens nothing */
+const SUB_CLOSE_MS=150;   /* the time it takes to cross the rail's margin from the item to the flyout */
+const SUB_FLY={el:null,item:null,want:null,openT:0,closeT:0,raf:0,px:-1,py:-1,hush:null};
+function subEntries(page){return SECTIONS.filter(s=>s.page===page&&s.subId);}
+/* The same glyph the section's head leads with, read off the head so the two never disagree. */
+function subGlyph(s){const r=$(s.head+" h1 .r"); return r?r.textContent.trim():"";}
+function subButtonHtml(s){
+  return '<button type="button" class="subitem'+(sectIsOpen(s.key)?" sel":"")+'" data-sect="'+esc(s.key)+'">'
+    +'<span class="ring" aria-hidden="true"><span class="heat"></span><span class="rune">'+esc(subGlyph(s))+'</span></span>'
+    +'<span class="lbl"></span><span class="norse"></span></button>';
+}
+/* A button's words. Mods has no Norse name, so its caption stays empty; the stylesheet keeps
+   the empty line so the two buttons under Mods sit on the same rhythm as the others. */
+function subWordsOf(b){
+  const s=sectRec(b.dataset.sect); if(!s) return;
+  const l=b.querySelector(".lbl"), n=b.querySelector(".norse");
+  if(l) l.textContent=T(s.subId);
+  if(n) n.textContent=s.norseId?T(s.norseId):"";
+}
+function subWords(){
+  $$(".subitem").forEach(subWordsOf);
+  const f=SUB_FLY; if(f.el&&f.item) f.el.setAttribute("aria-label",(f.item.querySelector(".lbl")||{}).textContent||"");
+}
+/* The ring is lit while its section stands open, however it was opened: called from sectSet. */
+function subLight(key){
+  const on=sectIsOpen(key);
+  $$('.subitem[data-sect="'+key+'"]').forEach(b=>b.classList.toggle("sel",on));
+}
+function subWireButtons(box,menu){
+  box.querySelectorAll(".subitem").forEach(b=>{
+    if(menu) b.setAttribute("role","menuitem");
+    subWordsOf(b);
+    b.addEventListener("click",()=>subGo(b.dataset.sect));
+  });
+}
+/* Arrow keys walk the buttons of one menu, down or right to the next, up or left back. */
+function subArrows(e,box){
+  const next=e.key==="ArrowDown"||e.key==="ArrowRight", prev=e.key==="ArrowUp"||e.key==="ArrowLeft";
+  if(!next&&!prev) return false;
+  const btns=[...box.querySelectorAll(".subitem")], i=btns.indexOf(document.activeElement);
+  if(i<0) return false;
+  e.preventDefault();
+  btns[Math.max(0,Math.min(btns.length-1,i+(next?1:-1)))].focus();
+  return true;
+}
+/* The hall on screen keeps its menu rolled out under its item; every other one rolls shut. */
+function subSync(page,opts){
+  $$(".subnav").forEach(nav=>{
+    const on=nav.dataset.page===page;
+    reveal(nav,on,opts&&opts.now?{now:true}:undefined);
+    const item=nav.parentElement&&nav.parentElement.querySelector(".navitem");
+    if(item) item.setAttribute("aria-expanded",on?"true":"false");
+  });
+  const f=SUB_FLY;
+  if(f.want&&f.want.dataset.page===page){clearTimeout(f.openT);f.openT=0;f.want=null;}
+  if(f.item&&f.item.dataset.page===page) subFlyClose();
+}
+/* A press on a button, in the dropdown or in a flyout. Focus that was in the flyout goes on to
+   the same button in the dropdown that has just rolled out, so a keyboard is never dropped. */
+function subGo(key){
+  const f=SUB_FLY, fromFly=!!f.el&&f.el.contains(document.activeElement);
+  subFlyClose();
+  goSection(key,{solo:true});
+  if(fromFly){const b=$('.subnav .subitem[data-sect="'+key+'"]'); if(b){try{b.focus({preventScroll:true});}catch(_){}}}
+}
+function subCanFly(item){return !!item&&item.dataset.page!==currentPage&&subEntries(item.dataset.page).length>0;}
+function subHoverIn(item){
+  const f=SUB_FLY;
+  if(f.item===item){clearTimeout(f.closeT);f.closeT=0;return;}
+  clearTimeout(f.openT); f.openT=0; f.want=null;
+  if(!subCanFly(item)) return;
+  f.want=item;
+  f.openT=setTimeout(()=>{f.openT=0;f.want=null;subFlyOpen(item);},SUB_OPEN_MS);
+}
+function subHoverOut(item){
+  const f=SUB_FLY;
+  if(f.want===item){clearTimeout(f.openT);f.openT=0;f.want=null;}
+}
+/* Level with its item, flush against the rail's edge, kept inside the window. */
+function subFlyPlace(){
+  const f=SUB_FLY, side=$(".side"); if(!f.el||!f.item||!side) return;
+  const r=f.item.getBoundingClientRect(), s=side.getBoundingClientRect(), h=f.el.offsetHeight;
+  const top=Math.max(s.top+4,Math.min(window.innerHeight-h-4,r.top+r.height/2-h/2));
+  f.el.style.left=Math.round(s.right)+"px";
+  f.el.style.top=Math.round(top)+"px";
+}
+function subFlyOpen(item){
+  const f=SUB_FLY; if(!f.el||!subCanFly(item)) return;
+  clearTimeout(f.openT); f.openT=0; f.want=null;
+  clearTimeout(f.closeT); f.closeT=0;
+  if(f.item===item) return;
+  if(f.item) subFlyClose();   /* one flyout at a time */
+  f.el.innerHTML='<div class="subfly-panel">'+subEntries(item.dataset.page).map(subButtonHtml).join("")+"</div>";
+  subWireButtons(f.el,true);
+  f.item=item;
+  f.el.setAttribute("aria-label",(item.querySelector(".lbl")||{}).textContent||"");
+  f.el.classList.add("open");
+  subFlyPlace();
+  if(!f.raf) f.raf=requestAnimationFrame(subFlyTick);
+}
+/* Goes at once (a press, Escape, a click elsewhere, its item becoming the hall on screen) and
+   leaves a copy fading behind it, the way the other menus leave. Emptied, so no second set of
+   buttons waits in the page. */
+function subFlyClose(){
+  const f=SUB_FLY;
+  clearTimeout(f.openT); f.openT=0; f.want=null;
+  clearTimeout(f.closeT); f.closeT=0;
+  if(f.raf){cancelAnimationFrame(f.raf);f.raf=0;}
+  if(!f.el||!f.item) return;
+  f.item=null;
+  fadeGhost(f.el);
+  f.el.classList.remove("open");
+  f.el.textContent="";
+}
+/* Every frame while open: placed again beside its item, and asked whether the pointer is still
+   over the item or the flyout (or the keyboard inside either). Asked by position rather than by
+   the pointer's events alone, because an item that a roll moves out from under a still pointer
+   gets no event at all. Out of both, it closes 150 ms later; back in, it stays. */
+function subFlyTick(){
+  const f=SUB_FLY; f.raf=0;
+  if(!f.el||!f.item) return;
+  if(!f.item.isConnected||!subCanFly(f.item)){subFlyClose();return;}
+  subFlyPlace();
+  const inside=r=>f.px>=r.left&&f.px<r.right&&f.py>=r.top&&f.py<r.bottom;
+  const panel=f.el.firstElementChild, act=document.activeElement;
+  const over=f.px>=0&&(inside(f.item.getBoundingClientRect())||(!!panel&&inside(panel.getBoundingClientRect())));
+  const held=!!act&&(f.item===act||f.el.contains(act));
+  if(over||held){clearTimeout(f.closeT);f.closeT=0;}
+  else if(!f.closeT) f.closeT=setTimeout(()=>{f.closeT=0;subFlyClose();},SUB_CLOSE_MS);
+  f.raf=requestAnimationFrame(subFlyTick);
+}
+/* The next thing Tab would reach after an item, the flyout left out: where Tab goes from the
+   flyout's last button. */
+function subNextFocusable(item){
+  const all=[...document.querySelectorAll('a[href],button,input,select,textarea,[tabindex]')]
+    .filter(k=>k.tabIndex>=0&&!k.disabled&&k.getClientRects().length&&!SUB_FLY.el.contains(k));
+  return all.find(k=>item.compareDocumentPosition(k)&Node.DOCUMENT_POSITION_FOLLOWING)||null;
+}
+function subItemKey(e,item){
+  if(e.key==="Enter"||e.key===" "){e.preventDefault();item.click();return;}
+  const f=SUB_FLY;
+  if(e.key==="Tab"&&!e.shiftKey&&f.item===item){
+    const first=f.el.querySelector(".subitem");
+    if(first){e.preventDefault();first.focus();}
+  }
+}
+function subFlyKey(e){
+  const f=SUB_FLY;
+  if(!f.item||subArrows(e,f.el)||e.key!=="Tab") return;
+  const btns=[...f.el.querySelectorAll(".subitem")], i=btns.indexOf(document.activeElement);
+  if(i<0) return;
+  if(e.shiftKey&&i===0){e.preventDefault();f.hush=f.item;f.item.focus();}
+  else if(!e.shiftKey&&i===btns.length-1){
+    e.preventDefault();
+    const next=subNextFocusable(f.item);
+    subFlyClose();
+    if(next) next.focus();
+  }
+}
+/* Once, after the chevrons. Each rail item is wrapped with its menu in a .navgroup, which keeps
+   the menu out of the rail's flex gap, so the roll starts at exactly nothing instead of the gap
+   appearing at once. The items become buttons a keyboard reaches; the menu under each is drawn
+   hidden, the way index.html writes a hidden part, and the hall on screen rolls its own out. */
+function subWire(){
+  const host=$(".body"); if(!host||$("#subFly")) return;
+  $$(".navitem").forEach(item=>{
+    const page=item.dataset.page, subs=subEntries(page);
+    const g=document.createElement("div"); g.className="navgroup";
+    item.parentNode.insertBefore(g,item); g.appendChild(item);
+    item.tabIndex=0; item.setAttribute("role","button");
+    item.addEventListener("keydown",e=>subItemKey(e,item));
+    if(!subs.length) return;
+    const id="subnav-"+page;
+    g.insertAdjacentHTML("beforeend",'<div class="subnav" id="'+id+'" data-page="'+esc(page)+'" style="display:none"><div class="subwell">'+subs.map(subButtonHtml).join("")+"</div></div>");
+    const nav=g.lastElementChild;
+    subWireButtons(nav,false);
+    nav.addEventListener("keydown",e=>{subArrows(e,nav);});
+    item.setAttribute("aria-controls",id);
+    item.setAttribute("aria-expanded","false");
+    item.addEventListener("pointerenter",()=>subHoverIn(item));
+    item.addEventListener("pointerleave",()=>subHoverOut(item));
+    item.addEventListener("focus",()=>{
+      if(SUB_FLY.hush===item){SUB_FLY.hush=null;return;}
+      if(item.matches(":focus-visible")) subFlyOpen(item);
+    });
+  });
+  host.insertAdjacentHTML("beforeend",'<div class="subfly" id="subFly" role="menu"></div>');
+  const f=SUB_FLY; f.el=$("#subFly");
+  f.el.addEventListener("keydown",subFlyKey);
+  document.addEventListener("pointermove",e=>{f.px=e.clientX;f.py=e.clientY;},{capture:true,passive:true});
+  document.documentElement.addEventListener("pointerleave",()=>{f.px=f.py=-1;});
+  document.addEventListener("pointerdown",e=>{
+    const t=e.target;
+    if(f.want&&!f.want.contains(t)){clearTimeout(f.openT);f.openT=0;f.want=null;}
+    if(f.item&&!f.el.contains(t)&&!f.item.contains(t)) subFlyClose();
+  },true);
+  document.addEventListener("keydown",e=>{
+    if(e.key!=="Escape"||!f.item) return;
+    const item=f.item, inside=f.el.contains(document.activeElement);
+    subFlyClose();
+    if(inside){f.hush=item;try{item.focus({preventScroll:true});}catch(_){}}   /* a focused item keeps its focus */
+  });
+  subSync(currentPage,{now:true});
+}
+/* SUBMENU-END */
+
 /* ---------- NAV ---------- */
 let currentPage="hearth";
 /* Halls laid out as a flex column so a child can be handed the pane's real
@@ -2302,6 +2537,7 @@ function goPage(name){
     p.style.display=on?(FLEX_PAGES[p.id]?"flex":"block"):"none";
   });
   currentPage=name;
+  try{subSync(name);}catch(_){}   /* the hall's sub-menu rolls out of its rail item, the last one's rolls shut */
   setToastLift();
   if(name==="vikings"){try{renderVikCols();}catch(_){}}
   if(name==="world"){try{worldTab(WORLD_TAB);}catch(_){}}
@@ -2338,6 +2574,7 @@ $$("[data-goto]").forEach(c=>c.addEventListener("click",()=>goPage(c.dataset.got
 goPage("hearth");
 sectWire();
 sectStackWire();
+subWire();
 
 /* ---------- MULTI-SERVER CHIP STRIP ----------
    One chip per server profile (saved or live). The active chip is the profile

@@ -115,6 +115,55 @@ one scroll is the landing. The landings that light a row of their own (`openAppT
 `sectSet` and keep their own row flash. The rail's own clicks walk to the hall and leave the
 sections as they stand.
 
+## Sub-menus (1.3.0)
+
+The owner's feature. Under the rail item of the hall on screen a column of ring buttons rolls
+out of the item, one per section of that hall: Dashboard holds Overview and Log, Map holds Map
+and Statistics, Mods holds Mods and Configs, Settings holds Settings and Discord. Players has
+none. Each button is laid out like a rail item, the section head's rune over the plain name over
+the Norse caption (Mods has no Norse name, so its caption line stays empty), only the rune sits
+on a forged bronze ring. The list comes off `SECTIONS` (each row's `subId` and `norseId`), so a
+section added to the table gets its button with no second list.
+
+- Under the hall on screen the column rolls out through `reveal` when the hall is walked into
+  and rolls shut when another hall is (`subSync`, called from `goPage`); the items below slide
+  with it. Each item and its menu sit in a `.navgroup`, so the roll starts at nothing rather
+  than at the rail's gap. A ring is lit while its section stands open, however it was opened:
+  `sectSet` lights or rests it, so a chevron on the page does too.
+- Over any other item (not Players) a flyout holds the same buttons in a row beside the rail,
+  level with the item. It opens after `SUB_OPEN_MS` (120 ms) of hover or at once on keyboard
+  focus, stays while the pointer is over the item or the flyout, closes `SUB_CLOSE_MS` (150 ms)
+  after the pointer has left both, and at once on Escape, a click anywhere else, a press on one
+  of its buttons or its item becoming the hall on screen. One at a time. The rail clips, so the
+  flyout is one element in `.body`, placed from the item's rect on every frame while it is open
+  (a dropdown rolling above the item moves it) and clipped at the rail's edge only, so it
+  slides 8px out from behind the rail; it leaves through `fadeGhost`. Above the halls, under the
+  palette, the dialogs, the toasts and the realm strip's own menu.
+- A press on a button, in either place, is `goSection(key,{solo:true})`: it walks to the hall,
+  folds the hall's other sections, opens the chosen one and lands it once every one of those
+  rolls has ended (a section folding above it moves it up as it goes). Every other road keeps
+  plain `goSection(key)`, which folds nothing. The chevrons and the hall's own scrolling are
+  unchanged, so several sections may still stand open; only these buttons fold anything.
+- The keyboard: rail items are buttons in the tab order, each with `aria-expanded` and
+  `aria-controls` naming its menu; the dropdown's buttons follow their item, arrows walk them,
+  Enter or Space presses. The flyout is a `role="menu"` of `menuitem`s: Tab from its item goes
+  into it, arrows walk it, Tab from its last button goes on to the next item, Escape closes it
+  and hands focus back to the item. A press from the flyout leaves focus on the same button in
+  the dropdown that has just rolled out.
+- The ring (`.ring` in app.css, the owner's pick of the three mock-ups): four background layers
+  (a broad conic light, two repeating conic facet patterns at 24 and 37 degrees, a specular
+  spot) under a dark inset face; the registered `--sheen` angle turns the light 26 degrees in
+  0.2 s on hover; an open section's ring takes the forge heat and an ember in its face that
+  breathes like the rail's other embers, paused under `body.idle` and still under reduced
+  motion. Every state carries the same five shadows, so each change is a transition. 34px
+  rings, 30px at the shortest rail (`max-height:780px`), where the captions fold away with the
+  rail's own, so a hall's two buttons and the three-line horn of mead fit the 680px window in
+  every language; a long label takes a second line instead of being clipped.
+- Reduced motion: the dropdown and the flyout are plain fades and the sheen holds still.
+
+`scripts/ui/sidebar_submenu_selftest.js` holds the rules over a stood-in page and
+`scripts/ui/sidebar_submenu_probe.js` asks the real page in a browser (copy gate 69 and 70).
+
 ## Checks that read the old shape
 
 The checks that keyed on `currentPage==="saga"`, `"runes"` and `"skald"` read `sectOn(key)`

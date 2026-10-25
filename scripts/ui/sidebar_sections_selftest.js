@@ -245,7 +245,7 @@ test("5. every road in goes through goSection or unfolds with sectSet, and none 
   ];
   for (const [road, name] of roads) assert.ok(APP.includes(road), name + " no longer lands on its section");
   assert.strictEqual((APP.match(/goPage\("mods"\); sectSet\("mods",true\);/g) || []).length, 2, "the two BepInEx landings do not unfold the Mods list");
-  const go = body("function goSection(key){");
+  const go = body("function goSection(key,opts){");
   /* 1.3.0: the unfold asks for the landing, which sectSet runs after the roll (rule 7). */
   assert.ok(go.includes("goPage(s.page);") && go.includes("sectSet(key,true,{land:true});"), "goSection does not open the hall and unfold the section");
   assert.ok(go.includes('if(!s){goPage(key);return;}'), "a hall with no section of that name is not a plain walk");
@@ -281,7 +281,7 @@ test("7. the glow: 0.5 s in, three pulses over 3 s, 0.5 s out, steady under redu
   const reduced = CSS.slice(CSS.indexOf("@media (prefers-reduced-motion:reduce){\n  .sectchev{animation:none}"));
   assert.ok(reduced.includes(".sect-glow{animation:sectGlowSteady 4s ease-out}"), "the glow still pulses under reduced motion");
   assert.ok(/@keyframes sectGlowSteady\{[^}]*\}[^}]*12\.5%,87\.5%\{/.test(CSS), "the steady glow is not steady");
-  const go = body("function goSection(key){");
+  const go = body("function goSection(key,opts){");
   /* Until 1.3.0 goSection scrolled the heading into view with scrollIntoView in the next frame,
      while the body was still 0 high: the target was clamped to the folded hall's end and a
      section opened from the top landed with its body under the fold (map_sections.md 6). The

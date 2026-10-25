@@ -492,6 +492,30 @@
     "side.nav.skald.label": {
       "translation": "[Ẋ Statistics Ẋ] ẊẊẊẊ"
     },
+    "side.sub.hearth.label": {
+      "translation": "[Ẋ Overview Ẋ] ẊẊẊ"
+    },
+    "side.sub.saga.label": {
+      "translation": "[Ẋ Log Ẋ] Ẋ"
+    },
+    "side.sub.atlas.label": {
+      "translation": "[Ẋ Map Ẋ] Ẋ"
+    },
+    "side.sub.skald.label": {
+      "translation": "[Ẋ Statistics Ẋ] ẊẊẊẊ"
+    },
+    "side.sub.mods.label": {
+      "translation": "[Ẋ Mods Ẋ] ẊẊ"
+    },
+    "side.sub.runes.label": {
+      "translation": "[Ẋ Configs Ẋ] ẊẊẊ"
+    },
+    "side.sub.world.label": {
+      "translation": "[Ẋ Settings Ẋ] ẊẊẊ"
+    },
+    "side.sub.herald.label": {
+      "translation": "[Ẋ Discord Ẋ] ẊẊẊ"
+    },
     "side.mead.title": {
       "translation": "[Ẋ Support BakaLoader and pour the skald a horn of mead Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
