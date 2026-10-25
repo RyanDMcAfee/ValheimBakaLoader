@@ -710,12 +710,15 @@
           <!-- The hall's two tabs. Everything that was on it is on Server, unchanged and
                still saved by the button above; App holds the preferences that belong to
                BakaLoader itself and each of those saves itself as it is moved. Static both
-               ways, so the walker owns both words. -->
-          <div class="sectbody" id="sectBody-world">
+               ways, so the walker owns both words. Outside the folding body since 1.3.0:
+               inside it, folding the hall's first section took the tabs away with the
+               panels and left no way to change tab. A tab pressed while the panels are
+               folded unfolds them (the second .wtab listener in app.js). -->
           <div class="worldtabs" role="tablist">
             <button class="wtab on" id="wtabServer" data-wtab="server" role="tab" aria-selected="true" data-i18n="world.tab.server">Server</button>
             <button class="wtab" id="wtabApp" data-wtab="app" role="tab" aria-selected="false" data-i18n="world.tab.app">App</button>
           </div>
+          <div class="sectbody" id="sectBody-world">
           <div id="worldTabServer" class="worldtab">
           <div class="card">
             <div class="microlabel" data-i18n="world.server.label">Server<span class="cnorse" data-i18n="common.norse.heimr">Heimr</span></div>
@@ -919,7 +922,7 @@
                      it. The sentence names the four fields, the five minutes, and the fact
                      that turning the switch off stops the post entirely. Keep it true against
                      Tools/HeartbeatService.cs: it sends deviceHash, appVersion,
-                     serverRunning, since 1.2.19 a setup block (HeartbeatService.Setup) and,
+                     serverRunning, since 1.3.0 a setup block (HeartbeatService.Setup) and,
                      since 1.2.6, a commands map of counts per profile key,
                      every five minutes, and returns without sending anything at all when
                      ShareAnonymousStats is off. The same preference gates the COUNTING in

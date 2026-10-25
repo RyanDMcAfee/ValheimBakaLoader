@@ -21,6 +21,17 @@
     3. THE STICKY HEAD. On the Dashboard, Mods and Settings the hall's head stays on screen
        while the hall scrolls. Asked: scrolled 400px down, the head's top is still at the top
        of the hall, and it casts the shadow while the pane's top fade is off.
+       Since 1.3.0 (issue 27) every SECTION head stays on screen too, and an opened section
+       lands in view. Asked at 1024x680 and 1408x800: with the hall at the top every later
+       head stands at the foot of the pane, and at every scroll position every head of the
+       hall is inside the pane; a section opened from the top, by its chevron and by
+       goSection, does not move the hall until it has rolled open, then ends with its head
+       inside the pane and either its head right under the heads above or its foot at the
+       foot of the pane (just above the heads stuck there, less the gap the hall keeps under
+       a section: the margin over the next head, or the hall's own bottom padding after the
+       last); a fold never scrolls; and with the Settings panels folded the tab strip is still
+       on screen and a press on it unfolds them. Before 1.3.0 the later heads never stuck and
+       a section opened from the top landed with its body under the fold.
 
   The page is the browser preview (no host), served from WebUI over a local port. Scrollbars
   are left ON (Playwright hides them by default), because the second question is about them.
@@ -69,7 +80,7 @@ function serve() {
 
 let failures = 0;
 const say = (ok, name, said) => {
-  console.log((ok ? "ok   " : "FAIL ") + name.padEnd(58) + said);
+  console.log((ok ? "ok   " : "FAIL ") + (name.length < 58 ? name.padEnd(58) : name + "  ") + said);
   if (!ok) failures++;
 };
 
@@ -206,6 +217,131 @@ const say = (ok, name, said) => {
           "shadow " + (r.shadow === "none" ? "none" : "on") + ", fade " + r.fade);
       }
       await page.close();
+
+      /* 1.3.0, issue 27: every section head on screen, and the landing, at the minimum window
+         and at the design size. */
+      for (const [w, hgt] of [[1024, 680], [1408, 800]]) {
+        const p = await open(w, hgt);
+        const at = w + "x" + hgt;
+        /* With the hall at the top, every later head at the foot; then with every section open,
+           every head inside the pane at five scroll positions. */
+        for (const hall of ["hearth", "mods", "world"]) {
+          const r = await p.evaluate(async n => {
+            const wait = ms => new Promise(r => setTimeout(r, ms));
+            /* The hall's heads straight from the SECTIONS table, so this asks the page and not app.js's own helper. */
+            const hallHeads = n => SECTIONS.filter(x => x.page === n).map(x => ({ key: x.key, head: document.querySelector(x.head), body: document.querySelector(x.body) })).filter(x => x.head);
+            SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+            goPage(n); await wait(250);
+            const el = document.querySelector("#page-" + n);
+            const read = () => {
+              const pane = el.getBoundingClientRect(), view = el.clientHeight, top0 = pane.top + el.clientTop;
+              return hallHeads(n).map(x => { const b = x.head.getBoundingClientRect(); return { top: b.top - top0, bottom: b.bottom - top0, h: b.height, view }; });
+            };
+            el.scrollTop = 0; el.dispatchEvent(new Event("scroll")); await wait(150);
+            const top = read();
+            /* The pane's foot fade stands down while heads stand there; it eases (0.18 s). */
+            await wait(250);
+            const fade = getComputedStyle(document.querySelector(".pages"), "::after").opacity;
+            const foot = top.slice(1).map((b, i, a) => Math.abs(b.bottom - (b.view - a.slice(i + 1).reduce((t, x) => t + x.h, 0))));
+            SECTIONS.forEach(x => sectSet(x.key, true, { now: true, silent: true }));
+            await wait(150);
+            const max = el.scrollHeight - el.clientHeight, off = [];
+            for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+              el.scrollTop = Math.round(max * f); el.dispatchEvent(new Event("scroll")); await wait(120);
+              read().forEach((b, i) => { if (b.top < -0.5 || b.bottom > b.view + 0.5) off.push(f + ":" + i + "@" + Math.round(b.top)); });
+            }
+            SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+            return { later: top.length - 1, foot: foot.map(d => +d.toFixed(1)), off, max, fade };
+          }, hall);
+          say(r.later > 0 && r.foot.every(d => d <= 1) && r.fade === "0", "at " + at + " with the " + hall + " hall at the top, every later head stands at the foot",
+            r.later + " later head(s), off the foot by " + r.foot.join(", ") + " px, foot fade opacity " + r.fade);
+          say(r.off.length === 0, "at " + at + " every " + hall + " head is on screen at every scroll position",
+            r.off.length ? "off screen: " + r.off.join(" ") : "5 positions over " + r.max + "px, every head inside the pane");
+        }
+        /* Each later section opened from the top, by its chevron and by goSection. */
+        for (const how of ["chevron", "goSection"]) for (const key of ["skald", "saga", "runes", "herald"]) {
+          const r = await p.evaluate(async ([key, how]) => {
+            const wait = ms => new Promise(r => setTimeout(r, ms));
+            /* The hall's heads straight from the SECTIONS table, so this asks the page and not app.js's own helper. */
+            const hallHeads = n => SECTIONS.filter(x => x.page === n).map(x => ({ key: x.key, head: document.querySelector(x.head), body: document.querySelector(x.body) })).filter(x => x.head);
+            const s = sectRec(key);
+            SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+            goPage(s.page); await wait(250);
+            const el = document.querySelector("#page-" + s.page);
+            el.scrollTop = 0; el.dispatchEvent(new Event("scroll")); await wait(150);
+            if (how === "chevron") document.querySelector(s.head + " .sectchev").click(); else goSection(key);
+            /* The roll is 0.2 s; the hall must not move inside it. */
+            const t0 = performance.now(); let early = 0;
+            while (performance.now() - t0 < 180) { early = Math.max(early, el.scrollTop); await wait(20); }
+            await wait(1300);
+            const heads = hallHeads(s.page), i = heads.findIndex(x => x.key === key);
+            const pane = el.getBoundingClientRect(), view = el.clientHeight, top0 = pane.top + el.clientTop;
+            const hs = heads.map(x => x.head.getBoundingClientRect().height);
+            const above = hs.slice(0, i).reduce((t, x) => t + x, 0), below = hs.slice(i + 1).reduce((t, x) => t + x, 0);
+            const hb = heads[i].head.getBoundingClientRect(), bb = heads[i].body.getBoundingClientRect();
+            /* The gap the hall keeps under the section, read with every head set static, since a
+               stuck head reports where it is stuck rather than where it stands in the hall. */
+            heads.forEach(x => { x.head.style.position = "static"; });
+            const bodyEnd = heads[i].body.getBoundingClientRect().bottom - top0 + el.scrollTop;
+            const next = i + 1 < heads.length ? heads[i + 1].head.getBoundingClientRect().top - top0 + el.scrollTop : el.scrollHeight;
+            heads.forEach(x => { x.head.style.position = ""; });
+            return { early, headTop: hb.top - top0, headBottom: hb.bottom - top0, above, below, view,
+                     bodyBottom: bb.bottom - top0, gap: next - bodyEnd };
+          }, [key, how]);
+          const under = Math.abs(r.headTop - r.above) <= 1;
+          const footed = Math.abs(r.bodyBottom + r.gap - (r.view - r.below)) <= 1;
+          const inside = r.headTop >= -0.5 && r.headBottom <= r.view + 0.5;
+          say(r.early === 0 && inside && (under || footed),
+            "at " + at + " " + key + " opened from the top by " + how + " lands in view",
+            "no move in the roll (" + r.early + "), head " + Math.round(r.headTop) + " to " + Math.round(r.headBottom) + " of " + r.view + ", "
+            + (under ? "right under the heads above (" + Math.round(r.above) + ")" : "")
+            + (footed ? (under ? " and " : "") + "foot " + Math.round(r.bodyBottom) + " + gap " + Math.round(r.gap) + " = pane foot " + Math.round(r.view - r.below) : "")
+            + (!under && !footed ? "neither: foot " + Math.round(r.bodyBottom) + " + gap " + Math.round(r.gap) + " against " + Math.round(r.view - r.below) : ""));
+        }
+        /* A fold never scrolls the hall. */
+        const fold = await p.evaluate(async () => {
+          const wait = ms => new Promise(r => setTimeout(r, ms));
+          SECTIONS.forEach(x => sectSet(x.key, x.page === "hearth", { now: true, silent: true }));
+          goPage("hearth"); await wait(250);
+          const el = document.querySelector("#page-hearth");
+          el.scrollTop = 300; el.dispatchEvent(new Event("scroll")); await wait(150);
+          const before = el.scrollTop;
+          document.querySelector("#sect-skald>.pagehead .sectchev").click();
+          await wait(900);
+          const after = el.scrollTop;
+          SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+          return { before, after };
+        });
+        say(fold.before === fold.after, "at " + at + " folding a section does not scroll the hall",
+          "scrollTop " + fold.before + " before the fold, " + fold.after + " after");
+        /* The Settings tabs stand outside the folding body, and a press on them unfolds it. */
+        const tabs = await p.evaluate(async () => {
+          const wait = ms => new Promise(r => setTimeout(r, ms));
+          SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+          goPage("world"); worldTab("server"); await wait(250);
+          const el = document.querySelector("#page-world");
+          el.scrollTop = 0; el.dispatchEvent(new Event("scroll")); await wait(100);
+          document.querySelector("#page-world>.pagehead .sectchev").click();
+          await wait(700);
+          const pane = el.getBoundingClientRect();
+          const shown = ["#wtabServer", "#wtabApp"].map(id => {
+            const b = document.querySelector(id).getBoundingClientRect();
+            return b.height > 0 && b.top >= pane.top && b.bottom <= pane.top + el.clientHeight;
+          });
+          const folded = !sectIsOpen("world");
+          document.querySelector("#wtabApp").click();
+          await wait(700);
+          const result = { folded, shown, open: sectIsOpen("world"), app: document.querySelector("#worldTabApp").getBoundingClientRect().height > 0 };
+          worldTab("server");
+          SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+          return result;
+        });
+        say(tabs.folded && tabs.shown.every(Boolean), "at " + at + " the Settings tabs stay on screen with the panels folded",
+          "folded " + tabs.folded + ", Server and App on screen: " + tabs.shown.join(", "));
+        say(tabs.open && tabs.app, "at " + at + " a tab pressed with the panels folded unfolds them",
+          "open " + tabs.open + ", App panel on screen " + tabs.app);
+        await p.close();
+      }
     }
   } finally {
     await browser.close();

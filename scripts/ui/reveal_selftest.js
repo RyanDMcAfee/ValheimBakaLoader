@@ -22,7 +22,10 @@
  *      first roll finishing late changes nothing, and the box always ends where the last call
  *      put it. A call that asks for where the box already is does nothing.
  *   4. Reduced motion, and a fade-only box: opacity only, no height, nothing set on the box.
- *   5. A box whose page is not on screen is set at once, with no roll.
+ *   5. A box whose page is not on screen is set at once, with no roll. A box whose parent is a
+ *      wrapper drawn as display:contents (a hall's section since 1.3.0, so its head can stick
+ *      across the hall) is asked about through the wrapper's own parent: it rolls when that is
+ *      on screen, and is set at once when that is hidden.
  *   6. revealText fades changed words in and leaves the same words alone; revealSwap slides a
  *      box whose contents change to its new height.
  *   7. The CSS: the blocks the Discord screen rolls, and the fade-out stand-in (fadeGhost) every
@@ -198,6 +201,20 @@ test("5. a box whose page is not on screen is set at once", () => {
   settled(el, "");
   p.reveal(el, false);
   settled(el, "none");
+  /* A section's body: its parent draws no box and answers no rects, its parent's parent is the
+     hall. Read as "off screen", every section's body popped open instead of rolling. */
+  const plain = p.getComputedStyle;
+  p.getComputedStyle = node => (node && node.cssDisplay ? Object.assign({}, plain(node), { display: node.cssDisplay }) : plain(node));
+  const inSect = box();
+  inSect.parentElement = { getClientRects: () => [], cssDisplay: "contents", parentElement: { getClientRects: () => [{}] } };
+  p.reveal(inSect, true);
+  assert.strictEqual(inSect.anims.length, 1, "a body inside a display:contents section on a hall on screen did not roll");
+  const inHidden = box();
+  inHidden.parentElement = { getClientRects: () => [], cssDisplay: "contents", parentElement: { getClientRects: () => [], cssDisplay: "none" } };
+  p.reveal(inHidden, true);
+  assert.strictEqual(inHidden.anims.length, 0, "a body inside a section on a hidden hall was rolled");
+  settled(inHidden, "");
+  p.getComputedStyle = plain;
   /* And a stand-in with no animate at all (the other selftests' elements) is set at once too. */
   const bare = { style: { display: "none" } };
   p.reveal(bare, true);

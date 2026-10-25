@@ -890,7 +890,9 @@ done
 echo "== 55. issue 20's layout in a real browser: row padding, the grip and the scrollbar, the sticky head =="
 # Three answers only a browser has: whether every settings row is padded the same, whether the
 # right-hand resize grip still covers the scrollbar's thumb, and whether the Dashboard, Mods and
-# Settings heads stay on screen while their halls scroll. Same readiness question as 40 asks.
+# Settings heads stay on screen while their halls scroll. Since 1.3.0 (issue 27) the third also
+# asks it of every section head, at the top and at the foot of the pane, and where a section
+# opened from the top lands once it has rolled open. Same readiness question as 40 asks.
 LAYOUT_PROBE="$UI_DIR/issue20_layout_probe.js"
 if [ ! -f "$LAYOUT_PROBE" ]; then
   echo "  the layout probe is missing: $LAYOUT_PROBE"; fail=1

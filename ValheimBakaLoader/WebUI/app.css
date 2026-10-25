@@ -457,9 +457,17 @@ html.lang-pending body>*{visibility:hidden}
   margin:-20px -22px 4px;padding:20px 22px 12px}
 .pages:has(>.page.active>.pagehead.floating)::before{display:none}
 /* A row brought into view (a palette jump, a flashed setting, a focused field) lands below the
-   head rather than behind it. The Mods head is the tallest at two lines of buttons. */
-.page:has(>.pagehead.floating){scroll-padding-top:120px}
+   heads stuck at the top and above the ones stuck at the foot rather than behind either. Until
+   1.3.0 this was one number, 120px, for heads that measure 62 to 129 px depending on the hall,
+   the window and the language: a dead gap over the Settings head and a row tucked under the
+   Dashboard head at the smallest window. sectStackRead in app.js measures both stacks as they
+   stand and writes them on the hall. */
+.page:has(>.pagehead.floating){scroll-padding-top:var(--stack-top,0px);scroll-padding-bottom:var(--stack-bottom,0px)}
 .pages.cue-up>.page.active>.pagehead.floating{box-shadow:0 14px 14px -14px rgba(0,0,0,.85)}
+/* While section heads stand at the foot of the pane they say there is more below on their
+   own, and the fade would only darken the lowest of them. Opacity rather than display, so the
+   fade eases out and back with its own transition as the heads take the foot and leave it. */
+.pages.heads-below::after{opacity:0}
 /* The sentence that says how the Mods table is sorted. Empty while it rests on Name. */
 .pagehead .modsortline{color:var(--ember-hi)}
 .pagehead .modsortline:empty{display:none}
@@ -482,8 +490,31 @@ html.lang-pending body>*{visibility:hidden}
    it turns from pointing right (folded) to a V (open) with the same turn the folding cards use.
    .sect-glow is the landing light every road into a section casts on its body: 0.5 s in, three
    soft pulses over 3 s, 0.5 s out; a steady glow under reduced motion. */
-.sect{flex:none;margin-top:14px;padding-top:14px;border-top:1px solid rgba(140,109,63,.25)}
-.sect>.pagehead.secthead{margin-bottom:12px}
+/* Every section head stays on screen (1.3.0, issue 27). It sticks under the heads above it once
+   its section has scrolled up there, and at the foot of the pane, above the heads below it,
+   while its section is still under the fold: position:sticky with both top and bottom. A
+   sticky box only travels inside its parent, and inside the .sect wrapper the head could not
+   leave its own section, so the wrapper draws no box of its own (display:contents) and the
+   head travels the whole hall like the hall's own head does. The wrapper keeps its id, its
+   data-sect and its open class, which is all anything reads off it. The offsets are the
+   measured heights of the heads above and below (--stick-top, --stick-bottom, written per
+   head by sectStackSize in app.js), less the hall's 20px padding the sticky edge is measured
+   from, the same -20px the hall's own head uses. The hairline the wrapper drew is painted on
+   the head now, across the text column only, with the 14px over it as the head's margin, so
+   the section sits where it always did. The shadow is the one the hall's own head casts:
+   downward from the lowest head stuck at the top, upward from the highest stuck at the foot. */
+.sect{display:contents}
+.sect>.pagehead.secthead{position:sticky;z-index:4;
+  top:calc(var(--stick-top,0px) - 20px);bottom:calc(var(--stick-bottom,0px) - 20px);
+  margin:14px -22px 4px;padding:15px 22px 8px;
+  background:linear-gradient(rgba(140,109,63,.25),rgba(140,109,63,.25)) 22px 0/calc(100% - 44px) 1px no-repeat,var(--iron);
+  transition:box-shadow .2s ease-out}
+.sect>.pagehead.secthead.stuck-top{box-shadow:0 14px 14px -14px rgba(0,0,0,.85)}
+.sect>.pagehead.secthead.edge-below{box-shadow:0 -14px 14px -14px rgba(0,0,0,.85)}
+/* The wrapper used to hold the flex:none; with no box of its own its body is a flex item of
+   the Dashboard's column, and a rolling body (overflow hidden while it rolls) may otherwise be
+   squeezed by the column. */
+.sect>.sectbody{flex:none}
 .sectbody{border-radius:var(--r2)}
 .sect .saga{height:clamp(320px,55vh,640px)}
 .sect .runes{height:clamp(360px,60vh,720px)}

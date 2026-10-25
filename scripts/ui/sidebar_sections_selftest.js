@@ -27,8 +27,16 @@
  *      walks to a hall that is a section now.
  *   6. The checks that read the old halls read sectOn, and the walk-in work of the old halls
  *      runs on the way open.
- *   7. The glow: 0.5 s in, three pulses over 3 s, 0.5 s out, steady under reduced motion; the
- *      landing scrolls the heading into view.
+ *   7. The glow: 0.5 s in, three pulses over 3 s, 0.5 s out, steady under reduced motion; and
+ *      the landing (1.3.0, issue 27): a chevron click and every road in bring the opened section
+ *      into view once it has rolled open, never before, never on a fold, by the rule in
+ *      sectLandTop (its foot at the pane's foot above the heads stuck there, or its head under
+ *      the heads above when it is taller than the room between them).
+ *   8. The head stack (1.3.0, issue 27): every section head sticks at the top under the heads
+ *      above it and at the foot above the heads below it, from heights measured by an observer
+ *      rather than written down; the wrapper draws no box so the head can travel the hall; the
+ *      scroll padding is the measured stack, not 120px; and the Settings tab strip stands
+ *      outside the folding body, where a press on it unfolds the panels.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -210,7 +218,8 @@ test("5. every road in goes through goSection or unfolds with sectSet, and none 
   for (const [road, name] of roads) assert.ok(APP.includes(road), name + " no longer lands on its section");
   assert.strictEqual((APP.match(/goPage\("mods"\); sectSet\("mods",true\);/g) || []).length, 2, "the two BepInEx landings do not unfold the Mods list");
   const go = body("function goSection(key){");
-  assert.ok(go.includes("goPage(s.page);") && go.includes("sectSet(key,true);"), "goSection does not open the hall and unfold the section");
+  /* 1.3.0: the unfold asks for the landing, which sectSet runs after the roll (rule 7). */
+  assert.ok(go.includes("goPage(s.page);") && go.includes("sectSet(key,true,{land:true});"), "goSection does not open the hall and unfold the section");
   assert.ok(go.includes('if(!s){goPage(key);return;}'), "a hall with no section of that name is not a plain walk");
 });
 
@@ -233,7 +242,7 @@ test("6. the checks that read the old halls read sectOn, and the walk-in work ru
   assert.ok(set.includes('if(open&&!was&&typeof s.enter==="function") s.enter();'), "the way-open work runs on a fold, or on a repeat");
 });
 
-test("7. the glow: 0.5 s in, three pulses over 3 s, 0.5 s out, steady under reduced motion, and the landing scrolls the heading up", () => {
+test("7. the glow: 0.5 s in, three pulses over 3 s, 0.5 s out, steady under reduced motion, and the landing brings the section into view after its roll", () => {
   assert.ok(/\.sect-glow\{animation:sectGlow 4s ease-out\}/.test(CSS), "the landing light is not 4 s");
   const frames = /@keyframes sectGlow\{([^}]*\}[^}]*\}[^}]*\}[^}]*\})/.exec(CSS);
   assert.ok(frames, "no sectGlow keyframes");
@@ -243,9 +252,81 @@ test("7. the glow: 0.5 s in, three pulses over 3 s, 0.5 s out, steady under redu
   assert.ok(reduced.includes(".sect-glow{animation:sectGlowSteady 4s ease-out}"), "the glow still pulses under reduced motion");
   assert.ok(/@keyframes sectGlowSteady\{[^}]*\}[^}]*12\.5%,87\.5%\{/.test(CSS), "the steady glow is not steady");
   const go = body("function goSection(key){");
-  assert.ok(go.includes('scrollIntoView({block:"start",behavior:revealReduced()?"auto":"smooth"})'), "the landing does not scroll the heading into view");
+  /* Until 1.3.0 goSection scrolled the heading into view with scrollIntoView in the next frame,
+     while the body was still 0 high: the target was clamped to the folded hall's end and a
+     section opened from the top landed with its body under the fold (map_sections.md 6). The
+     new truth: goSection and the chevron ask sectSet for the landing, sectSet runs it from the
+     roll's {done}, and the rule is sectLandTop's. */
+  assert.ok(go.includes("sectSet(key,true,{land:true});") && !go.includes("scrollIntoView"), "goSection does not ask for the landing, or scrolls on its own before the roll is over");
+  assert.ok(body("function sectWire(){").includes("b.addEventListener(\"click\",()=>sectSet(s.key,!sectIsOpen(s.key),{land:true}));"), "a chevron click does not bring the section it opens into view");
+  const land = body("function sectLand(key){");
+  assert.ok(land.includes("pageEl.scrollTo({top,behavior:revealReduced()?\"auto\":\"smooth\"})") && !land.includes("scrollIntoView"), "the landing is not one smooth scroll of the hall to the computed place");
+  {
+    const t = table(), rolls = [], landed = [];
+    t.reveal = (el, open, opts) => { rolls.push(opts); };
+    t.sectLand = key => landed.push(key);
+    t.sectStackRead = () => {};
+    t.sectSet("saga", true, { land: true, silent: true });
+    assert.deepStrictEqual(landed, [], "the section was brought into view before it had rolled open");
+    rolls[0].done();
+    assert.deepStrictEqual(landed, ["saga"], "the section was not brought into view once it had rolled open");
+    t.sectSet("saga", false, { land: true, silent: true }); rolls[1].done();
+    assert.deepStrictEqual(landed, ["saga"], "a fold scrolled the hall");
+    t.sectSet("runes", true, { silent: true }); rolls[2].done();
+    assert.deepStrictEqual(landed, ["saga"], "an unfold that did not ask (openAppTab and the like keep their own scroll) scrolled the hall");
+    /* The rule, in numbers: tops are the heads' places with nothing stuck, hs their heights. */
+    const top = g => t.sectLandTop(g);
+    assert.strictEqual(top({ tops: [0, 600, 900], hs: [97, 53, 53], i: 1, view: 631, full: 1400 }), 322,
+      "a section that fits does not end where the heads stuck at the foot begin");
+    assert.strictEqual(top({ tops: [0, 600, 1300], hs: [97, 53, 53], i: 1, view: 631, full: 1400 }), 503,
+      "a section taller than the room does not land with its head right under the heads above");
+    assert.strictEqual(top({ tops: [0, 700], hs: [62, 52], i: 1, view: 631, full: 1100 }), 469,
+      "the last section, fitting, does not land at the end of the hall");
+    assert.strictEqual(top({ tops: [0, 700], hs: [62, 52], i: 1, view: 631, full: 1500 }), 638,
+      "the last section, taller than the room, does not land under the hall's own head");
+    assert.strictEqual(top({ tops: [0, 900], hs: [62, 52], i: 0, view: 631, full: 1300 }), 0,
+      "the hall's own first section, taller than the room, does not land at the top of the hall");
+    assert.strictEqual(top({ tops: [0, 300], hs: [62, 52], i: 0, view: 631, full: 700 }), 0,
+      "a landing goes above the top of the hall");
+    assert.strictEqual(top({ tops: [0, 1000, 1100], hs: [97, 53, 53], i: 2, view: 631, full: 1200 }), 569,
+      "the last of three sections, fitting, does not land at the end of the hall");
+  }
   assert.ok(go.includes('body.classList.add("sect-glow")') && go.includes("setTimeout(()=>body.classList.remove(\"sect-glow\"),4200)"), "the landing does not light the section, or leaves it lit");
   assert.ok(go.includes("void body.offsetWidth;"), "a second landing on a lit section does not light it again");
+});
+
+test("8. the head stack: every section head sticks at both ends from measured heights, the scroll padding is the stack, and the Settings tabs stay out of the fold", () => {
+  assert.ok(/\.sect\{display:contents\}/.test(CSS), "the section wrapper still draws a box, so its head cannot stick past its own section");
+  assert.ok(/\.sect>\.pagehead\.secthead\{position:sticky;z-index:4;\s*top:calc\(var\(--stick-top,0px\) - 20px\);bottom:calc\(var\(--stick-bottom,0px\) - 20px\);/.test(CSS),
+    "a section head does not stick at the top under the heads above it and at the foot above the heads below it");
+  assert.ok(/\.sect>\.sectbody\{flex:none\}/.test(CSS), "a rolling section body can be squeezed by the Dashboard's column");
+  assert.ok(!/scroll-padding-top:\d+px/.test(CSS), "the scroll padding is a number written down again");
+  assert.ok(/\.page:has\(>\.pagehead\.floating\)\{scroll-padding-top:var\(--stack-top,0px\);scroll-padding-bottom:var\(--stack-bottom,0px\)\}/.test(CSS),
+    "the scroll padding is not the measured stack at the top and the foot");
+  assert.ok(/\.pages\.heads-below::after\{opacity:0\}/.test(CSS) && CSS.indexOf(".pages.heads-below::after") > CSS.indexOf(".pages.cue-down::after{opacity:1}"),
+    "the foot fade darkens the heads stuck at the foot, or pops rather than easing");
+  /* The heights: measured, and written as the heads above and below each one. */
+  const t = table(), props = {};
+  const fake = (name, h) => ({ getBoundingClientRect: () => ({ height: h }),
+                               style: { setProperty: (k, v) => { (props[name] = props[name] || {})[k] = v; } } });
+  const els = { "#page-hearth>.pagehead": fake("hearth", 97), "#sect-skald>.pagehead": fake("skald", 53), "#sect-saga>.pagehead": fake("saga", 60) };
+  t.$ = sel => els[sel] || null; t.sectStackRead = () => {};
+  t.sectStackSize("hearth");
+  same(props, { skald: { "--stick-top": "97px", "--stick-bottom": "60px" }, saga: { "--stick-top": "150px", "--stick-bottom": "0px" } },
+    "the heads are not told the heights above and below them");
+  const wire = body("function sectStackWire(){");
+  assert.ok(wire.includes("new ResizeObserver(") && wire.includes('addEventListener("scroll"'), "the stack is not measured again when a head, a body or the pane changes size, or read again on a scroll");
+  assert.ok(APP.includes("sectWire();\nsectStackWire();"), "the stack is never wired");
+  assert.ok(body("function goPage(name){").includes("try{sectStackRead(name);}catch(_){}"), "the walk into a hall leaves the pane with the last hall's stack");
+  const read = body("function sectStackRead(page){");
+  assert.ok(read.includes('pageEl.style.setProperty("--stack-top"') && read.includes('pageEl.style.setProperty("--stack-bottom"'), "the scroll padding is not written from the stack as it stands");
+  /* The Settings tab strip: under the head, outside the body that folds, and it unfolds it. */
+  const hall = HTML.indexOf('id="page-world"'), strip = HTML.indexOf('<div class="worldtabs" role="tablist">'), fold = HTML.indexOf('<div class="sectbody" id="sectBody-world">');
+  assert.ok(hall > 0 && hall < strip && strip < fold, "the Settings tab strip is inside the body that folds, so folding the panels takes the tabs away");
+  assert.ok(APP.includes('$$(".wtab").forEach(b=>b.addEventListener("click",()=>{if(!sectIsOpen("world")) sectSet("world",true,{land:true});}));'),
+    "a tab pressed with the panels folded leaves them folded");
+  assert.ok(APP.indexOf('$$(".wtab").forEach(b=>b.addEventListener("click",()=>worldTab(') < APP.indexOf('if(!sectIsOpen("world")) sectSet("world",true,{land:true});'),
+    "the unfold is wired above the tab's own handler");
 });
 
 console.log(failures.length === 0

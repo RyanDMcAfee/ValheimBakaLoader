@@ -64,6 +64,19 @@ function revealFrame(el){
   REVEAL_ROLL.slice(1).forEach(p=>{f[p]=cs[p];});
   return f;
 }
+/* Whether a box's parent is on screen. A wrapper drawn as display:contents (a hall's section
+   since 1.3.0, so that its head can stick across the whole hall) has no box of its own and
+   answers no rects even while everything in it is on screen, which read as "off screen" and
+   set the section's body at once instead of rolling it. Such a wrapper is asked through the
+   nearest ancestor that does draw a box. */
+function revealHostShown(p){
+  for(;p;p=p.parentElement){
+    if(p.getClientRects().length>0) return true;
+    let d=""; try{d=getComputedStyle(p).display;}catch(_){}
+    if(d!=="contents") return false;
+  }
+  return false;
+}
 function revealSettle(el){
   if(el._revealOverflow===undefined) return;
   el.style.overflow=el._revealOverflow;
@@ -76,7 +89,7 @@ function reveal(el,show,opts){
   if(revealShown(el)===show){ if(opts&&typeof opts.done==="function") opts.done(); return show; }
   el._revealShow=show;
   const parent=el.parentElement;
-  const onScreen=typeof el.animate==="function"&&!!parent&&parent.getClientRects().length>0;
+  const onScreen=typeof el.animate==="function"&&!!parent&&revealHostShown(parent);
   /* Where the box is on screen right now, read before a running roll is stopped. */
   const was=onScreen&&el.style.display!=="none"?revealFrame(el):null;
   if(el._revealAnim){ try{el._revealAnim.cancel();}catch(_){} el._revealAnim=null; }
@@ -1841,7 +1854,10 @@ function watchScrollCue(el){
   else el.classList.add("scrollfade");
   el.addEventListener("scroll",()=>updateScrollCue(el),{passive:true});
   const ro=cueObserverFor(el);
-  if(ro){ro.observe(el);[...el.children].forEach(c=>ro.observe(c));}
+  /* A hall's section wrapper draws no box since 1.3.0 (display:contents), so an observer on it
+     never fires; its head and body are watched instead, so a section rolling open still moves
+     the cue while it rolls. */
+  if(ro){ro.observe(el);[...el.children].forEach(c=>{ro.observe(c);if(c.classList&&c.classList.contains("sect"))[...c.children].forEach(g=>ro.observe(g));});}
   updateScrollCue(el);
 }
 function rescanScrollCues(){$$(".scrollcue").forEach(updateScrollCue);}
@@ -2071,7 +2087,16 @@ function sectSet(key,open,opts){
   if(box) box.classList.toggle("open",open);
   const chev=head&&head.querySelector(".sectchev");
   if(chev) chev.setAttribute("aria-expanded",open?"true":"false");
-  const done=()=>{try{rescanScrollCues();}catch(_){}};
+  /* {land:true}, from a chevron click and from every road in: once the roll is over and the
+     section stands at its full height, it is brought into view (sectLand). Opening only; a
+     fold never scrolls the hall. The head stack is read again either way, because the heads
+     under a rolling section have moved without the hall scrolling. */
+  const land=open&&!!(opts&&opts.land);
+  const done=()=>{
+    try{rescanScrollCues();}catch(_){}
+    try{sectStackRead(s.page);}catch(_){}
+    if(land){try{sectLand(key);}catch(_){}}
+  };
   reveal(body,open,opts&&opts.now?{now:true,done}:{done});
   /* The hall used to do this on the walk in; the section does it on the way open. */
   if(open&&!was&&typeof s.enter==="function") s.enter();
@@ -2102,7 +2127,7 @@ function sectWire(){
     const body=$(s.body); if(body&&body.id) b.setAttribute("aria-controls",body.id);
     b.innerHTML='<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.2 6 7.7l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     head.insertBefore(b,head.firstChild);
-    b.addEventListener("click",()=>sectSet(s.key,!sectIsOpen(s.key)));
+    b.addEventListener("click",()=>sectSet(s.key,!sectIsOpen(s.key),{land:true}));
     sectSet(s.key,sectIsOpen(s.key),{now:true,silent:true});   /* the markup's start state, said once */
   });
   sectWords();
@@ -2113,16 +2138,16 @@ function sectWords(){
 }
 /* Every road into a section (the condition bar, the palette, a mod row's configs entry, the
    Discord wizard, a toast's action, a link between halls): opens its hall, unfolds it, brings
-   it up and lights it. The ember glow is 0.5 s in, three soft pulses over 3 s, 0.5 s out, a
-   steady glow under reduced motion (.sect-glow in app.css), on the section's body. A key that
-   names a hall with no section of that name is a plain walk. */
+   it up once it has rolled open (sectLand, through sectSet's {land}) and lights it. The ember
+   glow is 0.5 s in, three soft pulses over 3 s, 0.5 s out, a steady glow under reduced motion
+   (.sect-glow in app.css), on the section's body. A key that names a hall with no section of
+   that name is a plain walk. */
 function goSection(key){
   const s=sectRec(key); if(!s){goPage(key);return;}
   goPage(s.page);
-  sectSet(key,true);
-  const head=$(s.head), body=$(s.body);
+  sectSet(key,true,{land:true});
+  const body=$(s.body);
   requestAnimationFrame(()=>{
-    try{(head||body).scrollIntoView({block:"start",behavior:revealReduced()?"auto":"smooth"});}catch(_){}
     if(!body) return;
     body.classList.remove("sect-glow");
     void body.offsetWidth;   /* so a second landing lights the glow again from the start */
@@ -2130,6 +2155,118 @@ function goSection(key){
     clearTimeout(body._glowT);
     body._glowT=setTimeout(()=>body.classList.remove("sect-glow"),4200);
   });
+}
+/* THE HEAD STACK (1.3.0, issue 27). Every head of a hall stays on screen: the hall's own at the
+   top as before, and each section's under the heads above it once its section has scrolled up
+   there, or at the foot of the pane, above the heads below it, while its section is still
+   under the fold. The stylesheet does the sticking (.sect>.pagehead.secthead); what it cannot
+   know is how tall the heads are, which changes with the hall, the window, the text size and
+   the language (62 to 129 px for the halls' own heads alone), so it is measured here and
+   written on each head as --stick-top (the heads above it) and --stick-bottom (the heads below
+   it). One ResizeObserver watches every hall, head and body, the way sizeUnsavedBand measures
+   the unsaved band: the site that gets forgotten is the one that brings the defect back. */
+function sectHeads(page){
+  return SECTIONS.filter(s=>s.page===page).map(s=>({key:s.key,head:$(s.head),body:$(s.body)})).filter(h=>h.head);
+}
+function sectStackSize(page){
+  const heads=sectHeads(page), hs=heads.map(h=>h.head.getBoundingClientRect().height);
+  if(!hs.length||!hs[0]) return;   /* the hall is not on screen; the observer asks again when it is */
+  const total=hs.reduce((t,h)=>t+h,0);
+  let above=0;
+  heads.forEach((h,i)=>{
+    if(i){
+      h.head.style.setProperty("--stick-top",above+"px");
+      h.head.style.setProperty("--stick-bottom",(total-above-hs[i])+"px");
+    }
+    above+=hs[i];
+  });
+  sectStackRead(page);
+}
+/* Which heads stand at the top of the pane and which at its foot right now, read off the
+   screen. The hall's scroll padding is set to those two stacks, so a row brought into view (a
+   focused field, a card opened in place, a palette jump) lands clear of both; the lowest head
+   stuck at the top and the highest at the foot cast the shadow the hall's own head casts; and
+   the fade over the pane's foot stands down while heads stand there. Only the hall on screen
+   speaks for the pane. */
+function sectStackRead(page){
+  if(page!==currentPage) return;
+  const pages=$(".pages"), pageEl=$("#page-"+page), heads=sectHeads(page);
+  let below=0;
+  if(pageEl&&heads.length&&pageEl.clientHeight){
+    const pane=pageEl.getBoundingClientRect(), top0=pane.top+pageEl.clientTop, foot=top0+pageEl.clientHeight;
+    let above=heads[0].head.getBoundingClientRect().height, edge=null;
+    heads.slice(1).forEach(h=>{
+      const r=h.head.getBoundingClientRect();
+      const st=parseFloat(h.head.style.getPropertyValue("--stick-top"))||0;
+      const sb=parseFloat(h.head.style.getPropertyValue("--stick-bottom"))||0;
+      const atTop=r.height>0&&Math.abs(r.top-(top0+st))<1;
+      const atFoot=r.height>0&&!atTop&&Math.abs(r.bottom-(foot-sb))<1;
+      h.head.classList.toggle("stuck-top",atTop);
+      if(atTop) above+=r.height;
+      if(atFoot){below+=r.height;if(!edge) edge=h.head;}
+    });
+    heads.slice(1).forEach(h=>h.head.classList.toggle("edge-below",h.head===edge));
+    pageEl.style.setProperty("--stack-top",Math.ceil(above)+"px");
+    pageEl.style.setProperty("--stack-bottom",Math.ceil(below)+"px");
+  }
+  if(pages) pages.classList.toggle("heads-below",below>0);
+}
+/* Where a section lands when it is opened (1.3.0, issue 27): its foot at the foot of the pane,
+   just above the heads stuck there (for the last section, the end of the hall); or, when it is
+   taller than the room between the heads above and below it, its head right under the heads
+   above. Pure numbers in, one scrollTop out, so the selftest can hold the rule:
+     tops  each head's place in the hall with nothing stuck (scroll coordinates)
+     hs    each head's height          i     the section
+     view  the pane's height           full  the hall's scroll height
+   A section ends where the next head begins, the gap over that head included, so a landed
+   section leaves the next head standing exactly where it sticks. */
+function sectLandTop(g){
+  const sum=a=>a.reduce((t,h)=>t+h,0);
+  const above=sum(g.hs.slice(0,g.i)), below=sum(g.hs.slice(g.i+1));
+  const end=g.i+1<g.tops.length?g.tops[g.i+1]:g.full;
+  const tall=end-g.tops[g.i]>g.view-above-below;
+  const top=tall?g.tops[g.i]-above:end-(g.view-below);
+  return Math.max(0,Math.min(g.full-g.view,Math.round(top)));
+}
+/* The heads' places with nothing stuck: a stuck head reports where it is stuck, not where it
+   stands in the hall, so every head is set static for one synchronous read that no frame ever
+   paints, and given back to the stylesheet straight after. */
+function sectGeometry(pageEl,heads){
+  const pane=pageEl.getBoundingClientRect(), st=pageEl.scrollTop, top0=pane.top+pageEl.clientTop;
+  heads.forEach(h=>{h.head.style.position="static";});
+  const tops=heads.map(h=>h.head.getBoundingClientRect().top-top0+st);
+  heads.forEach(h=>{h.head.style.position="";});
+  return {tops,hs:heads.map(h=>h.head.getBoundingClientRect().height),view:pageEl.clientHeight,full:pageEl.scrollHeight};
+}
+/* Brings an opened section into view. Called from sectSet's {done}, after the roll, when the
+   section stands at its full height: measured any sooner it is still 0 high and the target is
+   clamped to the folded hall's end, which is what left a section opened from the top with its
+   head at the bottom edge and its body under the fold. scrollIntoView cannot do this, because
+   it does not know about the heads stuck at the top and at the foot. Smooth, or at once under
+   reduced motion. */
+function sectLand(key){
+  const s=sectRec(key); if(!s||s.page!==currentPage) return;
+  const pageEl=$("#page-"+s.page), heads=sectHeads(s.page), i=heads.findIndex(h=>h.key===key);
+  if(!pageEl||i<0||!pageEl.clientHeight) return;
+  const g=sectGeometry(pageEl,heads); g.i=i;
+  const top=sectLandTop(g);
+  if(Math.abs(top-pageEl.scrollTop)<1) return;
+  pageEl.scrollTo({top,behavior:revealReduced()?"auto":"smooth"});
+}
+/* Wired once, after the chevrons: the observer, a scroll listener per hall, a first measure. */
+function sectStackWire(){
+  const pages=[...new Set(SECTIONS.map(s=>s.page))];
+  if(typeof ResizeObserver!=="undefined"){
+    try{
+      const ro=new ResizeObserver(()=>{try{sectStackSize(currentPage);}catch(_){}});
+      pages.forEach(p=>{
+        const el=$("#page-"+p); if(el) ro.observe(el);
+        sectHeads(p).forEach(h=>{ro.observe(h.head);if(h.body) ro.observe(h.body);});
+      });
+    }catch(_){}
+  }
+  pages.forEach(p=>{const el=$("#page-"+p); if(el) el.addEventListener("scroll",()=>{try{sectStackRead(p);}catch(_){}},{passive:true});});
+  pages.forEach(p=>{try{sectStackSize(p);}catch(_){}});
 }
 
 /* ---------- NAV ---------- */
@@ -2153,6 +2290,7 @@ function goPage(name){
   if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();flameResize();try{renderCleanseArmed();}catch(_){}}
   flameTick();   // the fire only burns while the Dashboard is on screen
   refreshScrollCues();
+  try{sectStackRead(name);}catch(_){}   // the pane's head stack belongs to the hall on screen
   try{renderEditBar();}catch(_){}
   if(name==="atlas"){try{atlasEnter();}catch(_){}} // also drives the mock preview
   if(name==="hearth"&&sectIsOpen("skald")){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
@@ -2176,6 +2314,7 @@ $$(".navitem").forEach(n=>n.addEventListener("click",()=>goPage(n.dataset.page))
 $$("[data-goto]").forEach(c=>c.addEventListener("click",()=>goPage(c.dataset.goto)));
 goPage("hearth");
 sectWire();
+sectStackWire();
 
 /* ---------- MULTI-SERVER CHIP STRIP ----------
    One chip per server profile (saved or live). The active chip is the profile
@@ -6462,7 +6601,15 @@ async function openModConfig(f){
   await refreshCfgList(false);
   await loadCfg(f,false);
   const it=[...document.querySelectorAll("#cfgList .cfg-item[data-f]")].find(el=>el.dataset.f===f);
-  if(it) try{it.scrollIntoView({block:"nearest"});}catch(_){}
+  /* The file's row is brought up inside the list only, to the list's top when it is out of
+     sight there. The hall itself is moved by the landing (sectLand), which runs once the
+     section has rolled open; a scroll of the hall from here would cut that one short, and the
+     top of the list is in view however the section landed. */
+  const list=it&&it.closest(".cfg-list");
+  if(list){
+    const r=it.getBoundingClientRect(), l=list.getBoundingClientRect();
+    if(r.top<l.top||r.bottom>l.bottom) list.scrollTop+=r.top-l.top;
+  }
 }
 /* Every reason a switch can be refused for, as the host names it in reason, beside the
    catalog entry that words it. The host sends its own English in error as well; this is the
@@ -13746,6 +13893,10 @@ function worldTab(name){
    returned. scripts/copy-gate/scan_listener_order.py fails on a click or keydown listener added
    to .wtab above this line. */
 $$(".wtab").forEach(b=>b.addEventListener("click",()=>worldTab(b.getAttribute("data-wtab"))));
+/* The strip stands outside the folding body since 1.3.0, so it is still there with the panels
+   folded; a press there unfolds them and brings them up, because a tab that changed nothing on
+   screen would be a dead button. Below the line above, so worldTab has already moved the tab. */
+$$(".wtab").forEach(b=>b.addEventListener("click",()=>{if(!sectIsOpen("world")) sectSet("world",true,{land:true});}));
 
 /* ---------- TEXT SIZE ----------
    The window is one page, so Text size is the page's ZOOM and the host side sets it on the

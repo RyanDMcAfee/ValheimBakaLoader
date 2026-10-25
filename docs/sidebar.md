@@ -26,7 +26,29 @@ which the test `The_halls_are_written_in_the_order_the_rail_lists_them` holds.
 Each section is a `.sect` with the old hall's `.pagehead` first (now `.secthead`, under a
 hairline) and the rest of the old hall in a `.sectbody`, which app.js rolls open and shut
 through `reveal()` (docs/motion-sweep.md). The three halls' own first sections keep their
-sticky heads; their bodies are the bento, `#sectBody-mods` and `#sectBody-world`.
+sticky heads; their bodies are the bento, `#sectBody-mods` and `#sectBody-world`. Since 1.3.0
+the Settings tab strip stands just above `#sectBody-world`, outside it, so folding the panels
+leaves the tabs under the head; a press on a tab while the panels are folded unfolds them.
+
+## Every head on screen (1.3.0)
+
+Every section head stays on screen (issue 27). The hall's own head sticks at the top as it
+always did. Each later head sticks at the top under the heads above it once its section has
+scrolled up there, and at the foot of the pane, above the heads below it, while its section
+is still under the fold, so with the hall at the top every folded section's head is in view
+at the foot. It is plain `position:sticky` with both `top` and `bottom`. A sticky box only
+travels inside its parent, so the `.sect` wrapper draws no box of its own
+(`display:contents`); it keeps its id, `data-sect` and `open` class, and `reveal()` asks about
+a body inside it through the hall.
+
+The offsets are the measured heights of the heads above and below each head, written on it as
+`--stick-top` and `--stick-bottom` by `sectStackSize` from one ResizeObserver over every hall,
+head and body (heads are 62 to 129 px depending on hall, window, text size and language, so
+nothing is written down). `sectStackRead` reads which heads stand at the top and at the foot
+on every scroll and after every roll, and writes the hall's scroll padding from those two
+stacks (`--stack-top`, `--stack-bottom`), which replaced the fixed 120px; the lowest head stuck
+at the top and the highest at the foot cast the hall head's shadow, and the fade over the
+pane's foot stands down while heads stand there.
 
 `sectWire()` in app.js writes the chevron to the left of every section heading: a button
 that glows like the app's other embers (`.sectchev`, `chevEmber`), points right while
@@ -51,10 +73,20 @@ nothing after it.
 ## Every road in
 
 `goSection(key)` is the one way a button, a palette row, a toast action or a link lands on
-a section: it opens the hall, unfolds the section, scrolls its heading into view (smoothly,
-or at once under reduced motion) and lights its body with the ember glow (`.sect-glow`:
-0.5 s in, three soft pulses over 3 s, 0.5 s out; a steady glow under reduced motion). The
-landings that light a row of their own (`openAppTab`, `openUpkeepCard`,
+a section: it opens the hall, unfolds the section, brings it into view once it has rolled
+open and lights its body with the ember glow (`.sect-glow`: 0.5 s in, three soft pulses over
+3 s, 0.5 s out; a steady glow under reduced motion).
+
+Bringing it into view is `sectLand`, run from the roll's `{done}` (`sectSet(key,true,{land:true})`),
+when the section stands at its full height; until 1.3.0 the scroll ran in the next frame while
+the body was still 0 high, so a section opened from the top landed with its body under the
+fold. The hall scrolls so the section's foot sits at the foot of the pane, just above the heads
+stuck there (the end of the hall for the last section); a section taller than the room between
+the heads above and below it lands with its head right under the heads above instead.
+`sectLandTop` holds the rule as plain numbers; the scroll is smooth, or at once under reduced
+motion. A chevron click that opens a section lands it the same way; a fold never scrolls. A
+mod row's configs entry brings its file's row up inside the Configs list only, so the hall's
+one scroll is the landing. The landings that light a row of their own (`openAppTab`, `openUpkeepCard`,
 `openConnectionCard`, the two BepInEx landings on the Mods list) unfold their section with
 `sectSet` and keep their own row flash. The rail's own clicks walk to the hall and leave the
 sections as they stand.
