@@ -66,13 +66,15 @@ namespace ValheimBakaLoader.Tests.Forms
         /// The fifteenth is the Gale box's name, beside the BepInEx row's and in the same voice.
         /// The sixteenth is 1.2.16's part headings in the Gale dialog (the mods, the profile's
         /// config files, the mods on this server only), at 11px, in the box's voice.
+        /// The seventeenth is 1.3.0's sidebar sub-menu caption, the Norse name under each ring
+        /// button at 10px, which is the rail item's own caption in the same voice.
         /// </summary>
         [Fact]
         public void The_small_serif_rules_and_the_display_ones_are_separate_tokens()
         {
             var css = Css();
 
-            Assert.Equal(16, Regex.Matches(css, Regex.Escape("font-family:var(--serif-small)")).Count);
+            Assert.Equal(17, Regex.Matches(css, Regex.Escape("font-family:var(--serif-small)")).Count);
 
             var display = Regex.Matches(css, @"font-family:var\(--serif\)[^}]*")
                 .Cast<Match>().Select(m => m.Value).ToList();
