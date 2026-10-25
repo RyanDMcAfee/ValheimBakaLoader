@@ -732,10 +732,12 @@ namespace ValheimBakaLoader.Tests.Forms
 
         /// <summary>
         /// The rail lists five halls since 1.2.18, in the owner's order: Dashboard, Players, Map,
-        /// Mods, Settings. The Log and Statistics are sections of the Dashboard, Configs a
-        /// section under the Mods list and Discord a section at the foot of Settings, each with
-        /// the ids it had as a hall, so every link and every keyboard route still lands where
-        /// it did (docs/sidebar.md has the map).
+        /// Mods, Settings. The Log is a section of the Dashboard, Statistics a section under the
+        /// map on the Map hall (on the Dashboard until 1.3.0), Configs a section under the Mods
+        /// list and Discord a section at the foot of Settings, each with the ids it had as a
+        /// hall, so every link and every keyboard route still lands where it did
+        /// (docs/sidebar.md has the map). The sections are listed in the file's order, which
+        /// is the halls' order: the Log on the Dashboard comes before Statistics on the Map.
         /// </summary>
         [Fact]
         public void The_sidebar_runs_hearth_vikings_atlas_mods_world()
@@ -755,7 +757,7 @@ namespace ValheimBakaLoader.Tests.Forms
                 .Select(m => m.Groups[1].Value)
                 .ToArray();
 
-            Assert.Equal(new[] { "skald", "saga", "runes", "herald" }, sections);
+            Assert.Equal(new[] { "saga", "skald", "runes", "herald" }, sections);
         }
 
         /// <summary>

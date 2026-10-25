@@ -2,8 +2,11 @@
  * remembered, and every old road still landing where it did.
  *
  * WHY THIS EXISTS. The owner's spec: the rail shows Dashboard, Players, Map, Mods, Settings
- * and nothing else; the Log and Statistics are sections of the Dashboard, Configs a section
- * under the Mods list, Discord a section at the foot of Settings; every section folds behind a
+ * and nothing else; the Log is a section of the Dashboard, Statistics a section under the map
+ * on the Map hall (it stood on the Dashboard between the bento and the Log until 1.3.0, issue
+ * 27), Configs a section under the Mods list, Discord a section at the foot of Settings; the
+ * Map's own map is a section too since 1.3.0, like the other halls' first ones; every section
+ * folds behind a
  * glowing chevron to the left of its heading and rolls through reveal; open or folded is
  * remembered per section across hall walks and restarts; and every way of jumping somewhere
  * opens the hall, unfolds the section, scrolls to it and lights it. The quiet ways that goes
@@ -15,7 +18,7 @@
  * The rules:
  *   1. The rail: five halls in the owner's order; the four that left are sections with the ids
  *      they had, each under the hall the spec names, in the spec's order.
- *   2. The table: SECTIONS in app.js names the seven sections with the spec's defaults, and the
+ *   2. The table: SECTIONS in app.js names the eight sections with the spec's defaults, and the
  *      markup starts each body the way its default says.
  *   3. The chevron: written to the left of every section heading, glows, rests when idle, says
  *      its state, and is worded from the catalog on every language repaint.
@@ -37,6 +40,11 @@
  *      rather than written down; the wrapper draws no box so the head can travel the hall; the
  *      scroll padding is the measured stack, not 120px; and the Settings tab strip stands
  *      outside the folding body, where a press on it unfolds the panels.
+ *   9. The Map hall (1.3.0, issue 27): its map is the hall's own section and Statistics stands
+ *      under it; the map's height is the pane less the measured head stack and lives on the
+ *      row, so no fold changes the map's size and so its zoom; a fit asked with the map folded
+ *      is owed rather than lost; a realm switch reads Statistics again; and a refresh asked
+ *      while one is out is not dropped.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -63,9 +71,21 @@ const MAP = fs.readFileSync(path.join(ROOT, "docs", "sidebar.md"), "utf8").repla
 
 let passed = 0;
 const failures = [];
+/* A rule may hand back a promise (rule 9 waits on a read it holds open); its line is printed
+   when it settles, and the summary waits for it. */
+const pending = [];
 function test(name, fn) {
+  const fail = problem => {
+    failures.push(name);
+    console.log("  FAIL " + name);
+    console.log("       " + (problem && problem.message ? problem.message : problem));
+  };
   try {
-    fn();
+    const later = fn();
+    if (later && typeof later.then === "function") {
+      pending.push(later.then(() => { passed++; console.log("  ok   " + name); }, fail));
+      return;
+    }
     passed++;
     console.log("  ok   " + name);
   } catch (problem) {
@@ -102,7 +122,7 @@ function table() {
 }
 
 const RAIL = ["hearth", "vikings", "atlas", "mods", "world"];
-const SECTS = { skald: "hearth", saga: "hearth", runes: "mods", herald: "world" };
+const SECTS = { skald: "atlas", saga: "hearth", runes: "mods", herald: "world" };
 
 test("1. the rail: five halls in the owner's order, the other four as sections under the halls the spec names", () => {
   const rail = [...HTML.matchAll(/<div class="navitem[^"]*" data-page="([a-z]+)">/g)].map(m => m[1]);
@@ -119,9 +139,11 @@ test("1. the rail: five halls in the owner's order, the other four as sections u
     assert.ok(HTML.indexOf('id="sectBody-' + key + '"', at) > at, key + " has no body to roll");
     assert.ok(HTML.indexOf('<section class="page', at) === -1 || HTML.indexOf('</section>', at) < HTML.indexOf('<section class="page', at), key + " runs past its hall");
   }
-  /* The Dashboard: bento, then Statistics, then the Log. Mods: list, then Configs. Settings: tabs, then Discord. */
+  /* The Dashboard: bento, then the Log. The Map: the map, then Statistics (1.3.0; until then
+     Statistics stood between the bento and the Log). Mods: list, then Configs. Settings: tabs,
+     then Discord. */
   const order = (a, b) => assert.ok(HTML.indexOf(a) < HTML.indexOf(b), a + " does not come before " + b);
-  order('<div class="bento">', 'id="sect-skald"'); order('id="sect-skald"', 'id="sect-saga"');
+  order('<div class="bento">', 'id="sect-saga"'); order('<div class="atlas-grid">', 'id="sect-skald"');
   order('id="sectBody-mods"', 'id="sect-runes"'); order('id="sectBody-world"', 'id="sect-herald"');
   /* The old halls' ids are all still there, so every link and every test that keys on them lands. */
   for (const id of ["term", "termIn", "termSearch", "vellumBtn", "skResetBtn", "skModFeed", "cfgList", "cfgEditor", "cfgSaveBtn",
@@ -132,11 +154,17 @@ test("1. the rail: five halls in the owner's order, the other four as sections u
   for (const key of Object.keys(SECTS)) assert.ok(MAP.includes("`#sect-" + key + "`"), "docs/sidebar.md does not place " + key);
 });
 
-test("2. the table: seven sections with the spec's defaults, and the markup starts each body as its default says", () => {
+test("2. the table: eight sections with the spec's defaults, and the markup starts each body as its default says", () => {
   const t = table();
   const rows = t.SECTIONS.map(s => [s.key, s.page, !!s.open]);
-  same(rows, [["hearth", "hearth", true], ["skald", "hearth", false], ["saga", "hearth", false],
+  /* In the rail's order, each hall's own section first: the head stack reads the first row of a
+     hall as its top. Statistics keeps its key, skald, on the Map, so a saved answer still holds. */
+  same(rows, [["hearth", "hearth", true], ["saga", "hearth", false], ["atlas", "atlas", true], ["skald", "atlas", false],
                                 ["mods", "mods", true], ["runes", "mods", false], ["world", "world", true], ["herald", "world", false]]);
+  const atlas = t.SECTIONS.find(s => s.key === "atlas");
+  assert.strictEqual(atlas.head, "#page-atlas>.pagehead", "the Map's own section is not headed by the hall's head");
+  assert.strictEqual(atlas.body, "#page-atlas>.atlas-grid", "the Map's own section does not fold the map");
+  assert.ok(HTML.includes('          <div class="atlas-grid">\n'), "the map does not start shown, as its default says");
   for (const s of t.SECTIONS) {
     assert.ok(HTML.includes(s.head.replace(/>/g, "").replace(/^#/, 'id="').split(".")[0] + '"'), s.key + "'s head names nothing in the markup");
     const bodyId = s.body.replace(/^.*#/, "").split(">")[0].replace(/\..*$/, "");
@@ -177,7 +205,7 @@ test("4. remembered: every move writes UiSections whole, the saved answer is rea
   assert.strictEqual(t.sectIsOpen("hearth"), false, "a saved fold was not honoured");
   assert.strictEqual(t.sectIsOpen("skald"), false, "a section the document does not name lost its default");
   t.sectSet("runes", true);
-  same(writes, [["userprefs.save", { prefs: { UiSections: { hearth: false, skald: false, saga: true, mods: true, runes: true, world: true, herald: false } } }]],
+  same(writes, [["userprefs.save", { prefs: { UiSections: { hearth: false, saga: true, atlas: true, skald: false, mods: true, runes: true, world: true, herald: false } } }]],
     "a move does not write the whole answer");
   /* Before the saved answer has been read, a move is not written: the same rule as the Upkeep switches. */
   const fresh = table(); const early = [];
@@ -233,7 +261,9 @@ test("6. the checks that read the old halls read sectOn, and the walk-in work ru
   assert.strictEqual(t.sectOn("saga"), false); t.sectSet("saga", true, { silent: true }); assert.strictEqual(t.sectOn("saga"), true);
   t.currentPage = "mods"; assert.strictEqual(t.sectOn("saga"), false, "a section counts as on screen with its hall away");
   const go = body("function goPage(name){");
-  assert.ok(go.includes('if(name==="hearth"&&sectIsOpen("skald"))') && go.includes('if(name==="mods"&&sectIsOpen("runes")) refreshCfgList(false);')
+  /* Statistics is on the Map since 1.3.0, so the walk that reads it again is the walk into the Map. */
+  assert.ok(go.includes('if(name==="atlas"&&sectIsOpen("skald"))') && !go.includes('if(name==="hearth"&&sectIsOpen("skald"))')
+    && go.includes('if(name==="mods"&&sectIsOpen("runes")) refreshCfgList(false);')
     && go.includes('if(name==="world"&&sectIsOpen("herald")) refreshHerald();'), "the walk into a hall does not refresh the open sections");
   const block = sectionsBlock();
   assert.ok(block.includes('enter:()=>{try{skaldRefresh();}catch(_){}}') && block.includes("enter:()=>{if(Native.available) refreshCfgList(false);}")
@@ -305,15 +335,20 @@ test("8. the head stack: every section head sticks at both ends from measured he
     "the scroll padding is not the measured stack at the top and the foot");
   assert.ok(/\.pages\.heads-below::after\{opacity:0\}/.test(CSS) && CSS.indexOf(".pages.heads-below::after") > CSS.indexOf(".pages.cue-down::after{opacity:1}"),
     "the foot fade darkens the heads stuck at the foot, or pops rather than easing");
-  /* The heights: measured, and written as the heads above and below each one. */
+  /* The heights: measured, and written as the heads above and below each one; and, since 1.3.0,
+     the whole stack with every head's margins on the hall as --stack-all (the Map sizes its map
+     with it), rounded up. The margins are the stylesheet's: the hall's own head reaches 20px up
+     over the hall's padding and keeps 4px under it, a section head keeps 14px over and 4px under. */
   const t = table(), props = {};
-  const fake = (name, h) => ({ getBoundingClientRect: () => ({ height: h }),
-                               style: { setProperty: (k, v) => { (props[name] = props[name] || {})[k] = v; } } });
-  const els = { "#page-hearth>.pagehead": fake("hearth", 97), "#sect-skald>.pagehead": fake("skald", 53), "#sect-saga>.pagehead": fake("saga", 60) };
-  t.$ = sel => els[sel] || null; t.sectStackRead = () => {};
-  t.sectStackSize("hearth");
-  same(props, { skald: { "--stick-top": "97px", "--stick-bottom": "60px" }, saga: { "--stick-top": "150px", "--stick-bottom": "0px" } },
-    "the heads are not told the heights above and below them");
+  const fake = (name, h, mt, mb) => ({ getBoundingClientRect: () => ({ height: h }), margins: { marginTop: mt + "px", marginBottom: mb + "px" },
+                                       style: { setProperty: (k, v) => { (props[name] = props[name] || {})[k] = v; } } });
+  const els = { "#page-hearth>.pagehead": fake("hearth", 97, -20, 4), "#sect-saga>.pagehead": fake("saga", 60, 14, 4), "#page-hearth": fake("page-hearth", 0, 0, 0),
+                "#page-atlas>.pagehead": fake("atlas", 61.5, -20, 4), "#sect-skald>.pagehead": fake("skald", 52.5, 14, 4), "#page-atlas": fake("page-atlas", 0, 0, 0) };
+  t.$ = sel => els[sel] || null; t.sectStackRead = () => {}; t.getComputedStyle = el => el.margins;
+  t.sectStackSize("hearth"); t.sectStackSize("atlas");
+  same(props, { saga: { "--stick-top": "97px", "--stick-bottom": "0px" }, "page-hearth": { "--stack-all": "159px" },
+                skald: { "--stick-top": "61.5px", "--stick-bottom": "0px" }, "page-atlas": { "--stack-all": "116px" } },
+    "the heads are not told the heights above and below them, or the hall the whole stack with its margins");
   const wire = body("function sectStackWire(){");
   assert.ok(wire.includes("new ResizeObserver(") && wire.includes('addEventListener("scroll"'), "the stack is not measured again when a head, a body or the pane changes size, or read again on a scroll");
   assert.ok(APP.includes("sectWire();\nsectStackWire();"), "the stack is never wired");
@@ -329,7 +364,75 @@ test("8. the head stack: every section head sticks at both ends from measured he
     "the unfold is wired above the tab's own handler");
 });
 
-console.log(failures.length === 0
-  ? "sidebar sections selftest: all " + passed + " rules pass"
-  : "sidebar sections selftest: " + failures.length + " of " + (passed + failures.length) + " rules FAIL");
-process.exit(failures.length === 0 ? 0 : 1);
+test("9. the Map hall: the map is a section with Statistics under it, keeps its size and zoom through every fold, and Statistics follows the realm", () => {
+  /* The markup: the hall's head floats like the other halls' first heads, and Statistics is the
+     last thing in the hall, after the map. */
+  const hall = HTML.slice(HTML.indexOf('<section class="page" id="page-atlas">'), HTML.indexOf("<!-- ============ PAGE: MODS"));
+  assert.ok(hall.includes('<div class="pagehead floating">'), "the Map's head does not stay on screen while Statistics is read");
+  assert.ok(hall.indexOf('<div class="atlas-grid">') < hall.indexOf('<div class="sect" id="sect-skald" data-sect="skald">')
+    && /<\/div>\s*<\/section>\s*$/.test(hall), "Statistics is not under the map, at the end of the Map hall");
+  /* The size: the pane less the measured stack, on the ROW, and the gutter kept. A height on the
+     grid itself would roll the map smaller under a fold, and atlasResize takes that for a zoom. */
+  const page = /#page-atlas\{([^}]*)\}/.exec(CSS), grid = /\.atlas-grid\{([^}]*)\}/.exec(CSS);
+  assert.ok(page && /container-type:size/.test(page[1]) && /scrollbar-gutter:stable/.test(page[1]), "the Map hall is not the size the map is measured from, or its scrollbar narrows it when Statistics opens");
+  assert.ok(grid && /flex:none/.test(grid[1]) && /grid-template-rows:max\(180px,calc\(100cqh - var\(--stack-all,0px\)\)\)/.test(grid[1]),
+    "the map's row is not the pane less the measured head stack");
+  assert.ok(!/(^|;)\s*(height|min-height|flex):/.test(grid[1].replace(/flex:none/, "")), "the grid has a height of its own, which a fold would roll and the map would follow");
+  /* The chart: atlasResize and atlasFit over a stand-in map. */
+  const wrap = { clientWidth: 0, clientHeight: 0 }, canvas = { width: 0, height: 0 };
+  const c = { Math, Number, window: { devicePixelRatio: 1 }, wrap, canvas, drawn: 0,
+              $: sel => (sel === "#atlasWrap" ? wrap : sel === "#atlasCanvas" ? canvas : null),
+              ATLAS: { mapExtent: 10500, viewBase: 0, fitOwed: false, cam: { cx: 0, cz: 0, ppm: 0 } } };
+  c.atlasDraw = () => { c.drawn++; };
+  vm.createContext(c);
+  for (const head of ["function atlasWrapSize(){", "function atlasFitPpm(){", "function atlasFit(){", "function atlasResize(){"])
+    vm.runInContext(body(head), c, { filename: "app.js#" + head });
+  const resize = (w, h) => { wrap.clientWidth = w; wrap.clientHeight = h; vm.runInContext("atlasResize()", c); };
+  resize(600, 216);
+  vm.runInContext("atlasFit()", c);
+  const fit = 216 / 21000;
+  assert.strictEqual(c.ATLAS.cam.ppm, fit, "the fit is not the shorter side across the world");
+  c.ATLAS.cam.ppm = fit * 1.5;
+  resize(0, 0); resize(600, 216);
+  assert.strictEqual(c.ATLAS.cam.ppm, fit * 1.5, "a fold and an unfold of the map changed its zoom");
+  resize(600, 300);
+  assert.ok(Math.abs(c.ATLAS.cam.ppm - fit * 1.5 * 300 / 216) < 1e-15, "the window growing no longer grows the chart with it");
+  resize(0, 0);
+  vm.runInContext("atlasFit()", c);
+  assert.strictEqual(c.ATLAS.cam.ppm, 0.03, "a fit with the map folded did not keep a sane stand-in");
+  resize(600, 216);
+  assert.strictEqual(c.ATLAS.cam.ppm, fit, "a fit asked with the map folded was lost: the map came back at the stand-in");
+  resize(600, 216);
+  assert.strictEqual(c.ATLAS.cam.ppm, fit, "the owed fit was paid twice");
+  /* A realm switch reads Statistics again, after the map is reset for the new realm. */
+  const sw = body("async function switchServer(name,opts){");
+  const reset = sw.indexOf("try{atlasReset();}catch{}"), again = sw.indexOf("try{skaldRefresh();}catch(_){}");
+  assert.ok(reset > 0 && again > reset, "a realm switch leaves Statistics on the last realm's numbers");
+  assert.ok(sw.indexOf('rpc("profiles.get",{name})') < again, "Statistics is read before the host has made the new realm the active one");
+  /* A refresh asked while one is out is not dropped, and the answer it replaces is not drawn. */
+  const at = APP.indexOf("let skaldBusy=false"), end = APP.indexOf("\nfunction renderSkald(){", at);
+  assert.ok(at > 0 && end > at, "skaldRefresh is no longer where this rule reads it");
+  const k = { answers: [], drawn: [], fetches: 0, SKALD: null };
+  k.skaldFetch = () => new Promise(r => { k.fetches++; k.answers.push(r); });
+  k.renderSkald = () => k.drawn.push(k.SKALD);
+  vm.createContext(k);
+  vm.runInContext(APP.slice(at, end).replace("let skaldBusy=false, skaldAgain=false;", "var skaldBusy=false, skaldAgain=false;")
+    + "\nthis.refresh=skaldRefresh;this.getSkald=()=>SKALD;", k, { filename: "app.js#skaldRefresh" });
+  return (async () => {
+    const first = k.refresh();
+    k.refresh();                         /* the realm switch, while the event's read is out */
+    k.answers[0]("left realm");
+    await new Promise(r => setImmediate(r));
+    assert.strictEqual(k.fetches, 2, "a refresh asked while one was out was dropped");
+    k.answers[1]("this realm");
+    await first;
+    same(k.drawn, ["this realm"], "the read that answered for the realm just left was drawn");
+  })();
+});
+
+Promise.all(pending).then(() => {
+  console.log(failures.length === 0
+    ? "sidebar sections selftest: all " + passed + " rules pass"
+    : "sidebar sections selftest: " + failures.length + " of " + (passed + failures.length) + " rules FAIL");
+  process.exit(failures.length === 0 ? 0 : 1);
+});

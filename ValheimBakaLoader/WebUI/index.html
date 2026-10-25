@@ -345,87 +345,6 @@
             </div>
           </div>
 
-        <!-- ============ SECTION: SKALD (Statistics, on the Dashboard: the realm's story in numbers) ============ -->
-        <div class="sect" id="sect-skald" data-sect="skald">
-          <div class="pagehead secthead">
-            <h1 data-i18n="skald.head.title"><span class="r">ᛏ</span>STATISTICS</h1>
-            <span class="hnorse" data-i18n="common.norse.skald">Skald</span>
-            <!-- No id on the subtitle: renderSkald writes it, joining the date the journal
-                 started to the sentence after it, so it is a composed message and belongs
-                 to the slice that keys those. -->
-            <span class="sub" id="skaldSub">the realm's story in numbers · counted on this machine only, nothing leaves it</span>
-            <div class="grow"></div>
-            <button class="btn btn-blood btn-sm" id="skResetBtn" title="Clear every counted number and start the journal again" data-i18n="skald.reset.label" data-i18n-title="skald.reset.title">ᛪ&nbsp; Reset statistics</button>
-          </div>
-          <div class="sectbody" id="sectBody-skald" style="display:none">
-          <div class="skald-stats">
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.uptime.label">Uptime<span class="cnorse" data-i18n="skald.uptime.norse">Hearth burned</span></div>
-              <div class="bigval" id="skUptime">-</div>
-              <div class="subval" data-i18n="skald.uptime.caption">total across 180 days</div>
-              <div style="margin-top:6px"><span class="pill green" id="skNowPill" style="display:none">alight -</span></div>
-            </div>
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.starts.label">Starts<span class="cnorse" data-i18n="skald.starts.norse">Kindlings</span></div>
-              <div class="bigval" id="skStarts">-</div>
-              <div class="subval" data-i18n="skald.starts.caption">server starts</div>
-              <div style="margin-top:6px"><span class="pill amber" id="skCrashPill" style="display:none">- crashes</span></div>
-            </div>
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.vikings.label">Players<span class="cnorse" data-i18n="common.norse.vikings">Vikings</span></div>
-              <div class="bigval" id="skVikings">-</div>
-              <div class="subval" id="skVikingsSub">unique souls · - visits</div>
-            </div>
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.deaths.label">Deaths</div>
-              <div class="bigval" id="skDeaths">-</div>
-              <div class="subval" id="skDeathsSub" data-i18n="skald.deaths.sub">valkyries dispatched</div>
-            </div>
-            <div class="card">
-              <div class="microlabel" data-i18n="skald.mods.label">Mod history<span class="cnorse" data-i18n="skald.mods.norse">Chronicle</span></div>
-              <div class="bigval" id="skModUps">-</div>
-              <div class="subval" id="skModUpsSub">updates · - installs</div>
-            </div>
-          </div>
-          <div class="skald-grid">
-            <div class="card sk-players" style="padding:0">
-              <div style="height:6px"></div>
-              <!-- The column widths are measured, not chosen. Every one of the five
-                   headers was rendered in English, Russian, Japanese and both Chinese
-                   under the per-language type rules and measured with a Range, and the
-                   widest of each plus the 24px of cell padding is what the percentage
-                   has to give it at the app's minimum window. Three of the five used to
-                   be short of their OWN ENGLISH there: Playtime had 56px for 66.5px of
-                   ink, Sessions 36px for 66.1px, Deaths 36px for 52.3px, and an English
-                   header is one unbreakable word, so it overflowed into the column
-                   beside it while Russian and Japanese broke in half instead.
-                   What the three columns take, they take from the two that had it to
-                   give: the Player column keeps 120px at the minimum window against the
-                   126px it had, which is six pixels off a name, and Last seen keeps its
-                   widest rendering with room.
-                   The wrapper below is the floor under all of it: the table can never be
-                   squeezed below the width where the measurements hold, and a card
-                   narrower than that scrolls sideways rather than crushing the headers
-                   again. -->
-              <div class="sk-ptable">
-              <table>
-                <thead><tr><th style="width:24%" data-i18n="vikings.col.name">Player</th><th style="width:20%" data-i18n="vikings.col.playtime">Playtime</th><th style="width:19%" data-i18n="skald.col.sessions">Sessions</th><th style="width:16.5%" data-i18n="vikings.col.deaths">Deaths</th><th data-i18n="vikings.col.seen">Last seen</th></tr></thead>
-                <tbody id="skPlayerTable"></tbody>
-              </table>
-              </div>
-            </div>
-            <div class="card sk-feed">
-              <div class="microlabel" data-i18n="skald.feed.label">Recent events<span class="cnorse" data-i18n="skald.feed.norse">Happenings</span></div>
-              <div class="skfeed" id="skFeed"></div>
-            </div>
-            <div class="card sk-mods">
-              <div class="microlabel" data-i18n="skald.mods.label">Mod history<span class="cnorse" data-i18n="skald.mods.norse">Chronicle</span></div>
-              <div class="skfeed" id="skModFeed"></div>
-            </div>
-          </div>
-          </div>
-        </div>
-
         <!-- ============ SECTION: SAGA (the Log, on the Dashboard) ============ -->
         <div class="sect" id="sect-saga" data-sect="saga">
           <div class="pagehead secthead">
@@ -507,7 +426,10 @@
 
         <!-- ============ PAGE: ATLAS (webmap + skies) ============ -->
         <section class="page" id="page-atlas">
-          <div class="pagehead">
+          <!-- Two sections since 1.3.0 (issue 27), like the other halls: the map, which is
+               this head's own and folds behind its chevron, and Statistics under it. So the
+               head floats like theirs and stays on screen while Statistics is read. -->
+          <div class="pagehead floating">
             <h1 data-i18n="atlas.head.title"><span class="r">ᛞ</span>MAP</h1>
             <span class="hnorse" data-i18n="common.norse.atlas">Atlas</span>
             <span class="sub" id="atlasSub" data-i18n="atlas.head.sub">the known world</span>
@@ -582,6 +504,87 @@
               </div>
             </div>
           </div>
+
+        <!-- ============ SECTION: SKALD (Statistics, on the Map hall since 1.3.0, under the map: the realm's story in numbers) ============ -->
+        <div class="sect" id="sect-skald" data-sect="skald">
+          <div class="pagehead secthead">
+            <h1 data-i18n="skald.head.title"><span class="r">ᛏ</span>STATISTICS</h1>
+            <span class="hnorse" data-i18n="common.norse.skald">Skald</span>
+            <!-- No id on the subtitle: renderSkald writes it, joining the date the journal
+                 started to the sentence after it, so it is a composed message and belongs
+                 to the slice that keys those. -->
+            <span class="sub" id="skaldSub">the realm's story in numbers · counted on this machine only, nothing leaves it</span>
+            <div class="grow"></div>
+            <button class="btn btn-blood btn-sm" id="skResetBtn" title="Clear every counted number and start the journal again" data-i18n="skald.reset.label" data-i18n-title="skald.reset.title">ᛪ&nbsp; Reset statistics</button>
+          </div>
+          <div class="sectbody" id="sectBody-skald" style="display:none">
+          <div class="skald-stats">
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.uptime.label">Uptime<span class="cnorse" data-i18n="skald.uptime.norse">Hearth burned</span></div>
+              <div class="bigval" id="skUptime">-</div>
+              <div class="subval" data-i18n="skald.uptime.caption">total across 180 days</div>
+              <div style="margin-top:6px"><span class="pill green" id="skNowPill" style="display:none">alight -</span></div>
+            </div>
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.starts.label">Starts<span class="cnorse" data-i18n="skald.starts.norse">Kindlings</span></div>
+              <div class="bigval" id="skStarts">-</div>
+              <div class="subval" data-i18n="skald.starts.caption">server starts</div>
+              <div style="margin-top:6px"><span class="pill amber" id="skCrashPill" style="display:none">- crashes</span></div>
+            </div>
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.vikings.label">Players<span class="cnorse" data-i18n="common.norse.vikings">Vikings</span></div>
+              <div class="bigval" id="skVikings">-</div>
+              <div class="subval" id="skVikingsSub">unique souls · - visits</div>
+            </div>
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.deaths.label">Deaths</div>
+              <div class="bigval" id="skDeaths">-</div>
+              <div class="subval" id="skDeathsSub" data-i18n="skald.deaths.sub">valkyries dispatched</div>
+            </div>
+            <div class="card">
+              <div class="microlabel" data-i18n="skald.mods.label">Mod history<span class="cnorse" data-i18n="skald.mods.norse">Chronicle</span></div>
+              <div class="bigval" id="skModUps">-</div>
+              <div class="subval" id="skModUpsSub">updates · - installs</div>
+            </div>
+          </div>
+          <div class="skald-grid">
+            <div class="card sk-players" style="padding:0">
+              <div style="height:6px"></div>
+              <!-- The column widths are measured, not chosen. Every one of the five
+                   headers was rendered in English, Russian, Japanese and both Chinese
+                   under the per-language type rules and measured with a Range, and the
+                   widest of each plus the 24px of cell padding is what the percentage
+                   has to give it at the app's minimum window. Three of the five used to
+                   be short of their OWN ENGLISH there: Playtime had 56px for 66.5px of
+                   ink, Sessions 36px for 66.1px, Deaths 36px for 52.3px, and an English
+                   header is one unbreakable word, so it overflowed into the column
+                   beside it while Russian and Japanese broke in half instead.
+                   What the three columns take, they take from the two that had it to
+                   give: the Player column keeps 120px at the minimum window against the
+                   126px it had, which is six pixels off a name, and Last seen keeps its
+                   widest rendering with room.
+                   The wrapper below is the floor under all of it: the table can never be
+                   squeezed below the width where the measurements hold, and a card
+                   narrower than that scrolls sideways rather than crushing the headers
+                   again. -->
+              <div class="sk-ptable">
+              <table>
+                <thead><tr><th style="width:24%" data-i18n="vikings.col.name">Player</th><th style="width:20%" data-i18n="vikings.col.playtime">Playtime</th><th style="width:19%" data-i18n="skald.col.sessions">Sessions</th><th style="width:16.5%" data-i18n="vikings.col.deaths">Deaths</th><th data-i18n="vikings.col.seen">Last seen</th></tr></thead>
+                <tbody id="skPlayerTable"></tbody>
+              </table>
+              </div>
+            </div>
+            <div class="card sk-feed">
+              <div class="microlabel" data-i18n="skald.feed.label">Recent events<span class="cnorse" data-i18n="skald.feed.norse">Happenings</span></div>
+              <div class="skfeed" id="skFeed"></div>
+            </div>
+            <div class="card sk-mods">
+              <div class="microlabel" data-i18n="skald.mods.label">Mod history<span class="cnorse" data-i18n="skald.mods.norse">Chronicle</span></div>
+              <div class="skfeed" id="skModFeed"></div>
+            </div>
+          </div>
+          </div>
+        </div>
         </section>
 
         <!-- ============ PAGE: MODS ============ -->

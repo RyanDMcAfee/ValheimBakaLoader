@@ -892,7 +892,9 @@ echo "== 55. issue 20's layout in a real browser: row padding, the grip and the 
 # right-hand resize grip still covers the scrollbar's thumb, and whether the Dashboard, Mods and
 # Settings heads stay on screen while their halls scroll. Since 1.3.0 (issue 27) the third also
 # asks it of every section head, at the top and at the foot of the pane, and where a section
-# opened from the top lands once it has rolled open. Same readiness question as 40 asks.
+# opened from the top lands once it has rolled open; and of the Map hall, where Statistics stands
+# since 1.3.0, that the map fills the pane, keeps its size and its zoom through every fold, and
+# zooms under the wheel while the hall scrolls everywhere else. Same readiness question as 40 asks.
 LAYOUT_PROBE="$UI_DIR/issue20_layout_probe.js"
 if [ ! -f "$LAYOUT_PROBE" ]; then
   echo "  the layout probe is missing: $LAYOUT_PROBE"; fail=1
@@ -1038,6 +1040,9 @@ echo "== 65. the simpler sidebar: five halls, the other four as remembered secti
 # failures (a hall dropped with its ids, a default or a saved answer not honoured, a road still
 # walking to a hall the rail lost, a check still reading currentPage for a section, the
 # preference missing on one side of the bridge) are each caught here, against docs/sidebar.md.
+# Since 1.3.0 (issue 27) Statistics is a section under the map on the Map hall, whose map is a
+# section too; rule 9 holds the map's size and zoom through a fold, the fit owed while it is
+# folded, and Statistics read again for the realm on screen.
 SIDEBAR_SELFTEST="$UI_DIR/sidebar_sections_selftest.js"
 if [ -f "$SIDEBAR_SELFTEST" ]; then
   if out=$(node "$SIDEBAR_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'

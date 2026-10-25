@@ -32,6 +32,14 @@
        last); a fold never scrolls; and with the Settings panels folded the tab strip is still
        on screen and a press on it unfolds them. Before 1.3.0 the later heads never stuck and
        a section opened from the top landed with its body under the fold.
+       Statistics moved to the Map hall in 1.3.0, under the map, and the map became the hall's
+       own section. Asked at both sizes: with Statistics folded the hall does not scroll and
+       the Statistics head ends it (the map fills the rest); five folds and unfolds of the map
+       and three of Statistics leave the zoom, the centre, the map's size and its canvas exactly
+       as they were, and the map has one size through every roll (atlasResize takes a change of
+       size for a zoom, so a map that shrank under a fold came back at another zoom); a Recenter
+       pressed with the map folded fits it once it is back; and the wheel over the map zooms it
+       without scrolling the hall, while over Statistics it scrolls the hall.
 
   The page is the browser preview (no host), served from WebUI over a local port. Scrollbars
   are left ON (Playwright hides them by default), because the second question is about them.
@@ -188,9 +196,11 @@ const say = (ok, name, said) => {
     // ---------------------------------------------------------------- 3. sticky head
     {
       const page = await open(1408, 640);
-      for (const h of ["hearth", "mods", "world"]) {
+      /* The Map hall's head floats since 1.3.0; the hall only scrolls with Statistics open. */
+      for (const h of ["hearth", "mods", "world", "atlas"]) {
         const r = await page.evaluate(async n => {
           goPage(n);
+          if (n === "atlas") sectSet("skald", true, { now: true, silent: true });
           if (n === "hearth") {
             for (const [card, head] of [["#connCard", "#connHead"], ["#upkeepCard", "#upkeepHead"]]) {
               const c = document.querySelector(card);
@@ -224,8 +234,10 @@ const say = (ok, name, said) => {
         const p = await open(w, hgt);
         const at = w + "x" + hgt;
         /* With the hall at the top, every later head at the foot; then with every section open,
-           every head inside the pane at five scroll positions. */
-        for (const hall of ["hearth", "mods", "world"]) {
+           every head inside the pane at five scroll positions. The Map hall (1.3.0) is the one
+           that fits: with Statistics folded its map fills what the heads leave of the pane, so
+           the hall does not scroll and the Statistics head ends it, the hall's gap under it. */
+        for (const hall of ["hearth", "mods", "world", "atlas"]) {
           const r = await p.evaluate(async n => {
             const wait = ms => new Promise(r => setTimeout(r, ms));
             /* The hall's heads straight from the SECTIONS table, so this asks the page and not app.js's own helper. */
@@ -243,6 +255,12 @@ const say = (ok, name, said) => {
             await wait(250);
             const fade = getComputedStyle(document.querySelector(".pages"), "::after").opacity;
             const foot = top.slice(1).map((b, i, a) => Math.abs(b.bottom - (b.view - a.slice(i + 1).reduce((t, x) => t + x.h, 0))));
+            /* How far the hall scrolls as it stands, and how far its last head ends from the pane's
+               foot against the gap the hall keeps there (that head's bottom margin and the hall's
+               bottom padding). */
+            const fits = el.scrollHeight - el.clientHeight;
+            const lastHead = hallHeads(n).slice(-1)[0].head, keep = parseFloat(getComputedStyle(lastHead).marginBottom) + parseFloat(getComputedStyle(el).paddingBottom);
+            const ends = Math.abs(top[top.length - 1].bottom + keep - top[0].view);
             SECTIONS.forEach(x => sectSet(x.key, true, { now: true, silent: true }));
             await wait(150);
             const max = el.scrollHeight - el.clientHeight, off = [];
@@ -251,10 +269,14 @@ const say = (ok, name, said) => {
               read().forEach((b, i) => { if (b.top < -0.5 || b.bottom > b.view + 0.5) off.push(f + ":" + i + "@" + Math.round(b.top)); });
             }
             SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
-            return { later: top.length - 1, foot: foot.map(d => +d.toFixed(1)), off, max, fade };
+            return { later: top.length - 1, foot: foot.map(d => +d.toFixed(1)), off, max, fade, fits, ends: +ends.toFixed(1), keep };
           }, hall);
-          say(r.later > 0 && r.foot.every(d => d <= 1) && r.fade === "0", "at " + at + " with the " + hall + " hall at the top, every later head stands at the foot",
-            r.later + " later head(s), off the foot by " + r.foot.join(", ") + " px, foot fade opacity " + r.fade);
+          if (hall === "atlas")
+            say(r.later > 0 && r.fits <= 1 && r.ends <= 1, "at " + at + " with the Map hall at the top, the map fills the pane and the Statistics head ends it",
+              "scrolls " + r.fits + "px, Statistics head ends " + r.ends + " px off the hall's end (the hall keeps " + r.keep + " px under it)");
+          else
+            say(r.later > 0 && r.foot.every(d => d <= 1) && r.fade === "0", "at " + at + " with the " + hall + " hall at the top, every later head stands at the foot",
+              r.later + " later head(s), off the foot by " + r.foot.join(", ") + " px, foot fade opacity " + r.fade);
           say(r.off.length === 0, "at " + at + " every " + hall + " head is on screen at every scroll position",
             r.off.length ? "off screen: " + r.off.join(" ") : "5 positions over " + r.max + "px, every head inside the pane");
         }
@@ -298,15 +320,19 @@ const say = (ok, name, said) => {
             + (footed ? (under ? " and " : "") + "foot " + Math.round(r.bodyBottom) + " + gap " + Math.round(r.gap) + " = pane foot " + Math.round(r.view - r.below) : "")
             + (!under && !footed ? "neither: foot " + Math.round(r.bodyBottom) + " + gap " + Math.round(r.gap) + " against " + Math.round(r.view - r.below) : ""));
         }
-        /* A fold never scrolls the hall. */
+        /* A fold never scrolls the hall. The Log is folded from a place the folded hall still
+           reaches, so the browser has no reason of its own to move it (until 1.3.0 this folded
+           Statistics, which stood between the bento and the Log and is on the Map now). */
         const fold = await p.evaluate(async () => {
           const wait = ms => new Promise(r => setTimeout(r, ms));
-          SECTIONS.forEach(x => sectSet(x.key, x.page === "hearth", { now: true, silent: true }));
+          SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
           goPage("hearth"); await wait(250);
           const el = document.querySelector("#page-hearth");
-          el.scrollTop = 300; el.dispatchEvent(new Event("scroll")); await wait(150);
+          const foldedMax = el.scrollHeight - el.clientHeight;
+          sectSet("saga", true, { now: true, silent: true }); await wait(150);
+          el.scrollTop = Math.min(300, Math.floor(foldedMax / 2)); el.dispatchEvent(new Event("scroll")); await wait(150);
           const before = el.scrollTop;
-          document.querySelector("#sect-skald>.pagehead .sectchev").click();
+          document.querySelector("#sect-saga>.pagehead .sectchev").click();
           await wait(900);
           const after = el.scrollTop;
           SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
@@ -340,6 +366,78 @@ const say = (ok, name, said) => {
           "folded " + tabs.folded + ", Server and App on screen: " + tabs.shown.join(", "));
         say(tabs.open && tabs.app, "at " + at + " a tab pressed with the panels folded unfolds them",
           "open " + tabs.open + ", App panel on screen " + tabs.app);
+        /* THE MAP HALL (1.3.0, issue 27): Statistics stands under the map. atlasResize takes a
+           change of the map's size for a zoom, so a map that changed size under a fold came back
+           at another zoom, a little further off on every fold. Asked: five folds and unfolds of
+           the map's own section and three of Statistics leave the zoom, the centre, the map's size
+           and its canvas exactly where they were, and the map has one size through every roll; a
+           Recenter pressed with the map folded fits it once it is back (the fit is owed, not lost
+           to a map with no size). */
+        const zoom = await p.evaluate(async () => {
+          const wait = ms => new Promise(r => setTimeout(r, ms));
+          SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+          goPage("atlas"); await wait(900);   /* the preview's island lands on an image load */
+          const el = document.querySelector("#page-atlas"), wrap = document.querySelector("#atlasWrap"), cv = document.querySelector("#atlasCanvas");
+          el.scrollTop = 0; el.dispatchEvent(new Event("scroll")); await wait(100);
+          const state = () => JSON.stringify({ ppm: ATLAS.cam.ppm, cx: ATLAS.cam.cx, cz: ATLAS.cam.cz, w: wrap.clientWidth, h: wrap.clientHeight, cw: cv.width, ch: cv.height });
+          /* A zoom and a pan of the host's own first, so a fold that refitted the map would show. */
+          ATLAS.cam.ppm *= 1.18 * 1.18; ATLAS.cam.cx = 640; ATLAS.cam.cz = -320; atlasDraw();
+          const start = state(), sizes = new Set(), moved = [];
+          const watch = async ms => {
+            const t0 = performance.now();
+            while (performance.now() - t0 < ms) {
+              if (wrap.clientHeight) sizes.add(wrap.clientWidth + "x" + wrap.clientHeight);
+              await new Promise(r => requestAnimationFrame(r));
+            }
+          };
+          const chev = key => document.querySelector(sectRec(key).head + " .sectchev");
+          let folds = 0;
+          for (let i = 0; i < 5; i++) {
+            chev("atlas").click(); await watch(450);
+            if (!sectIsOpen("atlas") && getComputedStyle(document.querySelector("#page-atlas>.atlas-grid")).display === "none") folds++;
+            chev("atlas").click(); await watch(450);
+            if (state() !== start) moved.push("map fold " + (i + 1) + ": " + state());
+          }
+          for (let i = 0; i < 3; i++) {
+            chev("skald").click(); await watch(1100);
+            chev("skald").click(); await watch(450);
+            if (state() !== start) moved.push("Statistics fold " + (i + 1) + ": " + state());
+          }
+          chev("atlas").click(); await wait(450);
+          document.querySelector("#atlasRecenter").click();
+          chev("atlas").click(); await wait(450);
+          const fit = atlasFitPpm(), fitted = fit > 0 && Math.abs(ATLAS.cam.ppm - fit) < 1e-12 && ATLAS.cam.cx === 0 && ATLAS.cam.cz === 0;
+          SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+          return { start, moved, sizes: [...sizes], folds, fitted, ppm: ATLAS.cam.ppm, fit };
+        });
+        say(zoom.folds === 5 && zoom.moved.length === 0, "at " + at + " folding and unfolding the map and Statistics keeps the map's zoom",
+          zoom.moved.length ? zoom.moved.join(" | ") : zoom.folds + " map folds and 3 Statistics folds, back to " + zoom.start + " every time");
+        say(zoom.sizes.length === 1, "at " + at + " the map keeps one size through every roll",
+          zoom.sizes.join(", "));
+        say(zoom.fitted, "at " + at + " a Recenter pressed with the map folded fits it once it is back",
+          "zoom " + zoom.ppm + ", the fit for this map " + zoom.fit);
+        /* The wheel over the map zooms it and never scrolls the hall; over Statistics it scrolls. */
+        await p.evaluate(async () => {
+          SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true }));
+          goPage("atlas"); sectSet("skald", true, { now: true, silent: true });
+          await new Promise(r => setTimeout(r, 300));
+          const el = document.querySelector("#page-atlas"); el.scrollTop = 0; el.dispatchEvent(new Event("scroll"));
+          atlasFit(); atlasDraw();
+          await new Promise(r => setTimeout(r, 150));
+        });
+        const spot = await p.evaluate(() => {
+          const c = document.querySelector("#atlasCanvas").getBoundingClientRect(), h = document.querySelector("#sect-skald>.pagehead h1").getBoundingClientRect();
+          return { cx: c.left + c.width / 2, cy: c.top + c.height / 2, hx: h.left + 20, hy: h.top + h.height / 2 };
+        });
+        const readWheel = () => p.evaluate(() => ({ top: document.querySelector("#page-atlas").scrollTop, ppm: ATLAS.cam.ppm }));
+        const w0 = await readWheel();
+        await p.mouse.move(spot.cx, spot.cy); await p.mouse.wheel(0, 240); await p.waitForTimeout(400);
+        const w1 = await readWheel();
+        await p.mouse.move(spot.hx, spot.hy); await p.mouse.wheel(0, 240); await p.waitForTimeout(600);
+        const w2 = await readWheel();
+        await p.evaluate(() => { SECTIONS.forEach(x => sectSet(x.key, !!x.open, { now: true, silent: true })); atlasFit(); atlasDraw(); });
+        say(w1.top === w0.top && w1.ppm !== w0.ppm && w2.top > w1.top, "at " + at + " the wheel zooms the map and scrolls the hall over Statistics",
+          "over the map: scrollTop " + w0.top + " to " + w1.top + ", zoom " + w0.ppm.toFixed(5) + " to " + w1.ppm.toFixed(5) + "; over the Statistics head: scrollTop " + w1.top + " to " + w2.top);
         await p.close();
       }
     }

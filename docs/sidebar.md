@@ -13,10 +13,10 @@ halls that stayed, with the ids, words and saved values they had.
 | Mods | the Mods hall; the list is the hall's first section | open | the rail, the palette, the Mods card, the condition bar's "mods with updates" row, the BepInEx landings |
 | Configs (Runes) | a section under the Mods list (`#sect-runes`) | folded | a mod row's "configs" entry (`openModConfig`), which unfolds it and lights it |
 | Settings (World) | the Settings hall; the tabs and both panels are the hall's first section | open | the rail, the palette, a new or duplicated realm landing on its ports and paths, `openAppTab` for the three App tab controls |
-| Map (Atlas) | its own hall, unchanged; third on the rail | | the rail, the palette |
-| Log (Saga) | a section at the foot of the Dashboard (`#sect-saga`), under Statistics | folded | the Recent log card's chip, the "open the log" toast action, the condition bar's unsaved, crash, failed-save and plugin rows |
+| Map (Atlas) | the Map hall; the map and its side column are the hall's first section, with Statistics under it since 1.3.0 | open | the rail, the palette |
+| Log (Saga) | a section at the foot of the Dashboard (`#sect-saga`), under the bento (under Statistics until 1.3.0) | folded | the Recent log card's chip, the "open the log" toast action, the condition bar's unsaved, crash, failed-save and plugin rows |
 | Discord (Herald) | a section at the foot of Settings (`#sect-herald`) | folded | the palette's Discord sharing entry; the setup wizard opens from inside it |
-| Statistics (Skald) | a section on the Dashboard (`#sect-skald`), between the bento and the Log | folded | the palette's Server analytics entry |
+| Statistics (Skald) | a section on the Map hall (`#sect-skald`), under the map, since 1.3.0 (issue 27); it stood between the bento and the Log on the Dashboard before | folded | the palette's Server analytics entry, which walks to the Map hall and so starts the map's drawing behind it |
 
 The halls are written in index.html in the rail's order (hearth, vikings, atlas, mods, world),
 which the test `The_halls_are_written_in_the_order_the_rail_lists_them` holds.
@@ -25,8 +25,9 @@ which the test `The_halls_are_written_in_the_order_the_rail_lists_them` holds.
 
 Each section is a `.sect` with the old hall's `.pagehead` first (now `.secthead`, under a
 hairline) and the rest of the old hall in a `.sectbody`, which app.js rolls open and shut
-through `reveal()` (docs/motion-sweep.md). The three halls' own first sections keep their
-sticky heads; their bodies are the bento, `#sectBody-mods` and `#sectBody-world`. Since 1.3.0
+through `reveal()` (docs/motion-sweep.md). The halls' own first sections keep their sticky
+heads; their bodies are the bento, the map (`.atlas-grid`, since 1.3.0), `#sectBody-mods` and
+`#sectBody-world`. Since 1.3.0
 the Settings tab strip stands just above `#sectBody-world`, outside it, so folding the panels
 leaves the tabs under the head; a press on a tab while the panels are folded unfolds them.
 
@@ -60,6 +61,29 @@ default, and what the hall used to do on the walk in, which the section does on 
 open (Statistics refreshes its journal, Configs re-lists the files, Discord re-reads its
 preferences).
 
+## The Map hall (1.3.0)
+
+Statistics moved from the Dashboard to the Map hall (issue 27), and the Map became a two-section
+hall like the others: the map with its side column is the hall's own section (`atlas` in
+`SECTIONS`, head `#page-atlas>.pagehead`, which floats now, body `.atlas-grid`, open by
+default), and Statistics stands under it, folded by default. Its key stays `skald`, so a saved
+open or folded answer survives the move.
+
+With Statistics folded the hall fits the pane and does not scroll: the map's row is
+`max(180px, calc(100cqh - var(--stack-all)))`, where `100cqh` is the hall's own content height
+(the hall is a size container) and `--stack-all` is every head of the hall with the margins
+around it, measured by `sectStackSize`. The height is on the grid's ROW, not on the grid, so a
+fold of the map's own section rolls the grid away while the map keeps its size and is clipped
+by the roll; the hall keeps its scrollbar's gutter (`scrollbar-gutter:stable`) so Statistics
+opening does not narrow it either. That matters because `atlasResize` takes a change of the
+map's size for a zoom: with the map's size untouched by every fold, a fold and an unfold come
+back to the same zoom and centre (the layout probe folds each five times and compares). A fit
+asked while the map is folded (the image landing, Recenter) is owed and made when the map is
+back. The canvas keeps zooming on the wheel; the hall scrolls by its scrollbar, the chevron or a
+wheel anywhere outside the canvas. A realm switch reads Statistics again after the map is reset
+for the new realm, and a read asked while one is out runs again after it rather than being
+dropped, so the numbers are always the realm on screen's.
+
 ## Remembered
 
 Open or folded is remembered per section, by the hall's own name: across hall walks in
@@ -68,7 +92,7 @@ sent as `UiSections` through `userprefs.get` and `userprefs.save`, the same docu
 same calls the Upkeep card's switches use). The saved answer is read with the Upkeep card's
 first read and set with no roll; every move writes the whole answer. The defaults in the
 table apply only to a section the document does not name, which is the first run and
-nothing after it.
+nothing after it (and, for the Map's own section, the first run of 1.3.0).
 
 ## Every road in
 

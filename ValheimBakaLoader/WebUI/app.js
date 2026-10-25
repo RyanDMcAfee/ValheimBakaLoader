@@ -2055,17 +2055,23 @@ function wireCollapsible(headId,body,targetEl){
 
 /* ---------- SECTIONS (1.2.18, the simpler sidebar) ----------
    The rail lists five halls: Dashboard, Players, Map, Mods, Settings. What used to be the Log,
-   Statistics, Configs and Discord halls are sections on the Dashboard (Statistics, then the
-   Log, under the bento), on Mods (Configs, under the list) and on Settings (Discord, at the
+   Statistics, Configs and Discord halls are sections: the Log on the Dashboard (under the
+   bento), Statistics on the Map (under the map, since 1.3.0; it stood between the bento and the
+   Log until then, issue 27), Configs on Mods (under the list) and Discord on Settings (at the
    foot). Every section, the halls' own first ones included, folds behind a chevron to the left
    of its heading, rolls through reveal, and remembers whether it stands open: across hall walks
    in UI_SECTIONS, across restarts in userprefs (UiSections, read with the Upkeep card's answer
-   and written on every move), by the hall's own name. The defaults below apply only until a
-   host has moved one. docs/sidebar.md maps the old rail to the new. */
+   and written on every move), by the hall's own name. Statistics kept its key, skald, when it
+   moved, so a host's saved answer for it still holds; the Map's own section is new in 1.3.0 and
+   takes its default until it is first moved. The rows run in the rail's order, and within a
+   hall the hall's own section comes first, which the head stack reads as the top of the hall.
+   The defaults below apply only until a host has moved one. docs/sidebar.md maps the old rail
+   to the new. */
 const SECTIONS=[
   {key:"hearth",page:"hearth",head:"#page-hearth>.pagehead",body:"#page-hearth>.bento",open:true},
-  {key:"skald",page:"hearth",head:"#sect-skald>.pagehead",body:"#sectBody-skald",open:false,enter:()=>{try{skaldRefresh();}catch(_){}}},
   {key:"saga",page:"hearth",head:"#sect-saga>.pagehead",body:"#sectBody-saga",open:false,enter:()=>{try{updateToastLift();}catch(_){}}},
+  {key:"atlas",page:"atlas",head:"#page-atlas>.pagehead",body:"#page-atlas>.atlas-grid",open:true},
+  {key:"skald",page:"atlas",head:"#sect-skald>.pagehead",body:"#sectBody-skald",open:false,enter:()=>{try{skaldRefresh();}catch(_){}}},
   {key:"mods",page:"mods",head:"#page-mods>.pagehead",body:"#sectBody-mods",open:true},
   {key:"runes",page:"mods",head:"#sect-runes>.pagehead",body:"#sectBody-runes",open:false,enter:()=>{if(Native.available) refreshCfgList(false);}},
   {key:"world",page:"world",head:"#page-world>.pagehead",body:"#sectBody-world",open:true},
@@ -2172,15 +2178,28 @@ function sectStackSize(page){
   const heads=sectHeads(page), hs=heads.map(h=>h.head.getBoundingClientRect().height);
   if(!hs.length||!hs[0]) return;   /* the hall is not on screen; the observer asks again when it is */
   const total=hs.reduce((t,h)=>t+h,0);
-  let above=0;
+  let above=0, flow=0;
   heads.forEach((h,i)=>{
     if(i){
       h.head.style.setProperty("--stick-top",above+"px");
       h.head.style.setProperty("--stick-bottom",(total-above-hs[i])+"px");
     }
     above+=hs[i];
+    flow+=hs[i]+sectMarginsOf(h.head);
   });
+  /* --stack-all is the whole stack as the hall spends it, every head with the margins around
+     it (1.3.0). The Map hall sizes its map with it, so the map fills what the heads leave of
+     the pane and its Statistics head ends the hall with nothing to scroll; rounded up, so a
+     fraction of a pixel never leaves the hall a scrollbar. */
+  const pageEl=$("#page-"+page);
+  if(pageEl) pageEl.style.setProperty("--stack-all",Math.ceil(flow)+"px");
   sectStackRead(page);
+}
+/* A head's top and bottom margins: the hall's own head reaches 20px up over the hall's padding
+   (a negative margin), and a section head keeps 14px over its hairline and 4px under it. */
+function sectMarginsOf(el){
+  let cs=null; try{cs=getComputedStyle(el);}catch(_){}
+  return cs?(parseFloat(cs.marginTop)||0)+(parseFloat(cs.marginBottom)||0):0;
 }
 /* Which heads stand at the top of the pane and which at its foot right now, read off the
    screen. The hall's scroll padding is set to those two stacks, so a row brought into view (a
@@ -2272,7 +2291,9 @@ function sectStackWire(){
 /* ---------- NAV ---------- */
 let currentPage="hearth";
 /* Halls laid out as a flex column so a child can be handed the pane's real
-   leftover height: the Atlas map, and the Hearth bento. */
+   leftover height: the Atlas map, and the Hearth bento. The map is handed it by the
+   stylesheet since 1.3.0, as the pane less the hall's head stack (app.css, the Map
+   hall), because Statistics stands under it and an open section grows the hall. */
 const FLEX_PAGES={"page-atlas":1,"page-hearth":1};
 function goPage(name){
   $$(".navitem").forEach(n=>n.classList.toggle("active",n.dataset.page===name));
@@ -2293,7 +2314,7 @@ function goPage(name){
   try{sectStackRead(name);}catch(_){}   // the pane's head stack belongs to the hall on screen
   try{renderEditBar();}catch(_){}
   if(name==="atlas"){try{atlasEnter();}catch(_){}} // also drives the mock preview
-  if(name==="hearth"&&sectIsOpen("skald")){try{skaldRefresh();}catch(_){}} // mock in preview, journal in-app
+  if(name==="atlas"&&sectIsOpen("skald")){try{skaldRefresh();}catch(_){}} // Statistics is on the Map since 1.3.0; mock in preview, journal in-app
   if(Native.available){
     if(name==="mods"&&!S.modsScanned&&!S.modsScanning) scanMods({force:false});
     /* The plugins folder can appear while the hall is off screen (BepInEx installed from
@@ -2843,6 +2864,10 @@ async function switchServer(name,opts){
   renderLastSave();
   renderSaveBars();
   try{atlasReset();}catch{}
+  /* Statistics is read for the realm the host is on now (profiles.get above made it the active
+     one). Until 1.3.0 nothing here asked, so the section kept the last realm's numbers until a
+     server event or a fold and unfold, while the Map beside it already showed the new world. */
+  try{skaldRefresh();}catch(_){}
   const st=await rpc("server.state");
   if(st!==FAIL){S.state=null;applyState(st);}
   refreshUpdateInfo();   // this realm's own install, asked fresh
@@ -13200,12 +13225,19 @@ async function skaldFetch(){
   const r=await rpc("analytics.overview",{});
   return r===FAIL?null:r;
 }
-let skaldBusy=false;
+let skaldBusy=false, skaldAgain=false;
+/* A call that comes while a read is out is not dropped (1.3.0): the read that is out can be
+   answering for the realm the host has just left (a server event read it, then the realm was
+   switched), so one more read follows it and the stale answer is never drawn. */
 async function skaldRefresh(){
-  if(skaldBusy) return; skaldBusy=true;
+  if(skaldBusy){skaldAgain=true;return;}
+  skaldBusy=true;
   try{
-    const d=await skaldFetch();
-    if(d){SKALD=d;renderSkald();}
+    do{
+      skaldAgain=false;
+      const d=await skaldFetch();
+      if(d&&!skaldAgain){SKALD=d;renderSkald();}
+    }while(skaldAgain);
   }finally{skaldBusy=false;}
 }
 function renderSkald(){
@@ -16543,6 +16575,7 @@ const ATLAS={
   mapImg:null, mapReady:false, mapExtent:10500,   // world meters, center -> png edge
   fogImg:null, fogReady:false, fogTex:null, fogMask:null, fogExtent:12288, // fog png spans ±2048*12/2 m
   viewBase:0,                                     // min(wrap w,h) at last resize - keeps the chart scaling with the window
+  fitOwed:false,                                  // a fit was asked while the map was folded away (atlasFit)
   info:null, rendering:false, seq:0,
   infoError:null,                                 // why the last world-info read did not answer
   layers:{portals:true,pois:true,builds:true,pins:false,fog:true},
@@ -17078,8 +17111,14 @@ function atlasPpmDev(ppm){
 }
 /* Device pixels to the metre under which a place name is more ink than information. */
 const ATLAS_LABEL_PPM_DEV=0.045;
+/* A fit asked while the map has no size (its section folded away since 1.3.0: the image can
+   land, or Recenter be pressed, with the map rolled up) is a fit owed: the stand-in density
+   keeps the drawing sane, and the next resize with a real size fits again. Without it the
+   map came back at the stand-in and never fitted, since nothing else asks. */
 function atlasFit(){
-  ATLAS.cam.cx=0; ATLAS.cam.cz=0; ATLAS.cam.ppm=atlasFitPpm()||0.03;
+  const ppm=atlasFitPpm();
+  ATLAS.fitOwed=!ppm;
+  ATLAS.cam.cx=0; ATLAS.cam.cz=0; ATLAS.cam.ppm=ppm||0.03;
 }
 function w2sX(wx){const s=atlasWrapSize();return (wx-ATLAS.cam.cx)*ATLAS.cam.ppm+s.w/2;}
 function w2sY(wz){const s=atlasWrapSize();return s.h/2-(wz-ATLAS.cam.cz)*ATLAS.cam.ppm;}
@@ -17087,9 +17126,13 @@ function atlasResize(){
   const cv=$("#atlasCanvas"); if(!cv) return;
   const s=atlasWrapSize(); if(!s.w||!s.h) return;
   /* the chart scales WITH the window: growing the pane grows the map by the
-     same ratio (relative zoom is preserved) instead of just adding empty sea */
+     same ratio (relative zoom is preserved) instead of just adding empty sea.
+     Only the window does that since 1.3.0: the map's own section and Statistics under it
+     fold without changing the map's size (app.css, the Map hall), so a fold and an unfold
+     come back to the same zoom; folded, the map has no size and returns above. */
   const m=Math.min(s.w,s.h);
-  if(ATLAS.viewBase&&ATLAS.cam.ppm&&m!==ATLAS.viewBase) ATLAS.cam.ppm*=m/ATLAS.viewBase;
+  if(ATLAS.fitOwed) atlasFit();
+  else if(ATLAS.viewBase&&ATLAS.cam.ppm&&m!==ATLAS.viewBase) ATLAS.cam.ppm*=m/ATLAS.viewBase;
   ATLAS.viewBase=m;
   const dpr=window.devicePixelRatio||1;
   const W=Math.round(s.w*dpr),H=Math.round(s.h*dpr);
@@ -17621,7 +17664,8 @@ if(Native.available){
   Native.on("ip.internal",d=>{S.intIp=d?.ip??null;renderNet();});
   Native.on("profiles.changed",()=>{refreshServers();});
   Native.on("servers.changed",d=>{if(Array.isArray(d)){S.servers=d;renderServerChips();}});
-  /* Skald hall keeps itself fresh while it is the page on screen */
+  /* Statistics keeps itself fresh while it is on screen: open, with its hall (the Map since
+     1.3.0) showing, which is what sectOn asks */
   Native.on("server.status",()=>{if(sectOn("skald"))skaldRefresh();});
   Native.on("server.playerDied",d=>{
     if(sectOn("skald")&&isActiveProfile(d?.profile))skaldRefresh();

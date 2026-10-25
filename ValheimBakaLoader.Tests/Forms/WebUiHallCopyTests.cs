@@ -643,10 +643,12 @@ namespace ValheimBakaLoader.Tests.Forms
 
         // ---------------------------------------------------------------------- E. Map
 
+        // The Map hall's own words end where Statistics begins: Statistics stands under the map
+        // since 1.3.0 and its words are read in their own inventory (H. Statistics).
         [Fact]
         public void The_map_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("atlas", "<!-- ============ PAGE: MODS"), new[]
+            TheHallNames(Hall("atlas", "<!-- ============ SECTION: SKALD"), new[]
             {
                 "atlas.head.title",
                 "common.norse.atlas",
@@ -683,7 +685,7 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void Every_map_layer_chip_keys_its_words_and_not_its_name()
         {
-            var hall = Hall("atlas", "<!-- ============ PAGE: MODS");
+            var hall = Hall("atlas", "<!-- ============ SECTION: SKALD");
 
             foreach (var (name, id) in new[]
             {
@@ -908,10 +910,12 @@ namespace ValheimBakaLoader.Tests.Forms
 
         // --------------------------------------------------------------- H. Statistics
 
+        // Statistics is the last thing on the Map hall since 1.3.0, so its words run to the
+        // comment that opens the Mods hall (they ran to the Log's section on the Dashboard).
         [Fact]
         public void The_statistics_hall_reads_its_words_out_of_the_catalog()
         {
-            TheHallNames(Hall("skald", "<!-- ============ SECTION: SAGA"), new[]
+            TheHallNames(Hall("skald", "<!-- ============ PAGE: MODS"), new[]
             {
                 "skald.head.title",
                 "common.norse.skald",
@@ -977,7 +981,7 @@ namespace ValheimBakaLoader.Tests.Forms
         public void The_deaths_caption_carries_both_registers_and_the_subtitle_waits()
         {
             var catalog = Catalog();
-            var hall = Hall("skald", "<!-- ============ SECTION: SAGA");
+            var hall = Hall("skald", "<!-- ============ PAGE: MODS");
 
             Assert.Equal("valkyries dispatched", Lore(catalog, "skald.deaths.sub"));
             Assert.Equal("player deaths", catalog["skald.deaths.sub"].GetProperty("plain").GetString());

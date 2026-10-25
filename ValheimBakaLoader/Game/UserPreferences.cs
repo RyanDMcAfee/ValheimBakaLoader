@@ -55,12 +55,14 @@ namespace ValheimBakaLoader.Game
 
         public bool StartWithWindows { get; set; }
 
-        // Which sections of the page stand open, by the hall's own name (hearth, skald, saga,
-        // mods, runes, world, herald): the Dashboard's own section, Statistics and the Log
-        // under it, the Mods list and Configs under it, Settings and Discord under it. Kept
-        // across restarts since 1.2.18, when the rail went down to five halls and these became
-        // sections; a name the document does not carry takes the page's default, which is
-        // the only time the default applies. See SECTIONS in app.js.
+        // Which sections of the page stand open, by the hall's own name (hearth, saga, atlas,
+        // skald, mods, runes, world, herald): the Dashboard's own section and the Log under it,
+        // the Map's own section and Statistics under it (since 1.3.0; Statistics stood on the
+        // Dashboard before and kept its name, skald, when it moved), the Mods list and Configs
+        // under it, Settings and Discord under it. Kept across restarts since 1.2.18, when the
+        // rail went down to five halls and these became sections; a name the document does
+        // not carry takes the page's default, which is the only time the default applies. See
+        // SECTIONS in app.js.
         public Dictionary<string, bool> UiSections { get; set; } = new();
 
         // Anonymous usage heartbeat (install count / servers online); see HeartbeatService.

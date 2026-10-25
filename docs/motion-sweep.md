@@ -37,6 +37,7 @@ Each line: where, what it is, how it moves now.
 | --- | --- | --- |
 | 1240 `langMenuClose` | the globe (language) menu | fades in by the stylesheet (`.langmenu.open`, 0.2 s), leaves through fadeGhost |
 | 1998 `wireCollapsible` | the Upkeep and Connection cards and the three folding Settings sections | the body rolls through reveal; the `open` class only turns the chevron. The bodies start hidden in index.html (`style="display:none"`), and the class rules that hid them by display are gone from app.css. The bento row keeps its content height until a card has rolled shut (`syncBentoRow`), so it never snaps |
+| 2087 `sectSet` (added 1.3.0) | every hall section's body, through its chevron and every road in; the Map's own map is one since 1.3.0 | rolls through reveal like the folding cards. The map keeps its size under its own roll and is clipped by it (its height is on the grid's row, not the grid), so the chart is never rescaled while it rolls and comes back at the same zoom |
 | 2032 `syncDirsSection` | the Directories section unfolding by itself for a path problem | through the same `rec.set(true)` the click uses |
 | 2345 `renderTestCopyHead` | the title bar's test-copy line | fade (a span in a row) |
 | 2715 `dupMark` | the source value under a dial in the Duplicate realm dialog | rolls; the words go after the roll |
