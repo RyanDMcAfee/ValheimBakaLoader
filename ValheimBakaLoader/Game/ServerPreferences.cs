@@ -253,6 +253,16 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public bool TestSourceGone { get; set; }
 
+        /// <summary>
+        /// The in-game name the source had when this copy was made, beside
+        /// <see cref="TestCopyOf"/>, which is its profile name. The profile name follows the
+        /// source through a rename and this does not, so the page can still say both: the name
+        /// the host knew it by and the profile it is now. Null for a realm that is not a test
+        /// copy, and for a copy of a realm that had no in-game name (the page says the profile
+        /// name then). Set once, by servers.create.
+        /// </summary>
+        public string TestCopyOfName { get; set; }
+
         // -- How the realm's chip looks in the sidebar --
 
         /// <summary>
@@ -307,6 +317,85 @@ namespace ValheimBakaLoader.Game
         /// host ticks them again, and never written while unticked. Never null on a loaded profile.
         /// </summary>
         public List<string> GaleConfigUnticked { get; set; } = new();
+
+        // -- Following a test copy of this realm (merge-back) --
+
+        /// <summary>
+        /// The profile name of a test copy of this realm that this realm takes its mods and
+        /// configs from, in place of a Gale profile, or null for none. The Gale box, its check,
+        /// its dialog and its condition bar row then read the test copy's folders on this PC and
+        /// nothing is asked of Gale's service. Moved along when the copy is renamed, and let go
+        /// when the copy is deleted or its name is given to a new realm. The world never travels.
+        /// </summary>
+        public string FollowTestCopy { get; set; }
+
+        /// <summary>
+        /// What the test copy's mods were (a fingerprint of their names, versions and files) when
+        /// the host last approved or dismissed them, the test copy's own stand in for
+        /// <see cref="GaleLastUpdatedAt"/>. Null until the first approval or dismissal.
+        /// </summary>
+        public string FollowTestCopyLastApproved { get; set; }
+
+        /// <summary>The mods the host unticked while following the test copy. Kept apart from the Gale profile's. Never null on a loaded profile.</summary>
+        public List<string> FollowTestCopyUnticked { get; set; } = new();
+
+        /// <summary>The config files the host unticked while following the test copy. Kept apart from the Gale profile's. Never null on a loaded profile.</summary>
+        public List<string> FollowTestCopyConfigUnticked { get; set; } = new();
+
+        /// <summary>What a test copy follow's key starts with, so it can never equal a Gale profile id.</summary>
+        public const string TestCopyFollowPrefix = "testcopy:";
+
+        /// <summary>True when this realm takes its mods and configs from a test copy rather than from a Gale profile.</summary>
+        public bool FollowsTestCopy() => !string.IsNullOrWhiteSpace(FollowTestCopy);
+
+        /// <summary>
+        /// What this realm follows, as one key: "testcopy:" and the copy's name while it follows
+        /// a test copy, else the Gale profile id, else null. A check, a configs read and an
+        /// approval are each held to the key they were made for, so a switch of feed drops them.
+        /// </summary>
+        public string GaleFollowKey() =>
+            FollowsTestCopy() ? TestCopyFollowPrefix + FollowTestCopy.Trim() : GaleProfileId;
+
+        /// <summary>The last approval of whatever this realm follows now.</summary>
+        public string GaleFeedLastApproved() => FollowsTestCopy() ? FollowTestCopyLastApproved : GaleLastUpdatedAt;
+
+        /// <summary>Stores the last approval for whatever this realm follows now, and leaves the other feed's alone.</summary>
+        public void SetGaleFeedLastApproved(string stamp)
+        {
+            if (FollowsTestCopy()) FollowTestCopyLastApproved = stamp;
+            else GaleLastUpdatedAt = stamp;
+        }
+
+        /// <summary>The unticked mods of whatever this realm follows now.</summary>
+        public List<string> GaleFeedUnticked() =>
+            (FollowsTestCopy() ? FollowTestCopyUnticked : GaleUnticked) ?? new List<string>();
+
+        /// <summary>Stores the unticked mods for whatever this realm follows now.</summary>
+        public void SetGaleFeedUnticked(List<string> names)
+        {
+            if (FollowsTestCopy()) FollowTestCopyUnticked = NormalizeUnticked(names);
+            else GaleUnticked = NormalizeUnticked(names);
+        }
+
+        /// <summary>The unticked config files of whatever this realm follows now.</summary>
+        public List<string> GaleFeedConfigUnticked() =>
+            (FollowsTestCopy() ? FollowTestCopyConfigUnticked : GaleConfigUnticked) ?? new List<string>();
+
+        /// <summary>Stores the unticked config files for whatever this realm follows now.</summary>
+        public void SetGaleFeedConfigUnticked(IEnumerable<string> paths)
+        {
+            if (FollowsTestCopy()) FollowTestCopyConfigUnticked = NormalizeUnticked(paths);
+            else GaleConfigUnticked = NormalizeUnticked(paths);
+        }
+
+        /// <summary>Stops following a test copy: the copy's name, its approval and its unticks go. A Gale profile id, if any, is left as it was.</summary>
+        public void ForgetTestCopyFollow()
+        {
+            FollowTestCopy = null;
+            FollowTestCopyLastApproved = null;
+            FollowTestCopyUnticked = new List<string>();
+            FollowTestCopyConfigUnticked = new List<string>();
+        }
 
         /// <summary>
         /// The "Namespace-Name" of every mod the host ticked in the approval dialog (1.3.0). From
@@ -371,6 +460,11 @@ namespace ValheimBakaLoader.Game
             GaleConfigUnticked = NormalizeUnticked(stored.GaleConfigUnticked);
             GaleTicked = NormalizeTicked(stored.GaleTicked);
             GaleConfigTicked = NormalizeTicked(stored.GaleConfigTicked);
+            // The test copy follow is written by the same box, and only by it.
+            FollowTestCopy = BlankAsNull(stored.FollowTestCopy);
+            FollowTestCopyLastApproved = stored.FollowTestCopyLastApproved;
+            FollowTestCopyUnticked = NormalizeUnticked(stored.FollowTestCopyUnticked);
+            FollowTestCopyConfigUnticked = NormalizeUnticked(stored.FollowTestCopyConfigUnticked);
             return this;
         }
 
@@ -390,6 +484,10 @@ namespace ValheimBakaLoader.Game
             GaleConfigUnticked = NormalizeUnticked(GaleConfigUnticked);
             GaleTicked = NormalizeTicked(GaleTicked);
             GaleConfigTicked = NormalizeTicked(GaleConfigTicked);
+            FollowTestCopy = BlankAsNull(FollowTestCopy);
+            FollowTestCopyLastApproved = null;
+            FollowTestCopyUnticked = NormalizeUnticked(FollowTestCopyUnticked);
+            FollowTestCopyConfigUnticked = NormalizeUnticked(FollowTestCopyConfigUnticked);
             return this;
         }
 
@@ -406,9 +504,11 @@ namespace ValheimBakaLoader.Game
             {
                 TestCopyOf = stored.TestCopyOf;
                 TestSourceGone = stored.TestSourceGone;
+                TestCopyOfName = stored.TestCopyOfName;
             }
             TestCopyOf = string.IsNullOrWhiteSpace(TestCopyOf) ? null : TestCopyOf.Trim();
             if (TestCopyOf == null) TestSourceGone = false;
+            TestCopyOfName = TestCopyOf == null ? null : BlankAsNull(TestCopyOfName);
             if (TestCopyOf != null) Public = false;
             return this;
         }
@@ -587,6 +687,7 @@ namespace ValheimBakaLoader.Game
                 ModManifest = file.ModManifest ?? defaults.ModManifest,
                 TestCopyOf = string.IsNullOrWhiteSpace(file.TestCopyOf) ? null : file.TestCopyOf.Trim(),
                 TestSourceGone = (file.TestSourceGone ?? false) && !string.IsNullOrWhiteSpace(file.TestCopyOf),
+                TestCopyOfName = string.IsNullOrWhiteSpace(file.TestCopyOf) ? null : BlankAsNull(file.TestCopyOfName),
                 LookRune = NormalizeLook(file.LookRune),
                 LookColor = NormalizeLook(file.LookColor),
                 GaleProfileId = StoredGaleProfileId(file.GaleProfileId),
@@ -596,6 +697,10 @@ namespace ValheimBakaLoader.Game
                 GaleConfigUnticked = NormalizeUnticked(file.GaleConfigUnticked),
                 GaleTicked = NormalizeTicked(file.GaleTicked),
                 GaleConfigTicked = NormalizeTicked(file.GaleConfigTicked),
+                FollowTestCopy = BlankAsNull(file.FollowTestCopy),
+                FollowTestCopyLastApproved = BlankAsNull(file.FollowTestCopyLastApproved),
+                FollowTestCopyUnticked = NormalizeUnticked(file.FollowTestCopyUnticked),
+                FollowTestCopyConfigUnticked = NormalizeUnticked(file.FollowTestCopyConfigUnticked),
             };
         }
 
@@ -668,6 +773,7 @@ namespace ValheimBakaLoader.Game
             // Written only when it is true, so a realm that is not a test copy, or one whose
             // source is still here, carries no key for it at all.
             TestSourceGone = TestSourceGone && !string.IsNullOrWhiteSpace(TestCopyOf) ? true : (bool?)null,
+            TestCopyOfName = string.IsNullOrWhiteSpace(TestCopyOf) ? null : BlankAsNull(TestCopyOfName),
             LookRune = NormalizeLook(LookRune),
             LookColor = NormalizeLook(LookColor),
             GaleProfileId = StoredGaleProfileId(GaleProfileId),
@@ -681,6 +787,10 @@ namespace ValheimBakaLoader.Game
             // was stored under the 1.3.0 rule, where null says none has been yet.
             GaleTicked = NormalizeTicked(GaleTicked),
             GaleConfigTicked = NormalizeTicked(GaleConfigTicked),
+            FollowTestCopy = BlankAsNull(FollowTestCopy),
+            FollowTestCopyLastApproved = BlankAsNull(FollowTestCopyLastApproved),
+            FollowTestCopyUnticked = NormalizeUnticked(FollowTestCopyUnticked) is { Count: > 0 } copyOff ? copyOff : null,
+            FollowTestCopyConfigUnticked = NormalizeUnticked(FollowTestCopyConfigUnticked) is { Count: > 0 } copyCfgOff ? copyCfgOff : null,
         };
     }
 }

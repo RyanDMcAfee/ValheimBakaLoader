@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using ValheimBakaLoader.Tools.Models;
@@ -34,6 +35,14 @@ namespace ValheimBakaLoader.Tools
         /// information, never offered for install and never counted as work.
         /// </summary>
         Framework,
+
+        /// <summary>
+        /// On the server at the feed's version, but the mod's files are not the same: a mod
+        /// rebuilt without a new version number. Only a feed that reads the files says so (a
+        /// test copy, by a hash of each mod's folder); a Gale profile carries versions only and
+        /// never gives this. It is work, like an update, and the page shows it as one.
+        /// </summary>
+        Changed,
     }
 
     /// <summary>One row of the comparison.</summary>
@@ -57,7 +66,8 @@ namespace ValheimBakaLoader.Tools
         /// For an <see cref="GaleDiffKind.Unticked"/> row, what it would have been had the host
         /// not said no: <see cref="GaleDiffKind.Add"/> or <see cref="GaleDiffKind.Update"/>.
         /// The approval dialog lists unticked rows too, with the tick off, and needs to know
-        /// which they are. Null on every other row.
+        /// which they are (<see cref="GaleDiffKind.Changed"/> too, from a test copy). Null on
+        /// every other row.
         /// </summary>
         public GaleDiffKind? UntickedFrom { get; init; }
 
@@ -89,8 +99,10 @@ namespace ValheimBakaLoader.Tools
 
         public int UpdateCount => Of(GaleDiffKind.Update).Count();
 
-        /// <summary>True when there is something to install: at least one add or update the host has not unticked.</summary>
-        public bool HasWork => AddCount + UpdateCount > 0;
+        public int ChangedCount => Of(GaleDiffKind.Changed).Count();
+
+        /// <summary>True when there is something to install: at least one add, update or changed mod the host has not unticked.</summary>
+        public bool HasWork => AddCount + UpdateCount + ChangedCount > 0;
     }
 
     /// <summary>
@@ -158,6 +170,19 @@ namespace ValheimBakaLoader.Tools
         public static bool IsFullName(string name) => name != null && FullName.IsMatch(name);
 
         /// <summary>
+        /// True when a name is one a local feed may list a mod by: a mod folder's own name, so
+        /// one segment that Windows takes as a file name, with no step up, no slash and no
+        /// space at either end. A mod made by hand often has no author in its folder name, and a
+        /// test copy has to be able to hand that mod back too.
+        /// </summary>
+        public static bool IsLocalName(string name) =>
+            !string.IsNullOrWhiteSpace(name)
+            && name.Length <= 200
+            && string.Equals(name.Trim(), name, StringComparison.Ordinal)
+            && name != "." && name != ".."
+            && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+
+        /// <summary>
         /// True when a profile line is the framework rather than a mod. The mod scan never
         /// lists the BepInEx pack (<see cref="ModScanner.IsPluginsFrameworkFolder"/>), so it
         /// would read as an add on every check, and installing it as a mod would put it in the
@@ -192,16 +217,37 @@ namespace ValheimBakaLoader.Tools
             IEnumerable<(string Name, string Version)> installed,
             IEnumerable<string> unticked)
         {
+            var triples = (installed ?? Enumerable.Empty<(string, string)>())
+                .Select(m => (m.Name, m.Version, (string)null));
+            return Compare(meta, triples, unticked);
+        }
+
+        /// <summary>
+        /// The comparison with a hash of each server mod's files beside its name and version.
+        /// A hash only counts when the feed carries one for the same mod too, so against a Gale
+        /// profile this is exactly the comparison without hashes.
+        /// </summary>
+        public static GaleProfileDiffResult Compare(
+            GaleProfileMeta meta,
+            IEnumerable<(string Name, string Version, string Hash)> installed,
+            IEnumerable<string> unticked)
+        {
             var server = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var serverHash = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var serverOrder = new List<string>();
-            foreach (var (name, version) in installed ?? Enumerable.Empty<(string, string)>())
+            foreach (var (name, version, hash) in installed ?? Enumerable.Empty<(string, string, string)>())
             {
                 var n = name?.Trim();
                 if (string.IsNullOrEmpty(n) || server.ContainsKey(n)) continue;
                 // A folder with no version at all still has a version, it just cannot be read.
                 server[n] = string.IsNullOrWhiteSpace(version) ? "unknown" : version.Trim();
+                serverHash[n] = hash;
                 serverOrder.Add(n);
             }
+
+            // A local feed (a test copy) names its mods by folder and reads a version off a
+            // manifest that may not be there, so its lines are taken on those terms.
+            var local = meta?.LocalFeed == true;
 
             var saidNo = new HashSet<string>(
                 (unticked ?? Enumerable.Empty<string>()).Where(u => !string.IsNullOrWhiteSpace(u)).Select(u => u.Trim()),
@@ -214,7 +260,7 @@ namespace ValheimBakaLoader.Tools
             foreach (var mod in meta?.Mods ?? Array.Empty<GaleProfileMod>())
             {
                 var name = mod?.Name?.Trim();
-                if (!IsFullName(name))
+                if (!(IsFullName(name) || (local && IsLocalName(name))))
                 {
                     skipped++;
                     continue;
@@ -227,7 +273,7 @@ namespace ValheimBakaLoader.Tools
                     continue;
                 }
 
-                if (mod.Enabled == null || mod.Version == null || !SemVer.IsReadable(mod.Version))
+                if (mod.Enabled == null || mod.Version == null || (!local && !SemVer.IsReadable(mod.Version)))
                 {
                     // The name is real, so a server copy of it is not "not in profile"; but there
                     // is no version to pin or no tick to follow, so nothing is offered for it.
@@ -257,19 +303,32 @@ namespace ValheimBakaLoader.Tools
 
                 GaleDiffKind kind;
                 var downgrade = false;
+                var readable = SemVer.IsReadable(mod.Version) && SemVer.IsReadable(serverVersion);
                 if (serverVersion == null)
                 {
                     kind = GaleDiffKind.Add;
                 }
-                else if (SemVer.IsReadable(serverVersion) && SemVer.Compare(mod.Version, serverVersion) == 0)
+                else if (readable
+                    ? SemVer.Compare(mod.Version, serverVersion) == 0
+                    // Only a local feed gets here with a version nobody can read: two folders
+                    // that both say "unknown" are the same version, and their files decide.
+                    : local && string.Equals(mod.Version.Trim(), serverVersion, StringComparison.OrdinalIgnoreCase))
                 {
                     kind = GaleDiffKind.Same;
                 }
                 else
                 {
                     kind = GaleDiffKind.Update;
-                    downgrade = SemVer.IsReadable(serverVersion) && SemVer.Compare(mod.Version, serverVersion) < 0;
+                    downgrade = readable && SemVer.Compare(mod.Version, serverVersion) < 0;
                 }
+
+                // The same version with different files is a rebuilt mod. Both sides must carry a
+                // hash, so a feed that has none (Gale's) never reaches this.
+                if (kind == GaleDiffKind.Same
+                    && mod.ContentHash != null
+                    && serverHash.TryGetValue(name, out var hereHash) && hereHash != null
+                    && !string.Equals(mod.ContentHash, hereHash, StringComparison.Ordinal))
+                    kind = GaleDiffKind.Changed;
 
                 if (kind != GaleDiffKind.Same && saidNo.Contains(name))
                 {

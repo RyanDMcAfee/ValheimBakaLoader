@@ -237,17 +237,26 @@ namespace ValheimBakaLoader.Tests.Game
         }
 
         /// <summary>
-        /// Both halls that hand the page a profile hand it the same shape. profiles.save
+        /// Every hall that hands the page a profile hands it the same shape. profiles.save
         /// answering the bare object was how the lines went stale the moment they were saved.
+        /// Since 1.3.0 profiles.rename answers with the profile too (it used to answer true), so
+        /// the pin names the three replies rather than counting two.
         /// </summary>
         [Fact]
         public void Both_profile_replies_carry_the_paths_in_force()
         {
             var bridge = Bridge();
 
-            Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(
-                bridge, @"BuildProfilePrefsDto\(prefs, UserPrefsProvider\.LoadPreferences\(\)\)").Count);
-            // And neither of them hands back the bare object any more.
+            foreach (var rpc in new[] { "profiles.get", "profiles.save", "profiles.rename" })
+            {
+                var start = bridge.IndexOf("RegisterRpc(\"" + rpc + "\"", StringComparison.Ordinal);
+                Assert.True(start >= 0, rpc + " is not registered");
+                var end = bridge.IndexOf("RegisterRpc(\"", start + 1, StringComparison.Ordinal);
+                var body = bridge.Substring(start, (end < 0 ? bridge.Length : end) - start);
+                Assert.Matches(@"BuildProfilePrefsDto\(\w+, UserPrefsProvider\.LoadPreferences\(\)\)", body);
+                Assert.DoesNotContain("return Task.FromResult<object>(true);", body);
+            }
+            // And none of them hands back the bare object any more.
             Assert.DoesNotContain("return Task.FromResult<object>(prefs);", bridge);
         }
 

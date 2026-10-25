@@ -28,6 +28,12 @@ namespace ValheimBakaLoader.Forms
     /// BepInEx/.bakaloader-config-backups/yyyyMMdd-HHmmss. It writes only files the profile
     /// carries, and nothing in it deletes anything.
     /// </para>
+    /// <para>
+    /// While the realm follows one of its test copies, the "zip" is the copy's own
+    /// BepInEx/config read off this PC (<see cref="TestCopyGaleFeed.ReadConfigs"/>), read again on
+    /// every open since a folder can change without a stamp to say so, and the unticks are the
+    /// copy's own list. The apply and its backups are the same.
+    /// </para>
     /// </summary>
     public partial class BlendWindow
     {
@@ -48,6 +54,7 @@ namespace ValheimBakaLoader.Forms
 
         internal sealed class GaleConfigMemo
         {
+            /// <summary>The follow's key the files were read for (the Gale id, or "testcopy:" and the copy's name).</summary>
             public string ProfileId { get; init; }
 
             /// <summary>The profile's updatedAt the meta had when this was fetched, so a moved profile is fetched again on the next open.</summary>
@@ -84,7 +91,7 @@ namespace ValheimBakaLoader.Forms
         internal async Task<object> GaleConfigsAsync(string profile, bool refresh)
         {
             var prefs = LoadGalePrefs(profile);
-            var id = prefs?.GaleProfileId;
+            var id = prefs?.GaleFollowKey();
             if (string.IsNullOrWhiteSpace(id)) return GaleConfigsState(profile);
 
             GaleMemos.TryGetValue(profile ?? "", out var check);
@@ -93,7 +100,9 @@ namespace ValheimBakaLoader.Forms
                 : null;
 
             GaleConfigMemos.TryGetValue(profile ?? "", out var held);
-            var stale = refresh || held == null || !held.Ok
+            // A test copy's folder is on this PC and has no stamp that moves, so it is read again
+            // on every open; reading it costs no trip.
+            var stale = refresh || prefs.FollowsTestCopy() || held == null || !held.Ok
                 || !string.Equals(held.ProfileId, id, StringComparison.Ordinal)
                 || (updatedAt != null && !string.Equals(held.UpdatedAt, updatedAt, StringComparison.Ordinal));
             if (!stale) return GaleConfigsState(profile);
@@ -103,7 +112,7 @@ namespace ValheimBakaLoader.Forms
             {
                 if (!GaleConfigsInFlight.TryGetValue(profile, out run))
                 {
-                    var client = GaleClient;
+                    var client = GaleFeedFor(profile, prefs);
                     // Off the window's thread: a DNS lookup, a TLS handshake, a redirect and a
                     // zip of up to fifty megabytes.
                     run = Task.Run(() => FetchGaleConfigsAsync(client, id, updatedAt));
@@ -127,7 +136,7 @@ namespace ValheimBakaLoader.Forms
 
             // Forgotten, or another code pasted, while it was out: not this realm's profile now.
             var now = LoadGalePrefs(profile);
-            if (memo != null && now != null && string.Equals(now.GaleProfileId, memo.ProfileId, StringComparison.Ordinal))
+            if (memo != null && now != null && string.Equals(now.GaleFollowKey(), memo.ProfileId, StringComparison.Ordinal))
                 GaleConfigMemos[profile] = memo;
 
             return GaleConfigsState(profile);
@@ -137,6 +146,19 @@ namespace ValheimBakaLoader.Forms
         {
             GaleConfigMemo Failed(string sentence) =>
                 new() { ProfileId = id, UpdatedAt = updatedAt, FetchedUtc = DateTime.UtcNow, SentenceId = sentence };
+
+            // A test copy's configs are read off this PC's disk into the shape the zip reads to,
+            // so nothing is fetched and no temp file is written.
+            if (client is TestCopyGaleFeed local)
+            {
+                var folder = local.ReadConfigs();
+                if (!folder.Ok) return Failed(folder.Refusal);
+                return new GaleConfigMemo
+                {
+                    ProfileId = id, UpdatedAt = updatedAt, FetchedUtc = DateTime.UtcNow,
+                    Files = folder.Files, ZipSkipped = folder.Skipped,
+                };
+            }
 
             GaleZipResult zip;
             try
@@ -168,7 +190,7 @@ namespace ValheimBakaLoader.Forms
         internal object GaleConfigsState(string profile)
         {
             var prefs = LoadGalePrefs(profile);
-            var id = prefs?.GaleProfileId;
+            var id = prefs?.GaleFollowKey();
             GaleConfigMemos.TryGetValue(profile ?? "", out var memo);
             if (memo != null && !string.Equals(memo.ProfileId, id, StringComparison.Ordinal)) memo = null;
 
@@ -197,7 +219,7 @@ namespace ValheimBakaLoader.Forms
                         state = GaleConfigStateWord(r.State),
                         // From 1.3.0 only a file the host ticked before starts ticked.
                         ticked = r.State != GaleConfigState.Same
-                            && ServerPreferences.GaleStartsTicked(r.Rel, prefs?.GaleConfigTicked, prefs?.GaleConfigUnticked),
+                            && ServerPreferences.GaleStartsTicked(r.Rel, prefs?.GaleConfigTicked, prefs?.GaleFeedConfigUnticked()),
                         preview = r.Preview.Select(l => new { k = l.Kind.ToString(), t = l.Text }).ToList(),
                         more = r.More,
                     }).ToList(),
@@ -209,6 +231,8 @@ namespace ValheimBakaLoader.Forms
                 profile,
                 following = !string.IsNullOrWhiteSpace(id),
                 statusId = string.IsNullOrWhiteSpace(id) ? GaleConfigsNotFollowingSentence : null,
+                // The test copy the files are read from, or null for a Gale profile.
+                testCopy = prefs?.FollowsTestCopy() == true ? prefs.FollowTestCopy.Trim() : null,
                 heldBy = GaleHeldBy(profile),
                 configs,
             };
@@ -218,7 +242,7 @@ namespace ValheimBakaLoader.Forms
         private int? GaleConfigChanges(string profile, ServerPreferences prefs)
         {
             if (!GaleConfigMemos.TryGetValue(profile ?? "", out var memo) || memo == null || !memo.Ok) return null;
-            if (!string.Equals(memo.ProfileId, prefs?.GaleProfileId, StringComparison.Ordinal)) return null;
+            if (!string.Equals(memo.ProfileId, prefs?.GaleFollowKey(), StringComparison.Ordinal)) return null;
             return memo.LastChanges;
         }
 
@@ -275,8 +299,11 @@ namespace ValheimBakaLoader.Forms
             var prefs = LoadGalePrefs(profile);
             GaleConfigMemos.TryGetValue(profile ?? "", out var memo);
             if (prefs == null || memo == null || !memo.Ok
-                || !string.Equals(memo.ProfileId, prefs.GaleProfileId, StringComparison.Ordinal))
+                || !string.Equals(memo.ProfileId, prefs.GaleFollowKey(), StringComparison.Ordinal))
                 return Refused("stale", "The profile's config files are not loaded any more. Press Refresh and look again.");
+
+            // Where the files come from, for the log: the profile, or the test copy named.
+            var from = prefs.FollowsTestCopy() ? "the test copy " + prefs.FollowTestCopy.Trim() : "the profile";
 
             var byRel = new Dictionary<string, GaleProfileConfigFile>(StringComparer.OrdinalIgnoreCase);
             foreach (var f in memo.Files) byRel.TryAdd(f.Rel, f);
@@ -310,8 +337,8 @@ namespace ValheimBakaLoader.Forms
                 .Where(r => r.State != GaleConfigState.Same)
                 .Select(r => r.Rel)
                 .ToList();
-            prefs.GaleConfigUnticked = ServerPreferences.NormalizeUnticked(
-                ServerPreferences.NormalizeUnticked(prefs.GaleConfigUnticked).Concat(offered)
+            prefs.SetGaleFeedConfigUnticked(
+                ServerPreferences.NormalizeUnticked(prefs.GaleFeedConfigUnticked()).Concat(offered)
                     .Where(r => !asked.Contains(r, StringComparer.OrdinalIgnoreCase)));
             prefs.GaleConfigTicked = ServerPreferences.GaleTicksAfter(prefs.GaleConfigTicked, asked,
                 offered.Where(r => !asked.Contains(r, StringComparer.OrdinalIgnoreCase)));
@@ -352,8 +379,8 @@ namespace ValheimBakaLoader.Forms
                         File.WriteAllBytes(full, bytes);
                         if (exists) replaced++; else added++;
                         AppLogger?.Information("{Line:l}", exists
-                            ? $"[Gale] Wrote {GaleProfileConfigs.RealmPrefix}{rel} from the profile. The old one is in BepInEx/{GaleConfigBackupFolder}/{stamp}/{rel}."
-                            : $"[Gale] Wrote {GaleProfileConfigs.RealmPrefix}{rel} from the profile, a new file.");
+                            ? $"[Gale] Wrote {GaleProfileConfigs.RealmPrefix}{rel} from {from}. The old one is in BepInEx/{GaleConfigBackupFolder}/{stamp}/{rel}."
+                            : $"[Gale] Wrote {GaleProfileConfigs.RealmPrefix}{rel} from {from}, a new file.");
                     }
                     catch (Exception e)
                     {
@@ -376,7 +403,7 @@ namespace ValheimBakaLoader.Forms
 
             if (asked.Count > 0)
                 AppLogger?.Information("{Line:l}",
-                    $"[Gale] Configs from the profile on {profile}: {added + replaced} written ({added} new, {replaced} replaced), {same} already the same."
+                    $"[Gale] Configs from {from} on {profile}: {added + replaced} written ({added} new, {replaced} replaced), {same} already the same."
                     + (backupRoot != null ? $" The replaced ones are kept in BepInEx/{GaleConfigBackupFolder}/{stamp}." : ""));
 
             return new

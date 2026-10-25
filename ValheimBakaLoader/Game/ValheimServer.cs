@@ -595,7 +595,7 @@ namespace ValheimBakaLoader.Game
         /// Start path builds one: the launch guard reads
         /// <see cref="IValheimServerOptions.LastLaunchedServerBuild"/> and its two siblings off
         /// these options, and the log view is wired through
-        /// <see cref="IValheimServerOptions.LogMessageHandler"/>. Unset (as in tests) means a
+        /// <see cref="IValheimServerOptions.LogLineHandler"/>. Unset (as in tests) means a
         /// relaunch keeps the options it is running with, exactly as it always did.
         /// </para>
         /// </summary>
@@ -1785,6 +1785,12 @@ namespace ValheimBakaLoader.Game
 
             // Raw server output also flows to the UI's log view when it asked for it.
             if (options.LogMessageHandler != null) ServerLogger.LogReceived += options.LogMessageHandler;
+
+            // The view asks for the tagged line, which carries the day it was stamped on: the
+            // text has only the time, and a day worked out when the event arrives would name the
+            // wrong one for a line stamped just before midnight.
+            if (options.LogLineHandler != null && ServerLogger is IRealmTaggedLog tagged)
+                tagged.LineReceived += options.LogLineHandler;
 
             // Companion plugins are installed before this point on a best-effort basis, and the
             // log stream the operator is watching does not exist until now. A failure used to

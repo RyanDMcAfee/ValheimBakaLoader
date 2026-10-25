@@ -19,12 +19,27 @@ namespace ValheimBakaLoader.Tools.Logging
         private volatile string Realm;
 
         public AppLogLine(string line, string profile)
+            : this(line, profile, null)
+        {
+        }
+
+        public AppLogLine(string line, string profile, string day)
         {
             Line = line;
             Realm = profile;
+            Day = day;
         }
 
         public string Line { get; }
+
+        /// <summary>
+        /// The host's own date the line was stamped on, "yyyy-MM-dd", or null for a line nobody
+        /// stamped. The line itself carries only the time, and the files carry the date in their
+        /// name, so a log read on screen across midnight had no way to say which day a line
+        /// belonged to. It rides beside the line rather than inside it, so the text, the files
+        /// and every reader of the time stay exactly as they were.
+        /// </summary>
+        public string Day { get; }
 
         public string Profile
         {

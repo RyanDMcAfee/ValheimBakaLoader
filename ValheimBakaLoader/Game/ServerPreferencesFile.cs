@@ -117,6 +117,8 @@ namespace ValheimBakaLoader.Game
 
         [JsonProperty("testCopyOf")] public string TestCopyOf { get; set; }
         [JsonProperty("testSourceGone")] public bool? TestSourceGone { get; set; }
+        // Since 1.3.0: the source's in-game name when the copy was made. Never renamed.
+        [JsonProperty("testCopyOfName")] public string TestCopyOfName { get; set; }
 
         // -- The chip's look in the sidebar --
 
@@ -132,5 +134,12 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("galeConfigUnticked")] public List<string> GaleConfigUnticked { get; set; }
         [JsonProperty("galeTicked")] public List<string> GaleTicked { get; set; }
         [JsonProperty("galeConfigTicked")] public List<string> GaleConfigTicked { get; set; }
+
+        // -- Following a test copy of this realm (merge-back, 1.3.0) --
+
+        [JsonProperty("followTestCopy")] public string FollowTestCopy { get; set; }
+        [JsonProperty("followTestCopyLastApproved")] public string FollowTestCopyLastApproved { get; set; }
+        [JsonProperty("followTestCopyUnticked")] public List<string> FollowTestCopyUnticked { get; set; }
+        [JsonProperty("followTestCopyConfigUnticked")] public List<string> FollowTestCopyConfigUnticked { get; set; }
     }
 }

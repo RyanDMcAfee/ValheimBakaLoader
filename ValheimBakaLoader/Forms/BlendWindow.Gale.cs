@@ -31,6 +31,14 @@ namespace ValheimBakaLoader.Forms
     /// the checks on it and every failure sentence are the ones that road already has. Nothing
     /// in this file removes a mod, and nothing in it can.
     /// </para>
+    /// <para>
+    /// A realm can follow one of its own test copies in place of a Gale profile (1.3.0,
+    /// FollowTestCopy). The same RPCs then read the copy's folders on this PC through
+    /// <see cref="TestCopyGaleFeed"/> (picked in BlendWindow.TestCopyFeed.cs), every check, read
+    /// and approval is held to the follow's key rather than to the Gale id, and the copy's
+    /// approval and unticks are kept apart from the Gale profile's. Its mods go in through
+    /// testcopy.pullMods, in that file, not through the add.
+    /// </para>
     /// </summary>
     public partial class BlendWindow
     {
@@ -62,7 +70,7 @@ namespace ValheimBakaLoader.Forms
             /// <summary>Which check this is. The page hands it back with a dismissal so a stamp is never taken from a newer check than the one the host was shown.</summary>
             public long Seq { get; init; }
 
-            /// <summary>The id the check was made for. A memo for any other id is stale.</summary>
+            /// <summary>The follow's key the check was made for (the Gale id, or "testcopy:" and the copy's name). A memo for any other key is stale.</summary>
             public string ProfileId { get; init; }
 
             public DateTime CheckedUtc { get; init; }
@@ -85,9 +93,10 @@ namespace ValheimBakaLoader.Forms
         /// compares by (the manifest's FullName, or the bare ModName for a folder with no author);
         /// <see cref="FullName"/> is the scan's own, the one mods.disable and mods.enable look a mod
         /// up by. They differ for an author-less folder ("-Name" against "Name"), and a switch sent
-        /// with the diff's name would find nothing.
+        /// with the diff's name would find nothing. <see cref="Hash"/> is a hash of the mod's files,
+        /// read only when the follow is a test copy, whose lines carry one too; null otherwise.
         /// </summary>
-        internal readonly record struct GaleInstalledMod(string Name, string Version, string FullName, bool Off);
+        internal readonly record struct GaleInstalledMod(string Name, string Version, string FullName, bool Off, string Hash = null);
 
         private void RegisterGaleRpcs()
         {
@@ -112,15 +121,21 @@ namespace ValheimBakaLoader.Forms
                 {
                     ForgetGale(prefs);
                 }
-                else if (!string.Equals(prefs.GaleProfileId, check.Id, StringComparison.Ordinal))
+                else if (!string.Equals(prefs.GaleProfileId, check.Id, StringComparison.Ordinal) || prefs.FollowsTestCopy())
                 {
-                    prefs.GaleProfileId = check.Id;
-                    prefs.GaleLastUpdatedAt = null;
-                    prefs.GaleUnticked = new List<string>();
-                    prefs.GaleNotAvailable = new List<string>();
-                    prefs.GaleConfigUnticked = new List<string>();
-                    prefs.GaleTicked = null;
-                    prefs.GaleConfigTicked = null;
+                    if (!string.Equals(prefs.GaleProfileId, check.Id, StringComparison.Ordinal))
+                    {
+                        prefs.GaleProfileId = check.Id;
+                        prefs.GaleLastUpdatedAt = null;
+                        prefs.GaleUnticked = new List<string>();
+                        prefs.GaleNotAvailable = new List<string>();
+                        prefs.GaleConfigUnticked = new List<string>();
+                        prefs.GaleTicked = null;
+                        prefs.GaleConfigTicked = null;
+                    }
+                    // A code pasted is the host choosing a Gale profile, so a test copy the
+                    // realm took its mods from is let go of.
+                    prefs.ForgetTestCopyFollow();
                     ServerPrefsProvider.SavePreferences(prefs);
                     GaleMemos.TryRemove(profile, out _);
                     GaleConfigMemos.TryRemove(profile, out _);
@@ -130,7 +145,9 @@ namespace ValheimBakaLoader.Forms
             });
 
             // Stops following: the id, the last approval and every untick go, and nothing is
-            // asked of the service again for this realm. The mods it installed stay.
+            // asked of the service again for this realm. The mods it installed stay. A test copy
+            // the realm follows is let go of too (testcopy.follow with no copy lets go of the
+            // copy alone).
             RegisterRpc("gale.forget", p =>
             {
                 var profile = GaleProfileOf(p);
@@ -160,10 +177,10 @@ namespace ValheimBakaLoader.Forms
 
                 var stale = prefs == null || memo == null || seq == null || memo.Seq != seq
                     || memo.Result?.Ok != true
-                    || !string.Equals(memo.ProfileId, prefs.GaleProfileId, StringComparison.Ordinal);
+                    || !string.Equals(memo.ProfileId, prefs.GaleFollowKey(), StringComparison.Ordinal);
                 if (!stale)
                 {
-                    prefs.GaleLastUpdatedAt = memo.Result.Meta.UpdatedAt;
+                    prefs.SetGaleFeedLastApproved(memo.Result.Meta.UpdatedAt);
                     ServerPrefsProvider.SavePreferences(prefs);
 
                     // After an install the folder is not what the check read, so the counts the
@@ -185,13 +202,15 @@ namespace ValheimBakaLoader.Forms
                 var prefs = LoadGalePrefs(profile);
                 GaleMemos.TryGetValue(profile, out var memo);
                 var fresh = prefs != null && memo != null && memo.Result?.Ok == true
-                    && string.Equals(memo.ProfileId, prefs.GaleProfileId, StringComparison.Ordinal)
+                    && string.Equals(memo.ProfileId, prefs.GaleFollowKey(), StringComparison.Ordinal)
                     && RereadGaleInstalled(profile, memo);
                 return Task.FromResult<object>(new { ok = fresh, state = GaleState(profile) });
             });
 
             // The ticks in the approval dialog. A name unticked is remembered until the host
-            // ticks it again; a ticked one is taken off the list. Only "Namespace-Name" is kept.
+            // ticks it again; a ticked one is taken off the list. Only "Namespace-Name" is kept,
+            // or, while the realm follows a test copy, a mod folder's own name; and the copy's
+            // unticks are its own list, so the Gale profile's are left as they were.
             // From 1.3.0 the ticked ones are remembered as well, because a review starts with
             // nothing ticked and only a mod the host ticked before starts ticked.
             RegisterRpc("gale.untick", p =>
@@ -200,13 +219,14 @@ namespace ValheimBakaLoader.Forms
                 var prefs = LoadGalePrefs(profile);
                 if (prefs == null) return Task.FromResult<object>(new { ok = false, state = GaleState(profile) });
 
-                var off = Names(p?["unticked"]);
-                var on = Names(p?["ticked"]);
-                var kept = ServerPreferences.NormalizeUnticked(prefs.GaleUnticked)
+                var local = prefs.FollowsTestCopy();
+                var off = Names(p?["unticked"], local);
+                var on = Names(p?["ticked"], local);
+                var kept = ServerPreferences.NormalizeUnticked(prefs.GaleFeedUnticked())
                     .Where(n => !on.Contains(n, StringComparer.OrdinalIgnoreCase))
                     .Concat(off)
                     .ToList();
-                prefs.GaleUnticked = ServerPreferences.NormalizeUnticked(kept);
+                prefs.SetGaleFeedUnticked(kept);
                 prefs.GaleTicked = ServerPreferences.GaleTicksAfter(prefs.GaleTicked, on, off);
                 ServerPrefsProvider.SavePreferences(prefs);
 
@@ -271,7 +291,7 @@ namespace ValheimBakaLoader.Forms
         {
             var prefs = LoadGalePrefs(profile);
             if (!GaleMemos.TryGetValue(profile ?? "", out var memo) || memo?.Result?.Ok != true) return false;
-            if (!string.Equals(memo.ProfileId, prefs?.GaleProfileId, StringComparison.Ordinal)) return false;
+            if (!string.Equals(memo.ProfileId, prefs?.GaleFollowKey(), StringComparison.Ordinal)) return false;
             return GaleListsBepInEx(memo.Result.Meta);
         }
 
@@ -328,18 +348,19 @@ namespace ValheimBakaLoader.Forms
             prefs.GaleConfigUnticked = new List<string>();
             prefs.GaleTicked = null;
             prefs.GaleConfigTicked = null;
+            prefs.ForgetTestCopyFollow();
             ServerPrefsProvider.SavePreferences(prefs);
             GaleMemos.TryRemove(prefs.ProfileName ?? "", out _);
             GaleConfigMemos.TryRemove(prefs.ProfileName ?? "", out _);
         }
 
-        private static List<string> Names(JToken token)
+        private static List<string> Names(JToken token, bool localFeed = false)
         {
             if (token is not JArray list) return new List<string>();
             return list.OfType<JValue>()
                 .Where(v => v.Type == JTokenType.String)
                 .Select(v => ((string)v)?.Trim())
-                .Where(GaleProfileDiff.IsFullName)
+                .Where(n => localFeed ? GaleProfileDiff.IsLocalName(n) : GaleProfileDiff.IsFullName(n))
                 .ToList();
         }
 
@@ -350,7 +371,7 @@ namespace ValheimBakaLoader.Forms
         internal async Task<object> GaleCheckAsync(string profile)
         {
             var prefs = LoadGalePrefs(profile);
-            var id = prefs?.GaleProfileId;
+            var id = prefs?.GaleFollowKey();
             if (string.IsNullOrWhiteSpace(id)) return GaleState(profile);
 
             Task<GaleCheckMemo> run;
@@ -358,7 +379,8 @@ namespace ValheimBakaLoader.Forms
             {
                 if (!GaleChecksInFlight.TryGetValue(profile, out run))
                 {
-                    var client = GaleClient;
+                    // Gale's service, or the test copy the realm follows read off this PC.
+                    var client = GaleFeedFor(profile, prefs);
                     var pluginsDir = GetPluginsDirectoryFor(profile);
                     // Task.Run, not a bare call: the client's first await is behind a DNS
                     // lookup and a TLS handshake, and the scan is a walk of the disk. Neither
@@ -385,7 +407,7 @@ namespace ValheimBakaLoader.Forms
             // The host may have forgotten the profile, or pasted another, while this was out.
             // A check for an id the realm no longer follows is dropped rather than shown.
             var now = LoadGalePrefs(profile);
-            if (memo != null && now != null && string.Equals(now.GaleProfileId, memo.ProfileId, StringComparison.Ordinal))
+            if (memo != null && now != null && string.Equals(now.GaleFollowKey(), memo.ProfileId, StringComparison.Ordinal))
             {
                 GaleMemos[profile] = new GaleCheckMemo
                 {
@@ -422,7 +444,8 @@ namespace ValheimBakaLoader.Forms
             IReadOnlyList<GaleInstalledMod> installed = null;
             if (result?.Ok == true)
             {
-                installed = ReadInstalledForGale(pluginsDir);
+                // Against a test copy the realm's own folders are hashed too, as the copy's are.
+                installed = ReadInstalledForGale(pluginsDir, result.Meta?.LocalFeed == true);
                 if (installed == null)
                 {
                     // A folder that would not read is not an empty server: comparing against
@@ -446,7 +469,7 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private bool RereadGaleInstalled(string profile, GaleCheckMemo memo)
         {
-            var installed = ReadInstalledForGale(GetPluginsDirectoryFor(profile));
+            var installed = ReadInstalledForGale(GetPluginsDirectoryFor(profile), memo.Result?.Meta?.LocalFeed == true);
             if (installed == null) return false;
             return GaleMemos.TryUpdate(profile, new GaleCheckMemo
             {
@@ -462,15 +485,23 @@ namespace ValheimBakaLoader.Forms
         private static IReadOnlyList<(string Name, string Version)> Pairs(IReadOnlyList<GaleInstalledMod> mods) =>
             mods?.Select(m => (m.Name, m.Version)).ToList();
 
+        /// <summary>What the comparison reads: each mod's name, version and the hash of its files, when it was read.</summary>
+        private static IEnumerable<(string Name, string Version, string Hash)> Triples(GaleCheckMemo memo) =>
+            memo.Mods != null
+                ? memo.Mods.Select(m => (m.Name, m.Version, m.Hash))
+                : (memo.Installed ?? Array.Empty<(string Name, string Version)>()).Select(m => (m.Name, m.Version, (string)null));
+
         /// <summary>The status line when the realm's own mod folder could not be read.</summary>
         internal const string GaleUnreadableSentence = "mods.gale.check.unreadable";
 
         /// <summary>
         /// The realm's mods, read the way the Mods hall reads them: ModScanner's manifest name
         /// and version per folder. A realm with no plugins folder yet has no mods, which is an
-        /// answer; a folder that is there and will not read is null, which is not.
+        /// answer; a folder that is there and will not read is null, which is not. Against a test
+        /// copy (<paramref name="localFeed"/>) each mod's version is read the way the copy's is
+        /// and its files are hashed, so the two sides are read alike.
         /// </summary>
-        private IReadOnlyList<GaleInstalledMod> ReadInstalledForGale(string pluginsDir)
+        private IReadOnlyList<GaleInstalledMod> ReadInstalledForGale(string pluginsDir, bool localFeed = false)
         {
             if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
                 return Array.Empty<GaleInstalledMod>();
@@ -479,7 +510,10 @@ namespace ValheimBakaLoader.Forms
                 return ModScanner.ScanPlugins(pluginsDir)
                     .Where(m => m != null)
                     .Select(m => new GaleInstalledMod(
-                        string.IsNullOrWhiteSpace(m.Author) ? m.ModName : m.FullName, m.InstalledVersion, m.FullName, m.Disabled))
+                        string.IsNullOrWhiteSpace(m.Author) ? m.ModName : m.FullName,
+                        localFeed ? TestCopyGaleFeed.VersionOf(m) : m.InstalledVersion,
+                        m.FullName, m.Disabled,
+                        localFeed ? TestCopyGaleFeed.FolderHash(m) : null))
                     .ToList();
             }
             catch (Exception e)
@@ -498,15 +532,17 @@ namespace ValheimBakaLoader.Forms
         {
             var prefs = LoadGalePrefs(profile);
             var id = prefs?.GaleProfileId;
+            var key = prefs?.GaleFollowKey();
+            var testCopy = prefs?.FollowsTestCopy() == true ? prefs.FollowTestCopy.Trim() : null;
             GaleMemos.TryGetValue(profile ?? "", out var memo);
-            if (memo != null && !string.Equals(memo.ProfileId, id, StringComparison.Ordinal)) memo = null;
+            if (memo != null && !string.Equals(memo.ProfileId, key, StringComparison.Ordinal)) memo = null;
 
             object check = null;
             if (memo != null)
             {
                 var ok = memo.Result?.Ok == true;
                 GaleProfileDiffResult diff = ok
-                    ? GaleProfileDiff.Compare(memo.Result.Meta, memo.Installed, prefs?.GaleUnticked)
+                    ? GaleProfileDiff.Compare(memo.Result.Meta, Triples(memo), prefs?.GaleFeedUnticked())
                     : null;
                 // A pinned build Thunderstore no longer has is not work: it is listed with its
                 // mark, and neither counts nor raises the row until the profile pins another.
@@ -516,9 +552,12 @@ namespace ValheimBakaLoader.Forms
                 // only one the host ticked before starts ticked (GaleStartsTicked keeps the older
                 // rule for a realm that has only the untick list so far).
                 bool Ticked(GaleDiffRow r) => (r.Kind == GaleDiffKind.Add || r.Kind == GaleDiffKind.Update)
-                    && ServerPreferences.GaleStartsTicked(r.Name, prefs?.GaleTicked, prefs?.GaleUnticked);
+                    && ServerPreferences.GaleStartsTicked(r.Name, prefs?.GaleTicked, prefs?.GaleFeedUnticked());
                 var addCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Add && !Gone(r)) ?? 0;
-                var updateCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Update && !Gone(r)) ?? 0;
+                // A mod rebuilt on a test copy under the same version is an update to the host,
+                // and is counted with them; changedCount says how many of them it is.
+                var updateCount = diff?.Rows.Count(r => (r.Kind == GaleDiffKind.Update || r.Kind == GaleDiffKind.Changed) && !Gone(r)) ?? 0;
+                var changedCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.Changed && !Gone(r)) ?? 0;
                 // The framework rows are the BepInEx row's, so the list and its count are the
                 // server's own mods the profile does not name, and nothing else.
                 var onlyHereCount = diff?.Rows.Count(r => r.Kind == GaleDiffKind.NotInProfile) ?? 0;
@@ -533,9 +572,10 @@ namespace ValheimBakaLoader.Forms
                     statusId = ok ? null : memo.Result?.SentenceId ?? GaleSyncClient.NetworkErrorSentence,
                     statusGame = ok ? null : memo.Result?.Game,
                     updatedAt = ok ? memo.Result.Meta.UpdatedAt : null,
-                    due = ok && addCount + updateCount > 0 && GaleProfileDiff.IsDue(diff, prefs?.GaleLastUpdatedAt),
+                    due = ok && addCount + updateCount > 0 && GaleProfileDiff.IsDue(diff, prefs?.GaleFeedLastApproved()),
                     addCount,
                     updateCount,
+                    changedCount,
                     skipped = diff?.Skipped ?? 0,
                     onlyHereCount,
                     rows = diff == null
@@ -565,10 +605,14 @@ namespace ValheimBakaLoader.Forms
             return new
             {
                 profile,
-                following = !string.IsNullOrWhiteSpace(id),
+                following = !string.IsNullOrWhiteSpace(key),
                 id,
-                lastApproved = prefs?.GaleLastUpdatedAt,
-                unticked = prefs?.GaleUnticked ?? new List<string>(),
+                // What the follow reads: "gale" for a Gale profile, "testcopy" for one of this
+                // realm's test copies (named in testCopy), or null for nothing.
+                feed = testCopy != null ? "testcopy" : string.IsNullOrWhiteSpace(id) ? null : "gale",
+                testCopy,
+                lastApproved = prefs?.GaleFeedLastApproved(),
+                unticked = prefs?.GaleFeedUnticked() ?? new List<string>(),
                 // The realm that has this install's plugins folder open, when one does. The
                 // dialog says to stop it first and does not offer Install while it is up.
                 heldBy,
@@ -617,6 +661,7 @@ namespace ValheimBakaLoader.Forms
             GaleDiffKind.Disabled => "disabled",
             GaleDiffKind.NotInProfile => "notInProfile",
             GaleDiffKind.Framework => "framework",
+            GaleDiffKind.Changed => "changed",
             _ => "same",
         };
     }

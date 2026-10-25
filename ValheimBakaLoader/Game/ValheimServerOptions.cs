@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using ValheimBakaLoader.Tools.Logging;
 
 namespace ValheimBakaLoader.Game
 {
@@ -79,6 +80,13 @@ namespace ValheimBakaLoader.Game
         bool LogFilteringDisabled { get; }
 
         Action<string> LogMessageHandler { get; }
+
+        /// <summary>
+        /// Every finished server line with the day it was stamped on, for the window's log view,
+        /// which shows the date beside the time. A view of options that has no window behind it
+        /// has nothing to hand it, so it answers null.
+        /// </summary>
+        Action<AppLogLine> LogLineHandler => null;
 
         string WorldPreset { get; }
 
@@ -361,6 +369,8 @@ namespace ValheimBakaLoader.Game
         public bool LogFilteringDisabled { get; set; }
 
         public Action<string> LogMessageHandler { get; set; }
+
+        public Action<AppLogLine> LogLineHandler { get; set; }
 
         public string WorldPreset { get; set; }
 

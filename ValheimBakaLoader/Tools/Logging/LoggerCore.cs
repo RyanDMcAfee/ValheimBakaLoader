@@ -55,6 +55,16 @@ namespace ValheimBakaLoader.Tools.Logging
         {
             return (logEvent, line) => $"{logEvent.Timestamp:[HH:mm:ss.fff]} {line}";
         }
+
+        /// <summary>
+        /// The date of the moment <see cref="Timestamp"/> prints the time of, read off the same
+        /// value, so a line stamped a millisecond before midnight says the day that is ending
+        /// and the next one says the day that began. Fixed digits whatever the machine's culture.
+        /// </summary>
+        public static string DayOf(DateTimeOffset stamped)
+        {
+            return stamped.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
     }
 
     /// <summary>
@@ -238,7 +248,9 @@ namespace ValheimBakaLoader.Tools.Logging
             // report. The file gets the whole stack through the template below.
             if (logEvent.Exception != null) line += " [" + Summarise(logEvent.Exception) + "]";
 
-            var held = new AppLogLine(line, realm);
+            // The day is taken here, from the event the time was printed from, and held with the
+            // line: a replay hours later must say the day the line was written, not today.
+            var held = new AppLogLine(line, realm, LogSteps.DayOf(logEvent.Timestamp));
             History.Add(held);
             LogReceived?.Invoke(line);
             LineReceived?.Invoke(held);
