@@ -1904,17 +1904,15 @@ function onWindowResize(){
 window.addEventListener("resize",onWindowResize);
 
 /* ---------- TOAST LIFT ----------
-   Toasts live at the bottom right of the content pane, clear of the status bar. Two
-   things are allowed to push them further up: the Saga hall's console input row, so
-   they never cover what you are typing, and an open modal's button row, so a toast
-   fired mid-dialog never lands on the buttons that dialog is waiting on. */
+   Toasts live at the bottom right of the content pane, clear of the status bar. An open
+   modal's button row pushes them further up, so a toast fired mid-dialog never lands on
+   the buttons that dialog is waiting on. The Log's console line used to push them up as
+   well, while it sat at the foot of the Log; since 1.3.0 (issue 27) it stands over the
+   lines at the top of the Log, out of the toasts' way, and lifting them for it only
+   covered more of the lines. */
 const TOAST_BASE=42;    // matches the base offset in the .toasts rule in app.css
 function updateToastLift(){
   let lift=0;
-  if(sectOn("saga")){
-    const row=$("#sect-saga .termin");
-    lift=(row&&row.offsetHeight?row.offsetHeight:36)+18;
-  }
   const btns=document.querySelector(".modal-bg.open .modal .mbtns");
   const app=$("#app");
   if(btns&&app){
@@ -2069,7 +2067,7 @@ function wireCollapsible(headId,body,targetEl){
    to the new. */
 const SECTIONS=[
   {key:"hearth",page:"hearth",head:"#page-hearth>.pagehead",body:"#page-hearth>.bento",open:true},
-  {key:"saga",page:"hearth",head:"#sect-saga>.pagehead",body:"#sectBody-saga",open:false,enter:()=>{try{updateToastLift();}catch(_){}}},
+  {key:"saga",page:"hearth",head:"#sect-saga>.pagehead",body:"#sectBody-saga",open:false,enter:()=>{try{sagaToTop();}catch(_){}}},
   {key:"atlas",page:"atlas",head:"#page-atlas>.pagehead",body:"#page-atlas>.atlas-grid",open:true},
   {key:"skald",page:"atlas",head:"#sect-skald>.pagehead",body:"#sectBody-skald",open:false,enter:()=>{try{skaldRefresh();}catch(_){}}},
   {key:"mods",page:"mods",head:"#page-mods>.pagehead",body:"#sectBody-mods",open:true},
@@ -2296,6 +2294,7 @@ let currentPage="hearth";
    hall), because Statistics stands under it and an open section grows the hall. */
 const FLEX_PAGES={"page-atlas":1,"page-hearth":1};
 function goPage(name){
+  const from=currentPage;
   $$(".navitem").forEach(n=>n.classList.toggle("active",n.dataset.page===name));
   $$(".page").forEach(p=>{
     const on=p.id==="page-"+name;
@@ -2309,6 +2308,9 @@ function goPage(name){
   /* The armed cheat-mark switch sits in the Hearth's World upkeep group from 1.2.10, so it is
      redrawn when the Dashboard comes back on screen, where the Players hall used to do it. */
   if(name==="hearth"){if(hlogDirty)renderHearthLog();hlogFit();flameResize();try{renderCleanseArmed();}catch(_){}}
+  /* Walking into the Dashboard with the Log open shows its newest line (1.3.0), the way opening
+     the Log does; a press on the hall the host is already on leaves a paused Log where it is. */
+  if(name==="hearth"&&from!=="hearth"&&sectIsOpen("saga")){try{sagaToTop();}catch(_){}}
   flameTick();   // the fire only burns while the Dashboard is on screen
   refreshScrollCues();
   try{sectStackRead(name);}catch(_){}   // the pane's head stack belongs to the hall on screen
@@ -2882,14 +2884,16 @@ async function switchServer(name,opts){
   try{renderWorldMods();}catch{}
   try{renderMaxPlayers();}catch{}
   refreshServers();
-  logDivider(T("realm.switched.divider",{name:prefs.ProfileName}));
   /* The lines this realm already wrote are in the console, hidden while another realm was on
      screen, so they are shown again rather than printed twice. Only what the page never saw
-     (lines from before it loaded, or pushed out of the scrollback) is replayed. */
+     (lines from before it loaded, or pushed out of the scrollback) is replayed. Those were all
+     written before the switch, so the divider goes in after them: with the newest line on top
+     (1.3.0) it stands over them, and what the realm says from here on lands above it. */
   applyTermVis();
   renderHearthLog();
   const sbuf=await rpc("logs.serverBuffer");
   if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length) sagaReplayUnseen(sbuf.slice(-200));
+  logDivider(T("realm.switched.divider",{name:prefs.ProfileName}));
   logLine("info","[BakaLoader] switched to profile '"+name+"'");
   /* This realm's own stored save folder, asked fresh. The row was cleared above with the
      rest of the previous realm's conditions. */
@@ -9063,7 +9067,15 @@ const TERM_CAP=1200;                      // scrollback (lines kept in the DOM)
 /* Lines held per realm ("" is the lines of no realm, dividers among them), kept beside the DOM
    so the cap does not count twelve hundred nodes on every line. null means count again. */
 let termRealmCount=null, termRealmTotal=0;
-let termPin=true, termUnseen=0;           // pinned-to-bottom = live tail; scrolled up = paused
+/* Newest first since 1.3.0 (issue 27): the top of the console is its live end, with the command
+   line over it. termPin is "live": the console stands at its top, within 2 px, so a new line lands
+   on top and is the first thing read. Scrolled down to older lines, or held by the Pause button
+   (termHeld), it is paused: a new line still goes in at the top, out of sight, the view is moved
+   down by what went in so the line being read stays where it is, and termUnseen counts it for the
+   chip. termGoingTop is a slide back to the top that is still running, whose own scroll events
+   are not the reader scrolling away. */
+let termPin=true, termUnseen=0, termHeld=false;
+let termGoingTop=false, termGoingT=0;
 
 /* A line written for a realm (dataset.p, lowercased) shows only while that realm is on
    screen. A line that belongs to no realm, the app's own news or a setting, shows on every
@@ -9091,17 +9103,25 @@ function lnVisible(el){
 function applyTermVis(){
   $$("#term .ln").forEach(l=>{l.style.display=lnVisible(l)?"":"none";});
   renderTermEmpty();
-  if(termPin) term.scrollTop=term.scrollHeight;
+  if(termPin&&!termGoingTop) term.scrollTop=0;
 }
+/* The chip and the Pause button, from termPin. The button is the console's state as well as its
+   switch (1.3.0): it reads Pause while the console follows and Live, lit, while it is paused,
+   which is what the "streaming" pill in the corner used to say. It holds both of its words at
+   once, stacked in one cell, and shows one: swapping the words would change its width and shove
+   the search box beside it on every press. The chip floats over the top of the lines, so its
+   coming and going moves nothing either. Both fade (app.css, .termhold, .termpane #termNew). */
 function renderTermStream(){
-  const chip=$("#termNew"), pill=$("#termStream");
-  if(termPin){
-    chip.classList.add("hidden");
-    pill.textContent=T("saga.stream.live"); pill.className="pill green";
-  }else{
-    chip.textContent="↓ "+T("saga.stream.unseen",{count:termUnseen});
+  const chip=$("#termNew"), hold=$("#termHold");
+  if(hold){
+    hold.classList.toggle("paused",!termPin);
+    hold.setAttribute("aria-pressed",termPin?"false":"true");
+  }
+  if(!chip) return;
+  if(termPin) chip.classList.add("hidden");
+  else{
+    chip.textContent="↑ "+T("saga.stream.unseen.top",{count:termUnseen});
     chip.classList.toggle("hidden",termUnseen===0);
-    pill.textContent=T("saga.stream.paused"); pill.className="pill amber";
   }
 }
 /* The console starts empty on a cold launch, so say so rather than showing a blank
@@ -9145,21 +9165,63 @@ function clearSagaNarrowing(){
   applyTermVis();
 }
 Object.assign(ES_ACTIONS,{clearSagaNarrowing});
-/* The empty state is the last child, so a new line goes in FRONT of it and the note is
-   left for renderTermEmpty to keep or drop. It used to be torn out here and never put
-   back, and nothing on the append road ever repainted it: a running server writes lines
-   the whole time, so the "no lines match" note lived until the next line landed and the
-   panel went black again with every line hidden. Asking again after each line is what
-   makes the note hold; renderTermEmpty leaves an already-correct note alone, so this is
-   a read per line and not a redraw per line. */
+/* Holding the view still while the console is paused. Before a line goes in at the top, the
+   first line on screen is remembered with where it stood; once the frame's lines are in, and
+   before that frame is painted, the console is scrolled down by however far that line moved, so
+   the reader sees nothing shift. One read and one write a frame however many lines a flood
+   brings, never one each: a modded server's boot is thousands of lines. */
+let termHoldRef=null, termHoldAt=0, termHoldRaf=0, termHoldCarry=0;
+/* Where a line stands in the console's content, to the fraction of a pixel: its box on screen
+   plus how far the console is scrolled. offsetTop rounds to whole pixels and a line is 19.25 px
+   tall, so it would be a quarter pixel out per line. A scroll between the two reads moves both
+   halves by the same amount, so it does not count as the line moving. */
+function termContentTop(el){
+  return el.getBoundingClientRect().top+term.scrollTop;
+}
+function termHoldBegin(){
+  if(termHoldRef) return;
+  const kids=term.children;
+  for(let i=0;i<kids.length;i++){
+    const k=kids[i];
+    if(k.dataset&&k.dataset.k&&k.style.display!=="none"){termHoldRef=k;termHoldAt=termContentTop(k);break;}
+  }
+  if(termHoldRef&&!termHoldRaf) termHoldRaf=requestAnimationFrame(termHoldSettle);
+}
+/* The browser keeps scrollTop in whole pixels, so what it rounds away is carried into the next
+   frame's move rather than lost: one line a frame would otherwise walk the reader's line down a
+   quarter pixel each time, two pixels by the eighth line. Only a rounding is carried; a move the
+   browser cut short because the lines do not fill the console yet is not owed later. */
+function termHoldSettle(){
+  termHoldRaf=0;
+  const ref=termHoldRef; termHoldRef=null;
+  /* a line a filter or a search has hidden since reads display "none", a shown one "" */
+  if(termPin||!ref||!ref.parentNode||ref.style.display!=="") return;
+  const by=termContentTop(ref)-termHoldAt;
+  if(!by) return;
+  const want=term.scrollTop+by+termHoldCarry;
+  term.scrollTop=want;
+  const left=want-term.scrollTop;
+  termHoldCarry=Math.abs(left)<1?left:0;
+}
+function termHoldDrop(){
+  if(termHoldRaf){try{cancelAnimationFrame(termHoldRaf);}catch(_){}}
+  termHoldRaf=0; termHoldRef=null; termHoldCarry=0;
+}
+/* Newest first (1.3.0): a line goes in at the top. The empty state is the last child, under
+   every line, and is left for renderTermEmpty to keep or drop. It used to be torn out here and
+   never put back, and nothing on the append road ever repainted it: a running server writes
+   lines the whole time, so the "no lines match" note lived until the next line landed and the
+   panel went black again with every line hidden. Asking again after each line is what makes the
+   note hold; renderTermEmpty leaves an already-correct note alone, so this is a read per line
+   and not a redraw per line. Live, the console stands at its top and the new line is simply
+   there; paused, the view is held and the chip counts the line. */
 function termAppend(d){
-  const es=term.querySelector(".empty-state");
-  if(es) term.insertBefore(d,es); else term.appendChild(d);
+  if(!termPin) termHoldBegin();
+  term.insertBefore(d,term.firstChild);
   termCount(d,1);
   termEvict();
   renderTermEmpty();
-  if(termPin) term.scrollTop=term.scrollHeight;
-  else if(d.style.display!=="none"&&d.dataset.k!=="div"){termUnseen++;renderTermStream();}
+  if(!termPin&&d.style.display!=="none"&&d.dataset.k!=="div"){termUnseen++;renderTermStream();}
 }
 function termLineRealm(el){
   return el&&el.dataset&&el.dataset.k?(el.dataset.p||""):null;
@@ -9175,7 +9237,8 @@ function termCount(el,by){
    server prints thousands of lines and pushed the history of the realm on screen out of the
    console the host was reading. The line that goes now is the oldest one of whichever realm
    holds the most, a hidden realm before the one on screen on a tie, so a loud realm pays for
-   its own noise and a quiet one keeps what it said. */
+   its own noise and a quiet one keeps what it said. Since 1.3.0 the oldest line is the lowest
+   one, so the cap trims from the bottom. */
 function termEvict(){
   const kids=term.children;
   const es=term.querySelector(".empty-state");
@@ -9191,33 +9254,48 @@ function termEvict(){
       if(n>most||(n===most&&worst===on&&k!==on)){worst=k;most=n;}
     });
     let gone=null;
-    for(let i=0;i<kids.length;i++){ if(termLineRealm(kids[i])===worst){gone=kids[i];break;} }
+    for(let i=kids.length-1;i>=0;i--){ if(termLineRealm(kids[i])===worst){gone=kids[i];break;} }
     if(!gone) break;
     termCount(gone,-1);
     gone.remove();
   }
 }
+/* The stamp on every row since 1.3.0 (issue 27): the date and the time, YYYY-MM-DD HH:MM:SS, in
+   fixed digits so a column of them lines up in any language. A host row takes its time from the
+   line ([HH:mm:ss] as the host printed it) and its day from the row's own "day", which the host
+   sends beside it; a row that comes without one (a host from before 1.3.0) shows the time alone
+   rather than a date the page would have to guess, because a line replayed after midnight would
+   wear the wrong one. A row the page writes itself is stamped whole from the clock it is written
+   by, at the moment it is written: the same machine's clock the host stamps with. */
+const SAGA_DAY_RE=/^\d{4}-\d\d-\d\d$/;
+function sagaStamp(time,day,now){
+  if(time) return (typeof day==="string"&&SAGA_DAY_RE.test(day)?day+" ":"")+time;
+  const d=now||new Date();
+  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());
+}
 /* profile: the realm the line belongs to. Left out it is the realm on screen; null means
    none. The realm is stored on the element and never written into the text: the Saga stays
-   the verbatim log. */
-function logLine(kind,text,time,profile){
+   the verbatim log. day: the host's date for a host row (sagaStamp). */
+function logLine(kind,text,time,profile,day){
   const d=document.createElement("div");
   d.className="ln "+kind; d.dataset.k=kind;
   d.dataset.s=(text||"").toLowerCase();
   const p=sagaLineRealm(profile);
   if(p) d.dataset.p=p;
   if(time) d.dataset.t=time;  // the line's own clock, so the replay can tell two sessions apart
-  const t=time||clock()+":"+String(new Date().getSeconds()).padStart(2,"0");
-  d.innerHTML=`<span class="t">${esc(t)}</span>  <span class="${kind}">${esc(text)}</span>`;
+  const stamp=sagaStamp(time,day);
+  d.innerHTML=`<span class="t">${esc(stamp)}</span>  <span class="${kind}">${esc(text)}</span>`;
   d.style.display=lnVisible(d)?"":"none";
   termAppend(d);
-  hlogPush(kind,text,t,p);   // Hearth hall keeps a mirror of the last few lines
+  hlogPush(kind,text,stamp.slice(-8),p);   // the Hearth card mirrors the last few lines, with the time alone: it is a glance, not the record
 }
 /* Replays host rows ({line, profile} or a bare string) that the console does not already
    hold. Counted, not just looked up, so a line that really did come twice still shows twice.
    The key is the realm, the line's own time and its text: an earlier session of the same realm
-   that said the same sentence is not this session's line. A replayed row goes at the end, after
-   the divider, since the console cannot know where it would have sat. */
+   that said the same sentence is not this session's line. A replayed row goes in at the top like
+   any other, since the console cannot know where it would have sat; the divider that marks a
+   replay is written after its rows, so it stands above them (1.3.0, newest first). A row brings
+   its day with it, so it is stamped with the day it was written, not the day it is replayed on. */
 function sagaReplayUnseen(rows){
   const have=new Map();
   $$("#term .ln").forEach(l=>{
@@ -9233,7 +9311,7 @@ function sagaReplayUnseen(rows){
     const key=sagaLineRealm(profile)+"\n"+(c.time||"")+"\n"+String(c.text||"").toLowerCase();
     const n=have.get(key)||0;
     if(n>0){have.set(key,n-1);return;}
-    logRaw(row.line,profile);
+    logRaw(row.line,profile,row.day);
   });
 }
 /* A renamed realm keeps its lines: they move to the new name in the console and the card. */
@@ -9256,10 +9334,19 @@ function logDivider(text){
 }
 /* App-log lines arrive as "[HH:mm:ss.fff] [WRN] msg" - lift the timestamp into the
    time cell (no double clocks) and read the severity tag instead of guessing.
-   Server lines carry no tag, so they fall back to content heuristics. */
-const LOG_TS_RE=/^\[(\d\d:\d\d:\d\d)(?:\.\d+)?\]\s*/;
+   Server lines carry no tag, so they fall back to content heuristics. The host puts one
+   space after the stamp, and only that one is taken (1.3.0): a stack frame's indentation
+   is the line's own, and taking it with the stamp is what hid every frame from the frame
+   test below. */
+const LOG_TS_RE=/^\[(\d\d:\d\d:\d\d)(?:\.\d+)?\] ?/;
 const LOG_TAG_RE=/^\[(VER|DBG|WRN|ERR|FAT)\]\s*/;
 const LOG_TAG_KIND={VER:"dbg",DBG:"dbg",WRN:"warn",ERR:"err",FAT:"err"};
+/* Exceptions are errors (1.3.0, issue 27). A Unity or Mono exception names its class
+   (NullReferenceException, never the bare word), its stack frames are "at" lines, and BepInEx
+   says its own level in brackets; every one of those used to read as Info. These sure signs
+   win over BepInEx's own [Warning, and [Warning wins over a loose "failed" in the words. */
+const LOG_ERR_RE=/exceptions?\b|\bunhandled\b|\bfatal\b|\[error\b/i;
+const LOG_FRAME_RE=/^\s+at\s+\S|^at [\w`$<>]+(?:\.[\w`$<>\[\],]+)+ ?\(/;
 function classifyLog(line){
   let text=line??"", time=null, kind=null;
   const ts=text.match(LOG_TS_RE);
@@ -9268,16 +9355,18 @@ function classifyLog(line){
   if(tag){kind=LOG_TAG_KIND[tag[1]];text=text.slice(tag[0].length);}
   if(!kind){
     if(NET_RE.test(text)) kind="net";
+    else if(LOG_ERR_RE.test(text)||LOG_FRAME_RE.test(text)) kind="err";
+    else if(/\[warning\b/i.test(text)) kind="warn";
     else{
       const l=text.toLowerCase();
-      if(/\bexception\b|\berror\b|\bfailed\b|\bfatal\b/.test(l)||/^\s+at\s+\S/.test(text)) kind="err";
+      if(/\berror\b|\bfailed\b/.test(l)) kind="err";
       else if(/\bwarn/.test(l)) kind="warn";
       else kind="info";
     }
   }
   return {kind,time,text};
 }
-function logRaw(line,profile){const c=classifyLog(line);logLine(c.kind,c.text,c.time,profile);}
+function logRaw(line,profile,day){const c=classifyLog(line);logLine(c.kind,c.text,c.time,profile,day);}
 
 renderTermEmpty();
 
@@ -9294,16 +9383,60 @@ $("#termSearch").addEventListener("input",e=>{
   applyTermVis();
 });
 
-/* pause-on-scroll-up: leave the bottom and the tail holds still; a chip counts
-   what arrived while reading. Click the chip (or scroll back down) to resume. */
-term.addEventListener("scroll",()=>{
-  const atBottom=term.scrollTop+term.clientHeight>=term.scrollHeight-8;
-  if(atBottom&&!termPin){termPin=true;termUnseen=0;renderTermStream();}
-  else if(!atBottom&&termPin){termPin=false;renderTermStream();}
-});
-$("#termNew").addEventListener("click",()=>{
-  termPin=true;termUnseen=0;term.scrollTop=term.scrollHeight;renderTermStream();
-});
+/* Pause on scroll (newest first since 1.3.0): leave the top for older lines and the console
+   holds still while a chip counts what arrived; back at the top it follows again, unless the
+   Pause button is holding it. */
+function termOnScroll(){
+  const atTop=term.scrollTop<=2;
+  if(termGoingTop){
+    if(atTop){termGoingTop=false;clearTimeout(termGoingT);}
+    return;
+  }
+  if(atTop&&!termPin&&!termHeld){termPin=true;termUnseen=0;termHoldDrop();renderTermStream();}
+  else if(!atTop&&termPin){termPin=false;renderTermStream();}
+}
+/* Back to the newest line, and following it: the chip and the Live button. The console slides
+   up (a jump under reduced motion), and the slide's own scroll events are not taken for the
+   reader leaving the top. A wheel or a press on the console during the slide hands it back to
+   the reader; a slide that has not reached the top within a second is asked about afresh. */
+function sagaGoLive(){
+  termHoldDrop();
+  termHeld=false; termPin=true; termUnseen=0;
+  renderTermStream();
+  if(term.scrollTop<=2) return;
+  termGoingTop=true;
+  clearTimeout(termGoingT);
+  termGoingT=setTimeout(()=>{termGoingTop=false;termOnScroll();},1000);
+  term.scrollTo({top:0,behavior:revealReduced()?"auto":"smooth"});
+}
+function termTakeBack(){
+  if(!termGoingTop) return;
+  termGoingTop=false;
+  clearTimeout(termGoingT);
+}
+/* The Pause button: while the console follows, it holds it still where it stands; while the
+   console is paused, by the button or by scrolling, it reads Live and follows again. */
+function sagaHoldToggle(){
+  if(!termPin){sagaGoLive();return;}
+  termHeld=true; termPin=false; termUnseen=0;
+  renderTermStream();
+}
+/* The console opened, or the Dashboard walked into with it open (1.3.0): it shows the newest
+   line and follows, whatever it was left at. Set at once, because the console is rolling or
+   fading in from nothing and there is nothing on screen to jump. A pause, a slide or a held
+   view from before goes with it. Before 1.3.0 a console folded at load opened on its oldest
+   lines and said it was streaming. */
+function sagaToTop(){
+  termHoldDrop();
+  termTakeBack();
+  termHeld=false; termPin=true; termUnseen=0;
+  term.scrollTop=0;
+  renderTermStream();
+}
+term.addEventListener("scroll",termOnScroll);
+["wheel","pointerdown","touchstart"].forEach(ev=>term.addEventListener(ev,termTakeBack,{passive:true}));
+$("#termNew").addEventListener("click",sagaGoLive);
+$("#termHold").addEventListener("click",sagaHoldToggle);
 
 /* copy exactly what's on screen (current pill + search) */
 $("#termCopy").addEventListener("click",()=>{
@@ -17674,14 +17807,15 @@ if(Native.available){
   Native.on("player.updated",p=>{
     if(sectOn("skald")&&isActiveProfile(p?.serverKey))skaldRefresh();
   });
-  /* An app line names its realm, or null when it belongs to none and shows on every realm. */
-  Native.on("log.app",d=>{if(d?.line!=null)logRaw(d.line,d.profile==null?null:d.profile);});
+  /* An app line names its realm, or null when it belongs to none and shows on every realm.
+     Since 1.3.0 a row also says the host's date it was stamped on (day), which the stamp shows. */
+  Native.on("log.app",d=>{if(d?.line!=null)logRaw(d.line,d.profile==null?null:d.profile,d.day);});
   /* Every realm's server lines are kept, tagged with their realm, and the console shows the
      ones of the realm on screen. A switch then shows the other realm's lines it already holds
      instead of replaying them. Net telemetry is still read for the realm on screen only. */
   Native.on("log.server",d=>{
     if(d?.line==null) return;
-    logRaw(d.line,d.profile==null?undefined:d.profile);
+    logRaw(d.line,d.profile==null?undefined:d.profile,d.day);
     if(isActiveProfile(d?.profile)) parseNetLine(d.line); // net telemetry rides the server log
   });
 
@@ -17761,17 +17895,19 @@ if(Native.available){
     rpc("ip.refresh").then(r=>{
       if(r!==FAIL&&r){S.extIp=r.external;S.intIp=r.internal;renderNet();}
     });
-    /* rows are {line, profile}; a null profile is a line that belongs to no realm */
+    /* rows are {line, profile, day}; a null profile is a line that belongs to no realm */
     const buf=await rpc("logs.appBuffer");
     if(buf!==FAIL&&Array.isArray(buf)) buf.forEach(r=>{
       if(typeof r==="string") logRaw(r,null);
-      else if(r&&r.line!=null) logRaw(r.line,r.profile==null?null:r.profile);
+      else if(r&&r.line!=null) logRaw(r.line,r.profile==null?null:r.profile,r.day);
     });
-    // a server may already be mid-session (auto-start / adopted) - replay its tail too
+    /* a server may already be mid-session (auto-start / adopted) - replay its tail too. The
+       divider goes in after the rows, so with the newest line on top it stands over everything
+       written before the page opened and every live line lands above it. */
     const sbuf=await rpc("logs.serverBuffer");
     if(sbuf!==FAIL&&Array.isArray(sbuf)&&sbuf.length){
-      logDivider(T("saga.divider.earlier"));
       sagaReplayUnseen(sbuf.slice(-200));
+      logDivider(T("saga.divider.earlier"));
     }
     await refreshPlayers();
     renderAllFromPrefs();

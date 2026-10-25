@@ -80,6 +80,7 @@ Each line: where, what it is, how it moves now.
 | 16320, 16321 `atlasRenderMap` | the worldgen-mods warning pill on the map | fade |
 | 16488, 16494 | the chunk note and the shape note slot under the map | roll; the shape note's words go after the roll |
 | 16704, 16705 `renderWeather` | the Skies box | rolls |
+| 9114 `renderTermStream` (1.3.0) | the "N new lines, back to the top" chip over the Log, and the Log's Pause button | the chip floats over the top of the lines (`.termpane #termNew`) and fades in and out by its `hidden` class (opacity, then visibility, 0.2 s); it used to sit in the head row as `display:none` and shove the search box aside each time. The Pause button holds both of its words, Pause and Live, stacked in one cell and cross-fades between them, so it never changes width and nothing beside it moves. Neither moves, so reduced motion has nothing to take out |
 
 Stylesheet entrances brought to the rule (app.css): `.modal-bg` and `.palette-bg` fade in over
 0.2 s ease-out (were 0.16 s); `.langmenu.open`, `.ctxmenu.ctxfixed.open` and `.wgtip.open` fade
@@ -100,7 +101,6 @@ every dialog are a plain fade.
 | 7350 `galeCfgToggle` | a Gale preview drawn hidden for its roll in | the start state of a roll, written just before reveal |
 | 1541 `renderLangDot` | the 6 px partial-translation dot on the rail | raised by a catalog read, not by a click, through a class the stylesheet owns |
 | 8573, 8581 `filterPal` | the palette's rows under typing | a search narrowing a list on every keystroke |
-| 8797, 8801 `renderTermStream` | the "N new" chip over the log | raised by scrolling the log, not by a click |
 | 16276, 16277 `atlasMsg` | the map's message line | already fades: `.atlas-msg.hidden` is an opacity transition |
 | index.html | the 45 parts written with `style="display:none"`, and `#heraldPanels` | initial render and hidden templates: nothing is on screen to move |
 | toasts | | come and go by `toastIn`/`toastOut` as before |

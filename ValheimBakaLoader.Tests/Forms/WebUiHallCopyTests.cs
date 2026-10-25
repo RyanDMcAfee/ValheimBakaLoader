@@ -776,6 +776,13 @@ namespace ValheimBakaLoader.Tests.Forms
                 "saga.new.title",
                 "saga.copy.label",
                 "saga.copy.title",
+                // 1.3.0 (issue 27): the Pause button holds both of its words, its tooltip and
+                // its spoken name. It is the Log's state as well, so the "streaming" pill that
+                // stood beside it (saga.stream.live, saga.stream.paused) is gone.
+                "saga.hold.pause",
+                "saga.hold.live",
+                "saga.hold.title",
+                "saga.hold.aria",
             });
         }
 

@@ -24,6 +24,11 @@
  * of the console. The last rules hold the cap realm by realm, and the replay's dedupe by the
  * line's own time, so an earlier session's identical sentence does not hide this one's.
  *
+ * 1.3.0 (issue 27) turned the console over: the newest line is the top one and the cap trims
+ * from the bottom. Every rule here holds as it did; the orders they read are newest first now,
+ * and the loud realm keeps its newest line at the top of its run rather than the bottom.
+ * saga_order_selftest.js holds the turning over itself.
+ *
  *     node scripts/ui/saga_empty_selftest.js [app.js]
  */
 
@@ -89,7 +94,7 @@ function makeConsole() {
         } };
       el.children.push(note);
     },
-    get firstChild() { return el.children[0]; },
+    get firstChild() { return el.children[0] || null; },
   };
   return el;
 }
@@ -103,6 +108,9 @@ function harness() {
     filter: "all",
     termPin: true,
     termUnseen: 0,
+    termHeld: false,
+    termGoingTop: false,
+    termHoldBegin: () => {},
     TERM_CAP: 1200,
     T: id => id,
     esc: s => String(s),
@@ -230,6 +238,7 @@ function realmHarness() {
     hlogRaf: 0,
     HLOG_MAX: 30,
     clock: () => "12:00",
+    pad: n => String(n).padStart(2, "0"),
     requestAnimationFrame: cb => { cb(); return 0; },
     $: selector => (selector === "#hearthLog" ? card : null),
     document: {
@@ -250,13 +259,14 @@ function realmHarness() {
     },
   });
   for (const opening of ["const NET_RE=", "const LOG_TS_RE=", "const LOG_TAG_RE=", "const LOG_TAG_KIND=",
-    "const HLOG_BUF="]) {
+    "const LOG_ERR_RE=", "const LOG_FRAME_RE=", "const SAGA_DAY_RE=", "const HLOG_BUF="]) {
     vm.runInContext(constLine(opening), h, { filename: "app.js#" + opening });
   }
   vm.runInContext("var hlogBuf=[];", h);
   /* logRaw is written on one line, so it is taken as the line it is */
-  vm.runInContext(constLine("function logRaw(line,profile){"), h, { filename: "app.js#logRaw" });
-  for (const opening of ["function sagaLineRealm(profile){", "function logLine(kind,text,time,profile){",
+  vm.runInContext(constLine("function logRaw(line,profile,day){"), h, { filename: "app.js#logRaw" });
+  for (const opening of ["function sagaLineRealm(profile){", "function sagaStamp(time,day,now){",
+    "function logLine(kind,text,time,profile,day){",
     "function logDivider(text){", "function classifyLog(line){",
     "function sagaReplayUnseen(rows){", "function sagaRenameRealm(from,to){",
     "function hlogPush(kind,text,time,p){", "function renderHearthLog(){"]) {
@@ -265,7 +275,7 @@ function realmHarness() {
   h.card = card;
   h.run = code => vm.runInContext(code, h);
   h.on = name => { h.S.profileName = name; };
-  /* the text of every line the host can see right now, in order */
+  /* the text of every line the host can see right now, in order: newest first since 1.3.0 */
   h.shown = () => h.term.children
     .filter(c => (c.cls || "").split(" ").indexOf("ln") >= 0 && c.dataset.k !== "div" && c.style.display !== "none")
     .map(c => c.dataset.s);
@@ -287,7 +297,7 @@ test("two realms interleaved: the realm on screen and the lines of no realm, not
   h.on("Alpha");
   h.interleave();
   assert.deepStrictEqual(h.shown(),
-    ["alpha starting", "a language pack is out of date", "alpha sweep failed"],
+    ["alpha sweep failed", "a language pack is out of date", "alpha starting"],
     "the Saga of Alpha is showing Beta's lines, or hiding its own or the app's");
 });
 
@@ -299,7 +309,7 @@ test("a switch shows the other realm's lines it already holds, and the divider s
   h.on("Beta");
   h.run("applyTermVis()");
   assert.deepStrictEqual(h.shown(),
-    ["beta starting", "a language pack is out of date", "beta sweep failed"],
+    ["beta sweep failed", "a language pack is out of date", "beta starting"],
     "a switch to Beta did not show Beta's own lines (case aside) or still shows Alpha's");
   assert.strictEqual(h.dividersShown(), 1, "the switch divider was hidden by the realm rule");
   assert.strictEqual(h.term.querySelectorAll(".ln").filter(c => c.dataset.k !== "div").length, 5,
@@ -308,7 +318,7 @@ test("a switch shows the other realm's lines it already holds, and the divider s
   h.on("Alpha");
   h.run("applyTermVis()");
   assert.deepStrictEqual(h.shown(),
-    ["alpha starting", "a language pack is out of date", "alpha sweep failed"],
+    ["alpha sweep failed", "a language pack is out of date", "alpha starting"],
     "switching back did not bring Alpha's lines back");
 });
 
@@ -348,7 +358,7 @@ test("a page line defaults to the realm on screen, null means none, and the text
   h.on("Alpha");
   h.run('logLine("ok","[BakaLoader] start requested")');
   h.run('logLine("info","[BakaLoader] the interface text size is now 3.",null,null)');
-  const [action, global] = h.term.children.filter(c => c.dataset.k !== "div");
+  const [global, action] = h.term.children.filter(c => c.dataset.k !== "div");
   assert.strictEqual(action.dataset.p, "alpha", "a realm action was not tagged with the realm on screen");
   assert.strictEqual(global.dataset.p, undefined, "a line passed null was tagged with a realm");
   assert.ok(action.innerHTML.indexOf("Alpha") < 0 && action.innerHTML.indexOf("alpha") < 0,
@@ -398,7 +408,7 @@ test("a renamed realm keeps its lines", () => {
   h.on("Hearthstone");
   h.run('sagaRenameRealm("Alpha","Hearthstone")');
   assert.deepStrictEqual(h.shown(),
-    ["alpha starting", "a language pack is out of date", "alpha sweep failed"],
+    ["alpha sweep failed", "a language pack is out of date", "alpha starting"],
     "a rename left the realm's lines under the old name, hidden for good");
   assert.ok(h.card.innerHTML.indexOf("alpha sweep failed") >= 0, "a rename lost the card's lines");
 });
@@ -413,9 +423,13 @@ test("a loud background realm cannot push the realm on screen out of the scrollb
   const alpha = h.shown().filter(s => s.indexOf("alpha line ") === 0);
   assert.strictEqual(alpha.length, 50,
     "Beta's boot pushed " + (50 - alpha.length) + " of Alpha's lines out of the console Alpha's host is reading");
+  /* newest first since 1.3.0: the realm's newest line heads its run, and what the cap took
+     was the oldest lines, from the bottom */
   const beta = held.filter(c => c.dataset.p === "beta");
-  assert.ok(beta.length > 0 && beta[beta.length - 1].dataset.s === "beta boot line 1299",
+  assert.ok(beta.length > 0 && beta[0].dataset.s === "beta boot line 1299",
     "the background realm lost its newest lines instead of its oldest");
+  assert.strictEqual(beta[beta.length - 1].dataset.s, "beta boot line " + (1300 - beta.length),
+    "the cap did not take the background realm's oldest lines from the bottom");
 });
 
 test("the realm on screen, when it is the loud one, pays for its own noise", () => {

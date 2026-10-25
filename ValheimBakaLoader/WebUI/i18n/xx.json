@@ -7085,6 +7085,25 @@
       },
       "plural": "count"
     },
+    "saga.stream.unseen.top": {
+      "translation": {
+        "one": "[Ẋ {count} new line, back to the top Ẋ] ẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} new lines, back to the top Ẋ] ẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count"
+    },
+    "saga.hold.pause": {
+      "translation": "[Ẋ Pause Ẋ] ẊẊ"
+    },
+    "saga.hold.live": {
+      "translation": "[Ẋ Live Ẋ] ẊẊ"
+    },
+    "saga.hold.aria": {
+      "translation": "[Ẋ Pause the log Ẋ] ẊẊẊẊ"
+    },
+    "saga.hold.title": {
+      "translation": "[Ẋ Pause holds the log still while you read older lines; Live goes back to the newest line and follows it Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "saga.copied.toast": {
       "translation": {
         "one": "[Ẋ {count} saga line copied Ẋ] ẊẊẊẊẊẊ",

@@ -1065,5 +1065,37 @@ else
   echo "  the world field realm selftest is missing: $WORLD_REALM_SELFTEST"; fail=1
 fi
 
+echo "== 67. the Log turned over: newest first, the cap from the bottom, a paused view that holds still =="
+# 1.3.0, issue 27. The Log reads newest first with the command line on top, every row stamped with
+# the host's date and time, live by default and paused while the reader looks at older lines. The
+# quiet ways that goes wrong: the cap trimming the newest lines, a paused reader's line sliding
+# away under every new one, a host row from an older host reading "undefined", the console opening
+# on its oldest lines (it did, folded at load), and an exception classed Info (it was).
+SAGA_ORDER_SELFTEST="$UI_DIR/saga_order_selftest.js"
+if [ -f "$SAGA_ORDER_SELFTEST" ]; then
+  if out=$(node "$SAGA_ORDER_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the saga order selftest is missing: $SAGA_ORDER_SELFTEST"; fail=1
+fi
+
+echo "== 68. the Log turned over, in a real browser: the held view, the slide back, the head row =="
+# The same feature asked of the real page in headless chromium: a paused reader's line stays put to
+# the pixel while lines go in above it, the chip slides the console back to its top, the console
+# opens on its newest line after lines arrived while it was folded, the command line stands over
+# the lines, and the head row fits with every control's words inside it and does not shift when
+# Pause flips, in English and in the pseudo catalog. Same readiness question as 40 asks.
+SAGA_PROBE="$UI_DIR/saga_order_probe.js"
+if [ ! -f "$SAGA_PROBE" ]; then
+  echo "  the saga order probe is missing: $SAGA_PROBE"; fail=1
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  NOT RUN: there is no node on this box, so nothing read the page in a browser."
+elif ! ready=$(node "$SWITCH_PROBE" --check); then
+  printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
+else
+  if out=$(node "$SAGA_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

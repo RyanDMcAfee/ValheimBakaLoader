@@ -514,6 +514,15 @@ RETIRED_IDS = {
     "herald.elsewhere.button": "1.2.17",
     "herald.elsewhere.note": "1.2.17",
     "herald.elsewhere.title": "1.2.17",
+    # 1.3.0 (issue 27): the Log reads newest first, so its chip says where the new lines are
+    # and what a press does ("back to the top") under saga.stream.unseen.top. Shipped since
+    # the chip's first release.
+    "saga.stream.unseen": "1.3.0",
+    # 1.3.0 (issue 27): the Pause button is the Log's state as well as its switch (it reads Live,
+    # lit, while the Log is paused), so the "streaming" and "paused" pill beside it is gone. It
+    # never said whether a server was running, only whether the Log was following.
+    "saga.stream.live": "1.3.0",
+    "saga.stream.paused": "1.3.0",
 }
 
 

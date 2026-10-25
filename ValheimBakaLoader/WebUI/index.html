@@ -367,12 +367,23 @@
                 <span class="fpill" data-f="warn" data-i18n="saga.filter.warn">Warn</span>
                 <span class="fpill" data-f="err" data-i18n="saga.filter.err">Error</span>
                 <span class="fpill" data-f="net" data-i18n="saga.filter.net">Net</span>
-                <input id="termSearch" class="termsearch" placeholder="search the saga…" spellcheck="false" autocomplete="off" aria-label="Search the saga" data-i18n-placeholder="saga.search.placeholder" data-i18n-aria="saga.search.aria">
-                <span class="pill ember hidden" id="termNew" title="Jump to the newest lines" data-i18n-title="saga.new.title">↓ 0 new</span>
-                <span class="fpill" id="termCopy" title="Copy the visible lines to the clipboard" data-i18n="saga.copy.label" data-i18n-title="saga.copy.title">ᛝ copy</span>
-                <span class="pill green" id="termStream">streaming</span>
+                <!-- The search, Copy and Pause stay together at the right end of the row (1.3.0). In
+                     a long language at the narrowest window they take a line of their own under the
+                     filters, still at the right, rather than squeezing the pills until their words
+                     spill over their borders. -->
+                <div class="termtools">
+                  <input id="termSearch" class="termsearch" placeholder="search the saga…" spellcheck="false" autocomplete="off" aria-label="Search the saga" data-i18n-placeholder="saga.search.placeholder" data-i18n-aria="saga.search.aria">
+                  <span class="fpill" id="termCopy" title="Copy the visible lines to the clipboard" data-i18n="saga.copy.label" data-i18n-title="saga.copy.title">ᛝ copy</span>
+                  <!-- 1.3.0 (issue 27): Pause holds the newest-first console still and Live follows
+                       again. The button is the state as well: it reads Live, lit, while the console
+                       is paused, by a press or by scrolling, which is what the "streaming" pill used
+                       to say from the corner. Both words sit in the button at once and one shows,
+                       so it never changes width when it flips. -->
+                  <button type="button" class="fpill termhold" id="termHold" aria-pressed="false" aria-label="Pause the log" title="Pause holds the log still while you read older lines; Live goes back to the newest line and follows it" data-i18n-aria="saga.hold.aria" data-i18n-title="saga.hold.title"><span class="th-pause" data-i18n="saga.hold.pause">Pause</span><span class="th-live" data-i18n="saga.hold.live">Live</span></button>
+                </div>
               </div>
-              <div class="term" id="term"></div>
+              <!-- The command line stands over the lines since 1.3.0 (issue 27): the newest line
+                   is the top one, so what a command answers lands right under where it was typed. -->
               <div class="termin">
                 <span class="prompt">ᛒ›</span>
                 <!-- No id on this placeholder: app.js writes it three ways at run time
@@ -381,6 +392,10 @@
                      messages. Keying it here would have the walker and app.js fight. -->
                 <input id="termIn" placeholder="devcommand… (Enter to send)" spellcheck="false" autocomplete="off">
                 <span class="caret" id="termCaret"></span>
+              </div>
+              <div class="termpane">
+                <div class="term" id="term"></div>
+                <button type="button" class="pill ember termnew hidden" id="termNew" title="Jump to the newest lines" data-i18n-title="saga.new.title">↑ 0 new</button>
               </div>
             </div>
           </div>

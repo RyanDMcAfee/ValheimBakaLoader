@@ -27,6 +27,9 @@
  *   6. The Settings tabs swap by taking the old one down at once and fading the new one in,
  *      the unsaved band leaves through fadeGhost, and a Gale config preview rolls shut before
  *      the part is drawn again without it.
+ *   7. The Log (1.3.0): the "new lines" chip floats over the lines and fades rather than being
+ *      shown and hidden by display, and the Pause button cross-fades its two stacked words, so
+ *      a press changes no width in the head row.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -227,6 +230,20 @@ test("6. the tab swap, the unsaved band and a Gale preview", () => {
   const gale = body("function galeCfgToggle(path){");
   assert.ok(gale.includes("reveal(pre,false,{done:close})"), "a Gale preview is torn out before it has rolled shut");
   assert.ok(gale.includes('pre.style.display="none";reveal(pre,true);'), "a Gale preview pops in with the redraw");
+});
+
+test("7. the Log's chip fades over the lines and the Pause button cross-fades its words", () => {
+  assert.ok(/<div class="termpane">[\s\S]*id="termNew"/.test(HTML), "the chip is no longer over the lines");
+  assert.ok(!/\.termhead \.hidden\{display:none\}/.test(CSS), "the chip is shown and hidden by display again");
+  assert.ok(/\.termpane #termNew\{[^}]*transition:opacity \.2s ease-out,visibility 0s linear 0s\}/.test(CSS), "the chip does not fade in");
+  assert.ok(/\.termpane #termNew\.hidden\{opacity:0;visibility:hidden;pointer-events:none;\s*transition:opacity \.2s ease-out,visibility 0s linear \.2s\}/.test(CSS),
+    "the chip vanishes rather than fading out");
+  assert.ok(/<button type="button" class="fpill termhold" id="termHold"[^>]*><span class="th-pause"[^>]*>Pause<\/span><span class="th-live"[^>]*>Live<\/span><\/button>/.test(HTML),
+    "the Pause button no longer holds both of its words");
+  assert.ok(/\.termhold>span\{grid-area:1\/1;transition:opacity \.2s ease-out/.test(CSS), "the Pause button's words are not stacked in one cell, or do not fade");
+  const stream = body("function renderTermStream(){");
+  assert.ok(!/\.style\.display|textContent=T\("saga\.hold/.test(stream), "the Pause button or the chip is swapped by display or by rewriting the words");
+  assert.ok(RECORD.includes("the Log's Pause button"), "docs/motion-sweep.md does not record the Log's chip and Pause button");
 });
 
 console.log(failures.length === 0
