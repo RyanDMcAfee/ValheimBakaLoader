@@ -176,7 +176,9 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.False(stored.Public);
             Assert.Contains("\"testCopyOf\":\"Second Sunset\"", JsonConvert.SerializeObject(stored.ToFile()));
             Assert.Null(ServerPrefs().LoadPreferences(Source).TestCopyOf);
-            Assert.DoesNotContain("testCopyOf", JsonConvert.SerializeObject(ServerPrefs().LoadPreferences(Home).ToFile()).Replace("\"testCopyOf\":null", ""));
+            // A realm that is no test copy names no source: both keys (testCopyOfName since 1.3.0) are null.
+            Assert.DoesNotContain("testCopyOf", JsonConvert.SerializeObject(ServerPrefs().LoadPreferences(Home).ToFile())
+                .Replace("\"testCopyOf\":null", "").Replace("\"testCopyOfName\":null", ""));
         }
 
         [Fact]

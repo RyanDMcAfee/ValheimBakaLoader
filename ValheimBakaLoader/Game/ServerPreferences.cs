@@ -252,6 +252,16 @@ namespace ValheimBakaLoader.Game
         /// </summary>
         public bool TestSourceGone { get; set; }
 
+        /// <summary>
+        /// The in-game name the source had when this copy was made, beside
+        /// <see cref="TestCopyOf"/>, which is its profile name. The profile name follows the
+        /// source through a rename and this does not, so the page can still say both: the name
+        /// the host knew it by and the profile it is now. Null for a realm that is not a test
+        /// copy, and for a copy of a realm that had no in-game name (the page says the profile
+        /// name then). Set once, by servers.create.
+        /// </summary>
+        public string TestCopyOfName { get; set; }
+
         // -- How the realm's chip looks in the sidebar --
 
         /// <summary>
@@ -444,9 +454,11 @@ namespace ValheimBakaLoader.Game
             {
                 TestCopyOf = stored.TestCopyOf;
                 TestSourceGone = stored.TestSourceGone;
+                TestCopyOfName = stored.TestCopyOfName;
             }
             TestCopyOf = string.IsNullOrWhiteSpace(TestCopyOf) ? null : TestCopyOf.Trim();
             if (TestCopyOf == null) TestSourceGone = false;
+            TestCopyOfName = TestCopyOf == null ? null : BlankAsNull(TestCopyOfName);
             if (TestCopyOf != null) Public = false;
             return this;
         }
@@ -625,6 +637,7 @@ namespace ValheimBakaLoader.Game
                 ModManifest = file.ModManifest ?? defaults.ModManifest,
                 TestCopyOf = string.IsNullOrWhiteSpace(file.TestCopyOf) ? null : file.TestCopyOf.Trim(),
                 TestSourceGone = (file.TestSourceGone ?? false) && !string.IsNullOrWhiteSpace(file.TestCopyOf),
+                TestCopyOfName = string.IsNullOrWhiteSpace(file.TestCopyOf) ? null : BlankAsNull(file.TestCopyOfName),
                 LookRune = NormalizeLook(file.LookRune),
                 LookColor = NormalizeLook(file.LookColor),
                 GaleProfileId = StoredGaleProfileId(file.GaleProfileId),
@@ -708,6 +721,7 @@ namespace ValheimBakaLoader.Game
             // Written only when it is true, so a realm that is not a test copy, or one whose
             // source is still here, carries no key for it at all.
             TestSourceGone = TestSourceGone && !string.IsNullOrWhiteSpace(TestCopyOf) ? true : (bool?)null,
+            TestCopyOfName = string.IsNullOrWhiteSpace(TestCopyOf) ? null : BlankAsNull(TestCopyOfName),
             LookRune = NormalizeLook(LookRune),
             LookColor = NormalizeLook(LookColor),
             GaleProfileId = StoredGaleProfileId(GaleProfileId),

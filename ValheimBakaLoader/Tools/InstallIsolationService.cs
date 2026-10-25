@@ -567,7 +567,14 @@ namespace ValheimBakaLoader.Tools
             return changed;
         }
 
-        public bool IsManagedInstall(string installDir)
+        public bool IsManagedInstall(string installDir) => IsManagedInstallDirectory(installDir);
+
+        /// <summary>
+        /// Whether <paramref name="installDir"/> is one BakaLoader made for a realm: its parent
+        /// folder is the instances root. A question about the path alone, so a profile can be
+        /// asked it while it is read from disk, with nothing on the disk opened.
+        /// </summary>
+        public static bool IsManagedInstallDirectory(string installDir)
         {
             if (string.IsNullOrWhiteSpace(installDir)) return false;
 
@@ -576,6 +583,24 @@ namespace ValheimBakaLoader.Tools
                 var full = Path.GetFullPath(installDir).TrimEnd(Path.DirectorySeparatorChar);
                 var parent = Directory.GetParent(full)?.Name;
                 return string.Equals(parent, InstancesRootName, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The same question about a stored server exe path, resolved the way every reader of a
+        /// stored path resolves it (a typed %USERPROFILE% is a place, not a folder name). Blank
+        /// is the app wide exe, which is the base install and never a managed one.
+        /// </summary>
+        public static bool IsManagedInstallExe(string serverExePath)
+        {
+            if (string.IsNullOrWhiteSpace(serverExePath)) return false;
+            try
+            {
+                return IsManagedInstallDirectory(Path.GetDirectoryName(PathCheck.Resolve(serverExePath)));
             }
             catch
             {

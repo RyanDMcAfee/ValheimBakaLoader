@@ -117,6 +117,8 @@ namespace ValheimBakaLoader.Game
 
         [JsonProperty("testCopyOf")] public string TestCopyOf { get; set; }
         [JsonProperty("testSourceGone")] public bool? TestSourceGone { get; set; }
+        // Since 1.3.0: the source's in-game name when the copy was made. Never renamed.
+        [JsonProperty("testCopyOfName")] public string TestCopyOfName { get; set; }
 
         // -- The chip's look in the sidebar --
 

@@ -4495,6 +4495,8 @@ namespace ValheimBakaLoader.Forms
                 CurrentProfile = prefs.ProfileName;
                 // Loading a profile IS the server switch - refresh the chips' active marker.
                 PostEvent("servers.changed", BuildServersList());
+                // A test copy on an install of its own reads as one (see HoldTestCopyInstallFlag).
+                HoldTestCopyInstallFlag(prefs);
                 return Task.FromResult<object>(BuildProfilePrefsDto(prefs, UserPrefsProvider.LoadPreferences()));
             });
 
@@ -4511,6 +4513,9 @@ namespace ValheimBakaLoader.Forms
                 // And whether it is a test copy, which the form has no box for either. A test
                 // copy is never listed, so its Public stays off whatever the form sent.
                 prefs = KeepTestCopyOf(prefs);
+                // And a test copy keeps its own install and its own save folder: a save that
+                // would point either somewhere shared is refused before anything is written.
+                HoldTestCopyIsolation(prefs);
                 // And the realm's Discord post, which only the Discord hall and the status
                 // service write. The profile writer keeps what is on disk for a realm that is
                 // there; one that is not starts switched off with no post, so a profile saved
@@ -4565,30 +4570,50 @@ namespace ValheimBakaLoader.Forms
 
             // Renames a profile in place (settings only; the isolated install folder keeps
             // its original on-disk name, which is harmless). Guards a running server and a
-            // name collision.
+            // name collision. Answers with the profile as it now stands, the shape profiles.get
+            // answers, so the page reads the realm's new name and its in-game name off the reply.
             RegisterRpc("profiles.rename", p =>
             {
                 var name = p.Value<string>("name");
                 var newName = (p.Value<string>("newName") ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(newName))
                     throw new HostFacingException("profiles.rename.nameRequired", "A new name is required.");
-                if (string.Equals(name, newName, StringComparison.Ordinal))
-                    return Task.FromResult<object>(true);
 
                 var prefs = ServerPrefsProvider.LoadPreferences(name)
                     ?? throw new HostFacingException("profiles.rename.noSuchProfile",
                         $"No profile named '{name}'", ("name", name));
+                if (string.Equals(name, newName, StringComparison.Ordinal))
+                {
+                    HoldTestCopyInstallFlag(prefs);
+                    return Task.FromResult<object>(BuildProfilePrefsDto(prefs, UserPrefsProvider.LoadPreferences()));
+                }
+
                 if (Sessions.TryGetValue(name, out var s) && s.Server.Status != ServerStatus.Stopped)
                     throw new HostFacingException("profiles.rename.serverRunning",
                         $"Stop the server '{name}' before renaming it.", ("name", name));
+                // The realm being renamed is no clash with itself: "Default" to "default" changes
+                // only the case, and the name is still this realm's. It used to be counted, so a
+                // change of case was refused as a name another server already has.
                 if (ServerPrefsProvider.LoadPreferences()
-                        .Any(x => string.Equals(x.ProfileName, newName, StringComparison.OrdinalIgnoreCase)))
+                        .Any(x => !string.Equals(x.ProfileName, prefs.ProfileName, StringComparison.Ordinal)
+                                  && string.Equals(x.ProfileName, newName, StringComparison.OrdinalIgnoreCase)))
                     throw new HostFacingException("profiles.rename.nameTaken",
                         $"A server named '{newName}' already exists.", ("newName", newName));
 
                 // A copy that still names newName lost that source earlier (nothing has the name,
                 // or the rename would have been refused), and must not be handed to this realm.
-                MarkTestCopiesSourceGone(newName);
+                // Not on a change of case: then the copies naming it are this realm's own, and
+                // they move with it below rather than being told their source is gone.
+                var caseOnly = string.Equals(name, newName, StringComparison.OrdinalIgnoreCase);
+                if (!caseOnly) MarkTestCopiesSourceGone(newName);
+
+                // The in-game name goes with the realm name when the two were one, or when the
+                // realm never had an in-game name at all, so the title bar (which shows the
+                // in-game name) follows the rename. A realm the host gave an in-game name of its
+                // own keeps that one: renaming "Default" leaves "Baka Gaijin" alone.
+                if (string.IsNullOrWhiteSpace(prefs.Name)
+                    || string.Equals(prefs.Name.Trim(), prefs.ProfileName?.Trim(), StringComparison.Ordinal))
+                    prefs.Name = newName;
 
                 prefs.ProfileName = newName;
                 ServerPrefsProvider.SavePreferences(prefs);
@@ -4608,7 +4633,11 @@ namespace ValheimBakaLoader.Forms
                     CurrentProfile = newName;
 
                 PostEvent("servers.changed", BuildServersList());
-                return Task.FromResult<object>(true);
+                // Read back rather than answered from memory, so the reply is what is stored,
+                // and read the way profiles.get reads it.
+                var renamed = ServerPrefsProvider.LoadPreferences(newName) ?? prefs;
+                HoldTestCopyInstallFlag(renamed);
+                return Task.FromResult<object>(BuildProfilePrefsDto(renamed, UserPrefsProvider.LoadPreferences()));
             });
 
             // Soft-delete: hide from the chip strip but keep everything on disk, so the
@@ -4835,6 +4864,28 @@ namespace ValheimBakaLoader.Forms
             RegisterRpc("servers.create", async p =>
             {
                 var name = (p.Value<string>("name") ?? "").Trim();
+
+                // Make a test copy names the realm it is a copy of. That realm has to be there
+                // now: its BepInEx is what the copy's install is seeded from, its settings are
+                // what the copy starts from, and its in-game name is what the copy is named after.
+                var testCopyOf = (p.Value<string>("testCopyOf") ?? "").Trim();
+                ServerPreferences testSource = null;
+                if (testCopyOf.Length > 0)
+                {
+                    testSource = ServerPrefsProvider.LoadPreferences()
+                        .FirstOrDefault(x => string.Equals(x.ProfileName, testCopyOf, StringComparison.OrdinalIgnoreCase))
+                        ?? throw new HostFacingException("servers.create.testCopySourceMissing",
+                            $"There is no realm named '{testCopyOf}' to make a test copy of, so nothing was made.",
+                            ("source", testCopyOf));
+
+                    // Held to the rule the page offers the name by (Tools/TestCopyNaming.cs): the
+                    // name becomes the copy's install and save folder names, and a name the dialog
+                    // offered comes through unchanged. Nothing left of it, and the copy gets the
+                    // name the page would have offered, built on the source's in-game name.
+                    name = TestCopyNaming.NameFor(name, testSource.Name, testSource.ProfileName,
+                        ServerPrefsProvider.LoadPreferences().Select(x => x.ProfileName));
+                }
+
                 if (string.IsNullOrWhiteSpace(name))
                     throw new HostFacingException("servers.create.nameRequired", "A server name is required.");
 
@@ -4847,20 +4898,6 @@ namespace ValheimBakaLoader.Forms
                 // adoptWorld a name can be a world), so the new realm's own lines are scoped
                 // here: "Created isolated server" belongs in the Saga of the realm it made.
                 using var realmScope = AppLog.ForRealm(name);
-
-                // Make a test copy names the realm it is a copy of. That realm has to be there
-                // now: its BepInEx is what the copy's install is seeded from, and its settings are
-                // what the copy starts from.
-                var testCopyOf = (p.Value<string>("testCopyOf") ?? "").Trim();
-                ServerPreferences testSource = null;
-                if (testCopyOf.Length > 0)
-                {
-                    testSource = ServerPrefsProvider.LoadPreferences()
-                        .FirstOrDefault(x => string.Equals(x.ProfileName, testCopyOf, StringComparison.OrdinalIgnoreCase))
-                        ?? throw new HostFacingException("servers.create.testCopySourceMissing",
-                            $"There is no realm named '{testCopyOf}' to make a test copy of, so nothing was made.",
-                            ("source", testCopyOf));
-                }
 
                 // Optional world-generation dials for the NEW world, validated up front (shared
                 // with worldgen.save) so an invalid value is refused before any install is
@@ -4897,6 +4934,16 @@ namespace ValheimBakaLoader.Forms
                 var isolateInstall = p.Value<bool?>("isolateInstall") ?? true;
                 var seedMods = p.Value<bool?>("seedMods") ?? true;
                 var isolateSaveFolder = p.Value<bool?>("isolateSaveFolder") ?? true;
+                // And a test copy has an install and a save folder of its own, whatever the page
+                // sent. With either switch off it ran on its source's install or kept its worlds
+                // beside other realms', so an update tried on it reached the realm it was made to
+                // protect, while the dialog said nothing done on it would.
+                if (testSource != null && (!isolateInstall || !isolateSaveFolder))
+                {
+                    Logger.Information("Test copy '{0}' is made with an install and a save folder of its own; the request to share one was not followed.", name);
+                    isolateInstall = true;
+                    isolateSaveFolder = true;
+                }
 
                 // Distinct world: explicit value, else a safe token derived from the name.
                 var world = (p.Value<string>("world") ?? "").Trim();
@@ -4979,8 +5026,14 @@ namespace ValheimBakaLoader.Forms
 
                 created.ProfileName = name;
                 created.TestCopyOf = testSource?.ProfileName;
+                // The source's in-game name as it is now, kept beside the profile name, which
+                // follows the source through a rename while this stays what the host knew it as.
+                created.TestCopyOfName = ServerPreferences.BlankAsNull(testSource?.Name);
                 created.TestSourceGone = false;
-                created.Name = name;              // its own in-game name, never the base server's
+                // Its own in-game name, never the base server's: the same as its realm name, so
+                // the title bar and the chip say one name. A test copy taken under the name it
+                // was offered is its source's in-game name with the suffix in both.
+                created.Name = name;
                 created.WorldName = world;
                 created.Password = password;      // its own password, never the base server's
                 created.Public = listPublicly;    // and private unless the host asked otherwise
@@ -9210,6 +9263,9 @@ namespace ValheimBakaLoader.Forms
                     // The realm this one is a test copy of, and whether that realm is still
                     // here. A deleted source leaves the copy standing, and the chip says so.
                     testCopyOf = look?.TestCopyOf,
+                    // And the source's in-game name when the copy was made, which a rename of
+                    // the source does not change, so the chip can say both.
+                    testCopyOfName = look?.TestCopyOfName,
                     // The stored flag is what holds once the source was deleted, whatever realm
                     // takes its name later; the name check covers a source file removed by hand.
                     testSourceGone = !string.IsNullOrWhiteSpace(look?.TestCopyOf)
@@ -11461,6 +11517,7 @@ namespace ValheimBakaLoader.Forms
             // own, and servers.create marks a test copy itself.
             created.TestCopyOf = null;
             created.TestSourceGone = false;
+            created.TestCopyOfName = null;
             // Nor the Discord post: a copy never adopts another realm's post, and it starts with
             // its switch off so making a realm never posts anything by surprise. Its webhook,
             // thread and share switches are kept, so turning it on is one switch.
