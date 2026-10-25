@@ -9073,9 +9073,10 @@ let termRealmCount=null, termRealmTotal=0;
    (termHeld), it is paused: a new line still goes in at the top, out of sight, the view is moved
    down by what went in so the line being read stays where it is, and termUnseen counts it for the
    chip. termGoingTop is a slide back to the top that is still running, whose own scroll events
-   are not the reader scrolling away. */
+   are not the reader scrolling away; termGoingAt is where it stood at the last look, which tells a
+   slide still on its way from one that has stopped (termGoingLook). */
 let termPin=true, termUnseen=0, termHeld=false;
-let termGoingTop=false, termGoingT=0;
+let termGoingTop=false, termGoingT=0, termGoingAt=0;
 
 /* A line written for a realm (dataset.p, lowercased) shows only while that realm is on
    screen. A line that belongs to no realm, the app's own news or a setting, shows on every
@@ -9261,29 +9262,50 @@ function termEvict(){
   }
 }
 /* The stamp on every row since 1.3.0 (issue 27): the date and the time, YYYY-MM-DD HH:MM:SS, in
-   fixed digits so a column of them lines up in any language. A host row takes its time from the
-   line ([HH:mm:ss] as the host printed it) and its day from the row's own "day", which the host
-   sends beside it; a row that comes without one (a host from before 1.3.0) shows the time alone
-   rather than a date the page would have to guess, because a line replayed after midnight would
-   wear the wrong one. A row the page writes itself is stamped whole from the clock it is written
-   by, at the moment it is written: the same machine's clock the host stamps with. */
+   fixed digits so a column of them lines up in any language. The date comes from the host. A host
+   row takes its time from the line ([HH:mm:ss] as the host printed it; the moment it arrived when
+   the line carries none) and its day from the row's own "day", which the host sends beside it; a
+   row that comes without one (a host from before 1.3.0) shows the time alone rather than a date
+   the page would have to guess, because a line replayed after midnight would wear the wrong one.
+   A row the page writes itself is stamped at the moment it is written, by the same machine's clock
+   the host stamps with, and wears a date only once the host has shown that it dates its rows
+   (sagaDated): until then every row in the column reads the time alone, one width. */
 const SAGA_DAY_RE=/^\d{4}-\d\d-\d\d$/;
-function sagaStamp(time,day,now){
-  if(time) return (typeof day==="string"&&SAGA_DAY_RE.test(day)?day+" ":"")+time;
-  const d=now||new Date();
-  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());
+let sagaDated=false;
+function sagaDayOk(day){return typeof day==="string"&&SAGA_DAY_RE.test(day);}
+function sagaDate(d){return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());}
+function sagaClock(d){return pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());}
+function sagaStamp(time,day){return (sagaDayOk(day)?day+" ":"")+time;}
+/* The first host row that brings its day: the page's own rows written before it, which read the
+   time alone, are given the date they were written on (kept on them as data-pd), so the column is
+   one width from then on. Held like a new line if the reader is paused, in case a longer stamp
+   wraps a row. */
+function sagaDateOwnRows(){
+  sagaDated=true;
+  if(!termPin) termHoldBegin();
+  $$("#term .ln").forEach(l=>{
+    const pd=l.dataset.pd;
+    if(!pd) return;
+    delete l.dataset.pd;
+    const t=l.querySelector(".t");
+    if(t) t.textContent=pd+" "+t.textContent;
+  });
 }
 /* profile: the realm the line belongs to. Left out it is the realm on screen; null means
    none. The realm is stored on the element and never written into the text: the Saga stays
-   the verbatim log. day: the host's date for a host row (sagaStamp). */
-function logLine(kind,text,time,profile,day){
+   the verbatim log. day and host: a row from the host (logRaw) with the host's date for it;
+   a row the page writes itself passes neither (sagaStamp). */
+function logLine(kind,text,time,profile,day,host){
   const d=document.createElement("div");
   d.className="ln "+kind; d.dataset.k=kind;
   d.dataset.s=(text||"").toLowerCase();
   const p=sagaLineRealm(profile);
   if(p) d.dataset.p=p;
   if(time) d.dataset.t=time;  // the line's own clock, so the replay can tell two sessions apart
-  const stamp=sagaStamp(time,day);
+  const now=new Date();
+  if(host&&!sagaDated&&sagaDayOk(day)) sagaDateOwnRows();
+  if(!host&&!sagaDated) d.dataset.pd=sagaDate(now);
+  const stamp=sagaStamp(time||sagaClock(now),host?day:(sagaDated?sagaDate(now):null));
   d.innerHTML=`<span class="t">${esc(stamp)}</span>  <span class="${kind}">${esc(text)}</span>`;
   d.style.display=lnVisible(d)?"":"none";
   termAppend(d);
@@ -9366,7 +9388,7 @@ function classifyLog(line){
   }
   return {kind,time,text};
 }
-function logRaw(line,profile,day){const c=classifyLog(line);logLine(c.kind,c.text,c.time,profile,day);}
+function logRaw(line,profile,day){const c=classifyLog(line);logLine(c.kind,c.text,c.time,profile,day,true);}
 
 renderTermEmpty();
 
@@ -9398,26 +9420,54 @@ function termOnScroll(){
 /* Back to the newest line, and following it: the chip and the Live button. The console slides
    up (a jump under reduced motion), and the slide's own scroll events are not taken for the
    reader leaving the top. A wheel or a press on the console during the slide hands it back to
-   the reader; a slide that has not reached the top within a second is asked about afresh. */
+   the reader; a slide that stops short of the top is asked about afresh (termGoingLook). */
 function sagaGoLive(){
   termHoldDrop();
   termHeld=false; termPin=true; termUnseen=0;
   renderTermStream();
   if(term.scrollTop<=2) return;
   termGoingTop=true;
+  termGoingAt=term.scrollTop;
   clearTimeout(termGoingT);
-  termGoingT=setTimeout(()=>{termGoingTop=false;termOnScroll();},1000);
+  termGoingT=setTimeout(termGoingLook,TERM_GOING_LOOK);
   term.scrollTo({top:0,behavior:revealReduced()?"auto":"smooth"});
+}
+/* A look at the slide every 400 ms, for as long as it is still coming up. Chromium's smooth slide
+   back from far down takes about a second and a half (measured from eight thousand pixels and from
+   twenty-two thousand), and far down is where a reader hunting an exception through a boot is. The
+   first cut gave it one second: it found the console short of the top and paused it, and the next
+   line the server wrote was held by a scrollTop write, which cuts a smooth slide dead where it
+   stands. The Log stopped partway with the chip counting again. Now a slide that is still falling
+   gets another look. One that has not moved since the last look has stopped (the reader took the
+   console somewhere a wheel or a press on it does not report) and is asked about afresh. A hidden
+   window paints no frames, so its slide waits rather than counting as stopped. */
+const TERM_GOING_LOOK=400;
+function termGoingLook(){
+  termGoingT=0;
+  if(!termGoingTop) return;
+  const at=term.scrollTop;
+  if(at>2&&(at<termGoingAt||document.hidden)){
+    termGoingAt=Math.min(at,termGoingAt);
+    termGoingT=setTimeout(termGoingLook,TERM_GOING_LOOK);
+    return;
+  }
+  termGoingTop=false;
+  termOnScroll();
 }
 function termTakeBack(){
   if(!termGoingTop) return;
   termGoingTop=false;
   clearTimeout(termGoingT);
+  termGoingT=0;
 }
 /* The Pause button: while the console follows, it holds it still where it stands; while the
-   console is paused, by the button or by scrolling, it reads Live and follows again. */
+   console is paused, by the button or by scrolling, it reads Live and follows again. Pressed
+   while a slide back to the top is still running, it stops the slide where it is: a scrollTop
+   write ends a smooth scroll, and a slide left to run would be stopped by the hold's next write
+   at some line nobody chose. */
 function sagaHoldToggle(){
   if(!termPin){sagaGoLive();return;}
+  if(termGoingTop){termTakeBack();term.scrollTop=term.scrollTop;}
   termHeld=true; termPin=false; termUnseen=0;
   renderTermStream();
 }

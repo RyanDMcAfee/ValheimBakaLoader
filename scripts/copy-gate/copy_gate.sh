@@ -1081,7 +1081,9 @@ fi
 
 echo "== 68. the Log turned over, in a real browser: the held view, the slide back, the head row =="
 # The same feature asked of the real page in headless chromium: a paused reader's line stays put to
-# the pixel while lines go in above it, the chip slides the console back to its top, the console
+# the pixel while lines go in above it, the chip and Live slide the console back to its top (also
+# from twenty thousand pixels down while the server writes, which the first cut stopped short of,
+# paused, with the chip counting again), Pause mid-slide stops it there, the console
 # opens on its newest line after lines arrived while it was folded, the command line stands over
 # the lines, and the head row fits with every control's words inside it and does not shift when
 # Pause flips, in English and in the pseudo catalog. Same readiness question as 40 asks.

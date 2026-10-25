@@ -16,6 +16,9 @@
  * that does layout arithmetic the way chromium does it (a line is 19.25 px, a hidden one is 0,
  * offsetTop and scrollTop come out in whole pixels, scrollTop is clamped), so "the line being read
  * did not move" is a number, not a reading.
+ * Rules 5c, 5d and 8b came from the review of the first cut: a slide back from far down while the
+ * server wrote was given up on after a second and then cut dead by the hold, and the page's own
+ * rows wore a date from the page clock while the host's rows had none.
  * scripts/ui/saga_order_probe.js asks the same questions of the real page in chromium.
  *
  *     node scripts/ui/saga_order_selftest.js [app.js]
@@ -92,6 +95,15 @@ function node(cls, h) {
     },
     get offsetTop() { return Math.round(this.y); },
     getBoundingClientRect() { return { top: this.y - (this.parent ? this.parent._top : 0), height: this.h }; },
+    /* the stamp's span, read and written through the line's markup as the page writes it */
+    querySelector(selector) {
+      const self = this, at = /(<span class="t">)([^<]*)(<\/span>)/;
+      if (selector !== ".t" || !at.test(self.innerHTML)) return null;
+      return {
+        get textContent() { return at.exec(self.innerHTML)[2]; },
+        set textContent(v) { self.innerHTML = self.innerHTML.replace(at, (m, a, b, c) => a + v + c); },
+      };
+    },
     remove() {
       if (this.parent) {
         this.parent.children = this.parent.children.filter(c => c !== this);
@@ -173,6 +185,8 @@ function harness(opts) {
     termHeld: false,
     termGoingTop: false,
     termGoingT: 0,
+    termGoingAt: 0,
+    sagaDated: false,
     termHoldRef: null,
     termHoldAt: 0,
     termHoldRaf: 0,
@@ -194,22 +208,25 @@ function harness(opts) {
     setTimeout: (cb, ms) => { timers.push(cb); return timers.length; },
     clearTimeout: id => { if (id) timers[id - 1] = null; },
     $: s => ({ "#termNew": chip, "#termHold": hold }[s] || null),
-    document: { createElement: () => node("") },
+    document: { createElement: () => node(""), hidden: false },
     console,
   };
   context.$$ = selector => term.querySelectorAll(selector);
   vm.createContext(context);
+  /* the constants, and the functions written on one line, are taken as the line they are */
   for (const opening of ["const NET_RE=", "const LOG_TS_RE=", "const LOG_TAG_RE=", "const LOG_TAG_KIND=",
-    "const LOG_ERR_RE=", "const LOG_FRAME_RE=", "const SAGA_DAY_RE="])
+    "const LOG_ERR_RE=", "const LOG_FRAME_RE=", "const SAGA_DAY_RE=", "const TERM_GOING_LOOK=",
+    "function sagaDayOk(day){", "function sagaDate(d){", "function sagaClock(d){", "function sagaStamp(time,day){",
+    "function logRaw(line,profile,day){"])
     vm.runInContext(line(opening), context, { filename: "app.js#" + opening });
-  vm.runInContext(line("function logRaw(line,profile,day){"), context, { filename: "app.js#logRaw" });
   for (const opening of ["function sagaRealmShown(p){", "function sagaLineRealm(profile){", "function lnVisible(el){",
     "function applyTermVis(){", "function renderTermStream(){", "function renderTermEmpty(){",
     "function termContentTop(el){", "function termHoldBegin(){", "function termHoldSettle(){", "function termHoldDrop(){",
     "function termAppend(d){", "function termLineRealm(el){", "function termCount(el,by){", "function termEvict(){",
-    "function sagaStamp(time,day,now){", "function logLine(kind,text,time,profile,day){", "function logDivider(text){",
+    "function sagaDateOwnRows(){", "function logLine(kind,text,time,profile,day,host){", "function logDivider(text){",
     "function classifyLog(line){", "function sagaReplayUnseen(rows){", "function termOnScroll(){",
-    "function sagaGoLive(){", "function termTakeBack(){", "function sagaHoldToggle(){", "function sagaToTop(){"]) {
+    "function sagaGoLive(){", "function termGoingLook(){", "function termTakeBack(){", "function sagaHoldToggle(){",
+    "function sagaToTop(){"]) {
     vm.runInContext(fn(opening), context, { filename: "app.js#" + opening });
   }
   const h = context;
@@ -377,6 +394,75 @@ test("5b. a wheel during the slide hands the console back to the reader", () => 
   assert.strictEqual(s.termPin, false, "a slide that stalled short of the top left the console claiming to be live");
 });
 
+/* The chip's main use is deep in the scrollback while the server keeps writing. Chromium's smooth
+   slide over twenty thousand pixels takes about a second and a half; the first cut asked afresh
+   after one second, found the console short of the top, paused it, and the next line's hold wrote
+   scrollTop, which cuts a smooth slide dead. The review measured the Log stopping at 499 to 1836 px,
+   paused, the chip counting again. */
+test("5c. a long slide under traffic keeps going while it is still coming up, and arrives live", () => {
+  const h = harness();
+  h.host(1250);
+  h.scrollTo(12000);
+  h.host(3);
+  h.paint();
+  assert.strictEqual(h.termPin, false);
+  h.term.scrollTo = o => { h.term.slides.push(o); };
+  h.run("sagaGoLive()");
+  const writes = h.term.writes;
+  /* a look every 400 ms, each finding the slide lower, a line arriving between them */
+  for (const at of [11200, 8600, 5000, 1900, 400]) {
+    h.term._top = at; h.run("termOnScroll()");
+    h.host(1);
+    assert.strictEqual(h.frames(), 0, "a line during the slide was held, and the hold's scrollTop write would cut the slide dead");
+    h.fireTimers();
+    assert.strictEqual(h.termGoingTop, true, "a slide still coming up at " + at + " px was given up on");
+    assert.strictEqual(h.termPin, true, "a slide still coming up at " + at + " px paused the console");
+    assert.ok(h.chip.classList.contains("hidden"), "the chip came back while the slide was still on its way");
+  }
+  assert.strictEqual(h.term.writes, writes, "something wrote scrollTop during the slide, which ends a smooth scroll where it stands");
+  h.term._top = 0; h.run("termOnScroll()");
+  assert.strictEqual(h.termGoingTop, false, "the slide arrived and was still taken as running");
+  assert.strictEqual(h.termPin, true, "the slide arrived and the console was not live");
+  assert.strictEqual(h.termUnseen, 0);
+  h.fireTimers();
+  assert.strictEqual(h.termPin, true, "a look left over from the slide paused the console after it arrived");
+  /* a hidden window paints no frames, so its slide does not move: it is waited out, not given up */
+  const w = harness();
+  w.host(200); w.scrollTo(3000);
+  w.term.scrollTo = o => { w.term.slides.push(o); };
+  w.run("sagaGoLive()");
+  w.document.hidden = true;
+  w.fireTimers(); w.fireTimers();
+  assert.strictEqual(w.termGoingTop, true, "a slide in a hidden window was taken as stopped");
+  assert.strictEqual(w.termPin, true);
+  w.document.hidden = false;
+  w.term._top = 2000; w.fireTimers();
+  assert.strictEqual(w.termGoingTop, true, "the slide moving again once the window showed was given up on");
+  w.fireTimers();   // and then it stops short, the reader having taken it somewhere
+  assert.strictEqual(w.termGoingTop, false, "a slide that stopped after the window showed kept its scroll events muted");
+  assert.strictEqual(w.termPin, false, "a slide that stopped short left the console claiming to be live");
+});
+
+test("5d. Pause pressed during the slide stops it where it is and holds there", () => {
+  const h = harness();
+  h.host(200);
+  h.scrollTo(3000);
+  h.term.scrollTo = o => { h.term.slides.push(o); };
+  h.run("sagaGoLive()");
+  h.term._top = 2100; h.run("termOnScroll()");
+  const writes = h.term.writes;
+  h.run("sagaHoldToggle()");
+  assert.strictEqual(h.termGoingTop, false, "Pause left the slide running");
+  assert.strictEqual(h.termPin, false, "Pause did not pause the console");
+  assert.strictEqual(h.termHeld, true, "Pause during a slide is not held at the top like a Pause");
+  assert.strictEqual(h.term.writes, writes + 1, "Pause did not write scrollTop, which is what ends a smooth scroll");
+  assert.strictEqual(h.term.scrollTop, 2100, "Pause moved the console instead of stopping it where it was");
+  h.fireTimers();
+  assert.strictEqual(h.termPin, false, "the slide's look took the console back after Pause");
+  assert.ok(/if\(termGoingTop\)\{termTakeBack\(\);term\.scrollTop=term\.scrollTop;\}/.test(fn("function sagaHoldToggle(){")),
+    "sagaHoldToggle no longer ends a running slide where it stands");
+});
+
 /* ---------------------------------------------------------- 6. the Pause button */
 test("6. Pause holds the console where it stands, even at the top; Live follows again", () => {
   const h = harness();
@@ -441,9 +527,13 @@ test("8. every row says its date and time; a host row without a day says the tim
       + " (no undefined, no date the page made up)");
   }
   h.run('logLine("ok","[BakaLoader] start requested")');
-  assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(stamp(0)), "a page row is not stamped whole: " + stamp(0));
-  assert.strictEqual(h.run("sagaStamp(null,null,new Date(2026,9,24,7,5,3))"), "2026-10-24 07:05:03",
+  assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(stamp(0)), "a page row after the host dated its rows is not stamped whole: " + stamp(0));
+  /* was sagaStamp(null,null,date): the page's own clock now has its own two pieces, and sagaStamp
+     only joins a day it trusts to a time */
+  assert.strictEqual(h.run("sagaDate(new Date(2026,9,24,7,5,3))+' '+sagaClock(new Date(2026,9,24,7,5,3))"), "2026-10-24 07:05:03",
     "the page's own stamp is not YYYY-MM-DD HH:MM:SS in fixed digits");
+  assert.strictEqual(h.run('sagaStamp("07:05:03","2026-10-24")'), "2026-10-24 07:05:03");
+  assert.strictEqual(h.run('sagaStamp("07:05:03",undefined)'), "07:05:03");
   assert.deepStrictEqual(h.hearth.slice(0, 2), ["23:59:59", "00:00:01"], "the Hearth card lost the time, or took the whole stamp");
   /* a replayed row keeps the day it was written */
   h.pendingRows = [{ line: "[22:10:00.000] replayed from yesterday", profile: "Alpha", day: "2026-10-23" }];
@@ -454,6 +544,41 @@ test("8. every row says its date and time; a host row without a day says the tim
   assert.ok(/Native\.on\("log\.server",d=>\{[\s\S]{0,120}logRaw\(d\.line,[^\n]*,d\.day\);/.test(SOURCE), "log.server drops the row's day");
   assert.ok(/logRaw\(r\.line,r\.profile==null\?null:r\.profile,r\.day\)/.test(SOURCE), "the boot replay drops the row's day");
   assert.ok(/logRaw\(row\.line,profile,row\.day\)/.test(fn("function sagaReplayUnseen(rows){")), "the replay drops the row's day");
+});
+
+/* The review of the first cut: a row the page writes itself ("> save", "switched to profile") wore
+   the page clock's full date while every host row from a host without H1 read the time alone, so
+   the column mixed two widths; and a host row with a day but no [HH:mm:ss] dropped its day and took
+   the page's whole clock. The date comes from the host: a page row wears one only once the host has
+   shown it dates its rows, and then the rows written before are given theirs. */
+test("8b. the page's own rows wear a date only once the host dates its rows; a host day always wins", () => {
+  const h = harness();
+  const stamp = i => /<span class="t">([^<]*)<\/span>/.exec(h.term.children[i].innerHTML)[1];
+  h.run('logLine("cmd","> save")');
+  assert.ok(/^\d\d:\d\d:\d\d$/.test(stamp(0)), "a page row wore the page's date before the host dated anything: " + stamp(0));
+  h.run('logRaw("[12:00:01.000] from a host without days", "Alpha")');
+  h.run('logLine("ok","[BakaLoader] switched to profile")');
+  for (const i of [0, 1, 2]) assert.ok(/^\d\d:\d\d:\d\d$/.test(stamp(i)), "row " + i + " reads " + stamp(i) + " in a column that has no dates yet");
+  assert.strictEqual(h.sagaDated, false, "a host row with no day was taken as the host dating its rows");
+  /* the first host row with its day: the page's earlier rows get the date they were written on */
+  h.run('logRaw("[12:00:02.000] the host dates its rows", "Alpha", "2026-10-24")');
+  assert.strictEqual(h.sagaDated, true);
+  assert.strictEqual(stamp(0), "2026-10-24 12:00:02");
+  for (const i of [1, 3]) {
+    assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(stamp(i)), "a page row written before the host dated its rows still reads " + stamp(i));
+    assert.strictEqual(h.term.children[i].dataset.pd, undefined, "a page row kept its pending date after it was given it");
+  }
+  assert.ok(/^\d\d:\d\d:\d\d$/.test(stamp(2)), "the old host's row without a day was given a date the page guessed: " + stamp(2));
+  h.run('logLine("ok","[BakaLoader] start requested")');
+  assert.ok(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(stamp(0)), "a page row after the host dated its rows reads " + stamp(0));
+  /* a host row with a day and no time of its own: the host's day, the moment it arrived */
+  h.run('logRaw("a host line with no clock", "Alpha", "1999-12-31")');
+  assert.ok(/^1999-12-31 \d\d:\d\d:\d\d$/.test(stamp(0)), "a host row's own day lost to the page's clock: " + stamp(0));
+  h.run('logRaw("a host line with no clock and no day", "Alpha")');
+  assert.ok(/^\d\d:\d\d:\d\d$/.test(stamp(0)), "a host row with no day was given the page's date: " + stamp(0));
+  /* the host road says it is the host */
+  assert.ok(/logLine\(c\.kind,c\.text,c\.time,profile,day,true\)/.test(line("function logRaw(line,profile,day){")),
+    "logRaw no longer tells logLine the row is the host's");
 });
 
 /* ---------------------------------------------------------- 9. exceptions are errors */

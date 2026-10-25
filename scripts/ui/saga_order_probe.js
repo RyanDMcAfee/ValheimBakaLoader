@@ -6,7 +6,10 @@
   layout arithmetic itself. What only a browser can answer is whether the page really does it:
   whether a paused reader's line stays put to the pixel while lines go in above it (the browser's
   own scroll anchoring would move it a second time, which is why .term turns it off), whether the
-  chip's slide back to the top arrives and leaves the console live, whether a console that was
+  chip's slide back to the top arrives and leaves the console live (also from twenty thousand
+  pixels down while the server keeps writing, a slide of about a second and a half that the first
+  cut gave up on after one; and Pause pressed mid-slide stops it there), whether the page's own
+  rows read the time alone until the host dates its rows and then wear theirs, whether a console that was
   folded while lines arrived opens on its newest line (before 1.3.0 it opened on its oldest and
   said it was streaming), and whether the head row, which gained a Pause button, still fits (one
   line in English; in the pseudo catalog the search, Copy and Pause may take a second line as one
@@ -114,6 +117,21 @@ const FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimat
     for (const [w, h] of [[1024, 680], [1408, 800]]) {
       const size = w + "x" + h;
       const page = await open(w, h);
+
+      /* ---------- 0. the page's own rows: the time alone until the host dates its rows ---------- */
+      /* The preview has no host, so its own opening lines are all the console holds. They read the
+         time alone, like a row from a host that sends no day, and the first host row that brings
+         its day gives them the date they were written on, so the column is one width either way. */
+      const own = await page.evaluate(() => {
+        const stamps = () => [...document.querySelectorAll("#term .ln .t")].map(t => t.textContent);
+        const before = stamps();
+        __add(1, 900);
+        return { before, after: stamps().slice(1) };
+      });
+      say(own.before.length > 0 && own.before.every(t => /^\d\d:\d\d:\d\d$/.test(t))
+          && own.after.length === own.before.length && own.after.every(t => /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(t)),
+        size + " the page's own rows: time alone, then dated with the host",
+        own.before.length + " rows read " + JSON.stringify(own.before[0]) + ", then " + JSON.stringify(own.after[0]));
 
       /* ---------- 1. folded while lines arrive, then opened: the newest line shows ---------- */
       const opened = await page.evaluate(async () => {
@@ -336,6 +354,95 @@ const FRAMES = "() => new Promise(r => requestAnimationFrame(() => requestAnimat
       });
       say(r.at === 0 && r.live, "1024x680 reduced motion: the chip goes back to the top at once", "scrollTop right after the press " + r.at);
       await shot(page, "log_reduced_motion_1024x680.png", "#sect-saga");
+      await page.close();
+    }
+
+    /* ---------- 10. a long slide back while the server keeps writing ---------- */
+    /* The chip's and Live's main use: deep in the scrollback, reading back through a boot for an
+       exception, while the server goes on printing. Chromium's smooth slide over twenty thousand
+       pixels takes about a second and a half. The first cut gave the slide one second and then
+       asked afresh: it found the console not at its top, paused it, and the next line's hold wrote
+       scrollTop, which cuts a smooth slide dead where it stands. The Log stopped partway, paused,
+       with the chip counting again. Every case here ended short of the top on that tree. */
+    {
+      const page = await open(1024, 680);
+      await page.evaluate(async () => { goSection("saga"); await new Promise(r => setTimeout(r, 500)); });
+      for (const [sel, from, every] of [["#termNew", 8000, 200], ["#termNew", 12000, 200], ["#termNew", 22000, 200],
+        ["#termNew", 12000, 50], ["#termHold", 10000, 200], ["#termHold", 22000, 200]]) {
+        const set = await page.evaluate(async ({ from, every }) => {
+          const term = document.getElementById("term");
+          sagaToTop();
+          term.querySelectorAll(".ln").forEach(l => l.remove());
+          termRealmCount = null;
+          __add(1250, 10000);
+          await __frames();
+          term.scrollTop = from;
+          await __frames();
+          let k = 20000;
+          window.__traffic = setInterval(() => __add(1, k++), every);
+          await new Promise(r => setTimeout(r, every * 3 + 120));
+          return { at: term.scrollTop, live: termPin, unseen: termUnseen };
+        }, { from, every });
+        await page.click(sel);
+        const end = await page.evaluate(async () => {
+          const term = document.getElementById("term"), t0 = performance.now();
+          let reached = null;
+          while (performance.now() - t0 < 3000) {
+            await new Promise(r => requestAnimationFrame(r));
+            if (reached === null && term.scrollTop === 0) reached = performance.now() - t0;
+          }
+          const chip = getComputedStyle(document.getElementById("termNew"));
+          const out = { top: term.scrollTop, live: termPin, going: termGoingTop, unseen: termUnseen,
+                        chip: chip.visibility, reached };
+          clearInterval(window.__traffic);
+          return out;
+        });
+        const name = (sel === "#termNew" ? "the chip" : "Live") + " from " + from + " px, a line every " + every + " ms";
+        say(!set.live && set.at > from - 50 && end.top === 0 && end.live && !end.going && end.unseen === 0 && end.chip === "hidden",
+          "1024x680 " + name + ": back on the newest line, following",
+          "paused at " + Math.round(set.at) + " with " + set.unseen + " unseen; 3 s later scrollTop " + Math.round(end.top) + ", live " + end.live
+          + ", unseen " + end.unseen + ", chip " + end.chip + (end.reached === null ? ", never reached the top" : ", at the top after " + Math.round(end.reached) + " ms"));
+        if (sel === "#termNew" && from === 22000) await shot(page, "log_long_slide_arrived_1024x680.png", "#sect-saga");
+      }
+
+      /* Pause pressed while the slide is still running holds the console where the slide was,
+         rather than letting the slide run on until the hold's next write stops it at random. */
+      await page.evaluate(async () => {
+        const term = document.getElementById("term");
+        sagaToTop();
+        term.querySelectorAll(".ln").forEach(l => l.remove());
+        termRealmCount = null;
+        __add(1250, 10000);
+        await __frames();
+        term.scrollTop = 22000;
+        await __frames();
+        let k = 30000;
+        window.__traffic = setInterval(() => __add(1, k++), 200);
+        await new Promise(r => setTimeout(r, 720));
+      });
+      await page.click("#termNew");
+      await page.waitForTimeout(450);
+      await page.click("#termHold");
+      const stop = await page.evaluate(async () => {
+        const term = document.getElementById("term");
+        const going = termGoingTop;
+        for (let i = 0; i < 4; i++) await new Promise(r => requestAnimationFrame(r));
+        /* the line sixty pixels into the console, found by its box rather than by a hit test, and
+           measured against the console, so a scroll of the hall by the click cannot pass for it */
+        const inTerm = el => el.getBoundingClientRect().top - term.getBoundingClientRect().top;
+        const ref = [...term.querySelectorAll(".ln")].find(l => l.style.display !== "none" && inTerm(l) + l.getBoundingClientRect().height > 60);
+        const at = term.scrollTop, before = inTerm(ref);
+        await new Promise(r => setTimeout(r, 1600));
+        const out = { going, at, moved: inTerm(ref) - before, top: term.scrollTop,
+                      live: termPin, held: termHeld, unseen: termUnseen };
+        clearInterval(window.__traffic);
+        return out;
+      });
+      say(!stop.going && !stop.live && stop.held && stop.at > 2000 && stop.top > 2000 && Math.abs(stop.moved) < 1 && stop.unseen >= 7,
+        "1024x680 Pause pressed during the slide holds the console where the slide was",
+        "stopped at " + Math.round(stop.at) + ", 1.6 s later " + Math.round(stop.top) + ", the line on screen moved " + stop.moved.toFixed(2)
+        + " px, paused " + !stop.live + ", held " + stop.held + ", unseen " + stop.unseen);
+      await shot(page, "log_pause_mid_slide_1024x680.png", "#sect-saga");
       await page.close();
     }
   } finally {

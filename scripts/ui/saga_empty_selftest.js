@@ -262,11 +262,14 @@ function realmHarness() {
     "const LOG_ERR_RE=", "const LOG_FRAME_RE=", "const SAGA_DAY_RE=", "const HLOG_BUF="]) {
     vm.runInContext(constLine(opening), h, { filename: "app.js#" + opening });
   }
-  vm.runInContext("var hlogBuf=[];", h);
-  /* logRaw is written on one line, so it is taken as the line it is */
-  vm.runInContext(constLine("function logRaw(line,profile,day){"), h, { filename: "app.js#logRaw" });
-  for (const opening of ["function sagaLineRealm(profile){", "function sagaStamp(time,day,now){",
-    "function logLine(kind,text,time,profile,day){",
+  vm.runInContext("var hlogBuf=[], sagaDated=false;", h);
+  /* logRaw and the stamp's pieces are written on one line, so each is taken as the line it is */
+  for (const opening of ["function logRaw(line,profile,day){", "function sagaDayOk(day){", "function sagaDate(d){",
+    "function sagaClock(d){", "function sagaStamp(time,day){"]) {
+    vm.runInContext(constLine(opening), h, { filename: "app.js#" + opening });
+  }
+  for (const opening of ["function sagaLineRealm(profile){", "function sagaDateOwnRows(){",
+    "function logLine(kind,text,time,profile,day,host){",
     "function logDivider(text){", "function classifyLog(line){",
     "function sagaReplayUnseen(rows){", "function sagaRenameRealm(from,to){",
     "function hlogPush(kind,text,time,p){", "function renderHearthLog(){"]) {
