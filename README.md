@@ -81,7 +81,20 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.2.18
+## What is new in 1.3.0
+
+- **The sidebar opens into its sections.** Click the hall you are on and its sections roll down as round bronze buttons; press one and it opens alone, landed in view. Rest on another hall and its buttons slide out beside it. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
+- **Every section heading stays on screen**, stuck at the top and the bottom as you scroll, and an opened section lands fully in view.
+- **Statistics stands under the map** on the Map hall. [Map (Atlas)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Map-(Atlas))
+- **The Log reads newest first** with the command line on top, full dates, and a pause when you scroll back. [Log (Saga)](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Log-(Saga))
+- **The Gale review is two sections**, Mods and Configs, nothing ticked on a first review, one button that installs what is ticked. [Gale profiles](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Gale-profiles)
+- **Test copies are named after the realm**, always get their own folders, and list Steam Cloud characters too. [Making a test copy](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Multiple-servers#making-a-test-copy)
+- **Changes come back from a test copy** with Follow my test copy on the source realm's Mods hall; the world stays where it is.
+- **The page comes back with the window** after a minimize, and the heartbeat now says which language and settings are in use. [Privacy and network](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Privacy-and-network)
+
+This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
+## What was new in 1.2.18
 
 - **The Settings screen names the right world after a realm switch.** The Editing line could show the previous realm's world for a moment, and a Save pressed in that moment could have kept it; both now use the realm on screen.
 
