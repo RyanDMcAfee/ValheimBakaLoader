@@ -38,7 +38,7 @@ namespace ValheimBakaLoader.Tools
     {
         public const string PluginFolderName = "BakaLoaderCommander";
         public const string PluginDllName = "BakaLoaderCommander.dll";
-        private const string ConfigFileName = "com.baka.commander.cfg";
+        internal const string ConfigFileName = "com.baka.commander.cfg";
 
         private readonly IApplicationLogger Logger;
 

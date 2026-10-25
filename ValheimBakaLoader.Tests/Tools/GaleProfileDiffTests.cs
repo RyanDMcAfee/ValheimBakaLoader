@@ -261,8 +261,9 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void There_is_no_row_kind_that_removes_anything()
         {
+            // 1.3.0 adds Changed (a test copy's rebuilt mod), which is an update, not a removal.
             Assert.Equal(
-                new[] { "Add", "Update", "Same", "Unticked", "Disabled", "NotInProfile", "Framework" },
+                new[] { "Add", "Update", "Same", "Unticked", "Disabled", "NotInProfile", "Framework", "Changed" },
                 System.Enum.GetNames(typeof(GaleDiffKind)));
         }
 

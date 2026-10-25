@@ -223,6 +223,76 @@ namespace ValheimBakaLoader.Tools
             return new GaleZipRead { Files = files, Skipped = skipped, HasManifest = manifest };
         }
 
+        /// <summary>
+        /// The config files under a realm's own BepInEx/config, read into memory in the same shape
+        /// <see cref="ReadZip(Stream)"/> gives a profile's zip, for a feed that is a folder on this
+        /// PC (a test copy) rather than a download. The same limits hold: the same kinds of file,
+        /// the same size per file, the same count and the same total, and a file or folder that
+        /// is a link is never followed (ConfigFiles.List). A file named in
+        /// <paramref name="leaveOut"/> is passed over, for the settings BakaLoader writes per realm
+        /// (a port, a player count), which must never travel from one realm to another. A folder
+        /// that is not there is an empty listing. Never throws.
+        /// </summary>
+        public static GaleZipRead ReadFolder(string configDir, IEnumerable<string> leaveOut = null)
+        {
+            try
+            {
+                var rels = ConfigFiles.List(configDir);
+                if (rels.Count > MaxEntries) return new GaleZipRead { Refusal = TooManySentence };
+
+                var skip = new HashSet<string>(leaveOut ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+                var files = new List<GaleProfileConfigFile>();
+                var skipped = 0;
+                long total = 0;
+
+                foreach (var rel in rels)
+                {
+                    if (skip.Contains(rel)) continue;
+                    if (!IsWritableName(rel))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    byte[] bytes;
+                    try
+                    {
+                        var full = Path.Combine(new[] { configDir }.Concat(rel.Split('/')).ToArray());
+                        var info = new FileInfo(full);
+                        if ((info.Attributes & FileAttributes.ReparsePoint) != 0 || info.Length > MaxEntryBytes)
+                        {
+                            skipped++;
+                            continue;
+                        }
+                        bytes = File.ReadAllBytes(full);
+                    }
+                    catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    if (bytes.Length > MaxEntryBytes)
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    total += bytes.Length;
+                    if (total > MaxTotalBytes) return new GaleZipRead { Refusal = TooLargeSentence };
+                    files.Add(new GaleProfileConfigFile { Rel = rel, Bytes = bytes });
+                }
+
+                files.Sort((a, b) => ConfigFiles.ComparePaths(a.Rel, b.Rel));
+                return new GaleZipRead { Files = files, Skipped = skipped, HasManifest = false };
+            }
+            catch (Exception)
+            {
+                // A folder that went away under the walk, or one the walk may not read.
+                return new GaleZipRead { Refusal = UnsafeSentence };
+            }
+        }
+
         /// <summary>A name that points somewhere a profile has no business: rooted, a drive or stream, or a step up.</summary>
         internal static bool IsHostile(string name)
         {

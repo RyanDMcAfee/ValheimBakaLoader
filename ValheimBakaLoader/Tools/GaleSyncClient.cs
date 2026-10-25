@@ -29,6 +29,13 @@ namespace ValheimBakaLoader.Tools
         /// three was missing, not a whole number, or below zero.
         /// </summary>
         public string Version { get; init; }
+
+        /// <summary>
+        /// A hash of the mod's files, or null. Gale's service carries versions only and never
+        /// sets it; a feed that reads a mod folder on this PC (a test copy) does, so a mod rebuilt
+        /// without a new version number still compares as different.
+        /// </summary>
+        public string ContentHash { get; init; }
     }
 
     /// <summary>What the profile's /meta answered, when it answered with something readable.</summary>
@@ -51,6 +58,14 @@ namespace ValheimBakaLoader.Tools
         /// itself reads it and nothing more.
         /// </summary>
         public string Community { get; init; }
+
+        /// <summary>
+        /// True when the mods were read off a realm folder on this PC (a test copy) rather than
+        /// from Gale's service. Such a feed names each mod by its folder, which need not be the
+        /// "Namespace-Name" Thunderstore spells, and a mod with no readable version is still
+        /// compared, by its files.
+        /// </summary>
+        public bool LocalFeed { get; init; }
     }
 
     /// <summary>The ways a check of a Gale profile can come out. Every one of them is an answer, none is a throw.</summary>

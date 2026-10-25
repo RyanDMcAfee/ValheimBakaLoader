@@ -1428,20 +1428,46 @@ namespace ValheimBakaLoader.Forms
             CommandCounts.Count(method, CountedProfileName(parameters) ?? ActiveProfileName, line);
         }
 
-        /// <summary>One replayed log line and the realm it belongs to, or null for none.</summary>
+        /// <summary>
+        /// One replayed log line, the realm it belongs to (or null for none), and the host's date
+        /// it was stamped on, "yyyy-MM-dd" (or null when the logger kept none). The line keeps
+        /// only the time, so a replay that crosses midnight needs the day beside it.
+        /// </summary>
         internal sealed class LogRow
         {
             public string line { get; set; }
             public string profile { get; set; }
+            public string day { get; set; }
         }
 
-        /// <summary>The application tail as the page replays it: each line with its realm.</summary>
+        /// <summary>The application tail as the page replays it: each line with its realm and its day.</summary>
         internal static List<LogRow> AppLogBufferRows(IBufferedLogger logger)
         {
             if (logger is IRealmTaggedLog tagged)
-                return tagged.TaggedBuffer.Select(l => new LogRow { line = l.Line, profile = l.Profile }).ToList();
+                return tagged.TaggedBuffer.Select(l => new LogRow { line = l.Line, profile = l.Profile, day = l.Day }).ToList();
             return (logger?.LogBuffer ?? Enumerable.Empty<string>())
-                .Select(line => new LogRow { line = line, profile = null }).ToList();
+                .Select(line => new LogRow { line = line, profile = null, day = null }).ToList();
+        }
+
+        /// <summary>
+        /// What a live log.app or log.server event carries: the line, the realm it is shown on,
+        /// and the day it was stamped. The same three keys a replayed <see cref="LogRow"/> has,
+        /// so the page reads a live line and a replayed one the same way.
+        /// </summary>
+        internal static object LogLinePayload(AppLogLine held, string profile)
+            => new { line = held?.Line, profile, day = held?.Day };
+
+        /// <summary>
+        /// The server tail as the page replays it, every line the realm's own. Read off the
+        /// tagged buffer when the logger keeps one, so each line still says the day it was
+        /// written rather than the day it is replayed on.
+        /// </summary>
+        internal static List<LogRow> ServerBufferRows(IBufferedLogger logger, string realm)
+        {
+            if (logger is IRealmTaggedLog tagged)
+                return tagged.TaggedBuffer.Select(l => new LogRow { line = l.Line, profile = realm, day = l.Day }).ToList();
+            return (logger?.LogBuffer ?? Enumerable.Empty<string>())
+                .Select(line => new LogRow { line = line, profile = realm, day = null }).ToList();
         }
 
         /// <summary>
@@ -3672,9 +3698,9 @@ namespace ValheimBakaLoader.Forms
             // The line travels with the realm it was written for, or null when it belongs to no
             // realm; the page hides a line whose realm is not the one on screen.
             if (AppLogger is IRealmTaggedLog tagged)
-                tagged.LineReceived += held => PostEvent("log.app", new { line = held.Line, profile = held.Profile });
+                tagged.LineReceived += held => PostEvent("log.app", LogLinePayload(held, held.Profile));
             else
-                AppLogger.LogReceived += line => PostEvent("log.app", new { line, profile = (string)null });
+                AppLogger.LogReceived += line => PostEvent("log.app", new { line, profile = (string)null, day = (string)null });
         }
 
         /// <summary>
@@ -8486,8 +8512,7 @@ namespace ValheimBakaLoader.Forms
             RegisterRpc("logs.serverBuffer", p =>
             {
                 var realm = ActiveProfileName;
-                var lines = Server?.Logger?.LogBuffer?.ToList() ?? new List<string>();
-                return Task.FromResult<object>(lines.Select(line => new LogRow { line = line, profile = realm }).ToList());
+                return Task.FromResult<object>(ServerBufferRows(Server?.Logger, realm));
             });
 
             // --- Network / IP ---
@@ -11430,6 +11455,8 @@ namespace ValheimBakaLoader.Forms
             created.GaleUnticked = new List<string>();
             created.GaleNotAvailable = new List<string>();
             created.GaleConfigUnticked = new List<string>();
+            // Nor a test copy it takes mods from: that copy is another realm's.
+            created.ForgetTestCopyFollow();
             // Nor whether the realm is a test copy: a duplicate of a test copy is a realm of its
             // own, and servers.create marks a test copy itself.
             created.TestCopyOf = null;
@@ -12151,7 +12178,9 @@ namespace ValheimBakaLoader.Forms
                 : WorldPrefsProvider.LoadPreferences(worldName);
 
             var options = ValheimServerOptions.FromPreferences(serverPrefs, userPrefs, worldPrefs);
-            options.LogMessageHandler = line => PostEvent("log.server", new { line, profile = logProfile });
+            // The tagged line rather than the bare string, because it carries the day it was
+            // stamped on and the page shows the date beside the time.
+            options.LogLineHandler = held => PostEvent("log.server", LogLinePayload(held, logProfile));
 
             return options;
         }

@@ -130,5 +130,12 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("galeUnticked")] public List<string> GaleUnticked { get; set; }
         [JsonProperty("galeNotAvailable")] public List<string> GaleNotAvailable { get; set; }
         [JsonProperty("galeConfigUnticked")] public List<string> GaleConfigUnticked { get; set; }
+
+        // -- Following a test copy of this realm (merge-back, 1.3.0) --
+
+        [JsonProperty("followTestCopy")] public string FollowTestCopy { get; set; }
+        [JsonProperty("followTestCopyLastApproved")] public string FollowTestCopyLastApproved { get; set; }
+        [JsonProperty("followTestCopyUnticked")] public List<string> FollowTestCopyUnticked { get; set; }
+        [JsonProperty("followTestCopyConfigUnticked")] public List<string> FollowTestCopyConfigUnticked { get; set; }
     }
 }
