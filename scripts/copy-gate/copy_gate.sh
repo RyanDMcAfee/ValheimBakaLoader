@@ -1136,5 +1136,20 @@ else
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 fi
 
+echo "== 71. the toast stack comes back down when a dialog closes =="
+# Issue 29. modalClose leaves a fading copy of the dialog behind (fadeGhost) and then measures
+# the stack's lift; the copy still carried the open class, so the lift stayed at the dialog's
+# height and the next toast landed mid-screen. The selftest drives updateToastLift with a
+# stand-in document: a live dialog lifts the stack, a ghost alone does not, a ghost beside a
+# live dialog is ignored whichever comes first, a tall dialog is capped, and the CSS still
+# reads the variable the function writes.
+TOASTLIFT_SELFTEST="$UI_DIR/toast_lift_selftest.js"
+if [ -f "$TOASTLIFT_SELFTEST" ]; then
+  if out=$(node "$TOASTLIFT_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the toast lift selftest is missing: $TOASTLIFT_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

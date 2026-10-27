@@ -1919,7 +1919,7 @@ window.addEventListener("resize",onWindowResize);
 const TOAST_BASE=42;    // matches the base offset in the .toasts rule in app.css
 function updateToastLift(){
   let lift=0;
-  const btns=document.querySelector(".modal-bg.open .modal .mbtns");
+  const btns=document.querySelector(".modal-bg.open:not(.reveal-ghost) .modal .mbtns");
   const app=$("#app");
   if(btns&&app){
     const r=btns.getBoundingClientRect(), a=app.getBoundingClientRect();
