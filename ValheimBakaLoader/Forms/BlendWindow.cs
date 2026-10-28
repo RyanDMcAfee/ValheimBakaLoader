@@ -224,7 +224,7 @@ namespace ValheimBakaLoader.Forms
         private static extern bool IsZoomed(IntPtr hWnd);
 
         [DllImport("user32.dll")]
-        private static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+        private static extern IntPtr MonitorFromRect(ref NativeRect rect, uint flags);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
@@ -546,7 +546,7 @@ namespace ValheimBakaLoader.Forms
                 {
                     var proposed = Marshal.PtrToStructure<NativeRect>(m.LParam).ToRectangle();
                     var maximized = IsZoomed(Handle);
-                    var client = WindowSnap.ClientRect(proposed, maximized, maximized ? WorkAreaOf(Handle) : Rectangle.Empty);
+                    var client = WindowSnap.ClientRect(proposed, maximized, maximized ? WorkAreaOf(proposed) : Rectangle.Empty);
                     Marshal.StructureToPtr(NativeRect.From(client), m.LParam, false);
                     m.Result = IntPtr.Zero;
                     return;
@@ -612,10 +612,20 @@ namespace ValheimBakaLoader.Forms
             base.WndProc(ref m);
         }
 
-        private static Rectangle WorkAreaOf(IntPtr window)
+        /// <summary>
+        /// The work area of the display a window rectangle is on. Asked by rectangle, not by
+        /// handle: while a maximized window is being restored from the taskbar, Windows cannot
+        /// yet say which display the handle is on and answers with the nearest one, which on a
+        /// PC with two displays is the other one (issue 26). The client area was then placed at
+        /// that display's coordinates, outside the window, so the page sat where nothing could
+        /// see or click it until a move made Windows ask again. The rectangle the size question
+        /// carries is on the right display every time.
+        /// </summary>
+        private static Rectangle WorkAreaOf(Rectangle proposed)
         {
             var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-            var monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+            var rect = NativeRect.From(proposed);
+            var monitor = MonitorFromRect(ref rect, MONITOR_DEFAULTTONEAREST);
             return monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info) ? info.Work.ToRectangle() : Rectangle.Empty;
         }
 

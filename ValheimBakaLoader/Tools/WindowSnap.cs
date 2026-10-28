@@ -71,10 +71,25 @@ namespace ValheimBakaLoader.Tools
         /// The client rectangle the window claims. Normal or snapped, the whole window: no
         /// frame is drawn. Maximized, the work area of its display, because a maximized
         /// window with a thick frame hangs a frame's width past every edge of the screen and
-        /// the title bar would start under the top of it.
+        /// the title bar would start under the top of it. A work area that is not where the
+        /// window is (another display's, which Windows answers with while a maximized window
+        /// is being restored from the taskbar, issue 26) does not win, or the client would be
+        /// placed outside the window and the page with it.
         /// </summary>
         public static Rectangle ClientRect(Rectangle proposed, bool maximized, Rectangle workArea) =>
-            maximized && !workArea.IsEmpty ? workArea : proposed;
+            maximized && OnThisDisplay(proposed, workArea) ? workArea : proposed;
+
+        /// <summary>
+        /// True when most of the work area lies inside the proposed rectangle. A maximized
+        /// window hangs a frame past every edge of its display, so its own work area is inside
+        /// it almost whole, while a neighbouring display's overlaps it by that frame at most.
+        /// </summary>
+        private static bool OnThisDisplay(Rectangle proposed, Rectangle workArea)
+        {
+            if (workArea.IsEmpty) return false;
+            var shared = Rectangle.Intersect(proposed, workArea);
+            return (long)shared.Width * shared.Height * 2 >= (long)workArea.Width * workArea.Height;
+        }
 
         /// <summary>
         /// The size to remember. Windows keeps the size a window had before it was snapped

@@ -93,6 +93,30 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Equal(proposed, WindowSnap.ClientRect(proposed, true, Rectangle.Empty));
         }
 
+        /// <summary>Issue 26, the cause: restoring a maximized window from the taskbar on a PC
+        /// with two displays, Windows answered the size question with the other display's work
+        /// area (the handle's display cannot be read mid-restore), and the client area was
+        /// placed there, outside the window: a blank page that took no clicks until a move made
+        /// Windows ask again. The work area is read by rectangle now, and one that is not where
+        /// the window is does not win.</summary>
+        [Fact]
+        public void A_work_area_from_another_display_does_not_put_the_client_outside_the_window()
+        {
+            var proposed = new Rectangle(1912, -8, 1936, 1056);   // maximized on the second display, frame hanging off
+            var other = new Rectangle(0, 0, 1920, 1040);          // the first display's work area
+            var own = new Rectangle(1920, 0, 1920, 1040);         // the second display's
+
+            Assert.Equal(proposed, WindowSnap.ClientRect(proposed, true, other));
+            Assert.Equal(own, WindowSnap.ClientRect(proposed, true, own));
+            // A display below, touching by the frame's height, is not it either.
+            Assert.Equal(proposed, WindowSnap.ClientRect(proposed, true, new Rectangle(1920, 1048, 1920, 1040)));
+
+            var host = AppSourceTree.Read("ValheimBakaLoader", "Forms", "BlendWindow.cs");
+            Assert.Contains("maximized ? WorkAreaOf(proposed) : Rectangle.Empty", host);
+            Assert.Contains("MonitorFromRect(ref rect, MONITOR_DEFAULTTONEAREST)", host);
+            Assert.DoesNotContain("MonitorFromWindow", host);
+        }
+
         /// <summary>Defined is not wired: the window answers with this mapping, and the page
         /// tells it where the button is every time the bar changes size.</summary>
         [Fact]
