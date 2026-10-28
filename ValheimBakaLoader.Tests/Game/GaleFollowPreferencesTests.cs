@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -40,6 +41,59 @@ namespace ValheimBakaLoader.Tests.Game
             // The service's text exactly, not a DateTime written out again.
             Assert.Equal(Stamp, back.GaleLastUpdatedAt);
             Assert.Equal(new[] { "Azumatt-AzuCraftyBoxes", "ValheimModding-Jotunn" }, back.GaleUnticked);
+        }
+
+        [Fact]
+        public void The_Hexium_notes_round_trip_under_their_own_key_and_a_file_without_them_reads_empty()
+        {
+            // 1.3.1, issue 30. Made-up mod names throughout.
+            var prefs = new ServerPreferences
+            {
+                ProfileName = "Gale Test",
+                GaleProfileId = "AAAAAAAAAAAA-_AAAAAAAA",
+                GaleNotAvailable = new List<string> { "Owner-Package@1.2.3", "Owner-Other@2.0.0" },
+                GaleHexium = new List<GaleHexiumMark>
+                {
+                    new() { Mod = " Owner-Package ", Version = "1.2.3", Kind = "noPackage", Hexium = "exact" },
+                    new() { Mod = "Owner-Other", Version = "2.0.0", Kind = "noVersion", Hexium = null },
+                    // The same build written again: the later answer wins, one entry stays.
+                    new() { Mod = "owner-package", Version = "1.2.3", Kind = "noPackage", Hexium = "other" },
+                    // No mod name: dropped.
+                    new() { Mod = "", Version = "1.0.0", Kind = "noPackage", Hexium = "exact" },
+                    // Words this build does not know read as nothing, never as an offer.
+                    new() { Mod = "Owner-Odd", Version = "3.0.0", Kind = "gone", Hexium = "maybe" },
+                },
+            };
+
+            var json = JsonConvert.SerializeObject(prefs.ToFile());
+            var notes = (JArray)JObject.Parse(json)["galeHexium"];
+            Assert.Equal(3, notes.Count);
+            Assert.Equal("owner-package", (string)notes[0]["mod"]);
+            Assert.Equal("1.2.3", (string)notes[0]["version"]);
+            Assert.Equal("noPackage", (string)notes[0]["kind"]);
+            Assert.Equal("other", (string)notes[0]["hexium"]);
+
+            var back = ServerPreferences.FromFile(JsonConvert.DeserializeObject<ServerPreferencesFile>(json));
+            Assert.Equal(new (string, string, string, string)[]
+            {
+                ("owner-package", "1.2.3", "noPackage", "other"),
+                ("Owner-Other", "2.0.0", "noVersion", null),
+                ("Owner-Odd", "3.0.0", null, null),
+            }, back.GaleHexium.Select(n => (n.Mod, n.Version, n.Kind, n.Hexium)).ToArray());
+
+            // A file written before 1.3.1 has marks and no notes: the marks stand, the notes are empty.
+            var older = ServerPreferences.FromFile(JsonConvert.DeserializeObject<ServerPreferencesFile>(
+                "{\"profileName\":\"Old\",\"galeProfileId\":\"ab12CD\",\"galeNotAvailable\":[\"Owner-Package@1.2.3\"]}"));
+            Assert.Single(older.GaleNotAvailable);
+            Assert.NotNull(older.GaleHexium);
+            Assert.Empty(older.GaleHexium);
+            Assert.Empty(new ServerPreferences().GaleHexium);
+            Assert.Null(new ServerPreferences { ProfileName = "Plain" }.ToFile().GaleHexium);
+
+            // The settings form's save keeps what is on disk, and a first save keeps what it has.
+            var fromPage = new ServerPreferences { ProfileName = "Gale Test", GaleHexium = null }.KeepGaleFollowFrom(back);
+            Assert.Equal(3, fromPage.GaleHexium.Count);
+            Assert.Empty(new ServerPreferences { GaleHexium = null }.KeepGaleFollowWithoutStore().GaleHexium);
         }
 
         [Fact]

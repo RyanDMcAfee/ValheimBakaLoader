@@ -1183,5 +1183,37 @@ else
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 fi
 
+echo "== 74. a Gale profile's build that is only on Hexium: asked once, held, installed on its own consent =="
+# 1.3.1, issue 30. A Gale walk that meets a build Thunderstore does not carry asks the Hexium index
+# once, on the walk, and the review only reads the answer: a build Hexium has is held out of the
+# ticks and gets its own Install from Hexium (a fresh prepare and the consent dialog on every
+# press), another version only opens the page, and nothing found, an index that did not answer
+# and the switch being off each say so in the row's tooltip. The Mods row's Failed pill says the
+# short words past 60 characters and fades when its words change. The selftest drives the GALE
+# and MODSTATUS blocks of app.js with a stand-in host and the real catalog.
+GALEHEX_SELFTEST="$UI_DIR/gale_hexium_selftest.js"
+if [ -f "$GALEHEX_SELFTEST" ]; then
+  if out=$(node "$GALEHEX_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the Gale Hexium selftest is missing: $GALEHEX_SELFTEST"; fail=1
+fi
+
+echo "== 75. issue 30 in a real browser: the Failed pill and the Gale review's Hexium rows fit at 1024x680 =="
+# The Mods row's Failed pill with a 200 character sentence stays inside its cell with the whole
+# sentence in its tooltip, and every Hexium tag and button in the Gale review stays inside its
+# cell with its words whole, in English and in the pseudo catalog. Same readiness question as 40.
+GALEHEX_PROBE="$UI_DIR/gale_hexium_probe.js"
+if [ ! -f "$GALEHEX_PROBE" ]; then
+  echo "  the Gale Hexium probe is missing: $GALEHEX_PROBE"; fail=1
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  NOT RUN: there is no node on this box, so nothing read the page in a browser."
+elif ! ready=$(node "$SWITCH_PROBE" --check); then
+  printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
+else
+  if out=$(node "$GALEHEX_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

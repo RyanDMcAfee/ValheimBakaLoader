@@ -8181,10 +8181,17 @@ namespace ValheimBakaLoader.Forms
                     // A Gale walk names its realm. A pinned build Thunderstore no longer has is
                     // marked on that realm's follow, so the next review shows it as not
                     // available rather than as a plain add; one that went in is unmarked.
+                    // From 1.3.1 (issue 30) the walk also asks Hexium about it, once, here, with
+                    // Also check Hexium on, and the answer is kept beside the mark: the review
+                    // reads it and never asks. A plain paste asks nothing and marks nothing.
                     var notAvailable = result.Reason == ModInstallResult.NotAvailableReason;
-                    if (!string.IsNullOrWhiteSpace(forProfile) && !string.IsNullOrWhiteSpace(reference.Version)
-                        && (notAvailable || result.Installed))
-                        MarkGaleNotAvailable(forProfile.Trim(), $"{reference.Owner}-{reference.Name}", reference.Version, notAvailable);
+                    var galeWalk = !string.IsNullOrWhiteSpace(forProfile) && !string.IsNullOrWhiteSpace(reference.Version);
+                    var hexium = galeWalk && notAvailable
+                        ? await GaleHexiumAnswerAsync(forProfile.Trim(), $"{reference.Owner}-{reference.Name}", reference.Version)
+                        : null;
+                    if (galeWalk && (notAvailable || result.Installed))
+                        MarkGaleNotAvailable(forProfile.Trim(), $"{reference.Owner}-{reference.Name}", reference.Version, notAvailable,
+                            result.GoneKind, hexium);
 
                     // What the mod that just went in needs and this realm does not have. Worked out
                     // while the install is still held, so nothing else writes the folder between
@@ -8210,8 +8217,14 @@ namespace ValheimBakaLoader.Forms
                             {
                                 ["mod"] = $"{reference.Owner}-{reference.Name}",
                                 ["version"] = reference.Version,
+                                // "noPackage" or "noVersion": which sentence the page says.
+                                ["kind"] = result.GoneKind,
                             }
                             : null,
+                        // What Hexium said about a gone build on a Gale walk (exact, other, none,
+                        // unreachable), or null when it was not asked. The walk counts an exact
+                        // one as waiting on Hexium rather than as missing.
+                        hexium,
                         // Which site the files came from, carried through so the page never
                         // has to guess what it just installed. Additive: a page that does not
                         // read it is unaffected, and a Thunderstore install says so plainly.
@@ -8315,6 +8328,12 @@ namespace ValheimBakaLoader.Forms
                             ToVersion = result.Version,
                             Source = Tools.ModSourceMarkerFile.HexiumSource,
                         });
+
+                        // A build a Gale walk marked gone from Thunderstore, now in from Hexium:
+                        // its mark and what Hexium said come off together, so the next review
+                        // does not offer it again (1.3.1, issue 30). Quiet on a realm that
+                        // follows no Gale profile.
+                        MarkGaleNotAvailable(ActiveProfileName, $"{result.Owner}-{result.Name}", result.Version, gone: false);
                     }
 
                     return new
@@ -11551,6 +11570,7 @@ namespace ValheimBakaLoader.Forms
             created.GaleLastUpdatedAt = null;
             created.GaleUnticked = new List<string>();
             created.GaleNotAvailable = new List<string>();
+            created.GaleHexium = new List<GaleHexiumMark>();
             created.GaleConfigUnticked = new List<string>();
             created.GaleTicked = null;
             created.GaleConfigTicked = null;

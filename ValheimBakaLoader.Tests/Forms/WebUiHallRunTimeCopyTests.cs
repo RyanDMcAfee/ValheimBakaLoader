@@ -452,11 +452,15 @@ namespace ValheimBakaLoader.Tests.Forms
             var catalog = Catalog();
 
             // The failed pill on a row: two entries rather than one sentence with a colon
-            // left hanging when the run had nothing to say.
-            Assert.Contains("esc(st.error?T(\"mods.row.failed\",{detail:st.error})"
-                            + ":T(\"mods.row.failed.nodetail\"))", js);
+            // left hanging when the run had nothing to say. Since 1.3.1 (issue 30) the sentence
+            // is worked out first and a long one is shown as the short words, whole in the
+            // tooltip, because a whole sentence ran out of the status column.
+            Assert.Contains("const full=st.error?T(\"mods.row.failed\",{detail:st.error})"
+                            + ":T(\"mods.row.failed.nodetail\");", js);
+            Assert.Contains("const shown=full.length>60?T(\"mods.row.failed.short\"):full;", js);
             Assert.Equal("Failed: {detail}", Field(catalog["mods.row.failed"], "lore"));
             Assert.Equal("Failed", Field(catalog["mods.row.failed.nodetail"], "lore"));
+            Assert.Equal("Failed, hover for why", Field(catalog["mods.row.failed.short"], "lore"));
 
             // The bulk bar: one whole sentence per shape, with the mod and both numbers in
             // named slots, because a language that puts the count first had nowhere to put

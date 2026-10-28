@@ -5270,8 +5270,14 @@ function renderRowStatus(st){
   }
   /* Two entries rather than one with a ternary inside it: a run that failed with nothing
      to say would otherwise read "Failed:" with a colon hanging off the end of it. */
-  if(st.phase==="failed")
-    return `<span class="pill" style="color:var(--blood-text);border-color:var(--blood)" title="${esc(st.error||"")}">${esc(st.error?T("mods.row.failed",{detail:st.error}):T("mods.row.failed.nodetail"))}</span>`;
+  if(st.phase==="failed"){
+    /* A whole failure sentence in a pill ran out of the status column (issue 30). Past 60
+       characters the pill says the short words and the sentence stays whole in its tooltip;
+       .rowfail in the stylesheet is the second net for a language that makes even those long. */
+    const full=st.error?T("mods.row.failed",{detail:st.error}):T("mods.row.failed.nodetail");
+    const shown=full.length>60?T("mods.row.failed.short"):full;
+    return `<span class="pill rowfail" style="color:var(--blood-text);border-color:var(--blood)" title="${esc(st.error||"")}">${esc(shown)}</span>`;
+  }
   return "";
 }
 /* The bulk-update bar's own record: how many mods, how many finished, which one is running.
@@ -5509,6 +5515,32 @@ function modsScanFailReason(){
   return modsScanReasonText()
     ||T((MODS_SCAN_FAIL[S.modsScanError]||MODS_SCAN_FAIL.failed).reasonId);
 }
+/* MODSTATUS-BEGIN: a Mods row's status pill keeps to the no-jump rule when its words change.
+   The table is written whole on every redraw, so the words each row's status cell had are read
+   first and compared after, by the row's key. scripts/ui/gale_hexium_selftest.js evaluates this. */
+function modStatusWords(tb){
+  const out=new Map();
+  if(!tb||typeof tb.querySelectorAll!=="function") return out;
+  for(const tr of tb.querySelectorAll("tr[data-key]")){
+    const c=tr.querySelector("td.modstat");
+    if(c) out.set(tr.getAttribute("data-key"),c.textContent);
+  }
+  return out;
+}
+/* A pill whose words changed in the redraw (a Gale walk's Failed going back to the row's own
+   state when the walk ends, Updating turning into its result) fades its new words in through
+   revealText. A row that was not there before arrives with the table, as it always has. */
+function modStatusFade(tb,was){
+  if(!was||!was.size||!tb||typeof tb.querySelectorAll!=="function") return;
+  for(const tr of tb.querySelectorAll("tr[data-key]")){
+    const key=tr.getAttribute("data-key");
+    if(!was.has(key)) continue;
+    const c=tr.querySelector("td.modstat");
+    if(!c||c.textContent===was.get(key)) continue;
+    for(const p of c.querySelectorAll(".pill")){const words=p.textContent;p.textContent="";revealText(p,words);}
+  }
+}
+/* MODSTATUS-END */
 function renderMods(){
   const busy=S.modsScanning||S.modsUpdating;
   $("#scanBtn").disabled=busy;
@@ -5591,6 +5623,7 @@ function renderMods(){
   const table=$("#modsTable");
   if(table) table.classList.toggle("po-empty",
     !mods.some(m=>m.possiblyOutdated&&!m.IsPatcher));
+  const statusWas=modStatusWords($("#modTable"));
   $("#modTable").innerHTML=shown.map(m=>modRowHtml(m,blind)).join("")||`<tr><td colspan="${modColCount()}">${mods.length
     ?emptyState({mark:"ᚱ",title:T("mods.empty.no_match.title"),
         /* The one reason that counts what it is hiding. The count is a slot and the
@@ -5611,6 +5644,7 @@ function renderMods(){
           reason:T("mods.empty.none.reason"),
           action:{name:"addMod",label:T("mods.empty.none.action")}}))}</td></tr>`;
   esWire($("#modTable"));
+  modStatusFade($("#modTable"),statusWas);
   $("#modTable")._list=mods;
   /* A real plural rather than an English "s", and both pills escaped on the way in. */
   $("#modUpdWrap").innerHTML=upd.length
@@ -5729,7 +5763,7 @@ function modRowHtml(m,blind){
     `<td class="mono"${has?' style="color:var(--amber)"':""}${blind?` title="${esc(T("mods.status.unchecked.tip"))}"`:(m.notListed?` title="${esc(T("mods.status.not_listed.tip"))}"`:"")}>${esc(m.LatestVersion||"-")}${mark}</td>`+
     modDateCell(m.installedUtc)+
     modDateCell(m.modUpdatedUtc)+
-    `<td>${statusCell}</td>`+
+    `<td class="modstat">${statusCell}</td>`+
     po+`</tr>`;
 }
 /* MODROW-END */
@@ -7275,16 +7309,20 @@ async function hexiumInstallFlow(mod){
   hexiumConsentModal(r,()=>doInstallFromHexium(r));
 }
 async function doInstallFromHexium(pay){
-  if(S.modsUpdating||S.modsScanning) return;
+  if(S.modsUpdating||S.modsScanning) return false;
   S.modsUpdating=true; renderMods();
   toast("ᚺ "+T("mods.hexium.fetching.toast"));
   logLine("info","[Hexium] downloading "+pay.Owner+"-"+pay.Name+" v"+pay.Version);
   const r=await rpc("mods.installFromHexium",
     {owner:pay.Owner,name:pay.Name,version:pay.Version,token:pay.Token});
   S.modsUpdating=false;
-  if(r===FAIL){renderMods();return;}
+  if(r===FAIL){renderMods();return false;}
   if(r.Installed){
     const full=r.Owner+"-"+r.Name;
+    /* A Failed pill a Gale walk left on this mod's row is answered now (issue 30). The walk
+       names a row by the profile's spelling, which may differ in case from Hexium's. */
+    if(S.modRowStatus) for(const k of Object.keys(S.modRowStatus))
+      if(k.toLowerCase()===full.toLowerCase()) delete S.modRowStatus[k];
     toast("ᚺ "+(r.Version
       ?T("mods.hexium.installed.toast",{name:full,version:r.Version})
       :T("mods.hexium.installed.noversion.toast",{name:full})));
@@ -7293,10 +7331,11 @@ async function doInstallFromHexium(pay){
       logLine("info","[Hexium] "+full+" says it needs: "+r.Dependencies.join(", "));
     if(S.state?.status==="Running") logLine("warn","[Hexium] server is running, so "+full+" loads on the next restart");
     await scanMods({force:false});
-  }else{
-    hexiumFailToast(r);
-    renderMods();
+    return true;
   }
+  hexiumFailToast(r);
+  renderMods();
+  return false;
 }
 /* The way back. A Hexium copy is never replaced on its own, so the swap to the
    Thunderstore build is its own action and it asks the same way the other one does. */
@@ -7827,8 +7866,14 @@ function galeDialogRows(st){
        A pinned build Thunderstore no longer has keeps its mark and starts unticked, so it is
        not offered as a plain add again; ticking it tries it once more. */
     const gone=!!r.notAvailable;
+    /* 1.3.1, issue 30: what the walk that marked the row learned about Hexium, and which way the
+       build was gone. A row Hexium has the build for (exact), or has other versions of (other),
+       is held: it has no tick, the review's own Install never installs it (the host is asked
+       per mod, on the row's own button) and it is never written to the unticks. */
+    const hexium=gone&&typeof r.hexium==="string"?r.hexium:null;
     rows.push({name:String(r.name),kind,profileVersion:r.profileVersion,serverVersion:r.serverVersion,
-      ticked:r.ticked===true&&r.kind!=="unticked"&&!gone,downgrade:!!r.downgrade,notAvailable:gone});
+      ticked:r.ticked===true&&r.kind!=="unticked"&&!gone,downgrade:!!r.downgrade,notAvailable:gone,
+      hexium,goneKind:gone&&typeof r.goneKind==="string"?r.goneKind:null,held:hexium==="exact"||hexium==="other"});
   }
   return {rows,disabled,onlyHere,same};
 }
@@ -7842,13 +7887,14 @@ function galeBepInEx(st){
 /* A row's tick as it stands in the open dialog: the host's own change if they made one, else
    the tick the host side started it with. */
 function galeModTicked(r){
+  if(r.held) return false;
   return Object.prototype.hasOwnProperty.call(GALE_MOD_TICKS,r.name)?!!GALE_MOD_TICKS[r.name]:!!r.ticked;
 }
 /* Every row of the Mods section that has a tick: the adds and updates, then the mods only this
    server has that are still on. One switched off already has nothing to tick. */
 function galeModTicks(st){
   const {rows,onlyHere}=galeDialogRows(st);
-  return rows.concat(onlyHere.filter(r=>!r.off)).map(r=>({row:r,ticked:galeModTicked(r)}));
+  return rows.filter(r=>!r.held).concat(onlyHere.filter(r=>!r.off)).map(r=>({row:r,ticked:galeModTicked(r)}));
 }
 /* The config files that have a tick, with the open dialog's ticks laid over the host side's. */
 function galeCfgTicks(st){
@@ -7925,14 +7971,39 @@ function galeVersionHtml(r){
     ?` <span class="galeold" title="${esc(T("mods.testcopy.dialog.changed.title"))}">${esc(T("mods.testcopy.dialog.changed"))}</span>`:"";
   return v+rebuilt+
     (r.downgrade?` <span class="galeold" title="${esc(T("mods.gale.dialog.older.title"))}">${esc(T("mods.gale.dialog.older"))}</span>`:"")+
-    (r.notAvailable?` <span class="galeold" title="${esc(T("mods.gale.dialog.not_available.title"))}">${esc(T("mods.gale.dialog.not_available"))}</span>`:"");
+    galeGoneTagHtml(r);
+}
+/* The mark on a row Thunderstore did not have, and the sentence that says why and what to do
+   (1.3.1, issue 30). A build the site took away keeps the words it always had; a package the
+   site never had says so, with what Hexium said about it; a build Hexium has says that. */
+function galeGoneTagHtml(r){
+  if(!r.notAvailable) return "";
+  const tag=(word,tip)=>` <span class="galeold galegone" title="${esc(tip)}">${esc(word)}</span>`;
+  if(r.hexium==="exact") return tag(T("mods.gale.dialog.on_hexium"),T("mods.gale.dialog.on_hexium.title"));
+  if(r.hexium==="other")
+    return tag(T("mods.gale.dialog.on_hexium_other"),T("mods.gale.dialog.on_hexium_other.title",{version:String(r.profileVersion||"")}));
+  if(r.goneKind==="noPackage")
+    return tag(T("mods.gale.dialog.not_on_thunderstore"),
+      r.hexium==="none"?T("mods.gale.dialog.not_on_thunderstore.none.title")
+      :r.hexium==="off"?T("mods.gale.dialog.not_on_thunderstore.off.title")
+      :T("mods.gale.dialog.not_on_thunderstore.unreachable.title"));
+  return tag(T("mods.gale.dialog.not_available"),T("mods.gale.dialog.not_available.title"));
+}
+/* A held row's one way to move, under its name: Install from Hexium runs the existing ask-first
+   flow for this mod alone, and Open on Hexium only opens the page. */
+function galeHexiumBtnHtml(r){
+  if(r.hexium==="exact")
+    return `<div class="galehexbtn"><button type="button" class="btn btn-ghost btn-sm" data-gale-hexium="${esc(r.name)}" title="${esc(T("mods.gale.dialog.on_hexium.title"))}">${esc(T("mods.gale.dialog.on_hexium.install"))}</button></div>`;
+  if(r.hexium==="other")
+    return `<div class="galehexbtn"><button type="button" class="btn btn-ghost btn-sm" data-gale-hexium-page="${esc(r.name)}">${esc(T("mods.gale.dialog.on_hexium.open"))}</button></div>`;
+  return "";
 }
 /* The Mods section: one table, ticks first, the mod, its state and its version or versions. */
 function galeModsHtml(st){
   const {rows,disabled,onlyHere,same}=galeDialogRows(st);
   const tick=(r,label)=>`<input type="checkbox" data-gale-row="${esc(r.name)}"${galeModTicked(r)?" checked":""} aria-label="${esc(label)}">`;
   const work=rows.map(r=>
-    `<tr><td>${tick(r,T("mods.gale.dialog.tick.aria",{name:r.name}))}</td><td class="mono">${esc(r.name)}</td>`+
+    `<tr><td>${r.held?"":tick(r,T("mods.gale.dialog.tick.aria",{name:r.name}))}</td><td class="mono">${esc(r.name)}${galeHexiumBtnHtml(r)}</td>`+
     `<td><span class="galestate ${r.kind==="add"?"add":"update"}">${esc(r.kind==="add"?T("mods.gale.dialog.state.add"):T("mods.gale.dialog.state.update"))}</span></td>`+
     `<td class="mono">${galeVersionHtml(r)}</td></tr>`).join("");
   const here=onlyHere.map(r=>
@@ -8220,6 +8291,10 @@ async function galeRunTicked(st,plan){
 function galeDialogClick(e){
   const t=e&&e.target;
   if(!t||typeof t.closest!=="function") return;
+  const hex=t.closest("[data-gale-hexium]");
+  if(hex){if(!hex.disabled) galeHexiumInstall(hex.getAttribute("data-gale-hexium"));return;}
+  const hexPage=t.closest("[data-gale-hexium-page]");
+  if(hexPage){if(!hexPage.disabled) galeHexiumPage(hexPage.getAttribute("data-gale-hexium-page"));return;}
   const sect=t.closest("[data-gale-sect]");
   if(sect){
     const key=sect.getAttribute("data-gale-sect");
@@ -8275,6 +8350,40 @@ function galeDialog(){
   galeConfigsLoad(false);
   return m;
 }
+/* A row's "Namespace-Name" split at its first hyphen, the way galeModUrl reads it. */
+function galeOwnerName(name){
+  const s=String(name||""), dash=s.indexOf("-");
+  return dash>0?{owner:s.slice(0,dash),name:s.slice(dash+1)}:{owner:"",name:s};
+}
+/* Install from Hexium on a row of the review (1.3.1, issue 30): the Mods hall's own ask-first
+   flow for this one mod. Every press asks mods.hexiumPrepare again and uses the token it hands
+   back, never one kept from earlier, which may have gone stale while the review sat open. The
+   consent dialog takes the review's place; once the install is done gale.rescan reads the disk
+   so the row leaves the list, and the review comes back for whatever is left. */
+async function galeHexiumInstall(name){
+  const st=GALE_DLG_ST;
+  if(!st||GALE_INSTALLING||S.modsUpdating||S.modsScanning) return;
+  const r=galeDialogRows(st).rows.find(x=>x.name===name&&x.hexium==="exact");
+  if(!r) return;
+  if(!Native.available){toast("ᚺ "+T("mods.hexium.preview.toast"));return;}
+  const id=galeOwnerName(r.name), profile=st.profile;
+  const pay=await rpc("mods.hexiumPrepare",{owner:id.owner,name:id.name,version:r.profileVersion});
+  if(pay===FAIL||!pay) return;
+  if(!pay.NeedsConsent){hexiumFailToast(pay);return;}
+  hexiumConsentModal(pay,async()=>{
+    await doInstallFromHexium(pay);
+    const re=await Native.call("gale.rescan",{profile}).catch(()=>null);
+    if(!re||!re.state||!galeApply(re.state)) renderGaleBox();
+    if(isActiveProfile(profile)&&GALE&&galeReviewable(GALE)&&!modalIsOpen()) galeDialog();
+  });
+}
+/* Open on Hexium on a row whose pinned version Hexium does not have: the page only. */
+function galeHexiumPage(name){
+  const id=galeOwnerName(name);
+  if(!Native.available||!id.owner) return;
+  Native.call("shell.openHexium",{owner:id.owner,name:id.name})
+    .catch(err=>toast("ᚦ "+T("mods.page.hexium.failed.toast",{detail:(err&&err.message)||T("common.error.unknown")})));
+}
 /* The pinned address the Mods hall's add already reads: a version page, never "latest". */
 function galeModUrl(name,version){
   const dash=name.indexOf("-");
@@ -8299,6 +8408,8 @@ function modNotAvailableText(r){
   if(!r||r.Reason!=="notAvailable") return null;
   const p=r.ErrorParams||{};
   const mod=p.mod||(r.Owner&&r.Name?r.Owner+"-"+r.Name:"");
+  /* A package Thunderstore never had is not a removed one (1.3.1, issue 30). */
+  if(p.kind==="noPackage") return T("mods.add.not_on_thunderstore.toast",{mod,version:p.version||r.Version||""});
   return T("mods.add.not_available.toast",{mod,version:p.version||r.Version||""});
 }
 /* Answers {stopped} so the configs after it know whether the walk was cut short. */
@@ -8323,7 +8434,7 @@ async function galeInstall(st,ticked,unticked){
   if(galeLocal(st)) return galePullLocal(st,ticked);
   GALE_INSTALLING=true; renderGaleBox();
   S.modsUpdating=true; S.modRowStatus=S.modRowStatus||{};
-  let done=0, failed=0, missing=0, stopped=false;
+  let done=0, failed=0, missing=0, hexium=0, stopped=false;
   /* BepInEx first, through the Mods hall's own write, with this Install as the host's answer.
      The write's own progress opens the way it does inside the hall's add. Nothing else goes
      in when it does not land. */
@@ -8355,7 +8466,10 @@ async function galeInstall(st,ticked,unticked){
       const why=a===FAIL||!a?null:galeFailSentence(a);
       /* Gone from Thunderstore is said and counted on its own: the host side has marked the
          row for the next review, and the rest of the walk goes on. */
-      if(a&&a!==FAIL&&a.Reason==="notAvailable") missing++; else failed++;
+      /* A gone build Hexium has is not missing: it waits on the row's own Install from Hexium,
+         which asks the host first, one mod at a time (issue 30). */
+      if(a&&a!==FAIL&&a.Reason==="notAvailable"){if(a.hexium==="exact") hexium++; else missing++;}
+      else failed++;
       S.modRowStatus[r.name]={phase:"failed",error:why};
       if(why) toast("ᚦ "+why);
       if(a&&a!==FAIL&&GALE_STOPS.includes(a.Reason)){stopped=true;break;}
@@ -8370,19 +8484,25 @@ async function galeInstall(st,ticked,unticked){
   if(!failed&&!stopped){
     const d=await Native.call("gale.dismiss",{profile,seq}).catch(()=>null);
     if(d&&d.state) galeApply(d.state);
-    toast(missing
+    if(done||missing||!hexium) toast(missing
       ?"ᚨ "+T("mods.gale.install.summary.toast",{done,missing})
       :"ᚨ "+T("mods.gale.install.done.toast",{count:done}));
+    if(hexium) toast("ᚺ "+T("mods.gale.install.hexium.toast",{count:hexium}));
   }else{
     if(!stopped||done) toast("ᚦ "+(missing
-      ?T("mods.gale.install.partial.missing.toast",{done,missing,left:ticked.length-done-missing})
-      :T("mods.gale.install.partial.toast",{done,left:ticked.length-done})));
+      ?T("mods.gale.install.partial.missing.toast",{done,missing,left:ticked.length-done-missing-hexium})
+      :T("mods.gale.install.partial.toast",{done,left:ticked.length-done-hexium})));
+    if(hexium) toast("ᚺ "+T("mods.gale.install.hexium.toast",{count:hexium}));
     /* No stamp, so the row stays for what is left. The mods that did go in are on the disk
        now, and the counts and the list are made again against it, so Review never offers
        them a second time. Gale is not asked. */
     const r=await Native.call("gale.rescan",{profile}).catch(()=>null);
     if(!r||!r.state||!galeApply(r.state)) renderGaleBox();
   }
+  /* The row pills this walk wrote go when it ends, the way Update all's do: the toasts said what
+     happened, and a gone build keeps its mark in the review, which is that mark's job. A Failed
+     pill left behind outlived the walk and every later install by another road (issue 30). */
+  for(const r of ticked) if(S.modRowStatus) delete S.modRowStatus[r.name];
   if(isActiveProfile(profile)) await scanMods({force:false});
   return {stopped};
 }

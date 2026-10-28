@@ -18,6 +18,66 @@ namespace ValheimBakaLoader.Game
     }
 
     /// <summary>
+    /// What a Gale walk learned about one pinned build Thunderstore did not have (1.3.1, issue
+    /// 30): which way it was gone, and what Hexium said when it was asked. Kept beside the
+    /// GaleNotAvailable mark of the same "Namespace-Name@version" so the review reads the answer
+    /// instead of asking Hexium again every time it opens. The JSON names are a never-rename
+    /// contract like every other key in the profile.
+    /// </summary>
+    public sealed class GaleHexiumMark
+    {
+        /// <summary>"Namespace-Name", as the Gale profile names it.</summary>
+        [Newtonsoft.Json.JsonProperty("mod")] public string Mod { get; set; }
+
+        /// <summary>The version the profile pins.</summary>
+        [Newtonsoft.Json.JsonProperty("version")] public string Version { get; set; }
+
+        /// <summary>"noPackage" (Thunderstore has no package by this name) or "noVersion" (it has the package, not this build). Null when it was not told.</summary>
+        [Newtonsoft.Json.JsonProperty("kind")] public string Kind { get; set; }
+
+        /// <summary>"exact", "other", "none" or "unreachable"; null when Hexium was not asked (the switch was off, or the realm changed first).</summary>
+        [Newtonsoft.Json.JsonProperty("hexium")] public string Hexium { get; set; }
+
+        public const string Exact = "exact";
+        public const string Other = "other";
+        public const string None = "none";
+        public const string Unreachable = "unreachable";
+
+        private static readonly string[] Kinds = { "noPackage", "noVersion" };
+        private static readonly string[] Answers = { Exact, Other, None, Unreachable };
+
+        /// <summary>The key the mark is found by, the same one GaleNotAvailable uses.</summary>
+        public string Key => $"{Mod?.Trim()}@{Version?.Trim()}";
+
+        /// <summary>
+        /// Trimmed, one per key (the last one written wins), with a word this build does not know
+        /// read as null rather than trusted. Never null. A hand-edited or newer file can only make
+        /// a row say less, never offer an install it should not.
+        /// </summary>
+        public static List<GaleHexiumMark> Normalize(IEnumerable<GaleHexiumMark> marks)
+        {
+            var kept = new List<GaleHexiumMark>();
+            var at = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var m in marks ?? Array.Empty<GaleHexiumMark>())
+            {
+                var mod = m?.Mod?.Trim();
+                var version = m?.Version?.Trim();
+                if (string.IsNullOrEmpty(mod) || string.IsNullOrEmpty(version)) continue;
+                var clean = new GaleHexiumMark
+                {
+                    Mod = mod,
+                    Version = version,
+                    Kind = Kinds.FirstOrDefault(k => string.Equals(k, m.Kind?.Trim(), StringComparison.OrdinalIgnoreCase)),
+                    Hexium = Answers.FirstOrDefault(a => string.Equals(a, m.Hexium?.Trim(), StringComparison.OrdinalIgnoreCase)),
+                };
+                if (at.TryGetValue(clean.Key, out var i)) kept[i] = clean;
+                else { at[clean.Key] = kept.Count; kept.Add(clean); }
+            }
+            return kept;
+        }
+    }
+
+    /// <summary>
     /// One saved server profile with all defaults applied. Round-trips to
     /// disk through <see cref="ServerPreferencesFile"/>.
     /// </summary>
@@ -325,6 +385,15 @@ namespace ValheimBakaLoader.Game
         public List<string> GaleNotAvailable { get; set; } = new();
 
         /// <summary>
+        /// Beside each GaleNotAvailable mark that a walk made from 1.3.1 on: which way the build
+        /// was gone and what Hexium said, asked once by the walk and never by the review. Taken
+        /// off with the mark when the build goes in by any road. Never null on a loaded profile;
+        /// an older file without it reads as empty, and a mark with no entry here reads the way
+        /// it did in 1.3.0.
+        /// </summary>
+        public List<GaleHexiumMark> GaleHexium { get; set; } = new();
+
+        /// <summary>
         /// The config files (paths under BepInEx/config, forward slashes) the host unticked in
         /// the configs part of the Gale dialog. Shown unticked on every later review until the
         /// host ticks them again, and never written while unticked. Never null on a loaded profile.
@@ -502,6 +571,7 @@ namespace ValheimBakaLoader.Game
             GaleLastUpdatedAt = stored.GaleLastUpdatedAt;
             GaleUnticked = NormalizeUnticked(stored.GaleUnticked);
             GaleNotAvailable = NormalizeUnticked(stored.GaleNotAvailable);
+            GaleHexium = GaleHexiumMark.Normalize(stored.GaleHexium);
             GaleConfigUnticked = NormalizeUnticked(stored.GaleConfigUnticked);
             GaleTicked = NormalizeTicked(stored.GaleTicked);
             GaleConfigTicked = NormalizeTicked(stored.GaleConfigTicked);
@@ -528,6 +598,7 @@ namespace ValheimBakaLoader.Game
             GaleLastUpdatedAt = null;
             GaleUnticked = NormalizeUnticked(GaleUnticked);
             GaleNotAvailable = NormalizeUnticked(GaleNotAvailable);
+            GaleHexium = GaleHexiumMark.Normalize(GaleHexium);
             GaleConfigUnticked = NormalizeUnticked(GaleConfigUnticked);
             GaleTicked = NormalizeTicked(GaleTicked);
             GaleConfigTicked = NormalizeTicked(GaleConfigTicked);
@@ -745,6 +816,7 @@ namespace ValheimBakaLoader.Game
                 GaleLastUpdatedAt = string.IsNullOrWhiteSpace(file.GaleLastUpdatedAt) ? defaults.GaleLastUpdatedAt : file.GaleLastUpdatedAt,
                 GaleUnticked = NormalizeUnticked(file.GaleUnticked),
                 GaleNotAvailable = NormalizeUnticked(file.GaleNotAvailable),
+                GaleHexium = GaleHexiumMark.Normalize(file.GaleHexium),
                 GaleConfigUnticked = NormalizeUnticked(file.GaleConfigUnticked),
                 GaleTicked = NormalizeTicked(file.GaleTicked),
                 GaleConfigTicked = NormalizeTicked(file.GaleConfigTicked),
@@ -837,6 +909,7 @@ namespace ValheimBakaLoader.Game
             // that has never followed a profile, and null reads back as an empty list.
             GaleUnticked = NormalizeUnticked(GaleUnticked) is { Count: > 0 } kept ? kept : null,
             GaleNotAvailable = NormalizeUnticked(GaleNotAvailable) is { Count: > 0 } gone ? gone : null,
+            GaleHexium = GaleHexiumMark.Normalize(GaleHexium) is { Count: > 0 } asked ? asked : null,
             GaleConfigUnticked = NormalizeUnticked(GaleConfigUnticked) is { Count: > 0 } left ? left : null,
             // Unlike the untick lists, an empty ticked list is written as one: it says a choice
             // was stored under the 1.3.0 rule, where null says none has been yet.

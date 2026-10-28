@@ -83,6 +83,9 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.False(result.Installed);
             Assert.Equal(ModInstallResult.NotAvailableReason, result.Reason);
             Assert.Equal("notAvailable", result.Reason);
+            // The package is there and deprecated: the build was taken away (1.3.1 tells this
+            // apart from a package the site never had).
+            Assert.Equal(ModInstallResult.NoVersionKind, result.GoneKind);
             Assert.Equal(Sentence, result.Error);
             Assert.Equal("1.8.4", result.Version);
             // The page is asked once, after the download, and nothing else is.
@@ -104,6 +107,7 @@ namespace ValheimBakaLoader.Tests.Tools
             var result = await service.InstallFromThunderstoreAsync(Pinned(), Plugins);
 
             Assert.Equal("notAvailable", result.Reason);
+            Assert.Equal(ModInstallResult.NoVersionKind, result.GoneKind);
             Assert.Equal(Sentence, result.Error);
             Assert.Equal(1, provider.Handler.Requests.Count(u => u == PackagePage));
         }
@@ -123,6 +127,39 @@ namespace ValheimBakaLoader.Tests.Tools
             var result = await service.InstallFromThunderstoreAsync(Pinned(), Plugins);
 
             Assert.Equal("notAvailable", result.Reason);
+        }
+
+        [Fact]
+        public async Task A_404_on_the_package_page_itself_is_a_package_Thunderstore_never_had()
+        {
+            // 1.3.1, issue 30: a mod published only on another site. Made-up names.
+            const string download = "https://thunderstore.io/package/download/Owner/Package/1.2.3/";
+            const string page = "https://thunderstore.io/api/experimental/package/Owner/Package/";
+            var (service, provider) = Service(r => r.RequestUri!.ToString() switch
+            {
+                download => new HttpResponseMessage(HttpStatusCode.NotFound),
+                page => new HttpResponseMessage(HttpStatusCode.NotFound),
+                _ => new HttpResponseMessage(HttpStatusCode.NotImplemented),
+            });
+
+            var result = await service.InstallFromThunderstoreAsync(
+                new ThunderstoreModReference { Owner = "Owner", Name = "Package", Version = "1.2.3" }, Plugins);
+
+            Assert.False(result.Installed);
+            Assert.Equal("notAvailable", result.Reason);
+            Assert.Equal(ModInstallResult.NoPackageKind, result.GoneKind);
+            Assert.Equal("Owner-Package 1.2.3: Thunderstore has no package by this name; "
+                + "Gale on the players' machines may still carry it", result.Error);
+            Assert.Equal(new[] { download, page }, provider.Handler.Requests);
+        }
+
+        [Fact]
+        public void The_never_there_sentence_matches_the_catalog()
+        {
+            var en = Newtonsoft.Json.Linq.JObject.Parse(AppSourceTree.Web("i18n/en.json"));
+            var lore = en["keys"]!["mods.add.not_on_thunderstore.toast"]!.Value<string>("lore");
+            Assert.Equal(ModUpdateService.NotAvailableSentence("Owner-Package", "1.2.3", ModInstallResult.NoPackageKind) + ".",
+                lore.Replace("{mod}", "Owner-Package").Replace("{version}", "1.2.3"));
         }
 
         [Fact]

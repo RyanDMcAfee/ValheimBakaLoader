@@ -34,6 +34,9 @@
  *   8. The sidebar's sub-menus (1.3.0): the dropdown under the hall on screen is drawn hidden and
  *      rolls through reveal; the hover flyout slides out from behind the rail and leaves through
  *      fadeGhost; under reduced motion both are plain fades and the ring's sheen holds still.
+ *   9. A Mods row's status pill (1.3.1, issue 30): the table is drawn whole on every redraw, so
+ *      renderMods reads each row's status words first and a pill whose words changed fades them
+ *      in through revealText; the record names it and the Gale review's Install from Hexium.
  *
  * Prints one line per rule and exits non zero on any failure.
  *
@@ -270,6 +273,18 @@ test("8. the sidebar's sub-menus: the dropdown rolls, the flyout slides out and 
   const rm = CSS.slice(CSS.indexOf("@media (prefers-reduced-motion:reduce){\n  .subfly.open .subfly-panel"));
   assert.ok(rm.slice(0, rm.indexOf("\n}")).includes(".subfly.open .subfly-panel{animation:fadeIn .2s ease-out}"), "the flyout slides under reduced motion");
   assert.ok(RECORD.includes("`subSync` (1.3.0)") && RECORD.includes("`subFlyClose` (1.3.0)"), "docs/motion-sweep.md does not record the sub-menus");
+});
+
+test("9. a Mods row's status pill fades its new words in when the table is drawn again (1.3.1)", () => {
+  /* The table is rewritten whole, so the only way a pill's new words can fade is to read them
+     before and compare after; gale_hexium_selftest.js drives the two functions themselves. */
+  const render = body("function renderMods(){");
+  const before = render.indexOf('const statusWas=modStatusWords($("#modTable"));');
+  const write = render.indexOf('$("#modTable").innerHTML=shown.map(m=>modRowHtml(m,blind))');
+  const after = render.indexOf('modStatusFade($("#modTable"),statusWas);');
+  assert.ok(before >= 0 && write > before && after > write, "renderMods no longer reads the status words before the redraw and fades them after");
+  assert.ok(body("function modStatusFade(tb,was){").includes("revealText(p,words);"), "a status pill's new words no longer go through revealText");
+  assert.ok(RECORD.includes("`modStatusFade` in `renderMods` (1.3.1)") && RECORD.includes("`galeHexiumInstall` (1.3.1)"), "docs/motion-sweep.md does not record the 1.3.1 Mods row and Gale review changes");
 });
 
 console.log(failures.length === 0

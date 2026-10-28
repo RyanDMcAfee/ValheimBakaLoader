@@ -2167,6 +2167,9 @@
     "mods.row.failed.nodetail": {
       "translation": "[Ẋ Failed Ẋ] ẊẊ"
     },
+    "mods.row.failed.short": {
+      "translation": "[Ẋ Failed, hover for why Ẋ] ẊẊẊẊẊẊẊ"
+    },
     "mods.mark.hexium_newer": {
       "translation": "[Ẋ newer on Hexium Ẋ] ẊẊẊẊẊ"
     },
@@ -2416,6 +2419,50 @@
     },
     "mods.gale.dialog.not_available.title": {
       "translation": "[Ẋ Thunderstore no longer has this version: the package is deprecated or the version was removed. Tick it to try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.on_hexium": {
+      "translation": "[Ẋ on Hexium Ẋ] ẊẊẊ"
+    },
+    "mods.gale.dialog.on_hexium.title": {
+      "translation": "[Ẋ Thunderstore does not have this build and Hexium does. Install from Hexium asks first, one mod at a time. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.on_hexium.install": {
+      "translation": "[Ẋ Install from Hexium Ẋ] ẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.on_hexium.open": {
+      "translation": "[Ẋ Open on Hexium Ẋ] ẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.on_hexium_other": {
+      "translation": "[Ẋ on Hexium, another version Ẋ] ẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.on_hexium_other.title": {
+      "translation": "[Ẋ The profile pins {version}. Hexium has this mod but not that version, so nothing installs from here. Open it on Hexium to see what it offers. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      }
+    },
+    "mods.gale.dialog.not_on_thunderstore": {
+      "translation": "[Ẋ not on Thunderstore Ẋ] ẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.not_on_thunderstore.none.title": {
+      "translation": "[Ẋ Thunderstore has no package by this name, and Hexium has none by this name either. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.not_on_thunderstore.unreachable.title": {
+      "translation": "[Ẋ Thunderstore has no package by this name, and Hexium could not be asked. Tick it to try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.dialog.not_on_thunderstore.off.title": {
+      "translation": "[Ẋ Thunderstore has no package by this name. Turn on Also check Hexium in Upkeep, then tick it to look there too. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.gale.install.hexium.toast": {
+      "translation": {
+        "one": "[Ẋ {count} mod is not on Thunderstore and Hexium has the build. Press Review and use Install from Hexium on its row. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} mods are not on Thunderstore and Hexium has the builds. Press Review and use Install from Hexium on each row. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      },
+      "mark": "ᚺ"
     },
     "mods.gale.install.summary.toast": {
       "translation": "[Ẋ Gale profile applied: {done} installed, {missing} no longer on Thunderstore and marked on the list. The installed ones load the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
@@ -2853,6 +2900,13 @@
     },
     "mods.add.not_available.toast": {
       "translation": "[Ẋ {mod} {version} is no longer on Thunderstore (the package is deprecated or that version was removed); Gale on the players' machines may still carry it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text",
+        "version": "text"
+      }
+    },
+    "mods.add.not_on_thunderstore.toast": {
+      "translation": "[Ẋ {mod} {version}: Thunderstore has no package by this name; Gale on the players' machines may still carry it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
       "params": {
         "mod": "text",
         "version": "text"

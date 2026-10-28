@@ -1096,6 +1096,10 @@ polyline.sl{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:roun
    the coloured ones; it is built like the rest of them so it reads as a pill and not as
    bare text somebody forgot to style. */
 .pill.grey{background:rgba(154,146,127,.14);color:var(--bone-dim);border:1px solid rgba(154,146,127,.4)}
+/* A Mods row's Failed pill keeps to its status cell (issue 30). The page already says the short
+   words for a long sentence, which stays whole in the tooltip; this is the second net for a
+   language that makes even the short words long. */
+#modTable td.modstat .pill.rowfail{display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 /* The chip on a mod row that came from the second site, and the mark on the Latest cell
    that says the other site is ahead. Both are quieter than a pill on purpose: they are a
    note about where files came from, not the row's status. The mark is the offer as well
@@ -2148,6 +2152,10 @@ select option,select optgroup{background:var(--iron-deeper);color:var(--bone)}
 .modal .galestate.update{color:var(--amber)}
 .modal .galestate.here{color:var(--cold-hi)}
 .modal .galecfgsame .galetbl{margin-top:2px}
+/* A row whose build only Hexium has (1.3.1, issue 30): its one button sits under the name, so the
+   state and version columns keep their widths in every language. */
+.modal .galetbl .galehexbtn{margin-top:4px;font-family:var(--sans)}
+.modal .galetbl .galehexbtn .btn{max-width:100%;white-space:normal;text-align:left}
 .modal .galecfgrow,.modal .galeherow{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;color:var(--bone)}
 .modal .galecfgrow input{accent-color:var(--ember);flex:none}
 .modal .galecfgpath{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}

@@ -129,6 +129,7 @@ namespace ValheimBakaLoader.Forms
                         prefs.GaleLastUpdatedAt = null;
                         prefs.GaleUnticked = new List<string>();
                         prefs.GaleNotAvailable = new List<string>();
+                        prefs.GaleHexium = new List<GaleHexiumMark>();
                         prefs.GaleConfigUnticked = new List<string>();
                         prefs.GaleTicked = null;
                         prefs.GaleConfigTicked = null;
@@ -302,21 +303,83 @@ namespace ValheimBakaLoader.Forms
         /// Marks a pinned build of a mod as gone from Thunderstore on a realm's follow, or takes
         /// the mark off once that build went in. Keyed by version, so a profile that moves to a
         /// new version offers the mod again. Quiet on a realm that would not read.
+        /// <para>
+        /// From 1.3.1 (issue 30) the mark has a note beside it in GaleHexium: which way the build
+        /// was gone (<paramref name="kind"/>) and what Hexium said (<paramref name="hexium"/>, null
+        /// when it was not asked). The note is written again on every walk that tries the build,
+        /// so a row the host ticks again is asked again, and a review that only reads never asks.
+        /// The build going in by any road takes the mark and the note off together.
+        /// </para>
         /// </summary>
-        private void MarkGaleNotAvailable(string profile, string mod, string version, bool gone)
+        private void MarkGaleNotAvailable(string profile, string mod, string version, bool gone,
+            string kind = null, string hexium = null)
         {
             var prefs = LoadGalePrefs(profile);
             if (prefs == null || string.IsNullOrWhiteSpace(prefs.GaleProfileId)) return;
             var key = GaleNotAvailableKey(mod, version);
             var marks = ServerPreferences.NormalizeUnticked(prefs.GaleNotAvailable);
             var had = marks.Contains(key, StringComparer.OrdinalIgnoreCase);
-            if (gone == had) return;
+            var notes = GaleHexiumMark.Normalize(prefs.GaleHexium);
+            var kept = notes.Where(n => !string.Equals(n.Key, key, StringComparison.OrdinalIgnoreCase));
+            var after = GaleHexiumMark.Normalize(gone
+                ? kept.Append(new GaleHexiumMark { Mod = mod, Version = version, Kind = kind, Hexium = hexium })
+                : kept);
+            static string Said(IEnumerable<GaleHexiumMark> list) =>
+                string.Join("|", list.Select(n => $"{n.Key}={n.Kind}/{n.Hexium}"));
+            if (gone == had && Said(notes) == Said(after)) return;
             prefs.GaleNotAvailable = gone
-                ? marks.Append(key).ToList()
+                ? (had ? marks : marks.Append(key).ToList())
                 : marks.Where(k => !string.Equals(k, key, StringComparison.OrdinalIgnoreCase)).ToList();
+            prefs.GaleHexium = after;
             try { ServerPrefsProvider.SavePreferences(prefs); }
             catch (Exception e) { AppLogger?.Debug("Could not note {0} on the Gale follow of {1}: {2}", key, profile, e.Message); }
         }
+
+        /// <summary>Whether Also check Hexium is on. Off, or unreadable, is off: nothing reaches hexium.gg then.</summary>
+        private bool GaleHexiumSwitchOn()
+        {
+            try { return UserPrefsProvider?.LoadPreferences()?.UseHexiumSource == true; }
+            catch (Exception e)
+            {
+                AppLogger?.Debug("Could not read the Hexium switch for the Gale follow: {0}", e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Asks Hexium once about a build a Gale walk found gone from Thunderstore (1.3.1, issue
+        /// 30). Only with Also check Hexium on, and only while the walk's realm is still the one
+        /// on screen, so a walk the host switched away from asks nothing more for the old realm.
+        /// The answer is "exact" (Hexium has this build), "other" (it has the package, not this
+        /// version), "none" or "unreachable"; null when it did not ask. Never throws. The review
+        /// never calls this: it reads what the walk stored.
+        /// </summary>
+        private async Task<string> GaleHexiumAnswerAsync(string profile, string mod, string version)
+        {
+            if (HexiumClient == null || !GaleHexiumSwitchOn()) return null;
+            if (!string.Equals(profile?.Trim(), ActiveProfileName, StringComparison.OrdinalIgnoreCase)) return null;
+            try
+            {
+                var lookup = await HexiumClient.LookupAsync(mod?.Trim());
+                if (lookup == null || !lookup.IndexAvailable) return GaleHexiumMark.Unreachable;
+                if (!lookup.Found) return GaleHexiumMark.None;
+                return lookup.Package.Find(version?.Trim()) != null ? GaleHexiumMark.Exact : GaleHexiumMark.Other;
+            }
+            catch (Exception e)
+            {
+                AppLogger?.Debug("Hexium could not be asked about {0} {1}: {2}", mod, version, e.Message);
+                return GaleHexiumMark.Unreachable;
+            }
+        }
+
+        /// <summary>
+        /// What a gone row says about Hexium: "off" while the switch is off (nothing can be fetched
+        /// or opened there then, whatever was learned before), the walk's answer when it asked, and
+        /// "unreachable" for a mark Hexium was never asked about (one made in 1.3.0, or while the
+        /// switch was off), whose row says to tick it to try again, which is what asks.
+        /// </summary>
+        internal static string GaleHexiumWord(GaleHexiumMark note, bool switchOn) =>
+            !switchOn ? "off" : note?.Hexium ?? GaleHexiumMark.Unreachable;
 
         internal static string GaleNotAvailableKey(string mod, string version) => $"{mod?.Trim()}@{version?.Trim()}";
 
@@ -345,6 +408,7 @@ namespace ValheimBakaLoader.Forms
             prefs.GaleLastUpdatedAt = null;
             prefs.GaleUnticked = new List<string>();
             prefs.GaleNotAvailable = new List<string>();
+            prefs.GaleHexium = new List<GaleHexiumMark>();
             prefs.GaleConfigUnticked = new List<string>();
             prefs.GaleTicked = null;
             prefs.GaleConfigTicked = null;
@@ -548,6 +612,12 @@ namespace ValheimBakaLoader.Forms
                 // mark, and neither counts nor raises the row until the profile pins another.
                 var gone = new HashSet<string>(prefs?.GaleNotAvailable ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
                 bool Gone(GaleDiffRow r) => gone.Contains(GaleNotAvailableKey(r.Name, r.ProfileVersion));
+                // What the walk that marked a row learned about it, read and never asked: opening
+                // the review twice asks Hexium nothing (issue 30).
+                var notes = GaleHexiumMark.Normalize(prefs?.GaleHexium).ToDictionary(n => n.Key, StringComparer.OrdinalIgnoreCase);
+                var hexiumOn = GaleHexiumSwitchOn();
+                GaleHexiumMark Note(GaleDiffRow r) =>
+                    notes.TryGetValue(GaleNotAvailableKey(r.Name, r.ProfileVersion), out var n) ? n : null;
                 // The tick a row starts with: only an add, an update or a rebuilt mod has one, and
                 // from 1.3.0 only one the host ticked before starts ticked (GaleStartsTicked keeps
                 // the older rule for a realm that has only the untick list so far). The ticked list
@@ -582,7 +652,9 @@ namespace ValheimBakaLoader.Forms
                     rows = diff == null
                         ? new List<object>()
                         : diff.Rows.Select(r => GaleRowDto(r, Gone(r), Ticked(r),
-                            r.Kind == GaleDiffKind.NotInProfile && here.TryGetValue(r.Name ?? "", out var m) ? m : null)).ToList(),
+                            r.Kind == GaleDiffKind.NotInProfile && here.TryGetValue(r.Name ?? "", out var m) ? m : null,
+                            Gone(r) ? GaleHexiumWord(Note(r), hexiumOn) : null,
+                            Gone(r) ? Note(r)?.Kind : null)).ToList(),
                     // What the configs part last found, so the Review link knows whether the
                     // dialog has anything there. Null until the configs part has been opened.
                     configChanges = GaleConfigChanges(profile, prefs),
@@ -637,10 +709,16 @@ namespace ValheimBakaLoader.Forms
             }
         }
 
-        private static object GaleRowDto(GaleDiffRow r, bool notAvailable, bool ticked, GaleInstalledMod? onServer) => new
+        private static object GaleRowDto(GaleDiffRow r, bool notAvailable, bool ticked, GaleInstalledMod? onServer,
+            string hexium = null, string goneKind = null) => new
         {
             name = r.Name,
             notAvailable,
+            // For a row marked gone from Thunderstore (1.3.1, issue 30): "exact", "other", "none",
+            // "unreachable" or "off" (GaleHexiumWord), and which way it was gone, "noPackage" or
+            // "noVersion" (null for a mark made before 1.3.1). Both null on every other row.
+            hexium,
+            goneKind,
             ticked,
             // For a server-only row: the scan's own FullName, which the switch looks the mod up
             // by, and whether it is switched off now. Null and false on every other row.

@@ -134,6 +134,8 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("galeLastUpdatedAt")] public string GaleLastUpdatedAt { get; set; }
         [JsonProperty("galeUnticked")] public List<string> GaleUnticked { get; set; }
         [JsonProperty("galeNotAvailable")] public List<string> GaleNotAvailable { get; set; }
+        // Since 1.3.1: which way each gone build was gone and what Hexium said. Never renamed.
+        [JsonProperty("galeHexium")] public List<GaleHexiumMark> GaleHexium { get; set; }
         [JsonProperty("galeConfigUnticked")] public List<string> GaleConfigUnticked { get; set; }
         [JsonProperty("galeTicked")] public List<string> GaleTicked { get; set; }
         [JsonProperty("galeConfigTicked")] public List<string> GaleConfigTicked { get; set; }

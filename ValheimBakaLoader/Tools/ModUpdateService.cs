@@ -88,6 +88,19 @@ namespace ValheimBakaLoader.Tools
         /// through, because trying again later fixes the second and never the first.
         /// </summary>
         public const string NotAvailableReason = "notAvailable";
+
+        /// <summary>
+        /// Which of the two ways a pinned build is gone (1.3.1, issue 30): Thunderstore has no
+        /// package by that name at all (<see cref="NoPackageKind"/>, the package page answers
+        /// 404), or the package is there and that build is not (<see cref="NoVersionKind"/>:
+        /// deprecated, or the version is not among the ones it lists). A mod that was only ever
+        /// published somewhere else looks like the first, and "removed" was the wrong word for
+        /// it. Null on every result that is not <see cref="NotAvailableReason"/>.
+        /// </summary>
+        public string GoneKind { get; init; }
+
+        public const string NoPackageKind = "noPackage";
+        public const string NoVersionKind = "noVersion";
     }
 
     /// <summary>
@@ -598,10 +611,12 @@ namespace ValheimBakaLoader.Tools
                 // A pinned download that answered 404 is either a build the site took away or a
                 // bad minute, and the package's own page tells the two apart. It is asked once,
                 // here, and only for this case: nothing on disk was touched at the download stage.
-                if (stage == "download" && IsNotFound(e) && !string.IsNullOrWhiteSpace(reference.Version)
-                    && await PinnedBuildGoneAsync(reference.Owner, reference.Name, reference.Version))
+                var gone = stage == "download" && IsNotFound(e) && !string.IsNullOrWhiteSpace(reference.Version)
+                    ? await PinnedBuildGoneAsync(reference.Owner, reference.Name, reference.Version)
+                    : null;
+                if (gone != null)
                 {
-                    Logger.Information("{0} {1} is no longer on Thunderstore.", reference.FolderName, reference.Version);
+                    Logger.Information("{0} {1} is not on Thunderstore ({2}).", reference.FolderName, reference.Version, gone);
                     return new ModInstallResult
                     {
                         Owner = reference.Owner,
@@ -609,7 +624,8 @@ namespace ValheimBakaLoader.Tools
                         Version = reference.Version,
                         Installed = false,
                         Reason = ModInstallResult.NotAvailableReason,
-                        Error = NotAvailableSentence($"{reference.Owner}-{reference.Name}", reference.Version),
+                        GoneKind = gone,
+                        Error = NotAvailableSentence($"{reference.Owner}-{reference.Name}", reference.Version, gone),
                     };
                 }
 
@@ -649,10 +665,17 @@ namespace ValheimBakaLoader.Tools
             return list.ToArray();
         }
 
-        /// <summary>The English sentence for a pinned build Thunderstore no longer has. The page words it from the catalog.</summary>
-        internal static string NotAvailableSentence(string mod, string version) =>
-            $"{mod} {version} is no longer on Thunderstore (the package is deprecated or that version was removed); "
-            + "Gale on the players' machines may still carry it";
+        /// <summary>
+        /// The English sentence for a pinned build Thunderstore does not have. The page words it
+        /// from the catalog: mods.add.not_available.toast for a build the site took away, and
+        /// mods.add.not_on_thunderstore.toast for a package the site never had, which is where a
+        /// mod published only on another site lands.
+        /// </summary>
+        internal static string NotAvailableSentence(string mod, string version, string kind = null) =>
+            kind == ModInstallResult.NoPackageKind
+                ? $"{mod} {version}: Thunderstore has no package by this name; Gale on the players' machines may still carry it"
+                : $"{mod} {version} is no longer on Thunderstore (the package is deprecated or that version was removed); "
+                  + "Gale on the players' machines may still carry it";
 
         /// <summary>The package page the pinned 404 is checked against: Thunderstore's experimental package endpoint.</summary>
         internal const string PackagePageFormat = "https://thunderstore.io/api/experimental/package/{0}/{1}/";
@@ -664,16 +687,18 @@ namespace ValheimBakaLoader.Tools
             e is HttpRequestException { StatusCode: System.Net.HttpStatusCode.NotFound };
 
         /// <summary>
-        /// Whether a pinned build that answered 404 is really gone. Asks the package page once,
-        /// through the same HTTP seam as the download. True when the page answers 404 itself
-        /// (the package is gone), when it says the package is deprecated, or when the version is
-        /// not among the ones it lists. The page lists versions only in some answers; where it
-        /// names just the latest, a pinned version that is not the latest and whose download
-        /// answered 404 is not there. False for anything the page did not say plainly (no
-        /// answer, an error, a body it could not read), and the plain failure sentence stands.
-        /// Never throws.
+        /// Whether a pinned build that answered 404 is really gone, and which way. Asks the
+        /// package page once, through the same HTTP seam as the download.
+        /// <see cref="ModInstallResult.NoPackageKind"/> when the page answers 404 itself (the site
+        /// has no package by that name, which is also what a mod never published there looks
+        /// like); <see cref="ModInstallResult.NoVersionKind"/> when it says the package is
+        /// deprecated or the version is not among the ones it lists. The page lists versions only
+        /// in some answers; where it names just the latest, a pinned version that is not the
+        /// latest and whose download answered 404 is not there. Null for anything the page did
+        /// not say plainly (no answer, an error, a body it could not read), and the plain failure
+        /// sentence stands. Never throws.
         /// </summary>
-        private async Task<bool> PinnedBuildGoneAsync(string owner, string name, string version)
+        private async Task<string> PinnedBuildGoneAsync(string owner, string name, string version)
         {
             try
             {
@@ -684,29 +709,29 @@ namespace ValheimBakaLoader.Tools
                     Uri.EscapeDataString(owner.Trim()), Uri.EscapeDataString(name.Trim()));
                 using var response = await client.GetAsync(url, deadline.Token);
 
-                if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return true;
-                if (!response.IsSuccessStatusCode) return false;
+                if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return ModInstallResult.NoPackageKind;
+                if (!response.IsSuccessStatusCode) return null;
 
                 var body = Newtonsoft.Json.Linq.JObject.Parse(await response.Content.ReadAsStringAsync());
-                if (body.Value<bool?>("is_deprecated") == true) return true;
+                if (body.Value<bool?>("is_deprecated") == true) return ModInstallResult.NoVersionKind;
 
                 bool Same(string v) => string.Equals(v?.Trim(), version.Trim(), StringComparison.OrdinalIgnoreCase);
 
                 if (body["versions"] is Newtonsoft.Json.Linq.JArray versions)
                 {
                     foreach (var v in versions)
-                        if (v is Newtonsoft.Json.Linq.JObject o && Same(o.Value<string>("version_number"))) return false;
-                    return true;
+                        if (v is Newtonsoft.Json.Linq.JObject o && Same(o.Value<string>("version_number"))) return null;
+                    return ModInstallResult.NoVersionKind;
                 }
 
                 var latest = (body["latest"] as Newtonsoft.Json.Linq.JObject)?.Value<string>("version_number");
-                if (string.IsNullOrWhiteSpace(latest)) return false;
-                return !Same(latest);
+                if (string.IsNullOrWhiteSpace(latest)) return null;
+                return Same(latest) ? null : ModInstallResult.NoVersionKind;
             }
             catch (Exception e)
             {
                 Logger.Debug("The package page did not answer about {0}-{1}: {2}", owner, name, e.Message);
-                return false;
+                return null;
             }
         }
 

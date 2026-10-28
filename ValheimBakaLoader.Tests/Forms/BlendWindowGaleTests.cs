@@ -944,11 +944,306 @@ namespace ValheimBakaLoader.Tests.Forms
             ((IUserPreferencesProvider)UserPrefs).Mutate(prefs =>
             {
                 prefs.Servers.First(s => s.ProfileName == Profile).GaleNotAvailable = new List<string> { "Azumatt-AzuCraftyBoxes@1.8.4" };
+                // 1.3.1: the note beside the mark goes with it.
+                prefs.Servers.First(s => s.ProfileName == Profile).GaleHexium = new List<GaleHexiumMark>
+                    { new() { Mod = "Azumatt-AzuCraftyBoxes", Version = "1.8.4", Kind = "noPackage", Hexium = "exact" } };
                 return true;
             });
             Assert.Single(Stored().GaleNotAvailable);
+            Assert.Single(Stored().GaleHexium);
 
             await Call("gale.set", new { profile = Profile, id = "ZZ99yy" });
+            Assert.Empty(Stored().GaleNotAvailable);
+            Assert.Empty(Stored().GaleHexium);
+        }
+
+        // ------------------------------------------------------------------ a build only on Hexium (1.3.1, issue 30)
+
+        // Made-up names: a mod Thunderstore never had, and one the server already runs.
+        private const string HexiumOnlyUrl = "https://thunderstore.io/c/valheim/p/Owner/Package/v/1.2.3/";
+
+        private static string HexiumMeta(string stamp) => Meta(stamp,
+            ("Owner-Package", true, 1, 2, 3),
+            ("Owner-Second", true, 2, 0, 0));
+
+        private async Task FollowHexiumProfile()
+        {
+            Install("Owner-Second", "2.0.0");
+            Handler.Body = HexiumMeta(Stamp1);
+            await Follow();
+            Assert.True((await Check())["check"]!.Value<bool>("ok"));
+        }
+
+        private void HexiumSwitch(bool on) =>
+            ((IUserPreferencesProvider)UserPrefs).Mutate(prefs => { prefs.UseHexiumSource = on; return true; });
+
+        private void ThunderstoreHasNo(string kind = ModInstallResult.NoPackageKind) =>
+            ModUpdates.Setup(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()))
+                .ReturnsAsync((ThunderstoreModReference r, string _) => new ModInstallResult
+                {
+                    Installed = false, Owner = r.Owner, Name = r.Name, Version = r.Version,
+                    Reason = ModInstallResult.NotAvailableReason, GoneKind = kind, Error = "gone",
+                });
+
+        private static HexiumLookup HexiumHas(params string[] versions) => new()
+        {
+            IndexAvailable = true,
+            Package = new HexiumPackage
+            {
+                Owner = "Owner",
+                Name = "Package",
+                Versions = versions.Select(v => new HexiumPackageVersion
+                    { VersionNumber = v, DownloadUrl = "https://hexium.gg/download/" + v }).ToList(),
+            },
+        };
+
+        private Task<JObject> GaleAdd() =>
+            Call("mods.addFromUrl", new { url = HexiumOnlyUrl, profile = Profile, requireStopped = true });
+
+        private async Task<JObject> ReviewRow(string name = "Owner-Package")
+        {
+            var check = (JObject)(await Call("gale.get", new { profile = Profile }))["check"];
+            return (JObject)check!["rows"]!.First(r => r.Value<string>("name") == name);
+        }
+
+        [Theory]
+        [InlineData("exact")]
+        [InlineData("other")]
+        [InlineData("none")]
+        [InlineData("unreachable")]
+        public async Task A_gone_build_asks_Hexium_once_on_the_walk_and_the_review_only_reads_the_answer(string answer)
+        {
+            HexiumSwitch(true);
+            ThunderstoreHasNo();
+            Hexium.Setup(h => h.LookupAsync("Owner-Package")).ReturnsAsync(answer switch
+            {
+                "exact" => HexiumHas("1.2.0", "1.2.3"),
+                "other" => HexiumHas("1.3.0"),
+                "none" => new HexiumLookup { IndexAvailable = true },
+                _ => new HexiumLookup { IndexAvailable = false, Error = "The Hexium index could not be read." },
+            });
+            await FollowHexiumProfile();
+
+            var a = await GaleAdd();
+
+            Assert.False(a.Value<bool>("Installed"));
+            Assert.Equal("notAvailable", a.Value<string>("Reason"));
+            Assert.Equal("noPackage", a["ErrorParams"]!.Value<string>("kind"));
+            Assert.Equal(answer, a.Value<string>("hexium"));
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Once);
+            Assert.Equal(new[] { "Owner-Package@1.2.3" }, Stored().GaleNotAvailable);
+            var note = Assert.Single(Stored().GaleHexium);
+            Assert.Equal(("Owner-Package", "1.2.3", "noPackage", answer), (note.Mod, note.Version, note.Kind, note.Hexium));
+
+            // The review reads the answer and asks nothing, however often it is opened.
+            var row = await ReviewRow();
+            await ReviewRow();
+            await Call("gale.rescan", new { profile = Profile });
+            Assert.True(row.Value<bool>("notAvailable"));
+            Assert.False(row.Value<bool>("ticked"));
+            Assert.Equal(answer, row.Value<string>("hexium"));
+            Assert.Equal("noPackage", row.Value<string>("goneKind"));
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Once);
+            Hexium.Verify(h => h.GetPackageAsync(It.IsAny<string>()), Times.Never);
+            // A row that is not gone carries no Hexium word.
+            var same = await ReviewRow("Owner-Second");
+            Assert.Null(same.Value<string>("hexium"));
+            Assert.Null(same.Value<string>("goneKind"));
+        }
+
+        [Fact]
+        public async Task An_unreachable_index_is_asked_again_only_when_the_walk_tries_the_build_again()
+        {
+            HexiumSwitch(true);
+            ThunderstoreHasNo();
+            Hexium.SetupSequence(h => h.LookupAsync("Owner-Package"))
+                .ReturnsAsync(new HexiumLookup { IndexAvailable = false, Error = "down" })
+                .ReturnsAsync(HexiumHas("1.2.3"));
+            await FollowHexiumProfile();
+
+            await GaleAdd();
+            Assert.Equal("unreachable", (await ReviewRow()).Value<string>("hexium"));
+            for (var i = 0; i < 3; i++) await ReviewRow();
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Once);
+
+            // The host ticked it again and pressed Install: the walk tries it, and asks again.
+            await GaleAdd();
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Exactly(2));
+            Assert.Equal("exact", (await ReviewRow()).Value<string>("hexium"));
+            Assert.Single(Stored().GaleHexium);
+            Assert.Single(Stored().GaleNotAvailable);
+        }
+
+        [Fact]
+        public async Task With_the_switch_off_the_walk_never_asks_Hexium_and_the_row_says_where_to_turn_it_on()
+        {
+            HexiumSwitch(false);
+            ThunderstoreHasNo();
+            await FollowHexiumProfile();
+
+            var a = await GaleAdd();
+
+            Assert.Equal("notAvailable", a.Value<string>("Reason"));
+            Assert.Null(a.Value<string>("hexium"));
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Never);
+            Hexium.Verify(h => h.GetPackageAsync(It.IsAny<string>()), Times.Never);
+            Hexium.Verify(h => h.RefreshAsync(), Times.Never);
+            var row = await ReviewRow();
+            Assert.Equal("off", row.Value<string>("hexium"));
+            Assert.Equal("noPackage", row.Value<string>("goneKind"));
+            Assert.Null(Stored().GaleHexium.Single().Hexium);
+
+            // Turned on later, the mark Hexium was never asked about reads "tick it to try again",
+            // and still nothing is asked until the walk tries it.
+            HexiumSwitch(true);
+            Assert.Equal("unreachable", (await ReviewRow()).Value<string>("hexium"));
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Never);
+
+            // And an answer learned while it was on reads "off" once it is off again.
+            Hexium.Setup(h => h.LookupAsync("Owner-Package")).ReturnsAsync(HexiumHas("1.2.3"));
+            await GaleAdd();
+            Assert.Equal("exact", (await ReviewRow()).Value<string>("hexium"));
+            HexiumSwitch(false);
+            Assert.Equal("off", (await ReviewRow()).Value<string>("hexium"));
+        }
+
+        [Fact]
+        public async Task A_plain_paste_of_a_gone_build_asks_Hexium_nothing_and_marks_nothing()
+        {
+            HexiumSwitch(true);
+            ThunderstoreHasNo();
+            await FollowHexiumProfile();
+
+            var a = await Call("mods.addFromUrl", new { url = HexiumOnlyUrl });
+
+            Assert.Equal("notAvailable", a.Value<string>("Reason"));
+            Assert.Equal("noPackage", a["ErrorParams"]!.Value<string>("kind"));
+            Assert.Null(a.Value<string>("hexium"));
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Never);
+            Assert.Empty(Stored().GaleNotAvailable);
+            Assert.Empty(Stored().GaleHexium);
+        }
+
+        [Fact]
+        public async Task A_realm_switch_during_the_add_asks_Hexium_nothing_for_the_old_realm()
+        {
+            HexiumSwitch(true);
+            await FollowHexiumProfile();
+            var current = typeof(BlendWindow).GetField("CurrentProfile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            ModUpdates.Setup(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()))
+                .ReturnsAsync((ThunderstoreModReference r, string _) =>
+                {
+                    // The host switched realms while the download was out.
+                    current.SetValue(Window, "Some Other Realm");
+                    return new ModInstallResult
+                    {
+                        Installed = false, Owner = r.Owner, Name = r.Name, Version = r.Version,
+                        Reason = ModInstallResult.NotAvailableReason, GoneKind = ModInstallResult.NoPackageKind,
+                    };
+                });
+
+            var a = await GaleAdd();
+
+            Assert.Equal("notAvailable", a.Value<string>("Reason"));
+            Assert.Null(a.Value<string>("hexium"));
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Never);
+
+            // And the next mod of the walk is refused before anything is fetched or asked.
+            var next = await GaleAdd();
+            Assert.Equal("realmChanged", next.Value<string>("Reason"));
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task An_install_from_Hexium_with_the_server_up_clears_both_marks_and_the_rescan_drops_the_row()
+        {
+            HexiumSwitch(true);
+            ThunderstoreHasNo();
+            Hexium.Setup(h => h.LookupAsync("Owner-Package")).ReturnsAsync(HexiumHas("1.2.3"));
+            typeof(BlendWindow).GetField("HexiumConsent", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(Window, new HexiumConsentGate());
+            await FollowHexiumProfile();
+            await GaleAdd();
+            Assert.Equal("exact", (await ReviewRow()).Value<string>("hexium"));
+
+            // The row's button runs the existing flow: prepare, the host's yes, the install.
+            PlantRunning(Profile);
+            var pay = await Call("mods.hexiumPrepare", new { owner = "Owner", name = "Package", version = "1.2.3" });
+            Assert.True(pay.Value<bool>("NeedsConsent"), pay.ToString());
+            ModUpdates.Setup(m => m.InstallFromHexiumAsync(It.IsAny<HexiumInstallPlan>(), It.IsAny<string>()))
+                .ReturnsAsync((HexiumInstallPlan plan, string _) =>
+                {
+                    Install("Owner-Package", plan.Version);
+                    return new ModInstallResult
+                    {
+                        Installed = true, Owner = plan.Owner, Name = plan.Name, Version = plan.Version,
+                        Source = ModSourceMarkerFile.HexiumSource,
+                    };
+                });
+            var r = await Call("mods.installFromHexium", new
+                { owner = "Owner", name = "Package", version = "1.2.3", token = pay.Value<string>("Token") });
+
+            Assert.True(r.Value<bool>("Installed"), r.ToString());
+            Assert.Empty(Stored().GaleNotAvailable);
+            Assert.Empty(Stored().GaleHexium);
+            var re = await Call("gale.rescan", new { profile = Profile });
+            var row = re["state"]!["check"]!["rows"]!.First(x => x.Value<string>("name") == "Owner-Package");
+            Assert.Equal("same", row.Value<string>("kind"));
+            Assert.False(row.Value<bool>("notAvailable"));
+            Assert.Null(row.Value<string>("hexium"));
+        }
+
+        [Fact]
+        public async Task A_later_Gale_install_of_the_build_clears_both_marks()
+        {
+            HexiumSwitch(true);
+            ThunderstoreHasNo();
+            Hexium.Setup(h => h.LookupAsync("Owner-Package")).ReturnsAsync(new HexiumLookup { IndexAvailable = true });
+            await FollowHexiumProfile();
+            await GaleAdd();
+            Assert.Single(Stored().GaleHexium);
+
+            ModUpdates.Setup(m => m.InstallFromThunderstoreAsync(It.IsAny<ThunderstoreModReference>(), It.IsAny<string>()))
+                .ReturnsAsync((ThunderstoreModReference r, string _) => new ModInstallResult { Installed = true, Owner = r.Owner, Name = r.Name, Version = r.Version });
+            await GaleAdd();
+
+            Assert.Empty(Stored().GaleNotAvailable);
+            Assert.Empty(Stored().GaleHexium);
+            Hexium.Verify(h => h.LookupAsync(It.IsAny<string>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task A_build_the_site_took_away_says_so_and_a_mark_from_before_reads_as_it_did()
+        {
+            HexiumSwitch(true);
+            ThunderstoreHasNo(ModInstallResult.NoVersionKind);
+            Hexium.Setup(h => h.LookupAsync("Owner-Package")).ReturnsAsync(new HexiumLookup { IndexAvailable = true });
+            await FollowHexiumProfile();
+
+            var a = await GaleAdd();
+            Assert.Equal("noVersion", a["ErrorParams"]!.Value<string>("kind"));
+            var row = await ReviewRow();
+            Assert.Equal("noVersion", row.Value<string>("goneKind"));
+            Assert.Equal("none", row.Value<string>("hexium"));
+
+            // A mark made by 1.3.0 has no note: it is still gone and unticked, with no kind, and
+            // the switch on reads "tick it to try again" until a walk asks.
+            ((IUserPreferencesProvider)UserPrefs).Mutate(prefs =>
+            {
+                var realm = prefs.Servers.First(s => s.ProfileName == Profile);
+                realm.GaleHexium = new List<GaleHexiumMark>();
+                return true;
+            });
+            var old = await ReviewRow();
+            Assert.True(old.Value<bool>("notAvailable"));
+            Assert.Null(old.Value<string>("goneKind"));
+            Assert.Equal("unreachable", old.Value<string>("hexium"));
+
+            // Forget takes the notes with the marks.
+            await GaleAdd();
+            Assert.Single(Stored().GaleHexium);
+            await Call("gale.forget", new { profile = Profile });
+            Assert.Empty(Stored().GaleHexium);
             Assert.Empty(Stored().GaleNotAvailable);
         }
 
