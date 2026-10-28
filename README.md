@@ -81,7 +81,16 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.3.0
+## What is new in 1.3.1
+
+- **Stop when empty.** Two switches beside Restart when empty in Settings > Advanced: stop the server after it has sat empty for the delay, with the world saved first, and shut Windows down after the stop if you ask. [Automatic restarts](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Automatic-restarts)
+- **A Gale profile mod that is only on Hexium** shows as on Hexium in the review, with its own Install from Hexium button that asks first, one mod at a time. [Gale profiles](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Gale-profiles)
+- **Toasts come back down after a dialog closes**, and a long failure note on a mod row reads short with the whole sentence on hover.
+- **The page comes back after a restore on a PC with two displays.** Restoring a maximized window from the taskbar could leave it blank until it was moved.
+
+This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
+## What was new in 1.3.0
 
 - **The sidebar opens into its sections.** Click the hall you are on and its sections roll down as round bronze buttons; press one and it opens alone, landed in view. Rest on another hall and its buttons slide out beside it. [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes)
 - **Every section heading stays on screen**, stuck at the top and the bottom as you scroll, and an opened section lands fully in view.
