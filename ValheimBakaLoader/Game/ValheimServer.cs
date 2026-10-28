@@ -500,6 +500,34 @@ namespace ValheimBakaLoader.Game
         public Func<Task<bool>> RunEmptyCleanse { get; set; }
 
         /// <summary>
+        /// Optional hook (set by the UI) that reads the realm's three empty-server switches and
+        /// their delay as they are saved right now.
+        /// <para>
+        /// Read off the profile on disk rather than off the options the process was launched
+        /// with, the same way the armed cleanse reads its switch: these switches are not part of
+        /// the command line, so saving them never raises "restart pending", and a host who turns
+        /// Stop when empty on at eleven at night expects it to mean tonight, not after the next
+        /// restart. Unset (as in tests), or a read that fails, falls back to <see cref="Options"/>.
+        /// </para>
+        /// </summary>
+        public Func<EmptyServerSwitches> ReadEmptyServerSwitches { get; set; }
+
+        /// <summary>
+        /// The machine's power switch, handed in by the window. Used once per stop when empty
+        /// that the profile asked Windows to follow, after the server has landed on Stopped and
+        /// never before. Null (as in tests that do not hand a fake) means Windows is left on and
+        /// the log says why.
+        /// </summary>
+        public IWindowsPowerOff PowerOff { get; set; }
+
+        /// <summary>
+        /// The wait the three empty-server timers hold to (restart, stop, and the mod update
+        /// check). Production waits the real minutes; a test hands its own so it can say which
+        /// timer reaches the end of its wait first without sitting through any of them.
+        /// </summary>
+        internal Func<TimeSpan, CancellationToken, Task> EmptyWait { get; set; } = (wait, token) => Task.Delay(wait, token);
+
+        /// <summary>
         /// Optional hook (set by the UI) that downloads and installs all available mod
         /// updates. Invoked while the server is fully stopped, in the gap between Stop and
         /// Start of an auto-update restart, so BepInEx is never loading the plugin files
@@ -774,6 +802,12 @@ namespace ValheimBakaLoader.Game
 
         // Restarts the server a set time after the last player leaves; cancelled if a player rejoins.
         private CancellationTokenSource EmptyRestartCts;
+        // Stops the server a set time after the last player leaves, when the profile asks for a
+        // stop instead; cancelled if a player rejoins, and by any stop or start that comes first.
+        private CancellationTokenSource EmptyStopCts;
+        // 1 while a stop the empty timer started is on its way down and the profile asked for
+        // Windows to follow it. Taken exactly once, when that stop lands on Stopped.
+        private int EmptyStopPowerOffDue;
         // Fires a scheduled (e.g. every 6 hours) restart while the server is running.
         private CancellationTokenSource ScheduledRestartCts;
         // When the next scheduled restart will fire (UTC); null when no restart is armed.
@@ -971,6 +1005,10 @@ namespace ValheimBakaLoader.Game
                     AdoptedRunningSinceUtc = null;
                     LastActivePlayerCount = 0;
                     CancelEmptyRestart();
+                    CancelEmptyStop();
+                    // A fresh session owes Windows nothing: a power-off is only ever due for the
+                    // stop that was on its way down, and that stop has to land first.
+                    Interlocked.Exchange(ref EmptyStopPowerOffDue, 0);
                     StartScheduledRestartTimer();
                     // A server that has just come up is empty, and an armed cleanse must not
                     // have to wait for somebody to join and leave before it means anything.
@@ -987,6 +1025,7 @@ namespace ValheimBakaLoader.Game
                     RunningSinceUtc = null;
                     AdoptedRunningSinceUtc = null;
                     if (IsRestarting) _ = ResumeAfterStopAsync();
+                    else PowerOffAfterEmptyStop();
                     break;
 
                 case ServerStatus.Stopping:
@@ -994,6 +1033,7 @@ namespace ValheimBakaLoader.Game
                     // is a cleanse that needs RCON on a server that is going down. The switch
                     // itself is left alone: it is armed until it fires.
                     CancelEmptyRestart();
+                    CancelEmptyStop();
                     CancelEmptyUpdateCheck();
                     CancelEmptyCleanse();
                     CancelScheduledRestart();
@@ -2997,14 +3037,28 @@ namespace ValheimBakaLoader.Game
             {
                 // A player is connected (or just joined) -> cancel any pending empty-server work.
                 CancelEmptyRestart();
+                if (CancelEmptyStop())
+                {
+                    using var realmScope = AppLog.ForRealm(ServerKey);
+                    ApplicationLogger.Information("A player joined; the empty-server stop is cancelled.");
+                }
                 CancelEmptyUpdateCheck();
                 CancelEmptyCleanse();
             }
             else if (LastActivePlayerCount > 0 && Status == ServerStatus.Running)
             {
                 // The last active player just left.
-                // Schedule the empty-server restart (only when that preference is enabled)...
-                if (Options.EmptyServerRestart) ScheduleEmptyRestart();
+                // Schedule the empty-server stop or restart, whichever the switches ask for. The
+                // decision is EmptyServerPlan's, so it is the one the tests ask.
+                var plan = EmptyServerPlan.Decide(CurrentEmptySwitches(), running: true, activePlayers: 0);
+                if (plan.RestartIgnored)
+                {
+                    using var realmScope = AppLog.ForRealm(ServerKey);
+                    ApplicationLogger.Information(
+                        "Both Restart when empty and Stop when empty are on; the stop wins and the restart switch is ignored.");
+                }
+                if (plan.Stops) ScheduleEmptyStop(plan.DelayMinutes, plan.ShutsDownWindows);
+                else if (plan.Action == EmptyServerAction.Restart) ScheduleEmptyRestart(plan.DelayMinutes);
                 // ...and always start watching for mod updates to install while empty (item C).
                 ScheduleEmptyUpdateCheck();
                 // ...and the armed one-shot cleanse, when this profile is still asking for one.
@@ -3014,11 +3068,10 @@ namespace ValheimBakaLoader.Game
             LastActivePlayerCount = activeCount;
         }
 
-        private void ScheduleEmptyRestart()
+        private void ScheduleEmptyRestart(int delayMinutes)
         {
             CancelEmptyRestart();
 
-            var delayMinutes = Math.Max(1, Options.EmptyServerRestartDelayMinutes);
             var cts = new CancellationTokenSource();
             EmptyRestartCts = cts;
             var token = cts.Token;
@@ -3029,7 +3082,7 @@ namespace ValheimBakaLoader.Game
             {
                 try
                 {
-                    await Task.Delay(delayMinutes * 60 * 1000, token);
+                    await EmptyWait(TimeSpan.FromMinutes(delayMinutes), token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -3044,7 +3097,7 @@ namespace ValheimBakaLoader.Game
                 // the next empty window, not strand it offline.
                 if (!await ConfirmAutomaticRestartAsync(LaunchReasons.Empty))
                 {
-                    ScheduleEmptyRestart();
+                    ScheduleEmptyRestart(delayMinutes);
                     return;
                 }
 
@@ -3062,6 +3115,165 @@ namespace ValheimBakaLoader.Game
             EmptyRestartCts = null;
             try { cts.Cancel(); } catch { }
             cts.Dispose();
+        }
+
+        /// <summary>
+        /// The empty-server switches as saved now, through <see cref="ReadEmptyServerSwitches"/>
+        /// when the window has wired it, else as the server was started with.
+        /// </summary>
+        private EmptyServerSwitches CurrentEmptySwitches()
+        {
+            var read = ReadEmptyServerSwitches;
+            if (read != null)
+            {
+                try
+                {
+                    var saved = read();
+                    if (saved != null) return saved;
+                }
+                catch (Exception e)
+                {
+                    ApplicationLogger.Warning(
+                        "Could not read the empty-server switches; using the ones the server started with: {message}", e.Message);
+                }
+            }
+
+            var o = Options;
+            return new EmptyServerSwitches(o.EmptyServerRestart, o.EmptyServerStop,
+                o.EmptyServerStopShutsDownWindows, o.EmptyServerRestartDelayMinutes);
+        }
+
+        /// <summary>
+        /// Stop when empty: the same wait and the same checks as the restart beside it, then the
+        /// server is brought down the road every stop takes (a save over RCON when RCON is on,
+        /// then the graceful close, so the game writes the world) and left down.
+        /// <para>
+        /// Nothing is launched, so the launch guard is not asked anything. And the stop is one
+        /// the host asked for: it goes through <see cref="Stop"/>, so the status is Stopping
+        /// before the process exits, Restart on Crash reads the exit as deliberate, and nothing
+        /// relaunches it.
+        /// </para>
+        /// <para>
+        /// The switches are asked once more when the wait is out, the way the armed cleanse asks
+        /// its switch: a host who turns Stop when empty (or the Windows half of it) off during the
+        /// wait has turned it off, and a machine that shut down after that would be a setting
+        /// doing something after it was turned off.
+        /// </para>
+        /// </summary>
+        private void ScheduleEmptyStop(int delayMinutes, bool thenWindows)
+        {
+            CancelEmptyStop();
+
+            var cts = new CancellationTokenSource();
+            EmptyStopCts = cts;
+            var token = cts.Token;
+
+            using (AppLog.ForRealm(ServerKey))
+            {
+                if (thenWindows)
+                    ApplicationLogger.Information("Server is empty; stopping in {minutes} minute(s), then Windows shuts down.", delayMinutes);
+                else
+                    ApplicationLogger.Information("Server is empty; stopping in {minutes} minute(s).", delayMinutes);
+            }
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await EmptyWait(TimeSpan.FromMinutes(delayMinutes), token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return; // A player rejoined, or the server was stopped or restarted first.
+                }
+
+                using var realmScope = AppLog.ForRealm(ServerKey);
+
+                if (token.IsCancellationRequested) return;
+
+                var plan = EmptyServerPlan.Decide(CurrentEmptySwitches(), running: true, activePlayers: 0);
+                if (Status != ServerStatus.Running
+                    || CountActivePlayers(PlayerDataRepository.Data) > 0
+                    || !plan.Stops)
+                {
+                    if (Status == ServerStatus.Running && !plan.Stops)
+                        ApplicationLogger.Information("Stop when empty was turned off during the wait; the server stays up.");
+
+                    // This wait is over and nothing was stopped, so it is no longer a stop that is
+                    // due: the update check must not go on standing aside for it.
+                    if (ReferenceEquals(EmptyStopCts, cts))
+                    {
+                        EmptyStopCts = null;
+                        cts.Dispose();
+                    }
+                    return;
+                }
+
+                // The update check is the one other timer that could take this server down while
+                // it is empty, and it would bring it straight back up. It goes first, so this is
+                // one stop and no restart.
+                CancelEmptyUpdateCheck();
+                CancelEmptyRestart();
+
+                ApplicationLogger.Information("Server still empty; stopping now.");
+
+                // Due BEFORE the stop goes out: the stop moves the status on this thread, and a
+                // process that is already gone can land on Stopped before Stop() returns.
+                if (plan.ShutsDownWindows) Interlocked.Exchange(ref EmptyStopPowerOffDue, 1);
+                Stop();
+
+                // A stop that did not go out (the server could no longer be stopped) owes Windows
+                // nothing: only the stop this timer started may be followed by a power-off.
+                if (Status == ServerStatus.Running || Status == ServerStatus.Starting)
+                    Interlocked.Exchange(ref EmptyStopPowerOffDue, 0);
+            });
+        }
+
+        /// <summary>Cancels a pending stop when empty. True when there was one to cancel.</summary>
+        private bool CancelEmptyStop()
+        {
+            var cts = EmptyStopCts;
+            if (cts == null) return false;
+
+            EmptyStopCts = null;
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
+            return true;
+        }
+
+        /// <summary>
+        /// The Windows half of stop when empty, run when the server lands on Stopped. It does
+        /// something only when the stop that landed is the one the empty timer started with the
+        /// Windows switch on; the flag is taken in one step, so a second Stopped can never ask
+        /// twice. A server that never reaches Stopped (a stop that hangs) never gets here, and
+        /// Windows stays on.
+        /// </summary>
+        private void PowerOffAfterEmptyStop()
+        {
+            if (Interlocked.Exchange(ref EmptyStopPowerOffDue, 0) != 1) return;
+
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
+            var power = PowerOff;
+            if (power == null)
+            {
+                ApplicationLogger.Warning(
+                    "The server stopped after sitting empty, but this window has no way to reach Windows, so Windows stays on.");
+                return;
+            }
+
+            try
+            {
+                power.Schedule(WindowsPowerOff.NoticeSeconds, WindowsPowerOff.EmptyStopComment);
+                ApplicationLogger.Information(
+                    "The server stopped after sitting empty; Windows shuts down in {seconds} seconds. Run shutdown /a in a command prompt to cancel.",
+                    WindowsPowerOff.NoticeSeconds);
+            }
+            catch (Exception e)
+            {
+                ApplicationLogger.Error(e,
+                    "The server stopped after sitting empty, but Windows did not accept the shutdown, so it stays on.");
+            }
         }
 
         /// <summary>
@@ -3092,7 +3304,7 @@ namespace ValheimBakaLoader.Game
                 {
                     while (!token.IsCancellationRequested)
                     {
-                        await Task.Delay(delayMs, token);
+                        await EmptyWait(TimeSpan.FromMilliseconds(delayMs), token);
 
                         if (token.IsCancellationRequested) return;
                         if (Status != ServerStatus.Running) return;
@@ -3106,11 +3318,26 @@ namespace ValheimBakaLoader.Game
                             continue;
                         }
 
+                        // The check can take a while, and a stop when empty that fired during it
+                        // cancelled this watch: nothing after that may restart the server.
+                        if (token.IsCancellationRequested) return;
+
                         if (pending <= 0) continue; // nothing to do yet - keep watching while empty.
 
                         // Re-confirm the server is still empty before pulling the trigger.
                         if (CountActivePlayers(PlayerDataRepository.Data) > 0) return;
                         if (!CanRestart) return;
+
+                        // A stop when empty is waiting to take this server down. Restarting it now
+                        // would bring it back up with nobody on it and no player leaving to start
+                        // the stop again, so it would stay up all night: the stop goes first.
+                        if (EmptyStopCts != null)
+                        {
+                            ApplicationLogger.Information(
+                                "{count} mod update(s) pending, but the server is due to stop while empty, so it is not restarted for them.",
+                                pending);
+                            return;
+                        }
 
                         ApplicationLogger.Information(
                             "Server empty {minutes}+ min with {count} mod update(s) pending; restarting to auto-update.",
@@ -3570,6 +3797,7 @@ namespace ValheimBakaLoader.Game
             CancelScheduledRestart();
             CancelEmptyUpdateCheck();
             CancelEmptyRestart();
+            CancelEmptyStop();
             CancelEmptyCleanse();
             CancelLaunchRetry();
             StopPositionPolling();

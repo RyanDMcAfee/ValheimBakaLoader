@@ -90,6 +90,19 @@ namespace ValheimBakaLoader.Game
 
         public int EmptyServerRestartDelayMinutes { get; set; } = 5;
 
+        /// <summary>
+        /// Stop the server, with a world save, once it has sat empty for
+        /// <see cref="EmptyServerRestartDelayMinutes"/>, and leave it stopped. Wins over
+        /// <see cref="EmptyServerRestart"/> when both are on. Off unless the host turns it on.
+        /// </summary>
+        public bool EmptyServerStop { get; set; }
+
+        /// <summary>
+        /// Once that stop has landed, ask Windows to shut down (a timed shutdown with a minute's
+        /// notice). Read only while <see cref="EmptyServerStop"/> is on.
+        /// </summary>
+        public bool EmptyServerStopShutsDownWindows { get; set; }
+
         public bool ScheduledRestart { get; set; }
 
         public int ScheduledRestartHours { get; set; } = 6;
@@ -684,6 +697,8 @@ namespace ValheimBakaLoader.Game
                 AutoRestartDelay = file.AutoRestartDelay ?? defaults.AutoRestartDelay,
                 EmptyServerRestart = file.EmptyServerRestart ?? defaults.EmptyServerRestart,
                 EmptyServerRestartDelayMinutes = file.EmptyServerRestartDelayMinutes ?? defaults.EmptyServerRestartDelayMinutes,
+                EmptyServerStop = file.EmptyServerStop ?? defaults.EmptyServerStop,
+                EmptyServerStopShutsDownWindows = file.EmptyServerStopShutsDownWindows ?? defaults.EmptyServerStopShutsDownWindows,
                 ScheduledRestart = file.ScheduledRestart ?? defaults.ScheduledRestart,
                 ScheduledRestartHours = file.ScheduledRestartHours ?? defaults.ScheduledRestartHours,
                 CleanseWhenEmpty = file.CleanseWhenEmpty ?? defaults.CleanseWhenEmpty,
@@ -768,6 +783,8 @@ namespace ValheimBakaLoader.Game
             AutoRestartDelay = AutoRestartDelay,
             EmptyServerRestart = EmptyServerRestart,
             EmptyServerRestartDelayMinutes = EmptyServerRestartDelayMinutes,
+            EmptyServerStop = EmptyServerStop,
+            EmptyServerStopShutsDownWindows = EmptyServerStopShutsDownWindows,
             ScheduledRestart = ScheduledRestart,
             ScheduledRestartHours = ScheduledRestartHours,
             CleanseWhenEmpty = CleanseWhenEmpty,

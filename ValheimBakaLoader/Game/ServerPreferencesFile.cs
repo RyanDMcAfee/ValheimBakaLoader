@@ -50,6 +50,9 @@ namespace ValheimBakaLoader.Game
         [JsonProperty("autoRestartDelay")] public int? AutoRestartDelay { get; set; }
         [JsonProperty("emptyServerRestart")] public bool? EmptyServerRestart { get; set; }
         [JsonProperty("emptyServerRestartDelayMinutes")] public int? EmptyServerRestartDelayMinutes { get; set; }
+        // 1.3.1: stop rather than restart, and optionally Windows after it. Both share the delay above.
+        [JsonProperty("emptyServerStop")] public bool? EmptyServerStop { get; set; }
+        [JsonProperty("emptyServerStopShutsDownWindows")] public bool? EmptyServerStopShutsDownWindows { get; set; }
         [JsonProperty("scheduledRestart")] public bool? ScheduledRestart { get; set; }
         [JsonProperty("scheduledRestartHours")] public int? ScheduledRestartHours { get; set; }
 

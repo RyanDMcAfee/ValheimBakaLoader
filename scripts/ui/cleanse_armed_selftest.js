@@ -217,11 +217,15 @@ test("the sixty second wait, the empty check and the one shot are all really the
     "a switch put down DURING the wait still fires the sweep, which is a setting doing"
     + " something after it was turned off");
 
-  // A player arriving cancels it, and so does a stop.
-  const changed = GAME.slice(GAME.indexOf("private void OnPlayerStatusChanged("));
-  assert.ok(/CancelEmptyCleanse\(\);/.test(changed.slice(0, 1400)),
+  // A player arriving cancels it, and so does a stop. Read to the end of the method rather
+  // than a fixed number of characters: 1.3.1 gave the method the stop when empty, and the
+  // window had been cut to the length the method happened to have.
+  const from = GAME.indexOf("private void OnPlayerStatusChanged(");
+  const changed = GAME.slice(from, GAME.indexOf("\n        private void ScheduleEmptyRestart(", from));
+  assert.ok(changed.length > 0 && changed.length < 4000, "OnPlayerStatusChanged could not be read to its end");
+  assert.ok(/CancelEmptyCleanse\(\);/.test(changed),
     "a player joining does not cancel the armed sweep's wait");
-  assert.ok(/ArmEmptyCleanseWatch\(\);/.test(changed.slice(0, 1400)),
+  assert.ok(/ArmEmptyCleanseWatch\(\);/.test(changed),
     "the last player leaving does not start the armed sweep's wait");
 });
 

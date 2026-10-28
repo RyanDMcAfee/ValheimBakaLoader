@@ -3418,6 +3418,12 @@
     "world.field.empty_delay": {
       "translation": "[Ẋ Empty Delay (min) Ẋ] ẊẊẊẊẊẊ"
     },
+    "world.field.empty_stop": {
+      "translation": "[Ẋ Empty-Server Stop Ẋ] ẊẊẊẊẊẊ"
+    },
+    "world.field.empty_stop_windows": {
+      "translation": "[Ẋ After the Stop Ẋ] ẊẊẊẊẊ"
+    },
     "world.field.sched_restart": {
       "translation": "[Ẋ Scheduled Restart Ẋ] ẊẊẊẊẊẊ"
     },
@@ -6253,6 +6259,16 @@
         "other": "[Ẋ Restart when empty for {minutes} min Ẋ] ẊẊẊẊẊẊẊẊẊ"
       },
       "plural": "minutes"
+    },
+    "world.empty_stop.label": {
+      "translation": {
+        "one": "[Ẋ Stop when empty for {minutes} min Ẋ] ẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ Stop when empty for {minutes} min Ẋ] ẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "minutes"
+    },
+    "world.empty_stop_windows.label": {
+      "translation": "[Ẋ Shut Windows down after the stop Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
     },
     "world.sched.label": {
       "translation": {

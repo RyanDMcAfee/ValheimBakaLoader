@@ -253,6 +253,8 @@ namespace ValheimBakaLoader.Tests.Game
             public int AutoRestartDelay => Inner.AutoRestartDelay;
             public bool EmptyServerRestart => Inner.EmptyServerRestart;
             public int EmptyServerRestartDelayMinutes => Inner.EmptyServerRestartDelayMinutes;
+            public bool EmptyServerStop => Inner.EmptyServerStop;
+            public bool EmptyServerStopShutsDownWindows => Inner.EmptyServerStopShutsDownWindows;
             public bool ScheduledRestart => Inner.ScheduledRestart;
             public int ScheduledRestartHours => Inner.ScheduledRestartHours;
             public bool RconEnabled => Inner.RconEnabled;

@@ -1151,5 +1151,37 @@ else
   echo "  the toast lift selftest is missing: $TOASTLIFT_SELFTEST"; fail=1
 fi
 
+echo "== 72. stop when empty on the Settings hall: one empty-server switch at a time, the Windows row gated =="
+# 1.3.1, issue 28. Stop when empty and its Windows half sit under Restart when empty in Advanced.
+# The quiet ways that goes wrong: Restart and Stop both left on (the host side lets the stop win,
+# so the page would show a restart that never happens), the Windows switch pressed while the stop
+# is off and looking like it means something, the delay box asleep while the stop needs it, a save
+# that leaves a key out (read as false), and a label that stops following the box. The selftest
+# drives the EMPTY-TIMERS block of app.js with stand-in controls and the real catalog.
+EMPTYSTOP_SELFTEST="$UI_DIR/empty_stop_selftest.js"
+if [ -f "$EMPTYSTOP_SELFTEST" ]; then
+  if out=$(node "$EMPTYSTOP_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the empty stop selftest is missing: $EMPTYSTOP_SELFTEST"; fail=1
+fi
+
+echo "== 73. stop when empty, in a real browser: every empty-server row fits at 1024x680, English and pseudo =="
+# The same rows measured in headless chromium at the window's minimum: each label fits inside
+# itself, ends before its switch and stays inside its row, the line over each row fits its field,
+# and the Windows row is drawn asleep with Stop off and awake with it on, in English and in the
+# pseudo catalog. Same readiness question as 40 asks.
+EMPTYSTOP_PROBE="$UI_DIR/empty_stop_row_probe.js"
+if [ ! -f "$EMPTYSTOP_PROBE" ]; then
+  echo "  the empty stop row probe is missing: $EMPTYSTOP_PROBE"; fail=1
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  NOT RUN: there is no node on this box, so nothing read the page in a browser."
+elif ! ready=$(node "$SWITCH_PROBE" --check); then
+  printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
+else
+  if out=$(node "$EMPTYSTOP_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

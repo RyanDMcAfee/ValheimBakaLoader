@@ -14732,6 +14732,7 @@ const setT=(id,on)=>{
   markSwitch(el);
   return !!on;
 };
+/* EMPTY-TIMERS-BEGIN */
 /* toggle → parameter-field gating (mirrors the WinForms enable/disable behavior) */
 function syncAdvGates(){
   const gate=(inputId,on)=>{
@@ -14739,27 +14740,72 @@ function syncAdvGates(){
     el.disabled=!on;
     el.closest(".field")?.classList.toggle("gated",!on);
   };
-  gate("fEmptyDelay",swOn("tEmpty"));
+  /* The one delay box serves both empty-server switches, so it wakes for either. */
+  gate("fEmptyDelay",swOn("tEmpty")||swOn("tEmptyStop"));
   gate("fSchedHours",swOn("tSched"));
   gate("fCrashDelay",swOn("tCrash"));
   gate("fRconPort",swOn("tRcon"));
   gate("fRconPw",swOn("tRcon"));
+  /* The Windows half means nothing without the stop (the host side reads it only while the
+     stop is on), so its row sleeps while the stop is off. It keeps the value it has and shows
+     it, the way the gated rows on the Upkeep card do; the capture-phase block below is what
+     refuses the press. */
+  const win=$("#tEmptyStopWin");
+  if(win){
+    const on=swOn("tEmptyStop");
+    win.closest(".togglerow")?.classList.toggle("gated",!on);
+    win.closest(".field")?.classList.toggle("gated",!on);
+    win.setAttribute("aria-disabled",on?"false":"true");
+  }
   updAdvLabels();
 }
-/* The three labels in Advanced that carry a number. Each is rebuilt from the field
-   beside it on every keystroke, so it is a run-time sentence with a named slot rather
-   than a static node the walker could fill: index.html leaves them id-less on purpose.
-   Two of them count something, so their entries carry the plural categories and the
-   category is chosen from the value rather than spelled out here. */
+/* The labels in Advanced that carry a number. Each is rebuilt from the field beside it on
+   every keystroke, so it is a run-time sentence with a named slot rather than a static node
+   the walker could fill: index.html leaves them id-less on purpose. Three of them count
+   something, so their entries carry the plural categories and the category is chosen from
+   the value rather than spelled out here. The two empty-server labels share the one box and
+   change their words through revealText, so a new number fades in rather than jumps. */
 function updAdvLabels(){
   const minutes=$("#fEmptyDelay").value.trim()||"5";
   const hours=$("#fSchedHours").value.trim()||"6";
   const port=$("#fRconPort").value.trim()||"25575";
-  $("#tEmptyLbl").textContent=T("world.empty.label",{minutes});
+  revealText($("#tEmptyLbl"),T("world.empty.label",{minutes}));
+  revealText($("#tEmptyStopLbl"),T("world.empty_stop.label",{minutes}));
   $("#tSchedLbl").textContent=T("world.sched.label",{hours});
   $("#tRconLbl").textContent=swOn("tRcon")?T("world.rcon.label",{port}):T("world.rcon.off.label");
 }
 ["fEmptyDelay","fSchedHours","fRconPort"].forEach(id=>$("#"+id).addEventListener("input",updAdvLabels));
+/* Restart when empty and Stop when empty are one choice: turning either on turns the other
+   off. These are registered after the shared [data-t] handler, so the class they read is the
+   one the press just set. The host side would let the stop win anyway; the page says so
+   before the save rather than leaving two switches on that cannot both happen. */
+function emptyTimersExclusive(pressed){
+  const other=pressed==="tEmpty"?"tEmptyStop":"tEmpty";
+  if(swOn(pressed)&&swOn(other)){ setT(other,false); syncAdvGates(); }
+}
+$("#tEmpty")?.addEventListener("click",()=>emptyTimersExclusive("tEmpty"));
+$("#tEmptyStop")?.addEventListener("click",()=>emptyTimersExclusive("tEmptyStop"));
+/* The sleeping Windows switch refuses the press in the CAPTURE phase on its row, before the
+   shared [data-t] handler on the switch could flip it. The keyboard goes through the same
+   click, so Enter and Space are refused by the same line. */
+$("#tEmptyStopWin")?.closest(".togglerow")?.addEventListener("click",e=>{
+  if(swOn("tEmptyStop")) return;
+  e.stopPropagation(); e.preventDefault();
+},true);
+/* What the form says about the three switches, for the load and for the save. */
+function renderEmptyTimers(p){
+  setT("tEmpty",p.EmptyServerRestart);
+  setT("tEmptyStop",p.EmptyServerStop);
+  setT("tEmptyStopWin",p.EmptyServerStopShutsDownWindows);
+}
+function emptyTimerPrefs(){
+  return {
+    EmptyServerRestart:swOn("tEmpty"),
+    EmptyServerStop:swOn("tEmptyStop"),
+    EmptyServerStopShutsDownWindows:swOn("tEmptyStopWin"),
+  };
+}
+/* EMPTY-TIMERS-END */
 /* show/hide password chips. The word on the chip says which way the next click goes, so
    it changes under the host's finger and cannot be a static node the walker fills once:
    the id would be written back over HIDE the next time anything walked the page. The
@@ -14816,7 +14862,7 @@ function renderWorldForm(){
     pubSw.classList.toggle("locked",!!p.TestCopyOf);
     if(p.TestCopyOf) pubSw.title=T("realm.test.public.locked"); else pubSw.removeAttribute("title");
   }
-  setT("tEmpty",p.EmptyServerRestart); setT("tSched",p.ScheduledRestart); setT("tRcon",p.RconEnabled);
+  renderEmptyTimers(p); setT("tSched",p.ScheduledRestart); setT("tRcon",p.RconEnabled);
   setT("tLogs",p.WriteServerLogsToFile); setT("tAutoStart",p.AutoStart); setT("tCrash",p.AutoRestart);
   syncAdvGates();
   /* This form has just been filled from what is saved, so nothing in it is unsaved.
@@ -15052,7 +15098,7 @@ async function runPathCheck(kind){
 const WORLD_FORM_FIELDS=["fName","fPassword","fPort","fSaveInterval","fBackups","fBackShort",
   "fBackLong","fEmptyDelay","fSchedHours","fCrashDelay","fRconPort","fRconPw",
   "fServerExe","fSaveDir","fArgs","fMaxPlayers"];
-const WORLD_FORM_TOGGLES=["tPublic","tCrossplay","tEmpty","tSched","tRcon","tLogs",
+const WORLD_FORM_TOGGLES=["tPublic","tCrossplay","tEmpty","tEmptyStop","tEmptyStopWin","tSched","tRcon","tLogs",
   "tAutoStart","tCrash"];
 /* Which control's field wears the marker for a key that is not a control of its own. */
 const WORLD_FORM_MARKER={world:"fWorld"};
@@ -16203,7 +16249,7 @@ async function saveConfigPress(opts){
     BackupIntervalLong:num("fBackLong",cur.BackupIntervalLong??43200),
     WriteServerLogsToFile:swOn("tLogs"), AutoStart:swOn("tAutoStart"),
     AutoRestart:swOn("tCrash"), AutoRestartDelay:num("fCrashDelay",cur.AutoRestartDelay??10),
-    EmptyServerRestart:swOn("tEmpty"), EmptyServerRestartDelayMinutes:num("fEmptyDelay",cur.EmptyServerRestartDelayMinutes??5),
+    ...emptyTimerPrefs(), EmptyServerRestartDelayMinutes:num("fEmptyDelay",cur.EmptyServerRestartDelayMinutes??5),
     ScheduledRestart:swOn("tSched"), ScheduledRestartHours:num("fSchedHours",cur.ScheduledRestartHours??6),
     RconEnabled:swOn("tRcon"), RconPort:num("fRconPort",cur.RconPort??25575),
     RconPassword:$("#fRconPw").value,

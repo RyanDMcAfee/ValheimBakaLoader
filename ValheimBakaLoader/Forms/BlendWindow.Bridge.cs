@@ -420,6 +420,7 @@ namespace ValheimBakaLoader.Forms
                 WireAppSelfUpdate(session);
                 WireModUpdateHooks(session);
                 WireEmptyCleanseHooks(session);
+                WireEmptyStopHooks(session);
                 WireRelaunchSettings(session);
                 WireLaunchGuard(session);
 
@@ -1709,6 +1710,35 @@ namespace ValheimBakaLoader.Forms
                 return prefs == null ? null : BuildServerOptions(MergeLaunchHistory(prefs));
             };
         }
+
+        /// <summary>
+        /// Teaches a session where its empty-server switches live and hands it the power switch
+        /// for the Windows half of stop when empty.
+        /// </summary>
+        private void WireEmptyStopHooks(ServerSession session)
+        {
+            var profile = session.ProfileName;
+
+            // The switches are read off the profile on disk each time a last player leaves and
+            // again when the wait is out, so a switch saved while the server is up means
+            // something tonight rather than after the next restart. They are not on the command
+            // line, so saving them never raises "restart pending" to say otherwise.
+            session.Server.ReadEmptyServerSwitches = () =>
+            {
+                var prefs = ServerPrefsProvider.LoadPreferences(profile);
+                return prefs == null
+                    ? null
+                    : new EmptyServerSwitches(prefs.EmptyServerRestart, prefs.EmptyServerStop,
+                        prefs.EmptyServerStopShutsDownWindows, prefs.EmptyServerRestartDelayMinutes);
+            };
+
+            // The one place the real power switch is handed out. The server only reaches it
+            // after a stop when empty has landed on Stopped with the Windows switch on.
+            session.Server.PowerOff = WindowsPower;
+        }
+
+        /// <summary>The machine's power switch: one for the whole app, handed to every session.</summary>
+        private static readonly IWindowsPowerOff WindowsPower = new WindowsPowerOff();
 
         /// <summary>
         /// Whether this session is running (or coming up on) settings the host has since

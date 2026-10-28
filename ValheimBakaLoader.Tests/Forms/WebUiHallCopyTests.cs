@@ -385,6 +385,9 @@ namespace ValheimBakaLoader.Tests.Forms
                 "world.wgs.note",
                 "world.mods.note", "world.sec.advanced", "common.norse.rites",
                 "world.field.empty_restart", "world.field.empty_delay",
+                // 1.3.1, issue 28: stop when empty and the Windows half of it
+                "world.field.empty_stop", "world.field.empty_stop_windows",
+                "world.empty_stop_windows.label",
                 "world.field.sched_restart", "world.field.sched_hours",
                 "world.field.crash_restart", "world.crash.label", "world.field.crash_delay",
                 "world.field.logs", "world.logs.label", "world.field.autostart",
@@ -476,13 +479,15 @@ namespace ValheimBakaLoader.Tests.Forms
         }
 
         /// <summary>
-        /// The three labels on the Settings hall that carry a number carry no id in the
+        /// The four labels on the Settings hall that carry a number carry no id in the
         /// markup, and ask for one at run time. Each is rebuilt from the field beside it
         /// every time that field is typed in, so it is a composed sentence with a named
         /// slot rather than a static node: key the element and the walker starts fighting
-        /// updAdvLabels(). Two of the three count something, so the entry carries its
+        /// updAdvLabels(). Three of the four count something, so the entry carries its
         /// plural categories and updAdvLabels hands the number in rather than choosing a
-        /// category itself.
+        /// category itself. Since 1.3.1 the two empty-server labels share one box and
+        /// change their words through revealText, so a new number fades in rather than
+        /// jumps (the owner's motion rule); the other two still write textContent.
         /// </summary>
         [Fact]
         public void The_advanced_labels_that_carry_a_number_ask_for_their_words_at_run_time()
@@ -491,16 +496,21 @@ namespace ValheimBakaLoader.Tests.Forms
             var js = AppJs();
             var catalog = Catalog();
 
-            foreach (var id in new[] { "tEmptyLbl", "tSchedLbl", "tRconLbl" })
+            foreach (var id in new[] { "tEmptyLbl", "tEmptyStopLbl", "tSchedLbl", "tRconLbl" })
             {
                 var open = html.IndexOf("id=\"" + id + "\"", StringComparison.Ordinal);
                 Assert.True(open > 0, "index.html no longer has #" + id);
                 var tag = html.Substring(html.LastIndexOf('<', open), html.IndexOf('>', open) - html.LastIndexOf('<', open) + 1);
                 Assert.DoesNotContain("data-i18n", tag);
-                Assert.Contains("$(\"#" + id + "\").textContent=", js);
             }
+            Assert.Contains("$(\"#tSchedLbl\").textContent=", js);
+            Assert.Contains("$(\"#tRconLbl\").textContent=", js);
 
-            Assert.Contains("$(\"#tEmptyLbl\").textContent=T(\"world.empty.label\",{minutes});", js);
+            Assert.Contains("revealText($(\"#tEmptyLbl\"),T(\"world.empty.label\",{minutes}));", js);
+            Assert.Contains("revealText($(\"#tEmptyStopLbl\"),T(\"world.empty_stop.label\",{minutes}));", js);
+            Assert.Equal("Stop when empty for {minutes} min", Plural(catalog, "world.empty_stop.label", "other"));
+            Assert.Equal("Stop when empty for {minutes} min", Plural(catalog, "world.empty_stop.label", "one"));
+            Assert.Equal("minutes", PluralParam(catalog, "world.empty_stop.label"));
             Assert.Contains("$(\"#tSchedLbl\").textContent=T(\"world.sched.label\",{hours});", js);
             Assert.Contains("T(\"world.rcon.label\",{port}):T(\"world.rcon.off.label\")", js);
 

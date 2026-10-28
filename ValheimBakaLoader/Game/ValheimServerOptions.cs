@@ -67,6 +67,12 @@ namespace ValheimBakaLoader.Game
 
         int EmptyServerRestartDelayMinutes { get; }
 
+        /// <summary>Stop (not restart) once empty for <see cref="EmptyServerRestartDelayMinutes"/>. Wins over the restart.</summary>
+        bool EmptyServerStop { get; }
+
+        /// <summary>After that stop, ask Windows to shut down. Means nothing while <see cref="EmptyServerStop"/> is off.</summary>
+        bool EmptyServerStopShutsDownWindows { get; }
+
         bool ScheduledRestart { get; }
 
         int ScheduledRestartHours { get; }
@@ -151,6 +157,8 @@ namespace ValheimBakaLoader.Game
                 AutoRestartDelay = serverPrefs.AutoRestartDelay,
                 EmptyServerRestart = serverPrefs.EmptyServerRestart,
                 EmptyServerRestartDelayMinutes = serverPrefs.EmptyServerRestartDelayMinutes,
+                EmptyServerStop = serverPrefs.EmptyServerStop,
+                EmptyServerStopShutsDownWindows = serverPrefs.EmptyServerStopShutsDownWindows,
                 ScheduledRestart = serverPrefs.ScheduledRestart,
                 ScheduledRestartHours = serverPrefs.ScheduledRestartHours,
                 RconEnabled = serverPrefs.RconEnabled,
@@ -354,6 +362,10 @@ namespace ValheimBakaLoader.Game
         public bool EmptyServerRestart { get; set; }
 
         public int EmptyServerRestartDelayMinutes { get; set; } = 5;
+
+        public bool EmptyServerStop { get; set; }
+
+        public bool EmptyServerStopShutsDownWindows { get; set; }
 
         public bool ScheduledRestart { get; set; }
 
