@@ -81,7 +81,16 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.3.1
+## What is new in 1.3.2
+
+- **A BepInEx update waits for the next stop.** Install it now while a server is up queues the update for the moment every server on that BepInEx is stopped, and the bar offers Stop, install and start again. Check BepInEx now asks Thunderstore by hand. [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx#install-it-now-with-a-server-up-the-queue)
+- **Add from link takes a .zip on this PC**, pasted or picked with Browse, for test builds a Gale profile cannot carry. A mod installed that way is marked Local and never updated behind your back. [Installing from a zip](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods#installing-from-a-zip-on-this-pc)
+- **Tick many mods and switch them off or on in one go**, with Shift-click for a range; fifty mods take one request and one rescan. [Switching many mods](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods#switching-many-mods-at-once)
+- **A BepInEx refusal names each server once**, and a failed install stays on screen instead of leaving with its toast.
+
+This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
+## What was new in 1.3.1
 
 - **Stop when empty.** Two switches beside Restart when empty in Settings > Advanced: stop the server after it has sat empty for the delay, with the world saved first, and shut Windows down after the stop if you ask. [Automatic restarts](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Automatic-restarts)
 - **A Gale profile mod that is only on Hexium** shows as on Hexium in the review, with its own Install from Hexium button that asks first, one mod at a time. [Gale profiles](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Gale-profiles)

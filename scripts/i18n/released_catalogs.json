@@ -117,6 +117,11 @@
       "version": "1.3.0",
       "catalog": 18,
       "fingerprint": "7847f5096c3f084e2397d7ae4625e1ad2007e094e0755cd13053629297fcec2c"
+    },
+    {
+      "version": "1.3.1",
+      "catalog": 19,
+      "fingerprint": "e71a383f2264ed160cb211d2be46cf1c142e6a76ff07eef0b871051fa3da4134"
     }
   ]
 }
