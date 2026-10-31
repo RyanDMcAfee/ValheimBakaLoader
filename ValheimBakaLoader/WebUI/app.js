@@ -5123,11 +5123,13 @@ function modSearchText(m){
     m.InstalledVersion, m.LatestVersion, m.hexiumLatest,
     m.IsPatcher?T("mods.tag.patcher"):"",
     (m.installedSource==="hexium")?T("mods.tag.hexium"):"",
+    (m.installedSource==="local")?T("mods.tag.local"):"",
     /* The pill the row draws, word for word. A search over the table has to carry the
        quiet pill too, or a host looking for the mods that were pulled is the one host
        the box cannot answer. */
     m.Bundled?T("mods.status.bundled")
       :m.disabled?T("mods.status.off")
+      :(m.installedSource==="local")?T("mods.status.local")
       :S.modsIndexBlind?T("mods.status.unchecked")
       :modIsHeld(m)?T("mods.status.held")
       :m.notListed?T("mods.status.not_listed")
@@ -5693,8 +5695,12 @@ function modStatusPill(m,blind){
   /* A row whose package the list came back without has no Latest to be level with, so
      it cannot read CURRENT either. It says the one thing that is known: Thunderstore is
      not listing it at the moment, and nothing has been done about that. */
+  /* A copy from a zip on this PC says so before anything about either site: it sits out every
+     update whatever Thunderstore lists, and a test build Thunderstore has never heard of would
+     otherwise read as not listed, which is true and beside the point. */
   return m.Bundled?`<span class="pill ember">${esc(T("mods.status.bundled"))}</span>`
     :m.disabled?`<span class="pill grey" title="${esc(T("mods.status.off.tip"))}">${esc(T("mods.status.off"))}</span>`
+    :(m.installedSource==="local")?`<span class="pill grey" title="${esc(T("mods.status.local.tip"))}">${esc(T("mods.status.local"))}</span>`
     :blind?`<span class="pill grey" title="${esc(T("mods.status.unchecked.tip"))}">${esc(T("mods.status.unchecked"))}</span>`
     :held?`<span class="pill amber" title="${esc(T("mods.status.held.tip"))}">${esc(T("mods.status.held"))}</span>`
     :m.notListed?`<span class="pill grey" title="${esc(T("mods.status.not_listed.tip"))}">${esc(T("mods.status.not_listed"))}</span>`
@@ -5713,6 +5719,9 @@ function modInstalledCell(m){
     return `<td class="mono"><span class="modchip modver" title="${esc(T("mods.tag.installed.hexium.tip"))}">${v}</span></td>`;
   if(src==="thunderstore")
     return `<td class="mono"><span class="modchip modver from-ts" title="${esc(T("mods.tag.installed.thunderstore.tip"))}">${v}</span></td>`;
+  /* A copy from a zip on this PC: Hexium's outline in a dashed line, so the three never read alike. */
+  if(src==="local")
+    return `<td class="mono"><span class="modchip modver from-local" title="${esc(T("mods.tag.installed.local.tip"))}">${v}</span></td>`;
   return `<td class="mono">${v}</td>`;
 }
 /* What a row's manifest asks for that the realm does not give it, as the scan handed it
@@ -5753,7 +5762,9 @@ function modRowHtml(m,blind){
   /* A copy the host took from the second site says so, and keeps saying so whatever
      happens to the switch afterwards: it is why this row sits out Update all. */
   const srcChip=(m.installedSource==="hexium")
-    ?` <span class="modchip" title="${esc(T("mods.tag.hexium.tip"))}">${esc(T("mods.tag.hexium"))}</span>`:"";
+    ?` <span class="modchip" title="${esc(T("mods.tag.hexium.tip"))}">${esc(T("mods.tag.hexium"))}</span>`
+    :(m.installedSource==="local")
+    ?` <span class="modchip" title="${esc(T("mods.tag.local.tip"))}">${esc(T("mods.tag.local"))}</span>`:"";
   /* One mark at most on the Latest cell. Either the other site is ahead of both what
      is installed and what Thunderstore has, or this is a Hexium copy Thunderstore has
      moved past. Both are offers, and both ask before they do anything. */
@@ -7081,8 +7092,9 @@ function modRowItems(mod){
     {r:"ᚱ",label:T("mods.menu.update"),disabled:!canUpd,
       tip:isPatcher?T("mods.menu.update.tip.patcher")
         :(mod.installedSource==="hexium"?T("mods.menu.update.tip.hexium")
+        :(mod.installedSource==="local"?T("mods.menu.update.tip.local")
         :(mod.notListed?T("mods.menu.update.tip.not_listed")
-        :T("mods.menu.update.tip.current"))),
+        :T("mods.menu.update.tip.current")))),
       fn:()=>doUpdateOne(mod)},
     /* One question to Thunderstore about this one mod, for a host looking at the mod's own
        page and knowing there is something newer than the row says. It asks the address the
@@ -7106,8 +7118,10 @@ function modRowItems(mod){
     items.push({r:"ᛋ",label:T("mods.menu.install_thunderstore"),fn:()=>thunderstoreSwapFlow(mod)});
   /* The same version again, from Thunderstore, laid out the way a mod manager lays it out.
      Offered only where there is a Thunderstore package and a version to pin it to; a Hexium
-     copy is not a Thunderstore build, and a patcher-only row is not installed this way. */
-  if(onStore&&mod.InstalledVersion&&!isPatcher&&mod.installedSource!=="hexium")
+     copy is not a Thunderstore build, and a patcher-only row is not installed this way. Nor is a
+     copy from a zip on this PC: the same number on Thunderstore is the published build, and a
+     "reinstall" would quietly put it over the test build the host chose. */
+  if(onStore&&mod.InstalledVersion&&!isPatcher&&mod.installedSource!=="hexium"&&mod.installedSource!=="local")
     items.push({r:"ᚨ",label:T("mods.menu.reinstall"),
       title:mod.layout==="nested"?T("mods.menu.reinstall.tip.nested"):"",
       fn:()=>reinstallModFlow(mod)});
@@ -7258,6 +7272,12 @@ async function checkOneNow(mod){
      Thunderstore has, so telling its host they have the newest would be untrue. */
   if(r.held&&r.thunderstoreNewer){
     toast("ᛋ "+T("mods.check_one.held.toast",{version:r.latestVersion}));
+    return;
+  }
+  /* A copy from a zip is held the same way, whichever side of it Thunderstore is: neither
+     "an update is waiting" nor "you have the newest" is the truth about a test build. */
+  if(mod.installedSource==="local"){
+    toast("ᛋ "+T("mods.check_one.local.toast",{version:r.latestVersion}));
     return;
   }
   toast("ᛋ "+(r.updateAvailable
@@ -7520,14 +7540,21 @@ function addModFlow(){
      second site on, this dialog takes a link from either of them, so it says that rather
      than naming one of the two. */
   const both=!!S.hexium;
+  /* From 1.3.2 the box takes a package zip on this PC as well (issue 32): a path pasted in, or
+     one Browse picks. The note and the button are there with the second site on or off, because
+     a test build is a zip whichever sites a scan reads. */
   confirmModal(()=>both?T("mods.add.title.link"):T("mods.add.title.store"),
     ()=>`<div class="mbody-note">${esc(T("mods.add.paste.note"))}</div>`+
-    `<input type="text" id="mModUrl" placeholder="${esc(both?T("mods.add.placeholder.link"):"https://thunderstore.io/c/valheim/p/Author/ModName/")}" spellcheck="false" autocomplete="off" style="margin-top:10px">`+
+    `<div class="pathrow" style="margin-top:10px"><input type="text" id="mModUrl" placeholder="${esc(both?T("mods.add.placeholder.link"):"https://thunderstore.io/c/valheim/p/Author/ModName/")}" spellcheck="false" autocomplete="off">`+
+    `<button class="btn btn-ghost btn-sm" id="mModBrowse" type="button">${esc(T("mods.add.browse"))}</button></div>`+
+    `<div class="mbody-note" style="margin-top:8px">${esc(T("mods.add.file_note"))}</div>`+
     hexNote()+
     runWarn(),
     ()=>T("common.button.install"),m=>{
       const url=(m.querySelector("#mModUrl")?.value||"").trim();
       if(!url){toast("ᚦ "+T("mods.add.no_link.toast"));return;}
+      /* A zip goes its own road: read, then put to the host, then installed on the yes. */
+      if(looksLikeLocalPath(url)){doAddLocalZip(url);return;}
       /* The one road that offers what the mod needs once it is in. */
       doAddMod(url,undefined,{offerDeps:true});
     });
@@ -7536,6 +7563,7 @@ function addModFlow(){
     setTimeout(()=>inp.focus(),40);
     inp.addEventListener("keydown",e=>{if(e.key==="Enter")document.querySelector("#mOk")?.click();});
   }
+  document.querySelector("#mModBrowse")?.addEventListener("click",()=>localZipBrowse(document.querySelector("#mModUrl")));
 }
 async function doAddMod(url,extra,opts){
   if(S.modsUpdating||S.modsScanning) return;
@@ -7628,6 +7656,161 @@ async function doAddMod(url,extra,opts){
     renderMods();
   }
 }
+/* LOCALZIP-BEGIN: Add from link with a package zip on this PC (1.3.2, issue 32).
+   The same box and the same host call as a link. The host decides path or link by its own
+   rule (Tools/LocalPackagePath.cs); this copy of it only picks the page's words and road, and
+   scripts/ui/local_path_cases.json holds the two equal. A zip is read and put to the host
+   first, then read AGAIN from the path and installed on the yes, so a test build rebuilt while
+   the question was open is the one that goes in. Nothing here is counted anywhere. */
+const LOCAL_QUOTE='"';
+/* Every way the host turns a zip down, as it names it in Reason, beside the catalog entry that
+   words it. Nothing throws these: they come back in the add's own answer, the way a switch's
+   reasons do, so they are a table of their own rather than rows of HOST_SENTENCES.
+   Tools/LocalPackageReader.cs and the add's zip road name them; WebUiLocalZipCopyTests holds
+   the two lists equal and every sentence's values to what the host sends. */
+const LOCAL_ZIP_REASONS=[
+  {named:"local.notAbsolute",       textId:"mods.local.reason.not_absolute"},
+  {named:"local.unbalancedQuote",   textId:"mods.local.reason.unbalanced_quote"},
+  {named:"local.missing",           textId:"mods.local.reason.missing"},
+  {named:"local.isFolder",          textId:"mods.local.reason.is_folder"},
+  {named:"local.notZip",            textId:"mods.local.reason.not_zip"},
+  {named:"local.empty",             textId:"mods.local.reason.empty"},
+  {named:"local.tooLarge",          textId:"mods.local.reason.too_large"},
+  {named:"local.locked",            textId:"mods.local.reason.locked"},
+  {named:"local.unreadable",        textId:"mods.local.reason.unreadable"},
+  {named:"local.notArchive",        textId:"mods.local.reason.not_archive"},
+  {named:"local.tooManyEntries",    textId:"mods.local.reason.too_many_entries"},
+  {named:"local.unpackedTooLarge",  textId:"mods.local.reason.unpacked_too_large"},
+  {named:"local.unsafeEntry",       textId:"mods.local.reason.unsafe_entry"},
+  {named:"local.noManifest",        textId:"mods.local.reason.no_manifest"},
+  {named:"local.manifestInFolder",  textId:"mods.local.reason.manifest_in_folder"},
+  {named:"local.badManifest",       textId:"mods.local.reason.bad_manifest"},
+  {named:"local.manifestFields",    textId:"mods.local.reason.manifest_fields"},
+  {named:"local.noDll",             textId:"mods.local.reason.no_dll"},
+  {named:"local.noOwner",           textId:"mods.local.reason.no_owner"},
+  {named:"local.ownerAmbiguous",    textId:"mods.local.reason.owner_ambiguous"},
+  {named:"local.ownerConflict",     textId:"mods.local.reason.owner_conflict"},
+  {named:"local.reserved",          textId:"mods.local.reason.reserved"},
+  {named:"local.serverRunning",     textId:"mods.local.reason.server_running"},
+  {named:"realmChanged",            textId:"mods.local.reason.realm_changed"},
+];
+/* The sentence for a refused zip, or null when the reason is not one this page has words for. */
+function localZipReasonText(id,params){
+  if(!id) return null;
+  const row=LOCAL_ZIP_REASONS.find(x=>x.named===id);
+  if(!row) return null;
+  try{return T(row.textId,params||{});}catch(_){return null;}
+}
+function looksLikeLocalPath(text){
+  let s=String(text??"").trim();
+  if(s.length>=2&&s[0]===LOCAL_QUOTE&&s[s.length-1]===LOCAL_QUOTE) s=s.slice(1,-1).trim();
+  else if(s.length>0&&(s[0]===LOCAL_QUOTE||s[s.length-1]===LOCAL_QUOTE)){
+    while(s[0]===LOCAL_QUOTE) s=s.slice(1);
+    while(s.endsWith(LOCAL_QUOTE)) s=s.slice(0,-1);
+    s=s.trim();
+  }
+  if(!s) return false;
+  if(/^file:/i.test(s)) return true;
+  if(s.indexOf("://")>=0) return false;
+  if(/^[A-Za-z]:[\\/]/.test(s)||/^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(s)) return true;
+  return /\.zip$/i.test(s)||s.indexOf("\\")>=0||s[0]==="%"||s[0]===".";
+}
+/* Browse beside the box: Windows' own picker for one .zip, and the answer into the box. It
+   installs nothing; Install does, through the same road a pasted path takes. */
+async function localZipBrowse(box){
+  if(!Native.available){toast("ᚨ "+T("mods.add.native_only.toast"));return;}
+  const r=await rpc("shell.pickFile",{kind:"zip"});
+  if(r===FAIL||!r||r.cancelled||!r.path||!box) return;
+  box.value=unquotePath(r.path);
+  try{box.focus();}catch(_){}
+}
+async function doAddLocalZip(text){
+  if(S.modsUpdating||S.modsScanning) return;
+  S.modsUpdating=true; renderMods();
+  toast("ᚨ "+T("mods.local.reading.toast"));
+  logLine("info","[Local] reading the zip: "+text);
+  /* The realm always goes with a zip, so a switch between Browse and Install is caught. */
+  const r=await rpc("mods.addFromUrl",{url:text,profile:S.profileName||null});
+  S.modsUpdating=false;
+  if(r===FAIL||!r){renderMods();return;}
+  if(r.NeedsLocalConsent){
+    renderMods();
+    localZipConfirm(r,()=>doInstallLocalZip(text,r));
+    return;
+  }
+  localZipRefused(r,text);
+}
+/* What the host said no to, in the reader's own language where the page has the words. */
+function localZipRefused(r,text){
+  if(r.Reason==="noBepInEx"){renderMods();bepInExOfferModal(()=>doAddLocalZip(text));return;}
+  const own=localZipReasonText(r.Reason,r.ErrorParams);
+  toast("ᚦ "+(own||T("mods.add.failed.toast",{detail:r.Error||T("common.error.unknown")})));
+  logLine("warn","[Local] not installed: "+(r.Error||r.Reason||"unknown"));
+  renderMods();
+}
+/* The question, in the Hexium consent's layout: what the zip says it is, where its owner came
+   from, and what it replaces, with the downgrade and the same-number rebuild said as such. */
+function localZipConfirm(pay,onAccept){
+  const rep=pay.wouldReplace||null;
+  const mod=pay.Owner+"-"+pay.Name;
+  const size=(pay.Bytes!=null&&Number(pay.Bytes)>0)?fmtBytes(pay.Bytes):"";
+  const deps=Array.isArray(pay.Dependencies)?pay.Dependencies:[];
+  const known=rep&&rep.installedVersion&&rep.installedVersion!=="unknown";
+  const replaceLine=()=>rep.same?T("mods.local.replace.same",{mod,version:pay.Version})
+    :(known&&rep.downgrade)?T("mods.local.replace.downgrade",{mod,installed:rep.installedVersion,version:pay.Version})
+    :known?T("mods.local.replace.body",{mod,installed:rep.installedVersion,version:pay.Version})
+    :T("mods.local.replace.unknown",{mod});
+  const body=()=>
+    `<div class="mbody-note">${esc(T("mods.local.confirm.note"))}</div>`+
+    `<div class="mono-list">${esc(pay.Owner)} / ${esc(pay.Name)}<br>`+
+      `${esc(T("common.label.version"))} ${esc(pay.Version)}<br>`+
+      `${esc(T("mods.local.confirm.file"))} ${esc(pay.FileName)}`+
+      (size?`<br>${esc(T("mods.local.confirm.size"))} ${esc(size)}`:"")+
+    `</div>`+
+    `<div class="mbody-note">${esc(pay.OwnerFrom==="installed"
+      ?T("mods.local.confirm.owner.installed",{owner:pay.Owner})
+      :T("mods.local.confirm.owner.file_name",{owner:pay.Owner}))}</div>`+
+    (rep
+      ?`<div class="mwarn">⚠ ${esc(replaceLine())}</div>`+
+       (rep.disabled?`<div class="mbody-note">${esc(T("mods.local.replace.off"))}</div>`:"")
+      :`<div class="mbody-note">${esc(T("mods.local.confirm.fresh"))}</div>`)+
+    `<div class="mbody-note">${esc(T("mods.local.confirm.held"))}</div>`+
+    (deps.length
+      ?`<div class="mbody-note" style="margin-top:10px">${esc(T("mods.local.confirm.deps"))}</div>`+
+       `<div class="mono-list">${deps.map(d=>esc(d)).join("<br>")}</div>`
+      :"");
+  confirmModal(()=>rep?T("mods.local.replace.title"):T("mods.local.confirm.title"),body,
+    ()=>rep?T("mods.local.replace.accept"):T("common.button.install"),()=>onAccept());
+}
+async function doInstallLocalZip(text,pay){
+  if(S.modsUpdating||S.modsScanning) return;
+  S.modsUpdating=true; renderMods();
+  toast("ᚨ "+T("mods.local.installing.toast"));
+  const r=await rpc("mods.addFromUrl",{url:text,profile:S.profileName||null,accept:true});
+  S.modsUpdating=false;
+  if(r===FAIL||!r){renderMods();return;}
+  if(!r.Installed){localZipRefused(r,text);return;}
+  const full=r.Owner+"-"+r.Name;
+  /* A Failed pill a Gale walk left on this row is answered now, as the Hexium install does. */
+  if(S.modRowStatus) for(const k of Object.keys(S.modRowStatus))
+    if(k.toLowerCase()===full.toLowerCase()) delete S.modRowStatus[k];
+  if(r.Replaced) toast("ᚨ "+T("mods.add.installed.replaced.toast",{name:full,version:r.Version}));
+  else toast("ᚨ "+T("mods.add.installed.toast",{name:full,version:r.Version}));
+  logLine("ok","[Local] installed "+full+" v"+r.Version+" from "+(pay&&pay.FileName||"a zip")+(r.Replaced?" (previous copy backed up)":""));
+  await scanMods({force:false});
+  /* A realm following a Gale profile reads the disk again, so a pinned build Thunderstore no
+     longer has and this zip just put in stops being offered. */
+  if(GALE){
+    const re=await Native.call("gale.rescan",{profile:S.profileName}).catch(()=>null);
+    if(!re||!re.state||!galeApply(re.state)) renderGaleBox();
+  }
+  const needs=Array.isArray(r.missingDependencies)?r.missingDependencies:[];
+  if(needs.length){
+    logLine("warn","[Local] "+full+" needs: "+needs.map(n=>n.fullName+" ("+n.state+")").join(", "));
+    modDepsDialog(r.Name||full,needs);
+  }
+}
+/* LOCALZIP-END */
 $("#addModBtn").addEventListener("click",()=>{
   if(Native.available){addModFlow();return;}
   toast("ᚨ "+T("mods.add.native_only.toast"));

@@ -116,6 +116,12 @@ namespace ValheimBakaLoader.Tools
         /// <inheritdoc cref="KindExe"/>
         public const string KindDir = "dir";
 
+        /// <summary>A package zip, for Add from link's Browse (1.3.2). Only the file picker takes it; nothing checks a zip path here.</summary>
+        public const string KindZip = "zip";
+
+        /// <summary>The one pattern the zip picker shows, which is also its label: a pattern reads the same in every language.</summary>
+        public const string ZipPattern = "*.zip";
+
         /// <summary>The path was set for this one server.</summary>
         public const string SourceProfile = "profile";
 

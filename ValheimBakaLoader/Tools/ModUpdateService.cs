@@ -175,6 +175,15 @@ namespace ValheimBakaLoader.Tools
         /// </para>
         /// </summary>
         Task<ModInstallResult> InstallFromHexiumAsync(HexiumInstallPlan plan, string pluginsDir);
+
+        /// <summary>
+        /// Installs a package zip from this PC that <see cref="LocalPackageReader"/> has already read
+        /// and passed, from the private copy it read (<paramref name="tempCopy"/>), the same way the
+        /// other two installers place a package: backed up, replaced, put back on any failure, a mod
+        /// the host switched off kept off, and a note saying the files came from a zip so no update
+        /// path ever replaces them. The copy is deleted whatever happens.
+        /// </summary>
+        Task<ModInstallResult> InstallFromLocalZipAsync(LocalPackageFacts facts, string tempCopy, string pluginsDir);
     }
 
     /// <summary>
@@ -317,6 +326,15 @@ namespace ValheimBakaLoader.Tools
             if (mod.IsHexiumInstalled)
             {
                 Logger.Information("Mod {0} was installed from Hexium, so the Thunderstore update is not applied.", mod.FullName);
+                return ModUpdateResult.Skipped(mod);
+            }
+
+            // The same for a copy the host installed from a zip on this PC, which is nearly always
+            // a test build: Thunderstore ranks 1.4.0 above 1.4.0-beta.1, so without this the beta
+            // would be swapped for the published release behind the host's back.
+            if (mod.IsLocalInstalled)
+            {
+                Logger.Information("Mod {0} was installed from a zip on this PC, so the Thunderstore update is not applied.", mod.FullName);
                 return ModUpdateResult.Skipped(mod);
             }
 
@@ -855,6 +873,118 @@ namespace ValheimBakaLoader.Tools
             finally
             {
                 TryDelete(tempZip);
+                TryDeleteDirectory(tempExtract);
+            }
+        }
+
+        // On a worker: a large zip takes a while to unpack and place, and the caller is the window.
+        public Task<ModInstallResult> InstallFromLocalZipAsync(LocalPackageFacts facts, string tempCopy, string pluginsDir) =>
+            Task.Run(() => InstallFromLocalZip(facts, tempCopy, pluginsDir));
+
+        private ModInstallResult InstallFromLocalZip(LocalPackageFacts facts, string tempCopy, string pluginsDir)
+        {
+            ModInstallResult Fail(string error) => new()
+            {
+                Owner = facts?.Owner,
+                Name = facts?.Name,
+                Version = facts?.Version,
+                Installed = false,
+                Source = ModSourceMarkerFile.LocalSource,
+                Dependencies = facts?.Dependencies ?? Array.Empty<string>(),
+                Error = error,
+            };
+
+            var tempExtract = Path.Combine(Path.GetTempPath(), $"bakaloader-{Guid.NewGuid():N}");
+            PackagePlacement placement = null;
+            string backupDir = null;
+
+            try
+            {
+                if (facts == null) return Fail("No mod was named.");
+                if (string.IsNullOrWhiteSpace(facts.Owner) || string.IsNullOrWhiteSpace(facts.Name) || string.IsNullOrWhiteSpace(facts.Version))
+                    return Fail("No owner, mod name and version to install.");
+                if (string.IsNullOrWhiteSpace(tempCopy) || !File.Exists(tempCopy))
+                    return Fail("The copy of the zip that was read is gone, so nothing was installed.");
+                if (string.IsNullOrWhiteSpace(pluginsDir) || !Directory.Exists(pluginsDir))
+                    return Fail("BepInEx plugins folder not found. Set a valid server .exe path first.");
+
+                var targetDir = Path.Combine(pluginsDir, facts.FolderName);
+                var replacing = Directory.Exists(targetDir) && HasAnyEntries(targetDir);
+
+                Logger.Information("Installing {0} v{1} from the zip {2} ({3} bytes).",
+                    facts.FolderName, facts.Version, facts.FileName, facts.Bytes);
+
+                // Every entry held to its declared length, so a zip that lies about one stops here,
+                // before the mod's folder is touched.
+                LocalPackageReader.ExtractTo(tempCopy, tempExtract);
+
+                // A package cannot ship its own history, a test build least of all: a note inside
+                // the zip claiming Hexium or anything else goes before the folder is placed.
+                StripSourceMarkers(tempExtract);
+
+                if (!HasAnyEntries(tempExtract))
+                    return Fail("The zip held nothing to install.");
+
+                var planned = PackagePlacement.Plan(tempExtract, BepInExRootOfPlugins(pluginsDir), facts.FolderName, Logger);
+                if (planned.Refusal != null) return Fail(planned.Refusal);
+
+                var wasOff = replacing && ModSwitch.IsDisabled(targetDir, planned.PatchersFolder);
+
+                placement = planned;
+                placement.BeforeEachFile = PlacingFile;
+                placement.Apply(DateTime.Now);
+                backupDir = placement.PluginsBackup;
+
+                if (wasOff) ModSwitch.SwitchOffFiles(new[] { placement.PluginsFolder, placement.PatchersFolder, placement.MonomodFolder });
+
+                // The zip's file name only. Its folder can be a share or a user folder, and this
+                // note lives in the mods folder, which ends up in support zips.
+                ModSourceMarkerFile.Write(placement.PluginsFolder, new ModSourceMarker
+                {
+                    Schema = ModSourceMarkerFile.CurrentSchema,
+                    Writer = $"{ModSourceMarkerFile.WriterPrefix} {AssemblyHelper.GetApplicationVersion()}",
+                    Source = ModSourceMarkerFile.LocalSource,
+                    Owner = facts.Owner,
+                    Name = facts.Name,
+                    Version = facts.Version,
+                    DownloadUrl = facts.FileName,
+                    FileSize = facts.Bytes,
+                    InstalledUtc = DateTime.UtcNow,
+                });
+
+                Logger.Information("Installed {0} v{1} from the zip {2} to {3} ({4} file(s) placed, {5} config file(s) kept as they were){6}.",
+                    facts.FolderName, facts.Version, facts.FileName, targetDir, placement.Placed, placement.ConfigKept,
+                    backupDir != null ? $" (previous copy backed up to {backupDir})" : "");
+
+                return new ModInstallResult
+                {
+                    Owner = facts.Owner,
+                    Name = facts.Name,
+                    Version = facts.Version,
+                    Folder = targetDir,
+                    Installed = true,
+                    Replaced = replacing,
+                    Source = ModSourceMarkerFile.LocalSource,
+                    Dependencies = facts.Dependencies ?? Array.Empty<string>(),
+                };
+            }
+            catch (Exception e)
+            {
+                Logger.Error(e, "Failed to install {0} from a zip on this PC.", facts?.FolderName);
+
+                if (placement != null)
+                {
+                    var stranded = placement.Rollback();
+                    if (stranded != null)
+                        return Fail($"Install failed AND automatic restore failed. Previous files are at: {stranded}");
+                    Logger.Information("Restored previous copy of {0}.", facts?.FolderName);
+                }
+
+                return Fail(e.Message);
+            }
+            finally
+            {
+                TryDelete(tempCopy);
                 TryDeleteDirectory(tempExtract);
             }
         }

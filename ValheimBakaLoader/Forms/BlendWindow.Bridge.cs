@@ -1447,6 +1447,7 @@ namespace ValheimBakaLoader.Forms
         partial void CountCommand(string method, JObject parameters)
         {
             if (CommandCounts == null) return;
+            if (IsLocalZipAdd(method, parameters)) return;
             if (!UserPrefsProvider.LoadPreferences().ShareAnonymousStats) return;
 
             var line = string.Equals(method, CommandTally.ConsoleMethod, StringComparison.Ordinal)
@@ -1455,6 +1456,16 @@ namespace ValheimBakaLoader.Forms
 
             CommandCounts.Count(method, CountedProfileName(parameters) ?? ActiveProfileName, line);
         }
+
+        /// <summary>
+        /// An Add from link with a zip on this PC rather than a link (1.3.2, issue 32). Never
+        /// counted, neither the read nor the install (owner decision D3): a test build is a private
+        /// thing between a host and a mod's author, and the beat has no business knowing one went
+        /// in. Decided by the host's own path rule, which reads nothing off the disk.
+        /// </summary>
+        internal static bool IsLocalZipAdd(string method, JObject parameters) =>
+            string.Equals(method, "mods.addFromUrl", StringComparison.Ordinal)
+            && Tools.LocalPackagePath.TryRecognize(parameters?.Value<string>("url"), out _, out _);
 
         /// <summary>
         /// One replayed log line, the realm it belongs to (or null for none), and the host's date
@@ -8057,8 +8068,10 @@ namespace ValheimBakaLoader.Forms
                 // it never reads as having a Thunderstore update waiting. Same rule as the
                 // scan, applied here rather than trusted to the page.
                 var heldFromHexium = installed?.IsHexiumInstalled ?? false;
+                // A copy from a zip on this PC is held off the same way. Only the update half: the
+                // swap mark below stays Hexium's, because a zip copy goes back by its link.
                 var updateAvailable = CheckOneSaysUpdateWaiting(
-                    package.LatestVersion, installed?.InstalledVersion, heldFromHexium);
+                    package.LatestVersion, installed?.InstalledVersion, installed?.HoldsOffThunderstore ?? false);
 
                 // The other half of the same rule. A held copy Thunderstore has moved past
                 // is neither updatable nor the newest, and the page says so instead of
@@ -8349,51 +8362,29 @@ namespace ValheimBakaLoader.Forms
                 // the moment the sentence is translated. The sentence is unchanged, so a page
                 // that reads only Error is exactly as it was.
                 object FailDto(string error, string reason = null,
-                    IReadOnlyDictionary<string, object> errorParams = null) => new
-                {
-                    Installed = false,
-                    Replaced = false,
-                    Owner = (string)null,
-                    Name = (string)null,
-                    Version = (string)null,
-                    Error = error,
-                    Reason = reason,
-                    // The named values the reason's own sentence interpolates, so a refusal
-                    // that came back through this road can be worded out of the catalog
-                    // exactly as the same refusal is on the direct call.
-                    ErrorParams = errorParams,
-                    source = (string)null,
-                    missingDependencies = Array.Empty<object>(),
-                };
+                    IReadOnlyDictionary<string, object> errorParams = null) => ModAddFail(error, reason, errorParams);
 
                 if (_modUpdateInProgress)
                     return FailDto("A mod update is already in progress. Try again in a moment.", "busy");
 
+                // 1.3.2 (issue 32): a zip on this PC. Asked before either link parser, so a pasted
+                // drive path never meets the "missing https://" sentence, and anything with :// in
+                // it that is not file:// goes on below exactly as it did.
+                var pasted = p.Value<string>("url");
+                if (Tools.LocalPackagePath.TryRecognize(pasted, out var localPath, out var localProblem))
+                    return await AddFromLocalZipAsync(p, localPath, localProblem);
+
                 // A hexium.gg link is a different site with a different answer: it never
                 // installs from a paste. It is resolved, and what it resolves to is handed
                 // back for the host to read and accept or turn down.
-                var pasted = p.Value<string>("url");
                 if (Tools.HexiumUrlParser.LooksLikeHexiumLink(pasted))
                     return await PrepareHexiumInstallAsync(pasted, null, null, null);
 
                 if (!ThunderstoreUrlParser.TryParse(pasted, out var reference, out var parseError))
                     return FailDto(parseError, "badUrl");
 
-                var pluginsDir = GetPluginsDirectory();
-                if (string.IsNullOrWhiteSpace(pluginsDir))
-                    return FailDto("BepInEx plugins folder not found. Set a valid server .exe path first.",
-                        "noServerPath");
-
-                // The Gale approval dialog runs this same add once per mod, and says two more
-                // things than a pasted link does: which realm it was opened for, and that it
-                // must not write into a plugins folder a running server has open. Both are held
-                // here rather than trusted to the page, because a realm switch or a Start can
-                // land between one mod and the next. A plain paste sends neither and is
-                // exactly as it was.
-                var forProfile = p.Value<string>("profile");
-                if (!string.IsNullOrWhiteSpace(forProfile)
-                    && !string.Equals(forProfile.Trim(), ActiveProfileName, StringComparison.OrdinalIgnoreCase))
-                    return FailDto("The server on screen changed, so nothing was installed.", "realmChanged");
+                var folderRefusal = AddGateFolders(p, out var pluginsDir, out var forProfile);
+                if (folderRefusal != null) return folderRefusal;
                 if (p.Value<bool?>("requireStopped") == true)
                 {
                     var holding = RunningSessionName(new[] { pluginsDir });
@@ -8450,35 +8441,8 @@ namespace ValheimBakaLoader.Forms
                     }
                 }
 
-                if (!bepStatus.Installed)
-                {
-                    // Maintained OFF means BakaLoader never writes BepInEx on its own. The
-                    // reason is what lets the page offer the install as a question.
-                    if (!Tools.BepInExConsent.Effective(
-                            bepPrefs.BepInExMaintained, bepPrefs.BepInExMaintenanceAsked))
-                        return FailDto(
-                            "BepInEx is not installed on this server, so there is nothing for a mod to load under.",
-                            "noBepInEx");
-
-                    try
-                    {
-                        await WriteBepInExAsync(null, update: false);
-                    }
-                    catch (Exception bepError)
-                    {
-                        return FailDto(bepError.Message, HostFacingException.IdOf(bepError) ?? "noBepInEx",
-                            HostFacingException.ParamsOf(bepError));
-                    }
-                }
-
-                // BepInEx is here and the plugins folder is not: the pack does not ship one,
-                // so this is the ordinary state of a fresh install rather than a fault. It is
-                // created and the add carries on.
-                if (!Directory.Exists(pluginsDir))
-                {
-                    try { Directory.CreateDirectory(pluginsDir); }
-                    catch (Exception folderError) { return FailDto(folderError.Message, "noPlugins"); }
-                }
+                var bepRefusal = await AddGateBepInExAsync(pluginsDir, bepPrefs, bepStatus);
+                if (bepRefusal != null) return bepRefusal;
 
                 _modUpdateInProgress = true;
                 try
@@ -9205,7 +9169,9 @@ namespace ValheimBakaLoader.Forms
             RegisterRpc("shell.pickFile", p =>
             {
                 var kind = p.Value<string>("kind");
-                if (!string.Equals(kind, PathCheck.KindExe, StringComparison.Ordinal))
+                // "zip" from 1.3.2: Add from link's Browse, for a package zip on this PC.
+                var zip = string.Equals(kind, PathCheck.KindZip, StringComparison.Ordinal);
+                if (!zip && !string.Equals(kind, PathCheck.KindExe, StringComparison.Ordinal))
                     throw new ArgumentException($"Unknown shell.pickFile kind: {kind}");
 
                 return Task.FromResult(RunOnUiThread(() =>
@@ -9215,10 +9181,12 @@ namespace ValheimBakaLoader.Forms
                         // No title and no filter label: both would be English in a window
                         // the catalog cannot reach. The file name IS the label, and it is a
                         // name rather than a word, so it reads the same in every language.
-                        Filter = PathCheck.ServerExeName + "|" + PathCheck.ServerExeName,
+                        // A zip's label is its pattern, for the same reason.
+                        Filter = zip ? PathCheck.ZipPattern + "|" + PathCheck.ZipPattern
+                            : PathCheck.ServerExeName + "|" + PathCheck.ServerExeName,
                         CheckFileExists = true,
                         Multiselect = false,
-                        InitialDirectory = PickerStartFolder(PathCheck.KindExe),
+                        InitialDirectory = PickerStartFolder(zip ? PathCheck.KindZip : PathCheck.KindExe),
                     };
                     return PickReply(dialog.ShowDialog(this) == DialogResult.OK, dialog.FileName);
                 }));
@@ -10597,7 +10565,9 @@ namespace ValheimBakaLoader.Forms
         /// took from the other site is left alone by every update path, so it never reads
         /// as having a Thunderstore update waiting however far ahead Thunderstore has gone.
         /// The row still shows what Thunderstore holds, and the swap back is its own
-        /// deliberate action that asks first.
+        /// deliberate action that asks first. From 1.3.2 the caller passes
+        /// InstalledMod.HoldsOffThunderstore here, so a copy from a zip on this PC is held
+        /// the same way: the check changes its Latest cell and offers nothing.
         /// </para>
         /// </summary>
         public static bool CheckOneSaysUpdateWaiting(string latestVersion, string installedVersion, bool installedFromHexium) =>
@@ -10830,6 +10800,251 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// The refusal mods.addFromUrl answers with. The refusal carries a REASON beside the
+        /// sentence: a page could only ever tell "BepInEx is missing" from "Thunderstore is down"
+        /// by matching English prose, which stops working the moment the sentence is translated.
+        /// One shape for both roads into the add, the link and the zip.
+        /// </summary>
+        private static object ModAddFail(string error, string reason = null,
+            IReadOnlyDictionary<string, object> errorParams = null) => new
+        {
+            Installed = false,
+            Replaced = false,
+            Owner = (string)null,
+            Name = (string)null,
+            Version = (string)null,
+            Error = error,
+            Reason = reason,
+            // The named values the reason's own sentence interpolates, so a refusal
+            // that came back through this road can be worded out of the catalog
+            // exactly as the same refusal is on the direct call.
+            ErrorParams = errorParams,
+            source = (string)null,
+            missingDependencies = Array.Empty<object>(),
+        };
+
+        /// <summary>
+        /// The add's first two holds, the same for a link and a zip: a plugins folder to put the mod
+        /// in, and the realm the page asked about still being the one on screen. Null when the add
+        /// may go on.
+        /// <para>
+        /// The Gale approval dialog runs the add once per mod, and says two more things than a
+        /// pasted link does: which realm it was opened for, and that it must not write into a
+        /// plugins folder a running server has open. Both are held here rather than trusted to the
+        /// page, because a realm switch or a Start can land between one mod and the next. A plain
+        /// paste sends neither and is exactly as it was. A zip always sends the realm.
+        /// </para>
+        /// </summary>
+        private object AddGateFolders(JObject p, out string pluginsDir, out string forProfile)
+        {
+            forProfile = null;
+            pluginsDir = GetPluginsDirectory();
+            if (string.IsNullOrWhiteSpace(pluginsDir))
+                return ModAddFail("BepInEx plugins folder not found. Set a valid server .exe path first.",
+                    "noServerPath");
+
+            forProfile = p.Value<string>("profile");
+            if (!string.IsNullOrWhiteSpace(forProfile)
+                && !string.Equals(forProfile.Trim(), ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                return ModAddFail("The server on screen changed, so nothing was installed.", "realmChanged");
+            return null;
+        }
+
+        /// <summary>
+        /// The add's loader hold, the same for a link and a zip: BepInEx installed, or installed now
+        /// when the host has said BakaLoader may look after it, and a plugins folder to write into.
+        /// Null when the add may go on.
+        /// </summary>
+        private async Task<object> AddGateBepInExAsync(string pluginsDir, UserPreferences bepPrefs, BepInExStatus bepStatus)
+        {
+            if (!bepStatus.Installed)
+            {
+                // Maintained OFF means BakaLoader never writes BepInEx on its own. The
+                // reason is what lets the page offer the install as a question.
+                if (!Tools.BepInExConsent.Effective(
+                        bepPrefs.BepInExMaintained, bepPrefs.BepInExMaintenanceAsked))
+                    return ModAddFail(
+                        "BepInEx is not installed on this server, so there is nothing for a mod to load under.",
+                        "noBepInEx");
+
+                try
+                {
+                    await WriteBepInExAsync(null, update: false);
+                }
+                catch (Exception bepError)
+                {
+                    return ModAddFail(bepError.Message, HostFacingException.IdOf(bepError) ?? "noBepInEx",
+                        HostFacingException.ParamsOf(bepError));
+                }
+            }
+
+            // BepInEx is here and the plugins folder is not: the pack does not ship one,
+            // so this is the ordinary state of a fresh install rather than a fault. It is
+            // created and the add carries on.
+            if (!Directory.Exists(pluginsDir))
+            {
+                try { Directory.CreateDirectory(pluginsDir); }
+                catch (Exception folderError) { return ModAddFail(folderError.Message, "noPlugins"); }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Add from link with a path to a package zip on this PC (1.3.2, issue 32). Two calls, like
+        /// the Hexium road: the first reads the zip and hands back what it is, and whether it would
+        /// replace a copy already here, for the host to read; the second, with accept, reads the zip
+        /// AGAIN from the path and installs what is there now, because the file can be rebuilt or
+        /// deleted while the question is on screen.
+        /// <para>
+        /// A zip is refused while the realm's server is up, a brand-new mod included (owner, D2): a
+        /// test build is nearly always a replacement for a plugin the server has loaded and locked,
+        /// and one rule is easier to hold than two. The check is made before anything is copied, and
+        /// again right before the install. Nothing about a zip install is counted (owner, D3): a
+        /// private test build's name has no business in the heartbeat.
+        /// </para>
+        /// </summary>
+        private async Task<object> AddFromLocalZipAsync(JObject p, string path, string problem)
+        {
+            if (problem != null)
+                return ModAddFail(problem == Tools.LocalPackagePath.UnbalancedQuote
+                        ? "That path has a quote at one end and not the other. Paste it again, or press Browse."
+                        : "That is not a full path. Paste the zip's whole path, or press Browse.",
+                    "local." + problem, new Dictionary<string, object> { ["path"] = path ?? "" });
+
+            var folderRefusal = AddGateFolders(p, out var pluginsDir, out _);
+            if (folderRefusal != null) return folderRefusal;
+
+            object Running(string name) => ModAddFail(
+                $"The server '{name}' is running on this install, so nothing was installed. Stop it first, then try again.",
+                "local.serverRunning", new Dictionary<string, object> { ["name"] = name });
+
+            var holding = RunningSessionName(new[] { pluginsDir });
+            if (holding != null) return Running(holding);
+
+            var accepted = p.Value<bool?>("accept") == true;
+            var bepPrefs = UserPrefsProvider.LoadPreferences();
+            var bepStatus = BepInEx.Status(GetCanonicalBaseServerExe(), pluginsDir, KnownInstalls());
+
+            if (accepted)
+            {
+                // The loader goes in first when the host has said it may, exactly as on the link
+                // road. The first call never writes anything, so this waits for the answer.
+                var bepRefusal = await AddGateBepInExAsync(pluginsDir, bepPrefs, bepStatus);
+                if (bepRefusal != null) return bepRefusal;
+            }
+            else if (!bepStatus.Installed
+                     && !Tools.BepInExConsent.Effective(bepPrefs.BepInExMaintained, bepPrefs.BepInExMaintenanceAsked))
+            {
+                // Said now rather than after the question: the confirm would only lead to it.
+                return ModAddFail("BepInEx is not installed on this server, so there is nothing for a mod to load under.",
+                    "noBepInEx");
+            }
+
+            if (accepted && _modUpdateInProgress)
+                return ModAddFail("A mod update is already in progress. Try again in a moment.", "busy");
+
+            List<Tools.Models.InstalledMod> installed;
+            try
+            {
+                installed = Directory.Exists(pluginsDir) ? ModScanner.ScanPlugins(pluginsDir) : new List<Tools.Models.InstalledMod>();
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not read the installed mods before a zip install: {0}", e.Message);
+                installed = new List<Tools.Models.InstalledMod>();
+            }
+
+            var tempCopy = Path.Combine(Path.GetTempPath(), $"bakaloader-local-{Guid.NewGuid():N}.zip");
+            if (accepted) _modUpdateInProgress = true;
+            try
+            {
+                var maxBytes = ModUpdateService is Tools.ModUpdateService real
+                    ? real.MaxModDownloadBytes
+                    : Tools.LocalPackageReader.DefaultMaxZipBytes;
+                var reading = await Tools.LocalPackageReader.InspectAsync(path, tempCopy, installed, maxBytes);
+                if (reading.Refusal != null)
+                    return ModAddFail(reading.Refusal.Sentence, reading.Refusal.Reason, reading.Refusal.Params);
+
+                var facts = reading.Facts;
+                var current = installed.FirstOrDefault(m =>
+                    string.Equals(m.FullName, facts.FolderName, StringComparison.OrdinalIgnoreCase));
+                var replacing = current != null
+                    || Directory.Exists(Path.Combine(pluginsDir, facts.FolderName));
+
+                if (!accepted)
+                {
+                    return new
+                    {
+                        NeedsLocalConsent = true,
+                        Installed = false,
+                        Replaced = false,
+                        facts.Owner,
+                        facts.Name,
+                        facts.Version,
+                        facts.FileName,
+                        facts.Bytes,
+                        facts.OwnerFrom,
+                        facts.Dependencies,
+                        // What is there now, so the question can say what this replaces and whether
+                        // it goes back a version. Null for a mod this server does not have.
+                        wouldReplace = replacing
+                            ? new
+                            {
+                                installedVersion = current?.InstalledVersion,
+                                source = current?.InstalledSource,
+                                disabled = current?.Disabled ?? false,
+                                same = current != null && Tools.SemVer.IsReadable(current.InstalledVersion)
+                                       && Tools.SemVer.Compare(current.InstalledVersion, facts.Version) == 0,
+                                downgrade = current != null && Tools.SemVer.IsNewer(current.InstalledVersion, facts.Version),
+                            }
+                            : null,
+                        Error = (string)null,
+                        Reason = (string)null,
+                        source = Tools.ModSourceMarkerFile.LocalSource,
+                    };
+                }
+
+                // Asked again right before the write: a Start can land while the zip was being read.
+                holding = RunningSessionName(new[] { pluginsDir });
+                if (holding != null) return Running(holding);
+
+                var result = await ModUpdateService.InstallFromLocalZipAsync(facts, tempCopy, pluginsDir);
+
+                // No Analytics.Record here, on purpose (D3): see the summary.
+                if (result.Installed)
+                {
+                    // A build a Gale follow marked gone from Thunderstore is in now, so the next
+                    // review stops offering it. Quiet on a realm that follows no Gale profile.
+                    MarkGaleNotAvailable(ActiveProfileName, facts.FolderName, facts.Version, gone: false);
+                }
+
+                var missing = result.Installed
+                    ? await MissingAfterInstallAsync(facts.FolderName, result.Dependencies, pluginsDir)
+                    : Array.Empty<Tools.Models.DependencyNeed>();
+
+                return new
+                {
+                    result.Installed,
+                    result.Replaced,
+                    result.Owner,
+                    result.Name,
+                    result.Version,
+                    result.Error,
+                    Reason = (string)null,
+                    ErrorParams = (object)null,
+                    source = Tools.ModSourceMarkerFile.LocalSource,
+                    missingDependencies = missing.Select(DependencyNeedDto).ToArray(),
+                };
+            }
+            finally
+            {
+                if (accepted) _modUpdateInProgress = false;
+                try { if (File.Exists(tempCopy)) File.Delete(tempCopy); } catch { /* a temp file */ }
+            }
+        }
+
+        /// <summary>
         /// The whole chain a mod that just went in needs and this realm does not have. Mods on
         /// disk are followed through their own manifests; one that is not on disk is followed
         /// through what its newest release says it needs, asked of the package page first and
@@ -11019,6 +11234,12 @@ namespace ValheimBakaLoader.Forms
                     var folder = string.IsNullOrWhiteSpace(exe) ? null : Path.GetDirectoryName(exe);
                     return !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder) ? folder : null;
                 }
+
+                // A package zip is wherever the host keeps downloads, which is Windows' own
+                // "where you were last". Without this the fall-through below opened it on the
+                // world save folder, the one place a mod zip never is.
+                if (string.Equals(kind, PathCheck.KindZip, StringComparison.Ordinal))
+                    return null;
 
                 var save = ResolveSaveDataFolder(null);
                 return !string.IsNullOrWhiteSpace(save) && Directory.Exists(save) ? save : null;

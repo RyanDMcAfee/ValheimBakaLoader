@@ -306,8 +306,8 @@ namespace ValheimBakaLoader.Tests.Forms
             var expected = new[]
             {
                 "mods.possibly_outdated.yes", "mods.status.bundled", "mods.status.current",
-                "mods.status.held", "mods.status.not_listed", "mods.status.off", "mods.status.unchecked",
-                "mods.status.update", "mods.tag.hexium", "mods.tag.patcher",
+                "mods.status.held", "mods.status.local", "mods.status.not_listed", "mods.status.off", "mods.status.unchecked",
+                "mods.status.update", "mods.tag.hexium", "mods.tag.local", "mods.tag.patcher",
             };
             Assert.Equal(expected, IdsAskedIn(text).ToArray());
 
@@ -350,6 +350,9 @@ namespace ValheimBakaLoader.Tests.Forms
                 // are in the haystack; the sentence above them is what the pill explains, not
                 // what it says.
                 "mods.deps.pill.tip",
+                // 1.3.2 (issue 32): a copy from a zip on this PC, its chip, its Installed pill and its
+                // status pill, each explained on hover.
+                "mods.status.local.tip", "mods.tag.local.tip", "mods.tag.installed.local.tip",
             };
             // Words the render draws AROUND the table rather than on a row: the pill above
             // it and the two lines under the heading. Subtracted by name for the same

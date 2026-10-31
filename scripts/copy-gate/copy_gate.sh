@@ -1232,5 +1232,20 @@ else
   echo "  the BepInEx queue selftest is missing: $BEPQ_SELFTEST"; fail=1
 fi
 
+echo "== 77. issue 32: Add from link takes a package zip on this PC =="
+# 1.3.2. The page's half of a zip install: a path takes the zip road by the same rule the host
+# uses (scripts/ui/local_path_cases.json, read by LocalPackagePathTests too), the first call only
+# asks and the yes sends accept, a cancel sends nothing more, every local refusal is worded from
+# the catalog, Browse asks for a zip, and a zip copy's row says Local, sits out Update and never
+# offers Reinstall. The selftest drives the LOCALZIP, MODROW and MODMENU blocks of app.js with a
+# stand-in host and the real catalog.
+LOCALZIP_SELFTEST="$UI_DIR/local_zip_selftest.js"
+if [ -f "$LOCALZIP_SELFTEST" ]; then
+  if out=$(node "$LOCALZIP_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the local zip selftest is missing: $LOCALZIP_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

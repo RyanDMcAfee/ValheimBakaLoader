@@ -702,7 +702,8 @@ namespace ValheimBakaLoader.Tests.Forms
             // 27 with the question Save Config asks when it moves the Server Executable while
             // a config file is open with unsaved changes: those changes were read from the old
             // install, and the re-read that follows the move lets them go (1.2.11).
-            Assert.Equal(27, sites);
+            // 28 with the question a zip on this PC asks before it goes in (1.3.2, issue 32).
+            Assert.Equal(28, sites);
             Assert.True(frozen.Count == 0,
                 "a dialog would keep its wording through a language switch:\n  "
                 + string.Join("\n  ", frozen));

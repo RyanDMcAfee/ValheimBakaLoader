@@ -349,7 +349,9 @@ const labels = items => Array.from(items, it => it === "hr" ? "hr" : (it.section
   await test("8. the host side carries the field, and every new id is in the catalog", () => {
     const add = BRIDGE.slice(BRIDGE.indexOf('RegisterRpc("mods.addFromUrl"'), BRIDGE.indexOf('RegisterRpc("mods.hexiumPrepare"'));
     assert.ok(/missingDependencies = missing\.Select\(DependencyNeedDto\)\.ToArray\(\)/.test(add), "the add's answer has no missingDependencies");
-    assert.ok(/missingDependencies = Array\.Empty<object>\(\)/.test(add), "a refused add has a different shape");
+    /* 1.3.2: every refusal of the add, a link's or a zip's, is the one ModAddFail shape. */
+    const fail = BRIDGE.slice(BRIDGE.indexOf("private static object ModAddFail("), BRIDGE.indexOf("private object AddGateFolders("));
+    assert.ok(/missingDependencies = Array\.Empty<object>\(\)/.test(fail) && /ModAddFail\(/.test(add), "a refused add has a different shape");
     const dto = BRIDGE.slice(BRIDGE.indexOf("public static object BuildModDto(Tools.Models.InstalledMod mod, DateTime? gameUpdatedUtc, DateTime nowUtc)"));
     assert.ok(/missingDependencies = \(mod\.MissingDependencies/.test(dto), "the scan's row has no missingDependencies");
     assert.ok(/DependencyMarks = hexiumNeeds/.test(BRIDGE), "the Hexium plan has no marks");

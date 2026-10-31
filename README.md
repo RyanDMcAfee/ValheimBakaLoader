@@ -65,7 +65,7 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 |---|---|
 | [**Dashboard**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Dashboard-%28Hearth%29) (Hearth) | Status, who is online, next save, addresses, CPU and RAM, a tail of the log, and the Upkeep card. |
 | [**Players**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Players-%28Vikings%29) (Vikings) | The roster, sortable, with a right-click menu: promote, allow, kick, ban, heal, teleport, spawn. |
-| [**Mods**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods) | Scans your mods against Thunderstore, updates one or all, installs from a pasted link, and looks after [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx) once you say yes. |
+| [**Mods**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods) | Scans your mods against Thunderstore, updates one or all, installs from a pasted link or a package zip on your PC, and looks after [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx) once you say yes. |
 | [**Settings**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Settings-%28World%29) (World) | Name, password, port, world and seed, crossplay, backups, restart rules, RCON, folders, [world modifiers](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/World-modifiers). |
 | [**Map**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Map-%28Atlas%29) (Atlas) | Drawn from its seed with no map mods, plus fog of war, portals, builds and a forecast. |
 | [**Configs**](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Configs-%28Runes%29) (Runes) | Your mods' config files, edited in the app, with a search and a find box. |

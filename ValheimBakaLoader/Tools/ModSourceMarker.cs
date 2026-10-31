@@ -71,10 +71,18 @@ namespace ValheimBakaLoader.Tools
 
         /// <summary>
         /// Written on a Thunderstore install since 1.2.15, so the Mods page can say when a mod
-        /// went in. It changes nothing else: only <see cref="HexiumSource"/> is read as a reason
-        /// to leave a mod out of an update.
+        /// went in. It changes nothing else: only <see cref="HexiumSource"/> and
+        /// <see cref="LocalSource"/> are read as a reason to leave a mod out of an update.
         /// </summary>
         public const string ThunderstoreSource = "thunderstore";
+
+        /// <summary>
+        /// Written from 1.3.2 on a mod installed from a package zip on this PC, which is nearly
+        /// always a test build. It makes the row sit out the Thunderstore updates exactly as a
+        /// Hexium copy does, because SemVer ranks 1.4.0-beta.1 below 1.4.0 and the published
+        /// release would otherwise replace the beta on the next unattended restart.
+        /// </summary>
+        public const string LocalSource = "local";
 
         /// <summary>Every writer name starts with this, and a note that does not is refused.</summary>
         public const string WriterPrefix = "BakaLoader";
@@ -119,7 +127,7 @@ namespace ValheimBakaLoader.Tools
         }
 
         /// <summary>
-        /// The source a folder may be said to have come from ("hexium" or "thunderstore"), or null when
+        /// The source a folder may be said to have come from ("hexium", "thunderstore" or "local"), or null when
         /// there is no note, the note is not believed, or it names a source this build
         /// does not know.
         /// </summary>
@@ -143,6 +151,7 @@ namespace ValheimBakaLoader.Tools
             var source = marker?.Source?.Trim();
             if (string.Equals(source, HexiumSource, StringComparison.OrdinalIgnoreCase)) return HexiumSource;
             if (string.Equals(source, ThunderstoreSource, StringComparison.OrdinalIgnoreCase)) return ThunderstoreSource;
+            if (string.Equals(source, LocalSource, StringComparison.OrdinalIgnoreCase)) return LocalSource;
             return null;
         }
 

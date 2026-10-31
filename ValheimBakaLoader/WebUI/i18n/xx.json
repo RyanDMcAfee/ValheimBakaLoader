@@ -3092,6 +3092,248 @@
     "mods.add.running.warn": {
       "translation": "[Ẋ The server is RUNNING. New mods only load after a restart, and replacing an existing mod may fail on locked files. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
     },
+    "mods.add.file_note": {
+      "translation": "[Ẋ Or paste the full path of a .zip on this PC, or press Browse. It must be a Thunderstore or Hexium package: manifest.json at the top of the zip, and the mod's files. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.add.browse": {
+      "translation": "[Ẋ Browse Ẋ] ẊẊ"
+    },
+    "mods.local.confirm.title": {
+      "translation": "[Ẋ Install from a zip on this PC? Ẋ] ẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.confirm.note": {
+      "translation": "[Ẋ BakaLoader read this from the zip's manifest.json. Nothing has been copied into the server yet. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.confirm.file": {
+      "translation": "[Ẋ File Ẋ] ẊẊ"
+    },
+    "mods.local.confirm.size": {
+      "translation": "[Ẋ Size Ẋ] ẊẊ"
+    },
+    "mods.local.confirm.owner.installed": {
+      "translation": "[Ẋ Owner {owner}, from the copy already on this server. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "owner": "text"
+      }
+    },
+    "mods.local.confirm.owner.file_name": {
+      "translation": "[Ẋ Owner {owner}, from the zip's file name. Ẋ] ẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "owner": "text"
+      }
+    },
+    "mods.local.confirm.fresh": {
+      "translation": "[Ẋ This mod is not installed on this server yet, so nothing is replaced. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.confirm.held": {
+      "translation": "[Ẋ It is marked as installed from a zip, so Update all, the waiting count and the unattended restart leave it alone. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.confirm.deps": {
+      "translation": "[Ẋ This package says it needs these. Once it is in, BakaLoader offers whatever this server is missing: Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.replace.title": {
+      "translation": "[Ẋ Replace the installed copy? Ẋ] ẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.replace.accept": {
+      "translation": "[Ẋ Replace it Ẋ] ẊẊẊẊ"
+    },
+    "mods.local.replace.body": {
+      "translation": "[Ẋ {mod} {installed} is installed on this server. This file is {version}. Installing it replaces the installed copy, and the old files are backed up first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text",
+        "installed": "text",
+        "version": "text"
+      }
+    },
+    "mods.local.replace.same": {
+      "translation": "[Ẋ {mod} {version} is already installed on this server. Installing this file replaces it, and the old files are backed up first. Use this when a test build was rebuilt under the same version number. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text",
+        "version": "text"
+      }
+    },
+    "mods.local.replace.downgrade": {
+      "translation": "[Ẋ {mod} {installed} is installed on this server, and this file is the older {version}. Installing it goes back a version, and the newer files are backed up first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text",
+        "installed": "text",
+        "version": "text"
+      }
+    },
+    "mods.local.replace.unknown": {
+      "translation": "[Ẋ A folder for {mod} is already on this server. Installing this file replaces it, and the old files are backed up first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text"
+      }
+    },
+    "mods.local.replace.off": {
+      "translation": "[Ẋ The installed copy is switched off, and it stays off after this install. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.reason.not_absolute": {
+      "translation": "[Ẋ That is not a full path. Paste the zip's whole path, starting with the drive letter, or press Browse. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.reason.unbalanced_quote": {
+      "translation": "[Ẋ That path has a quote at one end and not the other. Paste it again, or press Browse. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.local.reason.missing": {
+      "translation": "[Ẋ There is no file at {path}. Check the path, or press Browse to pick the zip. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "path": "text"
+      }
+    },
+    "mods.local.reason.is_folder": {
+      "translation": "[Ẋ {path} is a folder. Pick the .zip file itself. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "path": "text"
+      }
+    },
+    "mods.local.reason.not_zip": {
+      "translation": "[Ẋ {file} is not a .zip file. BakaLoader installs from the zip a Thunderstore or Hexium package comes in. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.local.reason.empty": {
+      "translation": "[Ẋ {file} is empty. It may still be downloading, or the download failed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.local.reason.too_large": {
+      "translation": "[Ẋ {file} is {size} MB, more than the {limit} MB BakaLoader will install from one zip. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "size": "number",
+        "limit": "number"
+      }
+    },
+    "mods.local.reason.locked": {
+      "translation": "[Ẋ Another program has {file} open, so BakaLoader could not read it. Close it there, or let its download finish, and try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.local.reason.unreadable": {
+      "translation": "[Ẋ {file} could not be read: {detail} Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "detail": "text"
+      }
+    },
+    "mods.local.reason.not_archive": {
+      "translation": "[Ẋ {file} ends in .zip but is not a readable zip archive. It may be damaged or only partly downloaded. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.local.reason.too_many_entries": {
+      "translation": "[Ẋ {file} holds {count} files, more than the {limit} BakaLoader will unpack from one zip, so nothing was installed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "count": "number",
+        "limit": "number"
+      }
+    },
+    "mods.local.reason.unpacked_too_large": {
+      "translation": "[Ẋ {file} would unpack to more than {limit} MB, which is more than BakaLoader will unpack from one zip, so nothing was installed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "limit": "number"
+      }
+    },
+    "mods.local.reason.unsafe_entry": {
+      "translation": "[Ẋ {file} holds a file path that points outside the mod's folder ({entry}), so nothing was installed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "entry": "text"
+      }
+    },
+    "mods.local.reason.no_manifest": {
+      "translation": "[Ẋ {file} has no manifest.json at the top of the zip. A Thunderstore or Hexium package keeps manifest.json at its top level, beside the plugin files. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.local.reason.manifest_in_folder": {
+      "translation": "[Ẋ {file} keeps manifest.json inside a folder ({folder}). Zip the folder's contents instead of the folder itself, so manifest.json sits at the top. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "folder": "text"
+      }
+    },
+    "mods.local.reason.bad_manifest": {
+      "translation": "[Ẋ The manifest.json in {file} could not be read: {detail} Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text",
+        "detail": "text"
+      }
+    },
+    "mods.local.reason.manifest_fields": {
+      "translation": "[Ẋ The manifest.json in {file} needs a name (letters, digits and underscores) and a version_number such as 1.4.0. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.local.reason.no_dll": {
+      "translation": "[Ẋ {file} holds no .dll file, so there is nothing for BepInEx to load. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "file": "text"
+      }
+    },
+    "mods.local.reason.no_owner": {
+      "translation": "[Ẋ BakaLoader cannot tell who publishes {name}. Rename the zip to Owner-Name-Version.zip, for example Acme-Aurora-1.4.0.zip, and add it again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.local.reason.owner_ambiguous": {
+      "translation": "[Ẋ More than one installed mod is called {name} ({owners}). Rename the zip to Owner-Name-Version.zip to say which one this is. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "owners": "text"
+      }
+    },
+    "mods.local.reason.owner_conflict": {
+      "translation": "[Ẋ {name} is already installed from {installed}, and this zip's name says {owner}. BakaLoader will not guess which one it is: rename the zip to start with {installed}, or remove the other copy first. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text",
+        "installed": "text",
+        "owner": "text"
+      }
+    },
+    "mods.local.reason.reserved": {
+      "translation": "[Ẋ {mod} is the loader or a part BakaLoader looks after itself, so it cannot be installed from a zip here. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "mod": "text"
+      }
+    },
+    "mods.local.reason.server_running": {
+      "translation": "[Ẋ The server '{name}' is running on this install, so nothing was installed. Stop it first, then try again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.local.reason.realm_changed": {
+      "translation": "[Ẋ The server on screen changed before the zip went in, so nothing was installed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.tag.local": {
+      "translation": "[Ẋ Local Ẋ] ẊẊ"
+    },
+    "mods.tag.local.tip": {
+      "translation": "[Ẋ These files came from a zip on this PC, so BakaLoader leaves them alone: this mod sits out Update all, the waiting count and the unattended restart. Paste the mod's Thunderstore link into the add box to go back to the published build. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.tag.installed.local.tip": {
+      "translation": "[Ẋ Installed from a zip on this PC. The Thunderstore latest column may show a different version, and that is expected. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.status.local": {
+      "translation": "[Ẋ local Ẋ] ẊẊ"
+    },
+    "mods.status.local.tip": {
+      "translation": "[Ẋ installed from a zip on this PC; BakaLoader will not replace it on its own Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.menu.update.tip.local": {
+      "translation": "[Ẋ This copy came from a zip on this PC, so Thunderstore updates are not applied to it. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
     "runes.head.title": {
       "translation": "[Ẋ CONFIGS Ẋ] ẊẊẊ"
     },
@@ -6426,6 +6668,21 @@
     },
     "mods.check_one.current.toast": {
       "translation": "[Ẋ you have the newest Ẋ] ẊẊẊẊẊẊ",
+      "mark": "ᛋ"
+    },
+    "mods.local.reading.toast": {
+      "translation": "[Ẋ Reading the zip… Ẋ] ẊẊẊẊẊ",
+      "mark": "ᚨ"
+    },
+    "mods.local.installing.toast": {
+      "translation": "[Ẋ Installing from the zip… Ẋ] ẊẊẊẊẊẊẊẊ",
+      "mark": "ᚨ"
+    },
+    "mods.check_one.local.toast": {
+      "translation": "[Ẋ Thunderstore's newest is {version}. This copy came from a zip on this PC, so it is left as it is. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+      "params": {
+        "version": "text"
+      },
       "mark": "ᛋ"
     },
     "mods.update_all.begun.toast": {

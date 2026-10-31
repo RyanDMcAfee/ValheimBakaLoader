@@ -290,10 +290,16 @@ namespace ValheimBakaLoader.Tests.Forms
         public void A_missing_plugins_folder_is_created_rather_than_refused()
         {
             var bridge = Bridge().Replace("\r\n", "\n");
-            var at = bridge.IndexOf("if (!Directory.Exists(pluginsDir))\n                {\n                    try { Directory.CreateDirectory(pluginsDir); }",
-                StringComparison.Ordinal);
+            // From 1.3.2 the loader hold is one helper both roads of the add go through, a
+            // pasted link and a zip on this PC, so the creation is looked for inside it.
+            var helper = bridge.IndexOf("private async Task<object> AddGateBepInExAsync(", StringComparison.Ordinal);
+            Assert.True(helper > 0, "the add's loader hold is gone");
+            var end = bridge.IndexOf("\n        }\n", helper, StringComparison.Ordinal);
+            var body = bridge.Substring(helper, end - helper);
 
-            Assert.True(at > 0, "the add flow no longer creates a missing plugins folder");
+            Assert.True(Regex.IsMatch(body, @"if \(!Directory\.Exists\(pluginsDir\)\)\s*\{\s*try \{ Directory\.CreateDirectory\(pluginsDir\); \}"),
+                "the add flow no longer creates a missing plugins folder");
+            Assert.Equal(2, Regex.Matches(bridge, Regex.Escape("await AddGateBepInExAsync(pluginsDir, bepPrefs, bepStatus)")).Count);
         }
 
         /// <summary>
@@ -839,7 +845,10 @@ namespace ValheimBakaLoader.Tests.Forms
         /// them covers is a table added tomorrow: rows in it would be wording something
         /// nothing checks, and every existing gate would stay green while it rotted. So the
         /// page is held to these four, and a fifth one has to arrive with the gate that
-        /// stands under it.
+        /// stands under it. The fifth is LOCAL_ZIP_REASONS (1.3.2), the ways the add turns
+        /// a zip on this PC down, and WebUiLocalZipCopyTests is its gate: every reason the
+        /// reader and the bridge send has a row, every row a sender, and every sentence only
+        /// the values that reason carries.
         /// </summary>
         [Fact]
         public void The_page_pairs_its_sentences_in_the_tables_that_are_guarded()
@@ -852,14 +861,15 @@ namespace ValheimBakaLoader.Tests.Forms
 
             Assert.NotEmpty(everywhere);
 
-            var guarded = HostSentencesTable() + LangReasonsTable() + BepInExReasonsTable() + ModSwitchReasonsTable();
+            var guarded = HostSentencesTable() + LangReasonsTable() + BepInExReasonsTable() + ModSwitchReasonsTable()
+                + NamedTable("const LOCAL_ZIP_REASONS=[");
             var loose = everywhere
                 .Where(id => !Regex.IsMatch(guarded, "named:\\s*\"" + Regex.Escape(id) + "\""))
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
 
             Assert.True(loose.Count == 0,
-                "these rows pair a sentence outside HOST_SENTENCES, LANG_REASONS, BEPINEX_REASONS and MOD_SWITCH_REASONS, "
+                "these rows pair a sentence outside HOST_SENTENCES, LANG_REASONS, BEPINEX_REASONS, MOD_SWITCH_REASONS and LOCAL_ZIP_REASONS, "
                     + "where nothing checks them: " + string.Join(", ", loose));
         }
 

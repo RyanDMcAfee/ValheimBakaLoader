@@ -707,7 +707,10 @@ function fnBody(source, head) {
     const add = BRIDGE.slice(BRIDGE.indexOf('RegisterRpc("mods.addFromUrl"'), BRIDGE.indexOf('RegisterRpc("mods.hexiumPrepare"'));
     assert.ok(/Value<bool\?>\("requireStopped"\)/.test(add) && /RunningSessionName\(new\[\] \{ pluginsDir \}\)/.test(add),
       "the add does not refuse a plugins folder a running server holds");
-    assert.ok(/Value<string>\("profile"\)/.test(add) && /"realmChanged"/.test(add), "the add does not hold the walk to its realm");
+    /* 1.3.2: the realm hold is one helper the link road and the zip road both go through. */
+    const gate = BRIDGE.slice(BRIDGE.indexOf("private object AddGateFolders("), BRIDGE.indexOf("private async Task<object> AddGateBepInExAsync("));
+    assert.ok(/AddGateFolders\(p, out var pluginsDir, out var forProfile\)/.test(add)
+      && /Value<string>\("profile"\)/.test(gate) && /"realmChanged"/.test(gate), "the add does not hold the walk to its realm");
     for (const [file, src] of [["BlendWindow.Gale.cs", GALE_CS], ["BlendWindow.GaleConfigs.cs", GALE_CFG_CS]])
       assert.ok(!/Remove|Delete/.test(src.replace(/TryRemove/g, "").replace(/\/\/\/.*|\/\/.*/g, "")),
         file + " calls something that removes");

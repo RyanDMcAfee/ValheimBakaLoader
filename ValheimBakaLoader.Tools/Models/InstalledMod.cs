@@ -146,6 +146,17 @@ namespace ValheimBakaLoader.Tools.Models
         public bool IsHexiumInstalled =>
             string.Equals(InstalledSource, "hexium", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>True when this copy was installed by BakaLoader from a package zip on this PC (1.3.2).</summary>
+        public bool IsLocalInstalled =>
+            string.Equals(InstalledSource, "local", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// True when no Thunderstore update may replace this copy: it came from Hexium, or from a
+        /// zip on this PC. The one test every update path asks, so a test build is never swapped
+        /// for the published one behind the host's back.
+        /// </summary>
+        public bool HoldsOffThunderstore => IsHexiumInstalled || IsLocalInstalled;
+
         /// <summary>
         /// The highest version Hexium offers for this exact package, or null when the
         /// host has not turned that source on, Hexium has no such package, or the
@@ -170,14 +181,16 @@ namespace ValheimBakaLoader.Tools.Models
         /// deliberate, and the sentence that used to stand here claimed the opposite.
         /// </para>
         /// <para>
-        /// A copy installed from Hexium always answers false, whatever Thunderstore
-        /// holds. This is the one flag "Update all", the waiting-updates count and the
-        /// unattended restart path all read, so a mod the host deliberately took from
-        /// the other site is never quietly replaced with the Thunderstore build.
-        /// Swapping back is offered as its own action, and it asks first.
+        /// A copy installed from Hexium, or from a zip on this PC, always answers false,
+        /// whatever Thunderstore holds (<see cref="HoldsOffThunderstore"/>). This is the one
+        /// flag "Update all", the waiting-updates count and the unattended restart path all
+        /// read, so a mod the host deliberately took from somewhere else is never quietly
+        /// replaced with the Thunderstore build. Swapping a Hexium copy back is offered as
+        /// its own action, and it asks first; a zip copy goes back by adding the mod's
+        /// Thunderstore link.
         /// </para>
         /// </summary>
-        public bool UpdateAvailable => !IsHexiumInstalled && SemVer.IsNewer(LatestVersion, InstalledVersion);
+        public bool UpdateAvailable => !HoldsOffThunderstore && SemVer.IsNewer(LatestVersion, InstalledVersion);
 
         /// <summary>
         /// True when Hexium has a version worth telling the host about: higher than

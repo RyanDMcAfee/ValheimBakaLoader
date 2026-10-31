@@ -188,8 +188,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // The swap dialog's own button and the row menu entry that opens it say the
             // same thing, so they are one key.
             Assert.Equal(2, Regex.Matches(js, Regex.Escape("T(\"mods.menu.install_thunderstore\")")).Count);
-            // Both dialogs label the version the same way, and so would a third.
-            Assert.Equal(2, Regex.Matches(js, Regex.Escape("T(\"common.label.version\")")).Count);
+            // Both dialogs label the version the same way, and so does the third, the question
+            // a zip on this PC asks before it goes in (1.3.2).
+            Assert.Equal(3, Regex.Matches(js, Regex.Escape("T(\"common.label.version\")")).Count);
             // Playtime and Deaths both fall back to the same dash tooltip.
             Assert.Equal(2, Regex.Matches(js, Regex.Escape("T(\"vikings.row.nothing_recorded.title\")")).Count);
 
@@ -236,6 +237,8 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.menu.remove", "mods.menu.thunderstore", "mods.menu.thunderstore.tip.missing",
                 "mods.menu.toggle.tip.running",
                 "mods.menu.update", "mods.menu.update.tip.current", "mods.menu.update.tip.hexium",
+                // 1.3.2: a copy from a zip on this PC sits out Update, and says so.
+                "mods.menu.update.tip.local",
                 "mods.menu.update.tip.not_listed", "mods.menu.update.tip.patcher",
             }, IdsAskedIn(menu).ToArray());
 

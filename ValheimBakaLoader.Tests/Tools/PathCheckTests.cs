@@ -584,7 +584,9 @@ namespace ValheimBakaLoader.Tests.Tools
             {
                 var start = bridge.IndexOf("RegisterRpc(\"" + rpc + "\"", StringComparison.Ordinal);
                 Assert.True(start > 0, rpc + " is not registered");
-                var body = bridge.Substring(start, 1400);
+                // Up to the next registration: the file picker grew a second kind in 1.3.2.
+                var end = bridge.IndexOf("RegisterRpc(", start + 12, StringComparison.Ordinal);
+                var body = bridge.Substring(start, (end > start ? end : start + 1400) - start);
                 Assert.Contains("Task.FromResult(RunOnUiThread(() =>", body);
                 Assert.Contains("PickReply(dialog.ShowDialog(this)", body);
             }
@@ -594,9 +596,12 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.Contains("if (!InvokeRequired) return work();", bridge);
             Assert.Contains("return (T)Invoke(work);", bridge);
 
-            // The file picker only ever offers the one file name, and only the two closed
-            // keywords are accepted: a raw path from the page can reach neither dialog.
-            Assert.Contains("Filter = PathCheck.ServerExeName + \"|\" + PathCheck.ServerExeName,", bridge);
+            // The file picker only ever offers the one file name, or from 1.3.2 the one pattern
+            // for a package zip, and only the closed keywords are accepted: a raw path from the
+            // page can reach neither dialog.
+            Assert.Contains("Filter = zip ? PathCheck.ZipPattern + \"|\" + PathCheck.ZipPattern", bridge);
+            Assert.Contains(": PathCheck.ServerExeName + \"|\" + PathCheck.ServerExeName,", bridge);
+            Assert.Equal("*.zip", PathCheck.ZipPattern);
             Assert.Contains("throw new ArgumentException($\"Unknown shell.pickFile kind: {kind}\");", bridge);
             Assert.Contains("throw new ArgumentException($\"Unknown shell.pickFolder kind: {kind}\");", bridge);
         }
