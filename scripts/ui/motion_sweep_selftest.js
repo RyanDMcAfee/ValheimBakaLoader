@@ -287,6 +287,19 @@ test("9. a Mods row's status pill fades its new words in when the table is drawn
   assert.ok(RECORD.includes("`modStatusFade` in `renderMods` (1.3.1)") && RECORD.includes("`galeHexiumInstall` (1.3.1)"), "docs/motion-sweep.md does not record the 1.3.1 Mods row and Gale review changes");
 });
 
+test("10. the Mods hall's tick bar rolls in and out, and its count fades its new words in (1.3.2)", () => {
+  /* The bar sits between the BepInEx row and the table, so its arrival moves the table down: it
+     has to roll. A tick changes the count in place, never redrawing the bar or the table. */
+  assert.ok(/id="modTickBar" style="display:none"/.test(HTML), "#modTickBar does not start hidden in the markup");
+  const bar = body("function renderModTickBar(shown){");
+  assert.ok(bar.includes("reveal(bar,true)") && bar.includes("reveal(bar,false)"), "the tick bar shows or hides without reveal");
+  assert.ok(bar.includes('revealText(bar.querySelector("#modTickCount")') && bar.includes('revealText(bar.querySelector("#modTickHidden")'),
+    "the tick bar's count changes its words without revealText");
+  assert.ok(!/style\.display/.test(bar), "the tick bar writes style.display by hand");
+  assert.ok(!/\.modtickbar\{[^}]*display:none/.test(CSS), "a class rule hides the tick bar");
+  assert.ok(RECORD.includes("`renderModTickBar` (1.3.2)"), "docs/motion-sweep.md does not record the 1.3.2 tick bar");
+});
+
 console.log(failures.length === 0
   ? "motion sweep selftest: all " + passed + " rules pass"
   : "motion sweep selftest: " + failures.length + " of " + (passed + failures.length) + " rules FAIL");

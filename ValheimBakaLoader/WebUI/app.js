@@ -311,6 +311,9 @@ const HOST_SENTENCES=[
   /* Removing a mod while a server is up. Windows will not let a loaded plugin be deleted,
      so this is a refusal now rather than a warning the host could walk past. */
   {named:"mods.remove.serverRunning",        textId:"mods.remove.reason.server_running"},
+  /* And while another mod job holds the folder (1.3.2): an update, an install or a batch of
+     switches. The switch's own sentence says it. */
+  {named:"mods.remove.busy",                 textId:"mods.switch.reason.busy"},
   /* A delete with files that left a folder standing. The realm is kept so the delete can be
      pressed again, and the sentence names the folders that are still there. */
   {named:"profiles.delete.filesSurvived",    textId:"realm.delete.reason.files_survived"},
@@ -537,6 +540,12 @@ const S={
      all button and the unattended paths read the whole list. Cleared on a profile switch,
      because the previous realm's search is not this realm's. */
   modFilter:"",
+  /* The ticked rows of the Mods table, by FullName (1.3.2, issue 33). Here rather than in
+     the boxes because renderMods writes the table whole. A scan keeps the ticks of the rows
+     still on disk, a batch and its rescan keep them all, and a realm switch empties them.
+     modTickAnchor is the box a Shift range starts from; modShown the FullNames the table
+     is drawing, in its order, which a range and Tick all shown read. */
+  modTicks:new Set(), modTickAnchor:null, modShown:null,
   /* The same for the Configs hall: it narrows the list of scrolls on screen, and reading,
      saving and reverting all act on the whole file whatever the list is showing. */
   runeFilter:"",
@@ -3089,6 +3098,8 @@ async function switchServer(name,opts){
   for(const key in WORLD_INTEGRITY_READ) delete WORLD_INTEGRITY_READ[key];
   /* a search was typed about the previous realm's mods and scrolls, so it goes with them */
   S.modFilter=""; if($("#modSearch")) $("#modSearch").value="";
+  /* and so were the ticks: a FullName on one realm is not the same mod on the next */
+  S.modTicks=new Set(); S.modTickAnchor=null; S.modShown=null;
   S.runeFilter=""; if($("#runeSearch")) $("#runeSearch").value="";
   cfgFindReset();
   /* conditions belong to the realm that raised them. saveFolderStray is one of them: the
@@ -5603,6 +5614,7 @@ function renderMods(){
     $("#modsSub").title="";
     renderModNeedsLine();
     renderModShowing(0,0);
+    renderModTickBar(null);
     return;
   }
   /* A scan that could not reach Thunderstore knows nothing about a newer version of
@@ -5627,6 +5639,8 @@ function renderMods(){
   if(table) table.classList.toggle("po-empty",
     !mods.some(m=>m.possiblyOutdated&&!m.IsPatcher));
   const statusWas=modStatusWords($("#modTable"));
+  /* The table is written whole, so a box that had the keyboard is found again by its key. */
+  const tickFocus=modTickFocusKey();
   $("#modTable").innerHTML=shown.map(m=>modRowHtml(m,blind)).join("")||`<tr><td colspan="${modColCount()}">${mods.length
     ?emptyState({mark:"ᚱ",title:T("mods.empty.no_match.title"),
         /* The one reason that counts what it is hiding. The count is a slot and the
@@ -5648,6 +5662,7 @@ function renderMods(){
           action:{name:"addMod",label:T("mods.empty.none.action")}}))}</td></tr>`;
   esWire($("#modTable"));
   modStatusFade($("#modTable"),statusWas);
+  modTickFocusRestore(tickFocus);
   $("#modTable")._list=mods;
   /* A real plural rather than an English "s", and both pills escaped on the way in. */
   $("#modUpdWrap").innerHTML=upd.length
@@ -5659,13 +5674,14 @@ function renderMods(){
   conditionModUpdates(upd.length);
   renderModIndexLine(mods.length);
   renderModShowing(shown.length,mods.length);
+  renderModTickBar(shown);
 }
 /* MODROW-BEGIN: one Mods table row, from the row's DTO and nothing else. Kept out of
    renderMods so scripts/ui/mod_row_selftest.js can draw a row with the page's globals stood
    in for; renderMods, just above, is the only caller. */
 /* How many cells a row has, for the colspan an empty state stretches across. A function
    rather than a const because renderMods, above it, can run before this line is reached. */
-function modColCount(){return 8;}
+function modColCount(){return 9;}
 /* A date the scan handed over, as the day it fell on in the host's own time zone
    (YYYY-MM-DD, which sorts the way it reads and means the same thing in every language), or
    "" when there is none. */
@@ -5748,6 +5764,14 @@ function modNeedsPill(m){
   const tip=[T("mods.deps.pill.tip")].concat(needs.map(modDepLine)).join("\n");
   return ` <span class="pill amber modneeds" title="${esc(tip)}">${esc(label)}</span>`;
 }
+/* The first cell: a real box, keyed by the row's own name, ticked from S.modTicks. A row the
+   host says it cannot switch (the loader's own patcher) gets an empty cell, so a batch never
+   carries a name it could only refuse. A row from an older host has no flag and gets a box. */
+function modTickCell(m){
+  if(m.switchable===false) return `<td class="modtick"></td>`;
+  const on=!!(S.modTicks&&S.modTicks.has(m.FullName));
+  return `<td class="modtick"><input type="checkbox" data-mod-tick="${esc(m.FullName)}"${on?" checked":""} aria-label="${esc(T("mods.tick.aria",{name:m.ModName||m.FullName}))}"></td>`;
+}
 function modRowHtml(m,blind){
   const has=!!m.UpdateAvailable;
   const st=S.modRowStatus&&S.modRowStatus[m.FullName];
@@ -5769,7 +5793,7 @@ function modRowHtml(m,blind){
      is installed and what Thunderstore has, or this is a Hexium copy Thunderstore has
      moved past. Both are offers, and both ask before they do anything. */
   const mark=modLatestMark(m);
-  return `<tr data-key="${esc(m.FullName)}"${m.disabled?' class="off"':""}><td><strong>${esc(m.ModName)}</strong>${patcherTag}${srcChip}</td>`+
+  return `<tr data-key="${esc(m.FullName)}"${m.disabled?' class="off"':""}>`+modTickCell(m)+`<td><strong>${esc(m.ModName)}</strong>${patcherTag}${srcChip}</td>`+
     `<td class="mono mod-author">${esc(m.Author||"")}</td>`+
     modInstalledCell(m)+
     `<td class="mono"${has?' style="color:var(--amber)"':""}${blind?` title="${esc(T("mods.status.unchecked.tip"))}"`:(m.notListed?` title="${esc(T("mods.status.not_listed.tip"))}"`:"")}>${esc(m.LatestVersion||"-")}${mark}</td>`+
@@ -6902,6 +6926,7 @@ async function scanMods(opts){
   }
   const idx=(r&&!Array.isArray(r))?r.index:null;
   S.mods=rows; S.modsScanned=true; S.lastScan=clock();
+  modTicksPrune();
   /* The time the LIST was read, which a press that reused a fresh one leaves where it
      was. An older bridge answering with a bare array has no such time, and the press
      time is the best that is known there. */
@@ -7523,6 +7548,230 @@ $("#modTable").addEventListener("click",e=>{
   e.preventDefault(); e.stopPropagation();
   if(mark.dataset.hex!=null){const m=modByKey(mark.dataset.hex); if(m) hexiumInstallFlow(m); return;}
   if(mark.dataset.ts!=null){const m=modByKey(mark.dataset.ts); if(m) thunderstoreSwapFlow(m);}
+});
+
+/* MODTICKS-BEGIN: ticking rows of the Mods table and switching the ticked ones in one request
+   (1.3.2, issue 33). A host halving a long list to find the mod that breaks a start used to
+   right-click every row twice: fifty clicks, fifty folder scans on the host and fifty table
+   redraws. The ticks live in S.modTicks by FullName; a tick never redraws the table, so the
+   keyboard stays on the box, and the bar is updated in place for the same reason.
+   scripts/ui/mod_ticks_selftest.js drives this block with a stand-in host. */
+/* The five buttons, in the order the bar shows them. The two switches are the only ones that
+   change anything on disk. */
+const MOD_TICK_BTNS=[
+  {id:"all",     labelId:"mods.tick.all",      titleId:"mods.tick.all.title"},
+  {id:"none",    labelId:"mods.tick.none",     titleId:"mods.tick.none.title"},
+  {id:"offones", labelId:"mods.tick.off_ones", titleId:"mods.tick.off_ones.title"},
+  {id:"off",     labelId:"mods.bulk.off",      titleId:"mods.bulk.off.title"},
+  {id:"on",      labelId:"mods.bulk.on",       titleId:"mods.bulk.on.title"},
+];
+/* Up from the first line of a press to the end of its rescan. Set before anything is awaited,
+   so a double click or Enter held down on the button sends one request, not two. */
+let MOD_BULK_BUSY=false;
+/* Set by the Space key on a box when Shift is held, for the click the key is about to make. */
+let MOD_TICK_SHIFT=false;
+function modTickable(m){return !!m&&!!m.FullName&&m.switchable!==false;}
+/* After a scan: a tick on a row that is no longer on disk goes, and so do the Failed pills a
+   batch left, since the rows they named have just been read again. */
+function modTicksPrune(){
+  if(!S.modTicks) S.modTicks=new Set();
+  const keep=new Set((S.mods||[]).filter(modTickable).map(m=>m.FullName));
+  for(const k of Array.from(S.modTicks)) if(!keep.has(k)) S.modTicks.delete(k);
+  if(S.modTickAnchor&&!keep.has(S.modTickAnchor)) S.modTickAnchor=null;
+  if(S.modRowStatus) for(const k of Object.keys(S.modRowStatus))
+    if(S.modRowStatus[k]&&S.modRowStatus[k].bulk) delete S.modRowStatus[k];
+}
+/* Every ticked row of the whole list, shown or not: a search narrows what is drawn and never
+   what the app acts on. */
+function modTickedRows(){
+  return (S.mods||[]).filter(m=>modTickable(m)&&S.modTicks&&S.modTicks.has(m.FullName));
+}
+/* The ticked rows a switch in this direction would change. */
+function modBulkRows(off){
+  return modTickedRows().filter(m=>off?!m.disabled:!!m.disabled);
+}
+/* Ticks or unticks the named rows and sets their boxes as they are, with no redraw. */
+function modTickSet(keys,on){
+  if(!S.modTicks) S.modTicks=new Set();
+  for(const k of keys){ if(on) S.modTicks.add(k); else S.modTicks.delete(k); }
+  for(const box of document.querySelectorAll("#modTable [data-mod-tick]"))
+    box.checked=S.modTicks.has(box.getAttribute("data-mod-tick"));
+  renderModTickBar();
+}
+/* One box pressed, by the mouse or by Space. With Shift, every row the table shows between the
+   last box pressed and this one takes this box's new state, in the order on screen now. */
+function modTickClick(key,on,shift){
+  if(!key) return;
+  const shown=S.modShown||[];
+  let keys=[key];
+  if(shift&&S.modTickAnchor&&S.modTickAnchor!==key){
+    const a=shown.indexOf(S.modTickAnchor), b=shown.indexOf(key);
+    if(a>=0&&b>=0) keys=shown.slice(Math.min(a,b),Math.max(a,b)+1).filter(k=>modTickable(modByKey(k)));
+  }
+  S.modTickAnchor=key;
+  modTickSet(keys,!!on);
+}
+function modTickAllShown(){ modTickSet((S.modShown||[]).filter(k=>modTickable(modByKey(k))),true); }
+function modUntickAll(){ S.modTickAnchor=null; modTickSet(Array.from(S.modTicks||[]),false); }
+function modTickOffOnes(){
+  modTickSet((S.modShown||[]).filter(k=>{const m=modByKey(k); return modTickable(m)&&!!m.disabled;}),true);
+}
+/* The box that had the keyboard before the table is written again, and the box to give it back
+   to after. Found by key, never by position: a scan can move a row. */
+function modTickFocusKey(){
+  const a=document.activeElement;
+  if(!a||typeof a.getAttribute!=="function"||typeof a.closest!=="function"||!a.closest("#modTable")) return null;
+  return a.getAttribute("data-mod-tick")||null;
+}
+function modTickFocusRestore(key){
+  if(!key) return;
+  const box=Array.from(document.querySelectorAll("#modTable [data-mod-tick]")).find(b=>b.getAttribute("data-mod-tick")===key);
+  if(box&&typeof box.focus==="function") box.focus({preventScroll:true});
+}
+/* The bar: the count, the hidden rows, and the five buttons. renderMods hands it the rows it
+   drew (null when nothing has been read); a tick calls it with nothing and the last drawn rows
+   stand. Built once and changed in place after, so a button keeps the keyboard. */
+function renderModTickBar(shown){
+  const bar=$("#modTickBar"); if(!bar) return;
+  if(shown!==undefined) S.modShown=shown?shown.map(m=>m.FullName):null;
+  if(!S.modShown||!(S.mods||[]).length){ reveal(bar,false); return; }
+  if(!bar.querySelector("[data-mod-bulk]")){
+    bar.innerHTML=`<span class="modtickmsg" role="status" aria-live="polite"><span id="modTickCount"></span><span class="modtickhidden" id="modTickHidden"></span></span>`+
+      `<span class="modtickbtns">${MOD_TICK_BTNS.map(b=>`<button type="button" class="btn btn-ghost btn-sm" data-mod-bulk="${b.id}"></button>`).join("")}</span>`;
+  }
+  if(!S.modTicks) S.modTicks=new Set();
+  const ticked=modTickedRows(), drawn=new Set(S.modShown);
+  const hidden=ticked.filter(m=>!drawn.has(m.FullName)).length;
+  revealText(bar.querySelector("#modTickCount"),T("mods.tick.count",{ticked:ticked.length,shown:S.modShown.length}));
+  revealText(bar.querySelector("#modTickHidden"),hidden?T("mods.tick.hidden",{hidden}):"");
+  const shownRows=S.modShown.map(modByKey).filter(modTickable);
+  const up=modRealmUp(), busy=MOD_BULK_BUSY||!!S.modsScanning||!!S.modsUpdating;
+  const can={
+    all:shownRows.some(m=>!S.modTicks.has(m.FullName)),
+    none:ticked.length>0,
+    offones:shownRows.some(m=>m.disabled&&!S.modTicks.has(m.FullName)),
+    off:!busy&&!up&&modBulkRows(true).length>0,
+    on:!busy&&!up&&modBulkRows(false).length>0,
+  };
+  for(const b of MOD_TICK_BTNS){
+    const el=bar.querySelector(`[data-mod-bulk="${b.id}"]`); if(!el) continue;
+    const label=T(b.labelId);
+    if(el.textContent!==label) el.textContent=label;
+    el.disabled=!can[b.id];
+    /* The running tip on the two switches says why they are grey; otherwise each says what it does. */
+    el.title=(up&&(b.id==="off"||b.id==="on"))?T("mods.menu.toggle.tip.running"):T(b.titleId);
+  }
+  reveal(bar,true);
+}
+/* A press on the bar. */
+function modBulkPress(id){
+  if(id==="all") modTickAllShown();
+  else if(id==="none") modUntickAll();
+  else if(id==="offones") modTickOffOnes();
+  else if(id==="off"||id==="on") return switchTicked(id==="off");
+}
+/* Switch off ticked, or Switch on ticked. No question in the common case, as with the row
+   menu's one entry: it removes nothing and the other button undoes it. The one question is
+   for ticked rows the search is hiding, named before anything is sent, because a search never
+   changes what the app acts on and a host can forget a tick they cannot see. */
+function switchTicked(off){
+  if(!Native.available){toast("ᚱ "+T("mods.toggle.preview.toast"));return;}
+  if(MOD_BULK_BUSY||S.modsUpdating||S.modsScanning||modRealmUp()) return;
+  const rows=modBulkRows(off);
+  if(!rows.length) return;
+  const drawn=new Set(S.modShown||[]);
+  const hidden=rows.filter(m=>!drawn.has(m.FullName)).length;
+  if(!hidden) return switchTickedNow(off,rows);
+  confirmModal(()=>off?T("mods.bulk.confirm.off.title",{count:rows.length}):T("mods.bulk.confirm.on.title",{count:rows.length}),
+    ()=>`<div class="mbody-note">${esc(T("mods.bulk.confirm.hidden",{hidden}))}</div>`+
+      `<div class="mono-list">${rows.map(m=>esc(m.FullName)).join("<br>")}</div>`,
+    ()=>off?T("mods.bulk.off"):T("mods.bulk.on"),()=>{switchTickedNow(off,rows);});
+}
+async function switchTickedNow(off,rows){
+  if(MOD_BULK_BUSY||S.modsUpdating||S.modsScanning||!rows||!rows.length) return;
+  MOD_BULK_BUSY=true; S.modsUpdating=true;
+  const forRealm=S.profileName;
+  const at=document.activeElement;
+  const press=at&&typeof at.closest==="function"&&at.closest("#modTickBar")?at.getAttribute("data-mod-bulk"):null;
+  renderMods();
+  const r=await rpc("mods.switchMany",{profile:forRealm||null,fullNames:rows.map(m=>m.FullName),off:!!off});
+  /* The realm moved on while this was out. Its flags were put down by the switch, and the
+     answer is about a hall that is no longer on screen. */
+  if(forRealm!==S.profileName){
+    MOD_BULK_BUSY=false;
+    logLine("info","[Mods] a switch of ticked mods answered for a server that is no longer open, so it was dropped");
+    renderModTickBar();
+    return;
+  }
+  S.modsUpdating=false;
+  if(r===FAIL||!r){ MOD_BULK_BUSY=false; renderMods(); return; }
+  if(!r.ok){
+    MOD_BULK_BUSY=false; renderMods();
+    toast("ᚦ "+(modSwitchReasonText(r,null,!off)
+      ||T("mods.bulk.refused.toast",{detail:r.error||T("common.error.unknown")})));
+    logLine("warn","[Mods] nothing was switched: "+(r.error||r.reason||"unknown"));
+    return;
+  }
+  const results=Array.isArray(r.results)?r.results.filter(x=>x&&x.fullName):[];
+  const done=results.filter(x=>x.ok), skipped=results.filter(x=>!x.ok&&x.skipped), left=results.filter(x=>!x.ok&&!x.skipped);
+  /* One rescan for the whole batch, and only when something moved. */
+  if((Number(r.changed)||0)>0) await scanMods({force:false});
+  MOD_BULK_BUSY=false;
+  if(forRealm!==S.profileName){ renderModTickBar(); return; }
+  /* The rows left as they were say so in their Status cell, with the reason on hover, until
+     the next scan reads them again. Set after the batch's own rescan, which clears them. */
+  S.modRowStatus=S.modRowStatus||{};
+  for(const x of left){
+    const m=modByKey(x.fullName)||{FullName:x.fullName,ModName:x.fullName};
+    S.modRowStatus[x.fullName]={phase:"failed",bulk:true,
+      error:modSwitchReasonText(x,m,!off)||x.error||""};
+  }
+  renderMods();
+  const note=skipped.length?" "+T("mods.bulk.skipped.note",{count:skipped.length}):"";
+  if(left.length) toast("ᚦ "+T("mods.bulk.partial.toast",{ok:done.length,failed:left.length})+note);
+  else if(done.length) toast("ᚱ "+(off?T("mods.bulk.off.done.toast",{count:done.length}):T("mods.bulk.on.done.toast",{count:done.length}))+note);
+  else if(skipped.length) toast("ᚱ "+T("mods.bulk.skipped.toast",{count:skipped.length}));
+  /* The Saga line is English and names every mod, so a report pasted from it says exactly
+     what moved and what did not, and why. */
+  const way=off?"off":"on";
+  logLine(left.length?"warn":"ok","[Mods] switched "+way+" "+done.length+" in one request"
+    +(done.length?": "+done.map(x=>x.fullName).join(", "):"")
+    +(skipped.length?"; already "+way+": "+skipped.map(x=>x.fullName).join(", "):"")
+    +(left.length?"; left as they were: "+left.map(x=>x.fullName+" ("+(x.error||x.reason||"unknown")+")").join(", "):""));
+  /* A press from the keyboard keeps the keyboard: the same button when it can still be
+     pressed, else the other switch, else the first button that can. */
+  if(press){
+    const bar=$("#modTickBar");
+    const all=bar?Array.from(bar.querySelectorAll("[data-mod-bulk]")):[];
+    const pick=[press,press==="off"?"on":"off"].map(id=>all.find(el=>el.getAttribute("data-mod-bulk")===id))
+      .find(el=>el&&!el.disabled)||all.find(el=>!el.disabled);
+    if(pick&&typeof pick.focus==="function") pick.focus({preventScroll:true});
+  }
+}
+/* MODTICKS-END */
+/* A box: Space toggles it natively, and Shift with Space or with the mouse ranges. The mouse
+   down is held back on a Shift press so the browser does not select the text of the rows in
+   between, which also keeps it from taking focus, so the click gives it focus itself. */
+$("#modTable").addEventListener("keydown",e=>{
+  const box=e.target&&typeof e.target.closest==="function"?e.target.closest("[data-mod-tick]"):null;
+  if(box&&(e.key===" "||e.code==="Space")) MOD_TICK_SHIFT=!!e.shiftKey;
+});
+$("#modTable").addEventListener("mousedown",e=>{
+  const box=e.target&&typeof e.target.closest==="function"?e.target.closest("[data-mod-tick]"):null;
+  if(box&&e.shiftKey) e.preventDefault();
+});
+$("#modTable").addEventListener("click",e=>{
+  const box=e.target&&typeof e.target.closest==="function"?e.target.closest("[data-mod-tick]"):null;
+  if(!box) return;
+  const shift=!!e.shiftKey||MOD_TICK_SHIFT;
+  MOD_TICK_SHIFT=false;
+  if(document.activeElement!==box) box.focus({preventScroll:true});
+  modTickClick(box.getAttribute("data-mod-tick"),box.checked,shift);
+});
+$("#modTickBar")?.addEventListener("click",e=>{
+  const b=e.target&&typeof e.target.closest==="function"?e.target.closest("[data-mod-bulk]"):null;
+  if(!b||b.disabled) return;
+  modBulkPress(b.getAttribute("data-mod-bulk"));
 });
 
 /* ---- Add a mod from any pasted Thunderstore link ---- */

@@ -703,7 +703,9 @@ namespace ValheimBakaLoader.Tests.Forms
             // a config file is open with unsaved changes: those changes were read from the old
             // install, and the re-read that follows the move lets them go (1.2.11).
             // 28 with the question a zip on this PC asks before it goes in (1.3.2, issue 32).
-            Assert.Equal(28, sites);
+            // 29 with the question Switch off ticked and Switch on ticked ask when the search
+            // hides some of the ticked rows, naming every mod the switch covers (issue 33).
+            Assert.Equal(29, sites);
             Assert.True(frozen.Count == 0,
                 "a dialog would keep its wording through a language switch:\n  "
                 + string.Join("\n  ", frozen));

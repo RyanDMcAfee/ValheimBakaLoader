@@ -212,6 +212,10 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.gale.button.title",
                 "mods.gale.box.check", "mods.gale.box.check.title",
                 "mods.gale.box.forget", "mods.gale.box.forget.title", "mods.gale.box.review",
+                // The tick column's header (1.3.2, issue 33): words for a screen reader only,
+                // since the column itself is a row of boxes. The bar above the table is app.js's,
+                // because its counts and its greyed buttons follow the ticks.
+                "mods.tick.col",
             });
         }
 

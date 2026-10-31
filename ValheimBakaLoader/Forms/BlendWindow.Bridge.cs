@@ -8260,6 +8260,12 @@ namespace ValheimBakaLoader.Forms
                 // is scoped to the profile it names. A realm that is up holds its OWN plugins
                 // folder open and nothing else: isolated installs are the default, so refusing
                 // over an unrelated realm blocked a removal Windows had no objection to.
+                // And not while another mod job holds the folder (an update, an install, a batch
+                // of switches): a folder removed under a rename walk is a mod half switched and
+                // half gone.
+                if (_modUpdateInProgress)
+                    throw new HostFacingException("mods.remove.busy", "A mod update is already in progress. Try again in a moment.");
+
                 var live = RunningSessionName(RemovalFolders(p));
                 if (live != null)
                     throw new HostFacingException("mods.remove.serverRunning",
@@ -8293,32 +8299,8 @@ namespace ValheimBakaLoader.Forms
             // about, so a click from a page that is a realm behind never switches the wrong mod.
             object SwitchMod(JObject p, bool off)
             {
-                object Answer(bool ok, int count, string error, string reason,
-                    IReadOnlyDictionary<string, object> errorParams = null) => new
-                {
-                    ok,
-                    count,
-                    error,
-                    reason,
-                    errorParams,
-                };
-
-                if (_modUpdateInProgress)
-                    return Answer(false, 0, "A mod update is already in progress. Try again in a moment.", "busy");
-
-                var forProfile = p?.Value<string>("profile");
-                if (!string.IsNullOrWhiteSpace(forProfile)
-                    && !string.Equals(forProfile.Trim(), ActiveProfileName, StringComparison.OrdinalIgnoreCase))
-                    return Answer(false, 0, "The server on screen changed, so nothing was changed.", "realmChanged");
-
-                var pluginsDir = GetPluginsDirectory();
-                if (string.IsNullOrWhiteSpace(pluginsDir))
-                    return Answer(false, 0, "BepInEx plugins folder not found. Set a valid server .exe path first.", "noServerPath");
-
-                var holding = RunningSessionName(new[] { pluginsDir });
-                if (holding != null)
-                    return Answer(false, 0, $"Stop the server '{holding}' first. Nothing was changed.", "serverRunning",
-                        new Dictionary<string, object> { ["name"] = holding });
+                var refused = SwitchRefusal(p, out _);
+                if (refused != null) return refused;
 
                 Tools.Models.InstalledMod mod;
                 try
@@ -8330,7 +8312,7 @@ namespace ValheimBakaLoader.Forms
                     // Every way the lookup can fail comes to the same thing for this row: there is
                     // no such mod on this realm's disk to switch, so it is one reason the page has
                     // words for rather than the lookup's own ids.
-                    return Answer(false, 0, e.Message, "notFound");
+                    return SwitchAnswer(false, 0, e.Message, "notFound");
                 }
 
                 _modUpdateInProgress = true;
@@ -8338,8 +8320,8 @@ namespace ValheimBakaLoader.Forms
                 {
                     var result = off ? Tools.ModSwitch.Disable(mod, AppLogger) : Tools.ModSwitch.Enable(mod, AppLogger);
                     return result.Ok
-                        ? Answer(true, result.Count, null, null)
-                        : Answer(false, 0, result.Error, result.Reason, result.Params);
+                        ? SwitchAnswer(true, result.Count, null, null)
+                        : SwitchAnswer(false, 0, result.Error, result.Reason, result.Params);
                 }
                 finally
                 {
@@ -8347,8 +8329,137 @@ namespace ValheimBakaLoader.Forms
                 }
             }
 
+            // What a switch is refused for before any file is looked at, one mod or a ticked
+            // fifty (mods.switchMany below): another mod job holding the folder, a page a realm
+            // behind, no server path, and the realm's own server up. Null when none of them
+            // stands, with the plugins folder the switch is for. It sits between SwitchMod and
+            // the two registrations on purpose: the reason tests read this stretch of the file
+            // for every id the page has to word, so a refusal added here is one they see.
+            object SwitchRefusal(JObject p, out string pluginsDir)
+            {
+                pluginsDir = null;
+                if (_modUpdateInProgress)
+                    return SwitchAnswer(false, 0, "A mod update is already in progress. Try again in a moment.", "busy");
+
+                var forProfile = p?.Value<string>("profile");
+                if (!string.IsNullOrWhiteSpace(forProfile)
+                    && !string.Equals(forProfile.Trim(), ActiveProfileName, StringComparison.OrdinalIgnoreCase))
+                    return SwitchAnswer(false, 0, "The server on screen changed, so nothing was changed.", "realmChanged");
+
+                var dir = GetPluginsDirectory();
+                if (string.IsNullOrWhiteSpace(dir))
+                    return SwitchAnswer(false, 0, "BepInEx plugins folder not found. Set a valid server .exe path first.", "noServerPath");
+
+                var holding = RunningSessionName(new[] { dir });
+                if (holding != null)
+                    return SwitchAnswer(false, 0, $"Stop the server '{holding}' first. Nothing was changed.", "serverRunning",
+                        new Dictionary<string, object> { ["name"] = holding });
+
+                pluginsDir = dir;
+                return null;
+            }
+
+            static object SwitchAnswer(bool ok, int count, string error, string reason,
+                IReadOnlyDictionary<string, object> errorParams = null) => new
+            {
+                ok,
+                count,
+                error,
+                reason,
+                errorParams,
+            };
+
             RegisterRpc("mods.disable", p => Task.FromResult(SwitchMod(p, off: true)));
             RegisterRpc("mods.enable", p => Task.FromResult(SwitchMod(p, off: false)));
+            RegisterRpc("mods.switchMany", p => Task.FromResult(SwitchMany(p)));
+
+            // The ticked rows of the Mods table, switched off or on in one request (1.3.2, issue
+            // 33). Fifty single switches cost fifty folder scans here and fifty more on the page's
+            // rescans after them; this is one scan here and one on the page.
+            // {profile, fullNames[], off} answers {ok, off, changed, skipped, failed, results:
+            // [{fullName, ok, skipped, count, reason, error, errorParams}]}. A refusal that stands
+            // for the whole batch (SwitchRefusal's) answers ok false with its reason and touches
+            // nothing. Otherwise every name gets a result of its own and the batch goes on past
+            // a refusal: each mod's renames are already all or nothing in ModSwitch, and an undo
+            // across mods would be a second rollback that can itself meet a locked file. A name
+            // already the wanted way comes back skipped, one no longer on disk (removed by hand,
+            // or a companion or framework folder the scan never lists) notFound, and a server
+            // that came up part way stops the rest as serverRunning with nothing of theirs
+            // touched. The busy flag is held for the whole walk, so an install, a remove, a
+            // Gale config write or a test copy pull that asks meanwhile is told busy.
+            object SwitchMany(JObject p)
+            {
+                if (p?["off"]?.Type != JTokenType.Boolean)
+                    throw new ArgumentException("off is required, true or false");
+                var off = p.Value<bool>("off");
+                var names = (p["fullNames"] as JArray ?? throw new ArgumentException("fullNames is required"))
+                    .Select(t => t.Type == JTokenType.String ? ((string)t).Trim() : null)
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                var refused = SwitchRefusal(p, out var pluginsDir);
+                if (refused != null)
+                {
+                    var whole = JObject.FromObject(refused);
+                    return new
+                    {
+                        ok = false, off, changed = 0, skipped = 0, failed = 0, results = Array.Empty<object>(),
+                        reason = whole.Value<string>("reason"), error = whole.Value<string>("error"),
+                        errorParams = whole["errorParams"],
+                    };
+                }
+                if (names.Count == 0)
+                    return new { ok = true, off, changed = 0, skipped = 0, failed = 0, results = Array.Empty<object>() };
+
+                _modUpdateInProgress = true;
+                try
+                {
+                    var onDisk = ModScanner.ScanPlugins(pluginsDir)
+                        .Where(m => !string.IsNullOrEmpty(m.FullName))
+                        .GroupBy(m => m.FullName, StringComparer.Ordinal)
+                        .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+                    var results = new List<object>(names.Count);
+                    int changed = 0, skipped = 0, failed = 0;
+                    foreach (var name in names)
+                    {
+                        Tools.ModSwitchResult result;
+                        var holding = RunningSessionName(new[] { pluginsDir });
+                        if (holding != null)
+                            result = Tools.ModSwitchResult.Refused("serverRunning",
+                                $"Stop the server '{holding}' first. {name} was not changed.",
+                                new Dictionary<string, object> { ["name"] = holding });
+                        else if (!onDisk.TryGetValue(name, out var mod))
+                            result = Tools.ModSwitchResult.Refused("notFound",
+                                $"No installed mod named '{name}', so nothing was switched.");
+                        else
+                            result = off ? Tools.ModSwitch.Disable(mod, AppLogger) : Tools.ModSwitch.Enable(mod, AppLogger);
+
+                        var already = result.Reason is "alreadyOff" or "alreadyOn";
+                        if (result.Ok) changed++;
+                        else if (already) skipped++;
+                        else failed++;
+                        results.Add(new
+                        {
+                            fullName = name,
+                            ok = result.Ok,
+                            skipped = already,
+                            count = result.Count,
+                            reason = result.Reason,
+                            error = result.Error,
+                            errorParams = result.Params,
+                        });
+                    }
+
+                    AppLogger?.Information("Switched {0} {1} in one request: {2} changed, {3} already that way, {4} left as they were.",
+                        names.Count == 1 ? "1 mod" : names.Count + " mods", off ? "off" : "on", changed, skipped, failed);
+                    return new { ok = true, off, changed, skipped, failed, results };
+                }
+                finally
+                {
+                    _modUpdateInProgress = false;
+                }
+            }
 
             // Installs a mod from any pasted Thunderstore link (page URL, versions page,
             // direct download URL, or ror2mm:// mod-manager link). No version in the
@@ -10739,6 +10850,9 @@ namespace ValheimBakaLoader.Forms
                 installedUtc = mod.InstalledUtc?.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture),
                 // Switched off: *.dll.old and no *.dll in its folders (mods.disable / mods.enable).
                 disabled = mod.Disabled,
+                // False for the one kind of row the switch always refuses (the loader's own
+                // patcher a host installed under plugins): the table draws it no tick box.
+                switchable = !Tools.ModSwitch.IsProtected(mod),
                 // "managed" or "nested" (an old whole-zip install the page can offer to reinstall
                 // at its version); null for a patcher-only row, which has no plugin folder to read.
                 layout = mod.IsPatcher ? null : mod.Layout,

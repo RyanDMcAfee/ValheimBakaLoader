@@ -153,7 +153,7 @@ test("a scan that could not reach the site says so and keeps the host's own rows
   const context = {
     S, Native: { available: true }, FAIL: Symbol("FAIL"), SCAN_CEILING_MS: 60000,
     rpc: async () => context.REPLY,
-    renderMods() {}, toast() {}, logLine() {},
+    renderMods() {}, modTicksPrune() {}, toast() {}, logLine() {},
     modsScanFailReason: () => "the site was not reached",
     T: id => id, clock: () => "12:00", hhmm: () => "12:00",
     setTimeout, console, window: {}, REPLY: null,
@@ -532,7 +532,7 @@ test("what the page asks the bridge for is the kind of scan it was given", () =>
   const context = {
     S, Native: { available: true }, FAIL: Symbol("FAIL"), SCAN_CEILING_MS: 60000,
     rpc: async (method, params) => { asked.push({ method, params }); return context.REPLY; },
-    renderMods() {}, toast() {}, logLine() {},
+    renderMods() {}, modTicksPrune() {}, toast() {}, logLine() {},
     modsScanFailReason: () => "the site was not reached",
     T: id => id, clock: () => "12:00", hhmm: () => "12:00",
     setTimeout, console, window: {}, REPLY: null,
@@ -625,7 +625,7 @@ test("a press while a scan is out is answered rather than swallowed", () => {
   const context = {
     S, Native: { available: true }, FAIL: Symbol("FAIL"), SCAN_CEILING_MS: 60000,
     rpc: async (method, params) => { asked.push({ method, params }); return { mods: [] }; },
-    renderMods() {}, toast: line => said.push(line), logLine() {},
+    renderMods() {}, modTicksPrune() {}, toast: line => said.push(line), logLine() {},
     modsScanFailReason: () => "the site was not reached",
     T: id => id, clock: () => "12:00", hhmm: () => "12:00",
     setTimeout, console, window: {},

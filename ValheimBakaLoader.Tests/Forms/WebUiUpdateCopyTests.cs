@@ -381,7 +381,10 @@ namespace ValheimBakaLoader.Tests.Forms
             // many wait on their own Install from Hexium in the review.
             // 261 with 1.3.2's three for a zip on this PC (issue 32): reading it, installing it,
             // and Check this mod on a copy that came from one.
-            Assert.Equal(261, marked.Count);
+            // 266 with 1.3.2's five for switching ticked mods in one go (issue 33): all switched
+            // off, all switched on, some left as they were, nothing needing it, and a batch the
+            // host refused whole.
+            Assert.Equal(266, marked.Count);
 
             // A one-character string literal of a glyph, followed by the space that always
             // rides with it: "ᛊ ". The two shapes in the page are toast("ᛊ "+T(id)) and the

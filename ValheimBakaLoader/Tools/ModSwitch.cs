@@ -72,6 +72,25 @@ namespace ValheimBakaLoader.Tools
             }
         }
 
+        /// <summary>
+        /// True for a mod the switch refuses whatever state it is in: BakaLoader's own plugins
+        /// and the loader's own patchers, by folder name, the same rule a switch applies. The
+        /// scan hands it to the page as the row's switchable flag (inverted), so the Mods table
+        /// draws no tick box for a row a batch could only refuse and the page never keeps a
+        /// copy of the list. A mod with no folder named is not protected: there is nothing to
+        /// refuse, and the switch says notFound for it.
+        /// </summary>
+        public static bool IsProtected(InstalledMod mod)
+        {
+            var directory = mod?.PluginDirectory ?? mod?.PatcherDirectory;
+            if (string.IsNullOrWhiteSpace(directory)) return false;
+            try { return IsProtectedFolder(new DirectoryInfo(directory).Name); }
+            catch { return false; }
+        }
+
+        private static bool IsProtectedFolder(string folderName) =>
+            ModScanner.IsCompanionFolder(folderName) || ModScanner.IsProtectedPatcher(folderName);
+
         /// <summary>Renames every plugin file of the mod to <c>*.dll.old</c>.</summary>
         public static ModSwitchResult Disable(InstalledMod mod, IApplicationLogger logger) => Switch(mod, off: true, logger);
 
@@ -110,7 +129,7 @@ namespace ValheimBakaLoader.Tools
             // patchers. Switching one of those off breaks a server in a way the Mods page has
             // no row to undo.
             var folderName = new DirectoryInfo(pluginDir ?? patcherDir).Name;
-            if (ModScanner.IsCompanionFolder(folderName) || ModScanner.IsProtectedPatcher(folderName))
+            if (IsProtectedFolder(folderName))
                 return ModSwitchResult.Refused("protected",
                     $"{folderName} is managed by BakaLoader or BepInEx and cannot be switched off here.",
                     new Dictionary<string, object> { ["folder"] = folderName });

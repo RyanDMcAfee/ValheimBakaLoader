@@ -112,7 +112,7 @@ function page(opts) {
     toast: line => toasts.push(line),
     logLine: (kind, line) => logs.push(line),
     clearCondition: name => cleared.push(name),
-    renderMods: () => {}, renderModFolderBtn: () => {}, renderCfgList: () => {},
+    renderMods: () => {}, modTicksPrune: () => {}, renderModFolderBtn: () => {}, renderCfgList: () => {},
     renderModIndexLine: () => {}, cfgFindReset: () => {}, cfgFindStale: () => {}, resetCfgSaveBtn: () => {},
     modFolderLookupFailed: () => {}, modsScanFailReason: () => "reason",
     modFolderFromCount: r => { context.S.modsFolder = r.folder; return true; },

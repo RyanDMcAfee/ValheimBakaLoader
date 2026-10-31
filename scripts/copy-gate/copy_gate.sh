@@ -1247,5 +1247,41 @@ else
   echo "  the local zip selftest is missing: $LOCALZIP_SELFTEST"; fail=1
 fi
 
+echo "== 78. issue 33: tick many mods and switch them in one request =="
+# 1.3.2. A box on every row the host can switch, a bar of five buttons above the table, and one
+# mods.switchMany for the whole set. The selftest drives the MODTICKS, MODROW and switch reason
+# blocks of app.js with a stand-in host and the real catalog: a server up greys both switches and
+# sends nothing, a refusal of the whole batch is worded with no scan, one mod left as it was gets
+# its Failed pill and one Saga line, the protected row has no box, ticks survive a search and a
+# sort and the ones a search hides are named before anything is sent, a Shift range follows the
+# order on screen, a double press sends one request, the focus stays on the box and on the bar,
+# a scan keeps only ticks still on disk, a realm switch empties them, a late answer from another
+# realm is dropped, and a batch that moved nothing does not rescan. The host half is
+# BlendWindowSwitchManyTests.
+TICKS_SELFTEST="$UI_DIR/mod_ticks_selftest.js"
+if [ -f "$TICKS_SELFTEST" ]; then
+  if out=$(node "$TICKS_SELFTEST"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the mod ticks selftest is missing: $TICKS_SELFTEST"; fail=1
+fi
+
+echo "== 79. issue 33 in a real browser: the tick column and its bar fit at 1024x680 =="
+# Nine cells in the head and every row with the tick column no wider than 40px, the table inside
+# its card and the hall not scrolling sideways, and the bar's five buttons inside the bar with
+# their words whole and no overlap, in English and in the pseudo catalog. Same readiness
+# question as 40.
+TICKS_PROBE="$UI_DIR/mod_ticks_probe.js"
+if [ ! -f "$TICKS_PROBE" ]; then
+  echo "  the mod ticks probe is missing: $TICKS_PROBE"; fail=1
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  NOT RUN: there is no node on this box, so nothing read the page in a browser."
+elif ! ready=$(node "$SWITCH_PROBE" --check); then
+  printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
+else
+  if out=$(node "$TICKS_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

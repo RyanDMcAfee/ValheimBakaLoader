@@ -2125,6 +2125,158 @@
         "detail": "text"
       }
     },
+    "mods.tick.col": {
+      "translation": "[Ẋ Tick Ẋ] ẊẊ"
+    },
+    "mods.tick.aria": {
+      "translation": "[Ẋ Tick {name} Ẋ] ẊẊ",
+      "params": {
+        "name": "text"
+      }
+    },
+    "mods.tick.count": {
+      "translation": {
+        "one": "[Ẋ {ticked} ticked, {shown} shown Ẋ] ẊẊẊẊẊ",
+        "other": "[Ẋ {ticked} ticked, {shown} shown Ẋ] ẊẊẊẊẊ"
+      },
+      "plural": "ticked",
+      "params": {
+        "ticked": "number",
+        "shown": "number"
+      }
+    },
+    "mods.tick.hidden": {
+      "translation": {
+        "one": "[Ẋ {hidden} ticked row is hidden by the search Ẋ] ẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {hidden} ticked rows are hidden by the search Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "hidden",
+      "params": {
+        "hidden": "number"
+      }
+    },
+    "mods.tick.all": {
+      "translation": "[Ẋ Tick all shown Ẋ] ẊẊẊẊẊ"
+    },
+    "mods.tick.all.title": {
+      "translation": "[Ẋ Ticks every row the table is showing now. A row the search hides keeps the tick it has. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.tick.none": {
+      "translation": "[Ẋ Untick all Ẋ] ẊẊẊẊ"
+    },
+    "mods.tick.none.title": {
+      "translation": "[Ẋ Unticks every row, the ones the search hides as well. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.tick.off_ones": {
+      "translation": "[Ẋ Tick the switched off Ẋ] ẊẊẊẊẊẊẊ"
+    },
+    "mods.tick.off_ones.title": {
+      "translation": "[Ẋ Ticks every row on screen that is switched off, so Switch on ticked puts them all back in one go. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.bulk.off": {
+      "translation": "[Ẋ Switch off ticked Ẋ] ẊẊẊẊẊẊ"
+    },
+    "mods.bulk.off.title": {
+      "translation": "[Ẋ Switches off every ticked mod that is on, in one go. Their files are renamed .dll.old and nothing is removed. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.bulk.on": {
+      "translation": "[Ẋ Switch on ticked Ẋ] ẊẊẊẊẊ"
+    },
+    "mods.bulk.on.title": {
+      "translation": "[Ẋ Switches on every ticked mod that is off, in one go. They load the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+    },
+    "mods.bulk.off.done.toast": {
+      "translation": {
+        "one": "[Ẋ {count} mod is switched off. It stays off until you switch it on again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} mods are switched off. They stay off until you switch them on again. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      },
+      "mark": "ᚱ"
+    },
+    "mods.bulk.on.done.toast": {
+      "translation": {
+        "one": "[Ẋ {count} mod is switched on. It loads the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} mods are switched on. They load the next time the server starts. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      },
+      "mark": "ᚱ"
+    },
+    "mods.bulk.partial.toast": {
+      "translation": {
+        "one": "[Ẋ {ok} switched, {failed} left as it was. Hover its Failed pill for why. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {ok} switched, {failed} left as they were. Hover the Failed pills for why. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "failed",
+      "params": {
+        "ok": "number",
+        "failed": "number"
+      },
+      "mark": "ᚦ"
+    },
+    "mods.bulk.skipped.note": {
+      "translation": {
+        "one": "[Ẋ {count} was already that way. Ẋ] ẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {count} were already that way. Ẋ] ẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      }
+    },
+    "mods.bulk.skipped.toast": {
+      "translation": {
+        "one": "[Ẋ Nothing needed switching: the {count} ticked mod was already that way. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ Nothing needed switching: the {count} ticked mods were already that way. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      },
+      "mark": "ᚱ"
+    },
+    "mods.bulk.refused.toast": {
+      "translation": "[Ẋ Nothing was switched: {detail} Ẋ] ẊẊẊẊẊẊẊ",
+      "params": {
+        "detail": "text"
+      },
+      "mark": "ᚦ"
+    },
+    "mods.bulk.confirm.off.title": {
+      "translation": {
+        "one": "[Ẋ Switch off {count} mod? Ẋ] ẊẊẊẊẊ",
+        "other": "[Ẋ Switch off {count} mods? Ẋ] ẊẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      }
+    },
+    "mods.bulk.confirm.on.title": {
+      "translation": {
+        "one": "[Ẋ Switch on {count} mod? Ẋ] ẊẊẊẊẊ",
+        "other": "[Ẋ Switch on {count} mods? Ẋ] ẊẊẊẊẊ"
+      },
+      "plural": "count",
+      "params": {
+        "count": "number"
+      }
+    },
+    "mods.bulk.confirm.hidden": {
+      "translation": {
+        "one": "[Ẋ {hidden} of them is hidden by the search. A search only narrows what is on screen, so the switch covers every ticked row. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ",
+        "other": "[Ẋ {hidden} of them are hidden by the search. A search only narrows what is on screen, so the switch covers every ticked row. Ẋ] ẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊẊ"
+      },
+      "plural": "hidden",
+      "params": {
+        "hidden": "number"
+      }
+    },
     "mods.tag.patcher": {
       "translation": "[Ẋ patcher Ẋ] ẊẊẊ"
     },
