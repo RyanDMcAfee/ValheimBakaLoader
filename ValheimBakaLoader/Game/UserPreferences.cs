@@ -46,6 +46,11 @@ namespace ValheimBakaLoader.Game
         // every launch; see Tools.BepInExNoticeKey for what a fact is named by.
         public string BepInExNoticeSeenKey { get; set; }
 
+        // The host's yes to a BepInEx write that could not run yet because a server on the
+        // install was up, with the answers that write carries. Null when nothing is queued.
+        // Kept on disk so closing the app does not lose it; see Tools.BepInExQueue.
+        public Tools.BepInExQueuedUpdate BepInExQueuedUpdate { get; set; }
+
         // The stray-save-folder facts the host has waved the condition-bar row away for. A LIST
         // rather than the one field above it, because this fact is per SERVER where that one is
         // per install: an isolated server's folders are its own. Two of the shapes are states
@@ -227,6 +232,7 @@ namespace ValheimBakaLoader.Game
                 BepInExMaintained = file.BepInExMaintained ?? defaults.BepInExMaintained,
                 BepInExMaintenanceAsked = file.BepInExMaintenanceAsked ?? defaults.BepInExMaintenanceAsked,
                 BepInExNoticeSeenKey = file.BepInExNoticeSeenKey ?? defaults.BepInExNoticeSeenKey,
+                BepInExQueuedUpdate = file.BepInExQueuedUpdate ?? defaults.BepInExQueuedUpdate,
                 // Blanks dropped on the way in, so a hand-edited document cannot put an entry in
                 // the list that matches an answer naming no fact.
                 StraySaveFolderSeenKeys = (file.StraySaveFolderSeenKeys ?? new())
@@ -310,6 +316,7 @@ namespace ValheimBakaLoader.Game
             BepInExMaintained = BepInExMaintained,
             BepInExMaintenanceAsked = BepInExMaintenanceAsked,
             BepInExNoticeSeenKey = BepInExNoticeSeenKey,
+            BepInExQueuedUpdate = BepInExQueuedUpdate,
             StraySaveFolderSeenKeys = (StraySaveFolderSeenKeys ?? new())
                 .Where(k => !string.IsNullOrWhiteSpace(k))
                 .ToList(),

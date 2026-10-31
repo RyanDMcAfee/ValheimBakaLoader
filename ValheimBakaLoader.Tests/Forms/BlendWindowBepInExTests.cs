@@ -70,6 +70,10 @@ namespace ValheimBakaLoader.Tests.Forms
         [InlineData("bepinex.remove")]
         [InlineData("bepinex.restore")]
         [InlineData("bepinex.noticeSeen")]
+        [InlineData("bepinex.queue")]
+        [InlineData("bepinex.unqueue")]
+        [InlineData("bepinex.stopAndInstall")]
+        [InlineData("bepinex.check")]
         public void The_bridge_answers_every_bepinex_call_the_page_can_make(string method)
             => Assert.Contains("RegisterRpc(\"" + method + "\"", Bridge(), StringComparison.Ordinal);
 
@@ -989,7 +993,15 @@ namespace ValheimBakaLoader.Tests.Forms
         [Fact]
         public void The_running_server_refusal_names_the_realms_as_a_slot()
         {
-            Assert.Contains("(\"names\", string.Join(\", \", blocked))", Service(), StringComparison.Ordinal);
+            // 1.3.2: the write, the queue and Stop, install and start again all say this refusal,
+            // so it is built in one factory and the slot is filled there.
+            var service = Service().Replace("\r\n", "\n");
+            var factory = service.Substring(service.IndexOf(
+                "public static HostFacingException ServersRunning(IEnumerable<string> names)", StringComparison.Ordinal));
+            factory = factory.Substring(0, factory.IndexOf("\n        }\n", StringComparison.Ordinal));
+            Assert.Contains("var joined = string.Join(\", \", names ?? Array.Empty<string>());", factory, StringComparison.Ordinal);
+            Assert.Contains("(\"names\", joined)", factory, StringComparison.Ordinal);
+            Assert.Contains("throw ServersRunning(blocked);", service, StringComparison.Ordinal);
             Assert.Contains("{names}", Catalog()["bepinex.reason.servers_running"].GetProperty("lore").GetString(),
                 StringComparison.Ordinal);
         }

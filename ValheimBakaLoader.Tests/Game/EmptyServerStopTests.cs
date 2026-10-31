@@ -451,6 +451,67 @@ namespace ValheimBakaLoader.Tests.Game
         }
 
         /// <summary>
+        /// Issue 31, scenario 12. A 1.3.1 stop when empty with the Windows switch off lands on
+        /// Stopped as a plain stop: no relaunch pending and no power-off due, so the queued
+        /// BepInEx write may run there. Read inside a Stopped handler, which is where the
+        /// bridge reads it, after the server's own handler has run.
+        /// </summary>
+        [Fact(Timeout = 60000)]
+        public async Task A_stop_when_empty_without_the_power_off_is_a_stop_the_queue_runs_at()
+        {
+            var seen = new ConcurrentQueue<(bool Relaunch, bool PowerOff)>();
+            Server.StatusChanged += (_, status) =>
+            {
+                if (status == ServerStatus.Stopped)
+                    seen.Enqueue((Server.RelaunchPending, Server.StoppedWithWindowsPowerOffDue));
+            };
+
+            var process = await RunningServer(Options(stop: true));
+            JoinAndLeave("4242", "Bjorn");
+            await WaitUntil(() => Waits.Count(StopWait) == 1);
+            Waits.Open(StopWait);
+            await WaitUntil(() => Processes.KillRequests.Count == 1);
+            RaiseExited(process);
+
+            var at = Assert.Single(seen);
+            Assert.False(at.Relaunch);
+            Assert.False(at.PowerOff);
+            Assert.True(BepInExQueue.FiresAtStop(at.Relaunch, at.PowerOff));
+            Assert.Empty(Power.Calls);
+        }
+
+        /// <summary>
+        /// Issue 31, scenario 12. With the Windows power-off due the same stop is one the queue
+        /// waits past: a minute from now Windows goes down, and a write cut there leaves an
+        /// install that loads neither version. The flag is still true in the Stopped handler,
+        /// although the power-off itself has already taken its own flag, and the next start
+        /// clears it.
+        /// </summary>
+        [Fact(Timeout = 60000)]
+        public async Task With_the_power_off_due_the_stop_leaves_the_queue_for_the_next_start()
+        {
+            var seen = new ConcurrentQueue<bool>();
+            Server.StatusChanged += (_, status) =>
+            {
+                if (status == ServerStatus.Stopped) seen.Enqueue(Server.StoppedWithWindowsPowerOffDue);
+            };
+
+            var process = await RunningServer(Options(stop: true, windows: true));
+            JoinAndLeave("4242", "Bjorn");
+            await WaitUntil(() => Waits.Count(StopWait) == 1);
+            Waits.Open(StopWait);
+            await WaitUntil(() => Processes.KillRequests.Count == 1);
+            RaiseExited(process);
+
+            Assert.True(Assert.Single(seen));
+            Assert.False(BepInExQueue.FiresAtStop(Server.RelaunchPending, Server.StoppedWithWindowsPowerOffDue));
+            Assert.Single(Power.Calls);
+
+            await RunningServer(Options(stop: true, windows: true));
+            Assert.False(Server.StoppedWithWindowsPowerOffDue);
+        }
+
+        /// <summary>
         /// With RCON on, the stop takes the road every stop takes: the save is asked for first,
         /// the close request waits for the save line, and the exit carries no unsaved warning.
         /// </summary>

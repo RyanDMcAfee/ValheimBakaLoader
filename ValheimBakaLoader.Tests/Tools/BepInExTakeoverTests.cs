@@ -999,6 +999,112 @@ namespace ValheimBakaLoader.Tests.Tools
             Assert.True((await service.UpdateAsync(BaseExe, Nobody(), options: Pressed)).Installed);
         }
 
+        // ------------------------------------------------------------------ the queue (issue 31)
+
+        /// <summary>
+        /// Scenario 3, through the real write. A base install's one live realm is a running
+        /// profile and a process on the list at once; the refusal used to read "Default,
+        /// Valheim dedicated server", two names for one server.
+        /// </summary>
+        [Fact]
+        public async Task A_running_base_profile_and_its_own_process_are_one_name_in_the_refusal()
+        {
+            ExistingInstall();
+
+            var (service, handler) = Build();
+            service.RunningImages.Add(BaseExe);
+            var running = new[] { new BepInExProfileInstall { ProfileName = "Default", ServerExePath = BaseExe, Running = true } };
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => service.UpdateAsync(BaseExe, running, options: Pressed));
+
+            Assert.Equal("bepinex.serversRunning", refused.MessageId);
+            Assert.Equal("Default", refused.Params["names"]);
+            Assert.Empty(handler.Requests);
+            Assert.Equal(new[] { "Default" }, service.ServersHoldingBase(BaseExe, running));
+            Assert.Empty(service.ForeignServersHoldingBase(BaseExe, running));
+        }
+
+        /// <summary>
+        /// Scenario 6, through the real write. A pack listed an hour ago is held by the soak for
+        /// a window; the queued write is the host's press, so it goes in.
+        /// </summary>
+        [Fact]
+        public async Task The_queued_write_takes_a_pack_the_soak_would_hold()
+        {
+            ExistingInstall();
+            var (service, _) = Build(created: DateTime.UtcNow.AddHours(-1));
+
+            var held = await service.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window);
+            Assert.Equal(BepInExSkipReason.Soak, held.SkipReason);
+
+            var queued = BepInExQueuedUpdate.From("5.4.2350", Pressed, DateTime.UtcNow);
+            var written = await service.UpdateAsync(BaseExe, Nobody(), options: queued.ToWriteOptions());
+
+            Assert.True(written.Installed);
+            Assert.False(written.Skipped);
+            Assert.Equal("5.4.2350", BepInExMarkerFile.Read(BaseDir).Version);
+        }
+
+        /// <summary>
+        /// Scenario 8, through the real write. Queued at 5.4.2360, and the site now serves
+        /// 5.4.2361: the current pack goes in, and the written outcome names it.
+        /// </summary>
+        [Fact]
+        public async Task A_queue_for_X_writes_the_current_pack_and_the_outcome_names_it()
+        {
+            ExistingInstall();
+            var (service, _) = Build(new PackSpec { Version = "5.4.2361" });
+
+            var queued = BepInExQueuedUpdate.From("5.4.2360", Pressed, DateTime.UtcNow);
+            var result = await service.UpdateAsync(BaseExe, Nobody(), options: queued.ToWriteOptions());
+
+            Assert.Equal("5.4.2361", result.Version);
+            Assert.Equal("5.4.2361", BepInExMarkerFile.Read(BaseDir).Version);
+            var outcome = ValheimBakaLoader.Forms.BlendWindow.BepInExOutcomeOf("Default", result, DateTime.UtcNow);
+            Assert.Equal("5.4.2361", outcome.ToVersion);
+        }
+
+        /// <summary>Scenario 16. Check BepInEx now with the site not answering is the offline refusal, and nothing is written.</summary>
+        [Fact]
+        public async Task Check_now_offline_is_the_offline_refusal_and_touches_nothing()
+        {
+            ExistingInstall();
+            var before = Snapshot();
+
+            var refused = await Assert.ThrowsAsync<HostFacingException>(
+                () => OfflineService().CheckAsync(BaseExe, Nobody(), TimeSpan.FromSeconds(5)));
+
+            Assert.Equal("bepinex.offline", refused.MessageId);
+            Assert.Empty(ChangedBetween(before, Snapshot()));
+        }
+
+        /// <summary>
+        /// Scenario 17, through the real service. The window turned the pack down as too young and
+        /// the host closed that bar. Check now finds the same pack still soaking, and its outcome
+        /// carries the very key the window's did, which is the key the check unseals.
+        /// </summary>
+        [Fact]
+        public async Task Check_now_on_a_soaking_pack_is_the_window_refusal_under_the_same_key()
+        {
+            ExistingInstall();
+            var (service, handler) = Build(new PackSpec { Version = "5.4.2400" }, created: DateTime.UtcNow.AddHours(-1));
+
+            var window = await service.UpdateAsync(BaseExe, Nobody(), options: BepInExWriteOptions.Window);
+            var check = await service.CheckAsync(BaseExe, Nobody(), TimeSpan.FromSeconds(5));
+
+            Assert.True(check.Newer);
+            Assert.Equal(BepInExSkipReason.Soak, check.UnattendedRefusal);
+            Assert.NotNull(check.EligibleUtc);
+            Assert.Empty(handler.Requests);
+
+            var plan = ValheimBakaLoader.Forms.BlendWindow.BepInExCheckPlan(check, false, DateTime.UtcNow.AddMinutes(5));
+            Assert.Equal("soak", plan.Kind);
+            Assert.Equal(
+                ValheimBakaLoader.Forms.BlendWindow.BepInExOutcomeOf("Default", window, DateTime.UtcNow).Key,
+                plan.Outcome.Key);
+        }
+
         /// <summary>
         /// A first install replaced nothing, so it has nothing to back up. An empty folder is
         /// not a backup and must not be counted as one, or the row would offer to put back a

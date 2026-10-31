@@ -1215,5 +1215,22 @@ else
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 fi
 
+echo "== 76. issue 31: Install it now while a server is up, the queued bar, Stop, install and start again =="
+# 1.3.2. The soak bar's Install it now always met the relaunched server Starting, so its write was
+# always refused, and the page had marked the bar read before sending it: one toast, then nothing.
+# The press with a server up now asks the queue question and sends no write; a refusal stands on
+# the row and on the bar it came from; the queued bar names who is still up, greys its Stop,
+# install and start again while it is out, takes Cancel as the unqueue, and redraws on a language
+# switch with no call and no toast. The selftest drives the real painters with a stand-in host.
+BEPQ_SELFTEST="$UI_DIR/bepinex_queue_selftest.js"
+if [ -f "$BEPQ_SELFTEST" ]; then
+  if out=$(node "$BEPQ_SELFTEST"); then printf '%s
+' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s
+' "$out" | sed 's/^/  /'; fail=1; fi
+else
+  echo "  the BepInEx queue selftest is missing: $BEPQ_SELFTEST"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "GATE: PASS" || echo "GATE: FAIL"
 exit $fail

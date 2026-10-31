@@ -808,6 +808,15 @@ namespace ValheimBakaLoader.Game
         // 1 while a stop the empty timer started is on its way down and the profile asked for
         // Windows to follow it. Taken exactly once, when that stop lands on Stopped.
         private int EmptyStopPowerOffDue;
+
+        /// <summary>
+        /// True when the stop that last landed on Stopped was an empty stop with the Windows
+        /// power-off due. Read in a Stopped handler: the flag itself is taken before any other
+        /// handler runs, so this is the one place the answer survives for them. A queued
+        /// BepInEx write reads it so it never starts a write Windows is about to cut.
+        /// </summary>
+        public bool StoppedWithWindowsPowerOffDue { get; private set; }
+
         // Fires a scheduled (e.g. every 6 hours) restart while the server is running.
         private CancellationTokenSource ScheduledRestartCts;
         // When the next scheduled restart will fire (UTC); null when no restart is armed.
@@ -1016,6 +1025,8 @@ namespace ValheimBakaLoader.Game
                     // The server is genuinely up on this build, so it becomes the one this
                     // profile "last launched". The version follows when the banner is parsed.
                     RecordLaunchedIdentity();
+                    // And the stop before this session owes the BepInEx queue nothing either.
+                    StoppedWithWindowsPowerOffDue = false;
                     break;
 
                 case ServerStatus.Stopped:
@@ -1024,6 +1035,7 @@ namespace ValheimBakaLoader.Game
                     // gone must not leave its start time behind for that restart to pick up.
                     RunningSinceUtc = null;
                     AdoptedRunningSinceUtc = null;
+                    StoppedWithWindowsPowerOffDue = Volatile.Read(ref EmptyStopPowerOffDue) == 1;
                     if (IsRestarting) _ = ResumeAfterStopAsync();
                     else PowerOffAfterEmptyStop();
                     break;
@@ -1265,7 +1277,12 @@ namespace ValheimBakaLoader.Game
             return null;
         }
 
-        private static string NormalizeExePath(string path)
+        /// <summary>
+        /// One exe path in the form two paths are compared in: full, no trailing separator,
+        /// lower case. The BepInEx refusal uses it as well, to tell a process a running profile
+        /// owns from one nobody here started.
+        /// </summary>
+        internal static string NormalizeExePath(string path)
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
             try { return Path.GetFullPath(path).TrimEnd('\\').ToLowerInvariant(); }

@@ -122,11 +122,14 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains(
                 "()=>bepInExUpdateFlow(bepInExRepairPackGone(S.bepinex)?{takeCurrentPack:true}:null));",
                 js, StringComparison.Ordinal);
-            Assert.Contains("bepInExUpdateFlow(gone?{takeCurrentPack:true}:null);", js, StringComparison.Ordinal);
+            // 1.3.2: the bar's press hands its own outcome on, so a refusal can put that bar back.
+            Assert.Contains("bepInExUpdateFlow(gone?{takeCurrentPack:true}:null,last);", js, StringComparison.Ordinal);
 
             // it survives the confirm a write over somebody else's install still asks
+            // 1.3.2: through bepInExWriteOrQueue, which asks the queue question when a server is up
+            // and otherwise is the same bepInExWrite with the same flags.
             Assert.Contains(
-                "bepInExWrite(method,Object.assign(bepInExWriteFlags(b),extra||{}),after));", js, StringComparison.Ordinal);
+                "bepInExWriteOrQueue(method,Object.assign(bepInExWriteFlags(b),extra||{}),after,bar));", js, StringComparison.Ordinal);
 
             // and the host side reads it and stops calling the write a repair
             Assert.Contains("TakeCurrentPack = call?.Value<bool?>(\"takeCurrentPack\") == true,",

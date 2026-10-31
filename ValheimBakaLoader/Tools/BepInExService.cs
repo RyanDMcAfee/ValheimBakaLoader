@@ -537,6 +537,50 @@ namespace ValheimBakaLoader.Tools
         public string CoreVersion { get; init; }
     }
 
+    /// <summary>
+    /// What Check BepInEx now found: the pack the site lists and what a write that nobody
+    /// watched would make of it. Nothing on this object was written anywhere.
+    /// </summary>
+    public sealed class BepInExCheck
+    {
+        /// <summary>The pack version the site lists.</summary>
+        public string Version { get; init; }
+
+        /// <summary>When the site says that version was published, or null.</summary>
+        public DateTime? ListedUtc { get; init; }
+
+        /// <summary>When a restart window may write it, which is the listing date plus the soak.</summary>
+        public DateTime? EligibleUtc { get; init; }
+
+        public bool Deprecated { get; init; }
+
+        public bool Pulled { get; init; }
+
+        /// <summary>The pack version the install note names, or null when BakaLoader did not write it.</summary>
+        public string InstalledPackVersion { get; init; }
+
+        /// <summary>The loader's own file version on disk, note or no note.</summary>
+        public string InstalledCoreVersion { get; init; }
+
+        /// <summary>
+        /// True when the listed pack is newer than the one here, or when there is no note to
+        /// compare against: the same rule the restart window reads.
+        /// </summary>
+        public bool Newer { get; init; }
+
+        /// <summary>
+        /// The skip reason a restart window would give this pack (soak, prerelease and the
+        /// rest), or null when a window would write it.
+        /// </summary>
+        public string UnattendedRefusal { get; init; }
+
+        /// <summary>
+        /// For a newer pack a window would turn down: the very result that window would have
+        /// recorded, so the bar it raises is the same fact under the same key.
+        /// </summary>
+        public BepInExInstallResult WindowResult { get; init; }
+    }
+
     public interface IBepInExService
     {
         /// <summary>
@@ -610,6 +654,21 @@ namespace ValheimBakaLoader.Tools
         /// step with a server waiting on it is held to this one number.
         /// </summary>
         TimeSpan UnattendedResolveTimeout { get; set; }
+
+        /// <summary>
+        /// What the site lists for the pack this install would take, beside the install as it
+        /// is, read the way a write reads it and with nothing written. Throws bepinex.offline
+        /// when the site did not answer within <paramref name="budget"/>.
+        /// </summary>
+        Task<BepInExCheck> CheckAsync(string baseExePath, IEnumerable<BepInExProfileInstall> profiles,
+            TimeSpan budget);
+
+        /// <summary>Every server holding this base right now, each named once.</summary>
+        IReadOnlyList<string> ServersHoldingBase(string baseExePath, IEnumerable<BepInExProfileInstall> profiles);
+
+        /// <summary>The servers on this base that BakaLoader did not start.</summary>
+        IReadOnlyList<string> ForeignServersHoldingBase(string baseExePath,
+            IEnumerable<BepInExProfileInstall> profiles);
 
         /// <summary>
         /// Removes a denikson-BepInExPack_Valheim folder that was installed into the plugins
@@ -944,8 +1003,10 @@ namespace ValheimBakaLoader.Tools
             => ProfilesBlockingWrite(baseExePath, profiles).Count == 0;
 
         /// <summary>
-        /// The servers that are UP but that BakaLoader did not start, named by the folder they
-        /// run from.
+        /// The valheim_server processes that are UP on this base, named by the folder they run
+        /// from. On its own it cannot tell a server BakaLoader started from one it did not,
+        /// because a process carries no profile; <see cref="ServersBlockingWrite"/> is the rule
+        /// that joins it to the profile list and drops the processes a running profile owns.
         /// <para>
         /// <see cref="ProfilesBlockingWrite"/> only ever knows the profiles this app carries. A
         /// host who launched the server from the Steam library, from a shortcut, or from a
@@ -971,6 +1032,95 @@ namespace ValheimBakaLoader.Tools
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        /// <summary>
+        /// Every server holding this base right now, each named ONCE: a running profile by its
+        /// profile name, and a process BakaLoader did not start by its folder.
+        /// <para>
+        /// The process list holds BakaLoader's own servers too, so joining the two lists by name
+        /// alone named a base install's one live realm twice, "Default, Valheim dedicated
+        /// server", and the host read two servers where there was one. A process whose image is
+        /// the exe a running profile runs is that profile, so it is dropped before anything is
+        /// named; the comparison is the one the adoption path uses for the same question
+        /// (<see cref="Game.ValheimServer.NormalizeExePath"/>). A process nobody here started is
+        /// still named by its folder, because nothing else names it.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> ServersBlockingWrite(string baseExePath,
+            IEnumerable<BepInExProfileInstall> profiles, IEnumerable<string> runningImagePaths)
+        {
+            var list = profiles?.Where(p => p != null).ToList() ?? new List<BepInExProfileInstall>();
+            var blocked = ProfilesBlockingWrite(baseExePath, list).ToList();
+
+            foreach (var name in ForeignServersBlockingWrite(baseExePath,
+                         UnclaimedImages(list, runningImagePaths)))
+                if (!blocked.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    blocked.Add(name);
+
+            return blocked;
+        }
+
+        /// <summary>
+        /// The processes on this base that no running profile owns, named by folder. Empty
+        /// means everything holding the base is a server BakaLoader can stop itself.
+        /// </summary>
+        public static IReadOnlyList<string> ForeignServersOnly(string baseExePath,
+            IEnumerable<BepInExProfileInstall> profiles, IEnumerable<string> runningImagePaths)
+            => ForeignServersBlockingWrite(baseExePath,
+                UnclaimedImages(profiles?.Where(p => p != null).ToList(), runningImagePaths));
+
+        private static IEnumerable<string> UnclaimedImages(
+            IReadOnlyCollection<BepInExProfileInstall> profiles, IEnumerable<string> runningImagePaths)
+        {
+            if (runningImagePaths == null) return Array.Empty<string>();
+
+            var owned = new HashSet<string>(
+                (profiles ?? Array.Empty<BepInExProfileInstall>())
+                    .Where(p => p.Running)
+                    .Select(p => Game.ValheimServer.NormalizeExePath(p.ServerExePath))
+                    .Where(path => path != null),
+                StringComparer.Ordinal);
+
+            return runningImagePaths
+                .Where(path => !owned.Contains(Game.ValheimServer.NormalizeExePath(path) ?? ""))
+                .ToList();
+        }
+
+        /// <summary>The servers holding this base right now, each named once, off the live process list.</summary>
+        public IReadOnlyList<string> ServersHoldingBase(string baseExePath, IEnumerable<BepInExProfileInstall> profiles)
+            => ServersBlockingWrite(baseExePath, profiles, RunningServerImagePaths());
+
+        /// <summary>The servers on this base that BakaLoader did not start, off the live process list.</summary>
+        public IReadOnlyList<string> ForeignServersHoldingBase(string baseExePath, IEnumerable<BepInExProfileInstall> profiles)
+            => ForeignServersOnly(baseExePath, profiles, RunningServerImagePaths());
+
+        /// <summary>
+        /// The refusal for a write while a server on the base is up. One factory, because the
+        /// write, the queue and Stop, install and start again all say it, and an id is one
+        /// meaning.
+        /// </summary>
+        public static HostFacingException ServersRunning(IEnumerable<string> names)
+        {
+            var joined = string.Join(", ", names ?? Array.Empty<string>());
+            return new HostFacingException("bepinex.serversRunning",
+                "BakaLoader counts these servers as loading this same BepInEx, so nothing is written "
+                + "while one of them is up. Still up: " + joined,
+                ("names", joined));
+        }
+
+        /// <summary>
+        /// The refusal Stop, install and start again gives when a server it asked to stop is
+        /// still up at the deadline. Nothing was written and nothing it had stopped is started,
+        /// so the host's yes is still queued.
+        /// </summary>
+        public static HostFacingException StopTimedOut(IEnumerable<string> names)
+        {
+            var joined = string.Join(", ", names ?? Array.Empty<string>());
+            return new HostFacingException("bepinex.stopTimedOut",
+                "These servers did not stop in time, so BepInEx was not written and nothing was started "
+                + "again. The update stays queued. Still up: " + joined,
+                ("names", joined));
         }
 
         /// <summary>
@@ -1187,6 +1337,51 @@ namespace ValheimBakaLoader.Tools
                 Logger.Debug("Could not read the BepInEx pack version: {0}", e.Message);
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Check BepInEx now. The listing a write would read, compared with the install as it
+        /// is, and the rule a restart window would apply to it, all on one clock and with no
+        /// write slot: nothing here touches a file, so nothing here needs one.
+        /// <para>
+        /// It reads the same <see cref="ResolveListingAsync"/> the write reads rather than
+        /// <see cref="LatestVersionAsync"/>, because the version alone cannot say whether a
+        /// window would hold the pack back. The soak date is on the listing and nowhere else,
+        /// and the host asking is asking exactly that: will the next restart take it.
+        /// </para>
+        /// </summary>
+        public async Task<BepInExCheck> CheckAsync(string baseExePath,
+            IEnumerable<BepInExProfileInstall> profiles, TimeSpan budget)
+        {
+            var status = Status(baseExePath, null, profiles);
+            var package = BepInExMarkerFile.Read(InstallRootOf(baseExePath))?.Package;
+            var (owner, name) = SplitPackage(package);
+
+            var listed = await ResolveListingAsync(owner, name, budget);
+
+            var installed = status.PackVersion;
+            var newer = string.IsNullOrWhiteSpace(installed)
+                || SemVer.Compare(listed.Version, installed) > 0;
+            var refusal = BepInExPackPolicy.RefusalFor(true, listed.Version, listed.Deprecated,
+                listed.DateCreated, listed.FileSize, DateTime.UtcNow, listed.Pulled);
+            var eligible = BepInExPackPolicy.EligibleAt(listed.DateCreated);
+
+            return new BepInExCheck
+            {
+                Version = listed.Version,
+                ListedUtc = listed.DateCreated,
+                EligibleUtc = eligible,
+                Deprecated = listed.Deprecated,
+                Pulled = listed.Pulled,
+                InstalledPackVersion = installed,
+                InstalledCoreVersion = status.CoreVersion,
+                Newer = newer,
+                UnattendedRefusal = refusal,
+                WindowResult = newer && refusal != null
+                    ? Skipped(status, refusal, listed.Version,
+                        refusal == BepInExSkipReason.Soak ? eligible : null)
+                    : null,
+            };
         }
 
         // ------------------------------------------------------------------ install
@@ -2406,18 +2601,10 @@ namespace ValheimBakaLoader.Tools
         /// </summary>
         private void RefuseWhileServersAreUp(string baseExePath, IEnumerable<BepInExProfileInstall> profiles)
         {
-            var blocked = ProfilesBlockingWrite(baseExePath, profiles).ToList();
-
-            foreach (var name in ForeignServersBlockingWrite(baseExePath, RunningServerImagePaths()))
-                if (!blocked.Contains(name, StringComparer.OrdinalIgnoreCase))
-                    blocked.Add(name);
-
+            var blocked = ServersBlockingWrite(baseExePath, profiles, RunningServerImagePaths());
             if (blocked.Count == 0) return;
 
-            throw new HostFacingException("bepinex.serversRunning",
-                "BakaLoader counts these servers as loading this same BepInEx, so nothing is written "
-                + "while one of them is up. Still up: " + string.Join(", ", blocked),
-                ("names", string.Join(", ", blocked)));
+            throw ServersRunning(blocked);
         }
 
         /// <summary>

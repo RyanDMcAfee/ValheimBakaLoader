@@ -189,6 +189,61 @@ namespace ValheimBakaLoader.Tests.Game
             Assert.Contains(@"-world ""Loader Window World""", second);
         }
 
+        /// <summary>
+        /// Issue 31, scenario 6. A queued BepInEx update and a scheduled restart: the write runs
+        /// after the server is Stopped and before the relaunch is Starting, it is the host's
+        /// own press (so the soak a window holds does not hold it), and the relaunch follows.
+        /// </summary>
+        [Fact]
+        public async Task A_queued_update_runs_between_stopped_and_starting_and_the_relaunch_follows()
+        {
+            var order = new List<string>();
+            Server.StatusChanged += (_, status) => { lock (order) order.Add(status.ToString()); };
+
+            // A relaunch delay that really yields, the way the production half second does. With
+            // one that completes at once the whole resume runs inside the server's own Stopped
+            // handler, and this handler is told Stopped only after it has already been told Starting.
+            Server.RelaunchDelay = _ => Task.Delay(1);
+            string statusAtWrite = null;
+
+            var pref = BepInExQueuedUpdate.From("5.4.2360", null, DateTime.UtcNow);
+            BepInExWriteOptions used = null;
+            Server.ApplyLoaderUpdate = async _ =>
+            {
+                await BepInExQueue.RunAsync(new BepInExQueueSteps
+                {
+                    Load = () => pref,
+                    Clear = ran => pref = null,
+                    StillUp = () => Array.Empty<string>(),
+                    Write = options =>
+                    {
+                        used = options;
+                        statusAtWrite = Server.Status.ToString();
+                        lock (order) order.Add("write");
+                        return Task.FromResult(new BepInExInstallResult { Installed = true, Version = "5.4.2361" });
+                    },
+                });
+            };
+
+            await RunningServer();
+            lock (order) order.Clear();
+            Server.Restart(reason: LaunchReasons.Scheduled);
+            var second = await Relaunch();
+
+            string[] seen;
+            lock (order) seen = order.ToArray();
+            var stopped = Array.IndexOf(seen, nameof(ServerStatus.Stopped));
+            var write = Array.IndexOf(seen, "write");
+            var starting = Array.LastIndexOf(seen, nameof(ServerStatus.Starting));
+            Assert.True(stopped >= 0 && write > stopped && starting > write, string.Join(" > ", seen));
+
+            Assert.Equal(nameof(ServerStatus.Stopped), statusAtWrite);
+            Assert.NotNull(used);
+            Assert.False(used.Unattended);
+            Assert.Null(pref);
+            Assert.Contains(@"-world ""Loader Window World""", second);
+        }
+
         // ------------------------------------------- and the step really moves the loader
 
         /// <summary>

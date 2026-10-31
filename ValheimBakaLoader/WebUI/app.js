@@ -271,6 +271,7 @@ const HOST_SENTENCES=[
   {named:"bepinex.foreignCore",        textId:"bepinex.reason.foreign_core"},
   {named:"bepinex.repairMismatch",     textId:"bepinex.reason.repair_mismatch"},
   {named:"bepinex.repairPackGone",     textId:"bepinex.reason.repair_pack_gone"},
+  {named:"bepinex.stopTimedOut",       textId:"bepinex.reason.stop_timed_out"},
   {named:"worlds.copySourceRequired",    textId:"world.copy.reason.source_required"},
   {named:"worlds.copyBadSourceRef",      textId:"world.copy.reason.bad_source"},
   {named:"worlds.copyBadSubfolder",      textId:"world.copy.reason.bad_subfolder"},
@@ -5794,6 +5795,15 @@ let BEP_PROGRESS=null;         // the last bepinex.progress of that write
 let BEP_PROG_OPEN=false;       // and whether the dialog showing it is ours to close
 let BEP_ADD_IN_FLIGHT=false;   // an add the host may install the loader inside of
 let BEP_ASKED_THIS_RUN=false;  // the first-start question, put once and not again
+let BEP_CHECKING=false;        // a Check BepInEx now this window started
+/* The last refusal a press on the row or the bar met, as {id,params}, worded again on every
+   draw so a language switch re-words it. A toast lasts five seconds and the host is very often
+   looking at something else for those five (issue 31: the press jumped halls and the toast was
+   the only trace). It stands on the row until the next press or an answer to the queue. */
+let BEP_REFUSAL=null;
+/* The same refusal, held against the one standing bar it came from (by that bar's key), so the
+   bar keeps saying it after the next status push redraws the bar from the host's answer. */
+let BEP_BAR_FAIL=null;
 /* Whether the host has ever answered that question, as the Upkeep card reads it. Every
    switch on that card rides in on one save, so while the answer is still missing the
    loader switch is left OUT of the save: without this a click on Start with Windows
@@ -6123,7 +6133,13 @@ function renderBepInExRow(){
     const el2=BEPINEX_ACTION_ELEMENTS[name];
     return `<button class="btn ${el2.cls} btn-sm" id="${el2.id}"${gate}>`+
       `${esc(T(BEPINEX_ACTION_WORDS[name].labelId))}</button>`;
-  }).join("");
+  }).join("")+
+    /* Check BepInEx now writes nothing, so a server being up is no reason to grey it: only
+       another write, or a check already out, is. */
+    (bepInExRowOffersCheck(b)
+      ?`<button class="btn btn-ghost btn-sm" id="bepCheck"${(busy||BEP_CHECKING)?` disabled title="${esc(T("bepinex.row.note.busy"))}"`:""}>`+
+       `${esc(T("bepinex.row.action.check"))}</button>`
+      :"");
   /* The notes under the row, each a whole sentence of its own. A deferred update is one
      of them rather than a state: it is true of an install that is otherwise perfectly
      current, and the condition bar says the same thing where a host is not on this hall. */
@@ -6141,6 +6157,9 @@ function renderBepInExRow(){
      drawn, which left the commonest way into the Outside state with nothing to explain it. */
   if(b.interruptedWrite) notes.push(T("bepinex.row.note.interrupted_write"));
   if(b.updateWaiting) notes.push(T("bepinex.row.note.waiting",{version:b.updateWaiting}));
+  if(b.queued) notes.push(T("bepinex.row.note.queued",{version:b.queued.version||T("bepinex.row.version.unknown")}));
+  const refused=bepInExRefusalText(BEP_REFUSAL);
+  if(refused) notes.push(refused);
   const shared=(Array.isArray(b.sharingProfiles)?b.sharingProfiles.filter(Boolean):[]).length;
   if(shared>1) notes.push(T("bepinex.row.note.shared",{count:shared-1}));
   if(busy) notes.push(T("bepinex.row.note.busy"));
@@ -6189,6 +6208,7 @@ function renderBepInExRow(){
   el.querySelector("#bepRepair")?.addEventListener("click",()=>bepInExRepairFlow());
   el.querySelector("#bepRestore")?.addEventListener("click",()=>bepInExRestoreFlow());
   el.querySelector("#bepRemove")?.addEventListener("click",()=>bepInExRemoveFlow());
+  el.querySelector("#bepCheck")?.addEventListener("click",()=>bepInExCheckNow());
   el.querySelector("#bepUpkeep")?.addEventListener("click",()=>openUpkeepBepInEx());
 }
 /* The row's own Install. With BakaLoader looking after the loader there is nothing to
@@ -6206,9 +6226,17 @@ function bepInExInstallFlow(after){
    ever takeCurrentPack, from the two places that offer to move an install off a pack the site
    has taken down. It rides through the confirm as well, because a write over an install
    BakaLoader did not make still asks first and the answer must survive the question. */
-function bepInExUpdateFlow(extra){
-  if(bepInExNeedsConfirm(S.bepinex,"update")){bepInExTakeoverModal("bepinex.update",null,extra);return;}
-  bepInExWrite("bepinex.update",Object.assign({},extra||{}),null);
+function bepInExUpdateFlow(extra,bar){
+  if(bepInExNeedsConfirm(S.bepinex,"update")){bepInExTakeoverModal("bepinex.update",null,extra,bar);return;}
+  bepInExWriteOrQueue("bepinex.update",Object.assign({},extra||{}),null,bar);
+}
+/* An update with a server on this install up is a write the host side is bound to refuse, so
+   it is the queue question instead. Everything else goes to the write as it always did. `bar`
+   is the standing left-alone answer the press came from, when it came from one. */
+function bepInExWriteOrQueue(method,params,after,bar){
+  const up=bepInExRunning();
+  if(method==="bepinex.update"&&up.length){bepInExQueueModal(params,up,bar);return;}
+  bepInExWrite(method,params,after,bar);
 }
 /* Files the note lists that an antivirus or a tidy-up took away. Nothing here is somebody
    else's work, so it is put back without a question; what is worth asking about is only
@@ -6300,7 +6328,7 @@ function bepInExPackOffered(b){
    is skipped is a button that does nothing.
    With the host's yes already given, the already-looked-after sentence rides along with
    the press they actually make, and the switch behind it is one click away. */
-function bepInExTakeoverModal(method,after,extra){
+function bepInExTakeoverModal(method,after,extra,bar){
   const b=S.bepinex;
   const installed=(b&&b.coreVersion)||T("bepinex.row.version.unknown");
   const pack=bepInExPackOffered(b);
@@ -6317,7 +6345,7 @@ function bepInExTakeoverModal(method,after,extra){
          `${esc(T("bepinex.notice.already_maintained.action"))}</button>`
         :""),
     ()=>T("bepinex.dialog.takeover.ok"),
-    ()=>bepInExWrite(method,Object.assign(bepInExWriteFlags(b),extra||{}),after));
+    ()=>bepInExWriteOrQueue(method,Object.assign(bepInExWriteFlags(b),extra||{}),after,bar));
 }
 /* The switch, reached from the dialog that named it. Delegated on the background rather
    than wired to the button, because a language switch rebuilds the dialog from its thunk
@@ -6341,9 +6369,10 @@ function bepInExDowngradeModal(method,params,after,slots){
 /* The one path every host-driven write goes through, so the row's buttons, the add
    flow's question and the empty state cannot drift apart. The answer IS the new status,
    so nothing asks again afterwards, and `after` is the add that was waiting on it. */
-async function bepInExWrite(method,params,after){
+async function bepInExWrite(method,params,after,bar){
   if(BEP_WRITING) return;
   BEP_WRITING=true;
+  BEP_REFUSAL=null;
   BEP_PROGRESS={phase:"resolving",percent:0,version:null};
   renderBepInExProgress();
   renderBepInExRow();
@@ -6351,14 +6380,24 @@ async function bepInExWrite(method,params,after){
   BEP_WRITING=false;
   bepInExProgressDone();
   if(r===FAIL){
+    /* rpc() has said the sentence once, in a toast that is gone in five seconds. It stands on
+       the row, and on the bar the press came from, until the next press. */
+    const id=window.BAKA_ERR_ID, slots=window.BAKA_ERR_PARAMS;
+    BEP_REFUSAL={id:id||"bepinex.writeFailed",params:slots};
+    if(bar){BEP_BAR_FAIL={key:bar.key,id:BEP_REFUSAL.id,params:slots};conditionBepInExLeftAlone(bar);}
     renderBepInExRow();
-    /* The refusal that is a question rather than an ending. rpc() has already said the
-       sentence; this is the offer that goes with it, and it only ever follows a press the
-       host made, so it is not a dialog opening by itself. */
+    /* The refusals that are a question rather than an ending: this is the offer that goes
+       with each, and it only ever follows a press the host made, so it is not a dialog opening
+       by itself. A server up that this page could not see (one BakaLoader did not start)
+       turns into the queue question exactly as a server it could see does. */
     if(window.BAKA_ERR_ID==="bepinex.newer"&&method!=="bepinex.remove")
       bepInExDowngradeModal(method,params,after,window.BAKA_ERR_PARAMS);
+    else if(id==="bepinex.serversRunning"&&method==="bepinex.update")
+      bepInExQueueModal(params,bepInExNamesOf(slots&&slots.names),bar);
     return;
   }
+  BEP_BAR_FAIL=null;
+  if(bar) bepInExLeftAloneSeen(bar);
   S.bepinex=r;
   renderMods();
   if(method==="bepinex.remove"){
@@ -6369,6 +6408,112 @@ async function bepInExWrite(method,params,after){
   }
   if(typeof after==="function") after();
 }
+/* A names slot the host joined with commas, or a list, as a list. */
+function bepInExNamesOf(names){
+  if(Array.isArray(names)) return names.filter(Boolean);
+  return String(names||"").split(",").map(s=>s.trim()).filter(Boolean);
+}
+/* The pack a queue is about: the one the bar was raised with, else whatever the host side has
+   named, else the one already queued. Shown only; the write takes the current pack. */
+function bepInExQueueVersion(bar){
+  return (bar&&bar.version)||bepInExPackOffered(S.bepinex)
+    ||(S.bepinex&&S.bepinex.queued&&S.bepinex.queued.version)||"";
+}
+/* The question a refused update turns into while a server on this install is up (issue 31).
+   It says what will happen and who is still up, and offers the two things that can: wait for
+   the servers to stop, or stop them now. Cancel leaves everything as it was. */
+function bepInExQueueModal(params,names,bar){
+  const version=bepInExQueueVersion(bar)||T("bepinex.row.version.unknown");
+  const up=bepInExNamesOf(names);
+  const again=()=>{
+    const m=modalOpen(
+      `<div class="mtitle">${esc(T("bepinex.dialog.queue.title"))}</div>`+
+      `<div class="mbody"><div class="mbody-note">${esc(T("bepinex.dialog.queue.body",{version,names:up.join(", ")}))}</div></div>`+
+      `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button>`+
+      `<button class="btn btn-ghost btn-sm" id="mBepStopNow">${esc(T("bepinex.condition.queued.stop_now"))}</button>`+
+      `<button class="btn btn-ember btn-sm" id="mOk">${esc(T("bepinex.dialog.queue.ok"))}</button></div>`,
+      again);
+    m.querySelector("#mCancel").addEventListener("click",modalClose);
+    m.querySelector("#mOk").addEventListener("click",()=>{modalClose();bepInExQueue(params,bar);});
+    m.querySelector("#mBepStopNow").addEventListener("click",()=>{modalClose();bepInExStopAndInstall(params,bar);});
+    return m;
+  };
+  return again();
+}
+/* The refusal as a sentence, or null when there is none or this page has no words for it. */
+function bepInExRefusalText(f){
+  if(!f||!f.id) return null;
+  return hostSentence(f.id,f.params)||null;
+}
+async function bepInExQueue(params,bar){
+  const version=bepInExQueueVersion(bar);
+  const r=await rpc("bepinex.queue",Object.assign({},params||{},{version}));
+  if(r===FAIL) return;
+  BEP_REFUSAL=null; BEP_BAR_FAIL=null;
+  if(bar) bepInExLeftAloneSeen(bar);
+  S.bepinex=r;
+  renderBepInExRow();
+  toast("ᛒ "+T("bepinex.queued.toast",{version:version||T("bepinex.row.version.unknown")}));
+}
+async function bepInExUnqueue(){
+  const r=await rpc("bepinex.unqueue",{});
+  if(r===FAIL) return;
+  BEP_REFUSAL=null;
+  S.bepinex=r;
+  renderBepInExRow();
+}
+/* Stop, install and start again (D1). One latch with the write, here and on the host side:
+   the bar's button goes grey while it is out, and a second press is told the write is busy. */
+async function bepInExStopAndInstall(params,bar){
+  if(BEP_WRITING) return;
+  const version=bepInExQueueVersion(bar);
+  BEP_WRITING=true;
+  bepInExQueuedRedraw(); renderBepInExRow();
+  const r=await rpc("bepinex.stopAndInstall",Object.assign({},params||{},{version}));
+  BEP_WRITING=false;
+  if(r===FAIL){
+    BEP_REFUSAL={id:window.BAKA_ERR_ID||"bepinex.writeFailed",params:window.BAKA_ERR_PARAMS};
+    renderBepInExRow(); bepInExQueuedRedraw();
+    return;
+  }
+  BEP_REFUSAL=null; BEP_BAR_FAIL=null;
+  if(bar) bepInExLeftAloneSeen(bar);
+  S.bepinex=r;
+  renderMods();
+  const res=r.result;
+  const started=bepInExNamesOf(r.started);
+  if(res&&!res.skipped&&started.length)
+    toast("ᛒ "+T("bepinex.stop_install.done.toast",{version:res.version||version,names:started.join(", ")}));
+  else if(res) bepInExReportWrite("bepinex.update",r);
+}
+/* Whether the row offers Check BepInEx now: on every state where there is a BepInEx to check,
+   the looked-after one included, which used to offer nothing to press at all. */
+function bepInExRowOffersCheck(b){
+  const state=bepInExState(b);
+  return !!state&&state!=="missing";
+}
+/* Check BepInEx now. Writes nothing and takes no write slot. A newer pack puts its bar back
+   (the host side clears the closed-notice mark for that exact fact), a current one is a toast,
+   and a site that did not answer is rpc()'s own offline sentence with nothing recorded. */
+async function bepInExCheckNow(){
+  if(BEP_CHECKING||BEP_WRITING) return;
+  BEP_CHECKING=true;
+  renderBepInExRow();
+  const r=await rpc("bepinex.check",{});
+  BEP_CHECKING=false;
+  if(r===FAIL){renderBepInExRow();return;}
+  S.bepinex=r;
+  renderMods();
+  const c=r.check||{};
+  const version=c.version||T("bepinex.row.version.unknown");
+  if(c.kind==="current")
+    toast("ᛒ "+T("bepinex.check.current.toast",{version:c.installed||version}));
+  else if(c.kind==="soak")
+    toast("ᛒ "+T("bepinex.check.soak.toast",
+      {version,when:c.eligibleUtc?new Date(c.eligibleUtc).toLocaleString(LOC()):""}));
+  else toast("ᛒ "+T("bepinex.check.newer.toast",{version}));
+}
+document.getElementById("bepCheckLink")?.addEventListener("click",e=>{e.preventDefault();bepInExCheckNow();});
 /* SECTION H. What that press actually came to, said in the words it came to it in. Five
    endings look identical in the status fields, because all five end with an install that
    is there, and only the result tells them apart: a write that moved the version, a write
@@ -12573,7 +12718,7 @@ function renderUpdatePill(){
    three that changes what the server would load if the host said yes. */
 const CONDITION_ORDER=["launchHold","saveFailed","backupFailed","crashRelaunch",
   "bepinexNoMods","bepinexNotLoaded","bepinexMissingFiles","serverUpdate","pluginFailure",
-  "bepinexNotice","appUpdate","bepinexAsk","bepinexLeftAlone","bepinexWaiting",
+  "bepinexNotice","appUpdate","bepinexAsk","bepinexLeftAlone","bepinexQueued","bepinexWaiting",
   "bepinexWritten","unsavedStop","saveFolderStray","galeChanged","modUpdates","restartPending"];
 const CONDITIONS=new Map();
 function setCondition(kind,cond){
@@ -12972,8 +13117,13 @@ function conditionRestartPending(on,sig){
 function conditionBepInEx(bep,status){
   if(!bep){
     clearCondition("bepinexWaiting");clearCondition("bepinexNotLoaded");
-    clearCondition("bepinexLeftAlone");clearCondition("bepinexWritten");return;
+    clearCondition("bepinexLeftAlone");clearCondition("bepinexWritten");
+    clearCondition("bepinexQueued");return;
   }
+  /* The queue rides on both answers. This one is the newer of the two whenever it arrives,
+     so the row's copy is brought up to it before the row's own conditions replay below. */
+  if(S.bepinex) S.bepinex.queued=bep.queued||null;
+  conditionBepInExQueued(bep.queued);
   conditionBepInExWaiting(bep.updateWaiting,bep.waitingProfiles);
   conditionBepInExNotLoaded(!!bep.notLoaded&&(status==="Running"));
   conditionBepInExLeftAlone(bep.lastUnattended);
@@ -12989,6 +13139,7 @@ function conditionBepInEx(bep,status){
    note back means hashing the core. */
 function renderBepInExConditions(){
   const b=S.bepinex;
+  if(b&&"queued" in b) conditionBepInExQueued(b.queued);
   conditionBepInExAsk(b);
   conditionBepInExMissingFiles(b);
   conditionBepInExNoMods(b);
@@ -13170,11 +13321,14 @@ function bepInExLeftAloneWrite(last){
      when the row went up. */
   const gone=last?last.reason==="bepinex.repairPackGone"&&!!last.leftAsItWas
                  :bepInExRepairPackGone(S.bepinex);
-  /* Pressing the offer IS having read the notice, so it goes down the same road the close
-     does rather than spelling those two lines out a second time. */
-  bepInExLeftAloneSeen(last);
-  goPage("mods"); sectSet("mods",true);
-  bepInExUpdateFlow(gone?{takeCurrentPack:true}:null);
+  /* The notice is marked read once the press has done something: the write did not fail, or
+     the host accepted the queue. It used to be marked before the write, so a refusal took the
+     bar down with it and a toast was all that was left (issue 31).
+     With a server on this install up, the write is bound to be refused, which is why the row
+     greys the same press. So the question that CAN be answered is asked instead, here where the
+     host is, and the bar stays until it is answered. */
+  if(!bepInExRunning().length){goPage("mods"); sectSet("mods",true);}
+  bepInExUpdateFlow(gone?{takeCurrentPack:true}:null,last);
 }
 function bepInExLeftAloneWiki(){
   if(Native.available) Native.call("shell.openUrl",{target:"bepinex-wiki"});
@@ -13216,8 +13370,12 @@ function bepInExLeftAloneKeptHtml(){
    anybody. Every reason ends the same way, which is that the install is exactly as it was,
    and each sentence says so rather than leaving the host to assume it. */
 function conditionBepInExLeftAlone(last){
-  const msg=bepInExLeftAloneText(last);
-  if(!msg){clearCondition("bepinexLeftAlone");return;}
+  const said=bepInExLeftAloneText(last);
+  if(!said){clearCondition("bepinexLeftAlone");return;}
+  /* The refusal this bar's own press met, still standing in it: a fresh status push redraws
+     the bar from the host's answer, and that answer knows nothing about the press. */
+  const failed=BEP_BAR_FAIL&&last&&BEP_BAR_FAIL.key===last.key?bepInExRefusalText(BEP_BAR_FAIL):null;
+  const msg=failed?said+" "+failed:said;
   /* Already read. The fact has not changed since the host closed it, and standing it up
      again after every restart window was the whole complaint. */
   if(bepInExNoticeSeen(last)){clearCondition("bepinexLeftAlone");return;}
@@ -13226,7 +13384,7 @@ function conditionBepInExLeftAlone(last){
      gets the link in the sentence instead, and the bar is left with one button. */
   const wiki=!!(offer&&offer.act==="wiki");
   const act=wiki?null:offer;
-  setCondition("bepinexLeftAlone",{sev:last.outcome==="failed"?"warn":"info",
+  setCondition("bepinexLeftAlone",{sev:(failed||last.outcome==="failed")?"warn":"info",
     title:T("bepinex.condition.left_alone.title"),
     msg,
     msgHtml:wiki?esc(msg)+" "+bepInExLeftAloneKeptHtml():null,
@@ -13265,6 +13423,35 @@ function conditionBepInExWaiting(version,names){
                  :T("bepinex.condition.waiting.body.none",{version}),
     again:()=>conditionBepInExWaiting(version,names),
   });
+}
+/* The host's yes to a BepInEx write that waits for every server on this install to stop
+   (issue 31). It stands until the write runs or the host cancels it, because it is a promise
+   the app is keeping on their behalf, and a promise nobody can see is one they cannot take
+   back. The reason the last attempt did not run stands in it too, unless that reason is only
+   the servers still up, which the sentence already names. */
+function conditionBepInExQueued(q){
+  if(!q){clearCondition("bepinexQueued");return;}
+  const version=q.version||T("bepinex.row.version.unknown");
+  const up=Array.isArray(q.names)?q.names.filter(Boolean):[];
+  const why=q.reason&&q.reason!=="bepinex.serversRunning"?hostSentence(q.reason,q.reasonParams):null;
+  const body=up.length?T("bepinex.condition.queued.body",{version,names:up.join(", ")})
+                      :T("bepinex.condition.queued.body.none",{version});
+  setCondition("bepinexQueued",{sev:why?"warn":"info",title:T("bepinex.condition.queued.title"),
+    msg:why?body+" "+why:body,
+    actionsHtml:`<button class="btn btn-ember btn-sm" id="cbBepStopNow"${BEP_WRITING?" disabled":""}>`+
+      `${esc(T("bepinex.condition.queued.stop_now"))}</button>`,
+    /* The bar's own button is the cancel: closing this bar without cancelling would hide a
+       write that is still going to happen. */
+    dismissLabel:T("bepinex.condition.queued.cancel"),
+    again:()=>conditionBepInExQueued(q),
+    onDismiss:()=>bepInExUnqueue(),
+    wire:bar=>bar.querySelector("#cbBepStopNow")?.addEventListener("click",()=>bepInExStopAndInstall(null,null)),
+  });
+}
+/* The queued bar drawn again from what it already holds, so its button follows the latch. */
+function bepInExQueuedRedraw(){
+  const c=CONDITIONS.get("bepinexQueued");
+  if(c&&typeof c.again==="function") c.again();
 }
 /* The server came up, the grace passed, and BepInEx never wrote its log. Nothing else in
    the app can see this: on Windows the whole loader mechanism is a DLL beside the

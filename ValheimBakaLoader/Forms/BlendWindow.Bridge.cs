@@ -247,6 +247,27 @@ namespace ValheimBakaLoader.Forms
         // rather than per profile, because so is BepInEx.
         private string _bepInExUpdateWaiting;
 
+        // Why the queued BepInEx write (UserPreferences.BepInExQueuedUpdate) has not run yet,
+        // as the refusal id and its slots the bar words it from, or null when nothing has been
+        // tried. In memory only: the queue itself is on disk, and on the next launch the first
+        // attempt says again why it waits.
+        private string _bepInExQueueReasonId;
+        private IReadOnlyDictionary<string, object> _bepInExQueueReasonParams;
+
+        // Profiles whose next start must not try the queue again, because the step that just
+        // ran it (a restart window, or Stop, install and start again) is the very thing that
+        // start follows. Without this a queue kept for "offline" was fetched twice per restart.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _bepInExQueueSkipStart =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // True while Stop, install and start again is stopping servers to write the queue
+        // itself. Those stops are its own, so the plain-stop hook leaves the queue to it rather
+        // than racing it for the write slot and fetching the pack a second time.
+        private volatile bool _bepInExStoppingForInstall;
+
+        /// <summary>The most Check BepInEx now may spend asking the site. A host is watching it.</summary>
+        internal static TimeSpan BepInExCheckBudget { get; set; } = TimeSpan.FromSeconds(20);
+
         // How the last unattended BepInEx write ended: what it moved, or why it did not
         // happen. Per install for the same reason, and it STANDS: a write inside a restart
         // window happens with nobody at the keyboard, so there is no toast to show it and very
@@ -529,6 +550,12 @@ namespace ValheimBakaLoader.Forms
                     // A crash already closed this uptime span with its own event.
                     Analytics.Record(new AnalyticsEvent { Kind = "stop", Server = profile });
                 }
+
+                // A plain stop is one of the three moments a queued BepInEx write may run: the
+                // Stop button, stop when empty, a crash with no restart. A restart runs it in
+                // its own window instead, and a stop with Windows about to power off does not
+                // start a write the shutdown could cut.
+                if (status == ServerStatus.Stopped) RunBepInExQueueAtStop(session);
 
                 DiscordStatus.RequestUpdate(profile);
 
@@ -2610,6 +2637,67 @@ namespace ValheimBakaLoader.Forms
         }
 
         /// <summary>
+        /// Every live session on this install as Stop, install and start again sees one, from
+        /// the process-wide registry for the same reason the refusal reads it: the world on the
+        /// same BepInEx is very often in the window next door.
+        /// </summary>
+        private IReadOnlyList<Tools.IBepInExRealm> BepInExRealmsOn(string baseExe)
+        {
+            var realms = new List<Tools.IBepInExRealm>();
+            foreach (var session in SessionRegistry.All)
+            {
+                if (session?.ProfileName == null) continue;
+                var exe = session.Server?.Options?.ServerExePath;
+                if (string.IsNullOrWhiteSpace(exe)) exe = GetServerExePathFor(session.ProfileName);
+                if (!Tools.BepInExService.SharesBase(baseExe, exe)) continue;
+                if (realms.Any(r => string.Equals(r.Name, session.ProfileName, StringComparison.OrdinalIgnoreCase))) continue;
+                realms.Add(new SessionRealm(session, this));
+            }
+            return realms;
+        }
+
+        /// <summary>One session as <see cref="Tools.BepInExStopAndInstall"/> drives it.</summary>
+        private sealed class SessionRealm : Tools.IBepInExRealm
+        {
+            private readonly ServerSession Session;
+            private readonly BlendWindow Window;
+
+            public SessionRealm(ServerSession session, BlendWindow window)
+            {
+                Session = session;
+                Window = window;
+            }
+
+            public string Name => Session.ProfileName;
+
+            public bool IsStopped => Session.Server.Status == ServerStatus.Stopped;
+
+            public TimeSpan StopSaveBound => Session.Server.StopSaveBound;
+
+            public void Stop()
+            {
+                if (Session.Server.CanStop) Session.Server.Stop();
+            }
+
+            /// <summary>
+            /// The ordinary start: the options a fresh Start would build (launch history included,
+            /// which the launch guard reads), on the window's own thread. The queue was just run,
+            /// so this start does not try it again.
+            /// </summary>
+            public void Start()
+            {
+                Window._bepInExQueueSkipStart[Session.ProfileName] = true;
+                var options = Session.Server.RefreshOptions?.Invoke() ?? Session.Server.Options;
+                void Go()
+                {
+                    if (Session.Server.CanStart) Session.Server.Start(options);
+                }
+                if (Window.IsHandleCreated && Window.InvokeRequired) Window.BeginInvoke(new Action(Go));
+                else Go();
+            }
+        }
+
+        /// <summary>
         /// How the last BepInEx write that nobody watched ended: it wrote, it declined on a
         /// rule, or it threw.
         /// <para>
@@ -2796,7 +2884,8 @@ namespace ValheimBakaLoader.Forms
         /// that asked for a write, and the event an unattended write posts when it is over.
         /// Null on a plain status read, where there is no one write to report.
         /// </param>
-        private object BuildBepInExDto(Tools.BepInExInstallResult result = null)
+        private object BuildBepInExDto(Tools.BepInExInstallResult result = null,
+            IReadOnlyList<string> started = null, object check = null)
         {
             var prefs = UserPrefsProvider.LoadPreferences();
             var baseExe = GetCanonicalBaseServerExe();
@@ -2862,6 +2951,14 @@ namespace ValheimBakaLoader.Forms
                 // Set by the unattended window when it found a newer pack and could not write
                 // it because another server on this install was up.
                 updateWaiting = _bepInExUpdateWaiting,
+                // The host's yes to a write that waits for every server on this install to stop,
+                // with the servers still up and why the last attempt did not run. Null when
+                // nothing is queued.
+                queued = BepInExQueuedDto(),
+                // The servers Stop, install and start again started again, on its own reply.
+                started,
+                // What Check BepInEx now found, on its own reply.
+                check,
                 // True for ALL four writers, so the row never draws its buttons enabled while
                 // an unattended window or a start is writing the very files they would write.
                 busy = BepInExWriteInProgress,
@@ -3144,10 +3241,13 @@ namespace ValheimBakaLoader.Forms
                         statePrefs.BepInExMaintained, statePrefs.BepInExMaintenanceAsked),
                     consentUnanswered = Tools.BepInExConsent.Unanswered(statePrefs.BepInExMaintenanceAsked),
                     updateWaiting = waiting,
+                    // Each server named once: a running profile by its name, a server BakaLoader
+                    // did not start by its folder. The same list the queued bar reads.
                     waitingProfiles = waiting == null
                         ? Array.Empty<string>()
-                        : Tools.BepInExService.ProfilesBlockingWrite(GetCanonicalBaseServerExe(), KnownInstalls())
+                        : BepInEx.ServersHoldingBase(GetCanonicalBaseServerExe(), KnownInstalls())
                             .ToArray(),
+                    queued = BepInExQueuedDto(),
                     notLoaded = BepInExDidNotLoad(session),
                     // How the last write nobody watched ended. Read straight off what this
                     // window is holding, so it costs this event nothing: it touches no install
@@ -3160,6 +3260,203 @@ namespace ValheimBakaLoader.Forms
                 AppLogger.Debug("Could not build the BepInEx state: {0}", e.Message);
                 return null;
             }
+        }
+
+        /// <summary>The queued BepInEx write on disk, or null.</summary>
+        private Tools.BepInExQueuedUpdate BepInExQueued()
+        {
+            try { return UserPrefsProvider.LoadPreferences()?.BepInExQueuedUpdate; }
+            catch (Exception e) { AppLogger.Debug("Could not read the BepInEx queue: {0}", e.Message); return null; }
+        }
+
+        /// <summary>Takes the queue off disk, but only when it is still the yes this attempt read.</summary>
+        private void ClearBepInExQueue(Tools.BepInExQueuedUpdate ran)
+        {
+            UserPrefsProvider.Mutate(prefs =>
+            {
+                if (prefs.BepInExQueuedUpdate == null) return false;
+                if (ran != null && !prefs.BepInExQueuedUpdate.SameAs(ran)) return false;
+                prefs.BepInExQueuedUpdate = null;
+                return true;
+            });
+        }
+
+        /// <summary>
+        /// The one attempt at the queued write, from wherever it is tried. Every ending is
+        /// recorded the way the bar reads it: a write as the written outcome (naming the pack
+        /// that actually went in, which is the current one and not necessarily the one the
+        /// host was shown), a reason that passes as the reason the queue still waits, and a
+        /// reason trying again cannot fix as a standing failure with the queue gone.
+        /// </summary>
+        /// <param name="profile">Whose moment this is, for the journal and the outcome. Null for none.</param>
+        /// <param name="installs">The profiles to count, which in a restart window leaves out the one restarting.</param>
+        /// <param name="stop">The window's own clock, when there is one.</param>
+        /// <param name="slotHeld">True when the caller already holds the write slot.</param>
+        private async Task<Tools.BepInExQueueRun> TryRunQueuedBepInExAsync(string profile,
+            IEnumerable<Tools.BepInExProfileInstall> installs, CancellationToken stop, bool slotHeld)
+        {
+            var baseExe = GetCanonicalBaseServerExe();
+
+            var run = await Tools.BepInExQueue.RunAsync(new Tools.BepInExQueueSteps
+            {
+                Load = BepInExQueued,
+                Clear = ClearBepInExQueue,
+                StillUp = () => BepInEx.ServersHoldingBase(baseExe, installs),
+                TryBegin = slotHeld ? null : TryBeginBepInExWrite,
+                End = EndBepInExWrite,
+                Write = async options =>
+                {
+                    PostBepInExChanged();
+                    using var budget = CancellationTokenSource.CreateLinkedTokenSource(stop);
+                    budget.CancelAfter(BepInExWriteBudget);
+                    return await BepInEx.UpdateAsync(baseExe, installs, null, budget.Token, options)
+                        .ConfigureAwait(false);
+                },
+            }).ConfigureAwait(false);
+
+            if (run.Ending == Tools.BepInExQueueEnding.NothingQueued) return run;
+
+            try
+            {
+                switch (run.Ending)
+                {
+                    case Tools.BepInExQueueEnding.Written:
+                        _bepInExQueueReasonId = null;
+                        _bepInExQueueReasonParams = null;
+                        _bepInExUpdateWaiting = null;
+                        RecordBepInExInstall(profile, run.Result);
+                        RecordUnattendedBepInEx(profile, run.Result);
+                        Logger.Information("The queued BepInEx update ran: {0} is what is here now.",
+                            run.Result?.Version ?? "the pack that was already here");
+                        break;
+
+                    case Tools.BepInExQueueEnding.ServersUp:
+                        _bepInExQueueReasonId = "bepinex.serversRunning";
+                        _bepInExQueueReasonParams = new Dictionary<string, object>
+                        {
+                            ["names"] = string.Join(", ", run.StillUp),
+                        };
+                        break;
+
+                    case Tools.BepInExQueueEnding.Busy:
+                        _bepInExQueueReasonId = "bepinex.busy";
+                        _bepInExQueueReasonParams = null;
+                        break;
+
+                    case Tools.BepInExQueueEnding.Kept:
+                        // A clock that ran out reads as the offline sentence: it is a site that
+                        // did not answer in time, by another road.
+                        _bepInExQueueReasonId = HostFacingException.IdOf(run.Error) ?? "bepinex.offline";
+                        _bepInExQueueReasonParams = HostFacingException.ParamsOf(run.Error);
+                        Logger.Information("The queued BepInEx update waits: {0}", run.Error?.Message);
+                        break;
+
+                    case Tools.BepInExQueueEnding.Dropped:
+                        _bepInExQueueReasonId = null;
+                        _bepInExQueueReasonParams = null;
+                        RecordUnattendedBepInExFailure(profile, run.Error);
+                        Logger.Warning("The queued BepInEx update could not run and was taken off the queue: {0}",
+                            run.Error?.Message);
+                        break;
+                }
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("Could not record the queued BepInEx write: {0}", e.Message);
+            }
+
+            PostBepInExChanged(run.Result);
+            return run;
+        }
+
+        /// <summary>
+        /// The plain-stop moment for the queue. Off the status thread: a write takes seconds,
+        /// and the handler it is called from is the one every status transition goes through.
+        /// </summary>
+        private void RunBepInExQueueAtStop(ServerSession session)
+        {
+            try
+            {
+                if (_bepInExStoppingForInstall || BepInExQueued() == null) return;
+
+                var server = session.Server;
+                if (!Tools.BepInExQueue.FiresAtStop(server.RelaunchPending, server.StoppedWithWindowsPowerOffDue))
+                {
+                    if (server.StoppedWithWindowsPowerOffDue)
+                        Logger.Information(
+                            "The queued BepInEx update waits for the next start: Windows is about to shut down.");
+                    return;
+                }
+
+                _ = Task.Run(() => TryRunQueuedBepInExAsync(session.ProfileName, LiveInstalls(),
+                    CancellationToken.None, slotHeld: false));
+            }
+            catch (Exception e)
+            {
+                AppLogger.Debug("The queued BepInEx update was not tried at this stop: {0}", e.Message);
+            }
+        }
+
+        /// <summary>
+        /// What the page reads about the queue: the yes on disk, the servers still holding the
+        /// base (each named once), and why the last attempt did not run. Null when nothing is
+        /// queued, and only then is the process list left unread.
+        /// </summary>
+        private object BepInExQueuedDto()
+        {
+            var queued = BepInExQueued();
+            if (queued == null) return null;
+
+            IReadOnlyList<string> names;
+            try { names = BepInEx.ServersHoldingBase(GetCanonicalBaseServerExe(), KnownInstalls()); }
+            catch { names = Array.Empty<string>(); }
+
+            return new
+            {
+                version = queued.Version,
+                queuedUtc = queued.QueuedUtc,
+                names,
+                reason = _bepInExQueueReasonId,
+                reasonParams = _bepInExQueueReasonParams,
+            };
+        }
+
+        /// <summary>
+        /// What Check BepInEx now does with what it found, with every input handed in so a test
+        /// can drive it. A newer pack a window would turn down becomes the very refusal that
+        /// window would record, under the same key, so a closed bar for that fact comes back
+        /// once (the key is unseen again); a newer pack a window would write becomes the
+        /// waiting row; the current pack is a toast and nothing else.
+        /// </summary>
+        internal static (BepInExUnattendedOutcome Outcome, string Waiting, string Kind) BepInExCheckPlan(
+            Tools.BepInExCheck check, bool windowWouldApply, DateTime nowUtc)
+        {
+            if (check == null || !check.Newer) return (null, null, "current");
+
+            if (check.WindowResult != null)
+                return (BepInExOutcomeOf(null, check.WindowResult, nowUtc), null,
+                    check.UnattendedRefusal == Tools.BepInExSkipReason.Soak ? "soak" : "newer");
+
+            return (null, windowWouldApply ? check.Version : null, "newer");
+        }
+
+        /// <summary>
+        /// The restart window's turn at the queue. A queued yes comes first and is the whole of
+        /// the loader step when there is one. It is the host's own press, so it is not held to the
+        /// consent switch and not to the soak, and the plan (which IS both of those) does not run
+        /// after it: one write per window. The relaunch follows whatever it comes to, on the clock
+        /// the window already has, and the start that relaunch makes skips the queue it just ran.
+        /// True when there was a queue to run.
+        /// </summary>
+        private async Task<bool> RunBepInExQueueInWindowAsync(string profile, CancellationToken stop)
+        {
+            if (BepInExQueued() == null) return false;
+
+            _bepInExQueueSkipStart[profile] = true;
+            await TryRunQueuedBepInExAsync(profile,
+                LiveInstalls().Where(i => !string.Equals(i.ProfileName, profile, StringComparison.OrdinalIgnoreCase)),
+                stop, slotHeld: false);
+            return true;
         }
 
         /// <summary>
@@ -3178,6 +3475,9 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private async Task ApplyBepInExUpdateAsync(string profile, CancellationToken stop = default)
         {
+            // A queued yes is the whole of this step when there is one. See below.
+            if (await RunBepInExQueueInWindowAsync(profile, stop)) return;
+
             try
             {
                 var prefs = UserPrefsProvider.LoadPreferences();
@@ -3419,6 +3719,24 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private void PrepareBepInExForStart(string profile, string exePath)
         {
+            // A queued yes, before anything else and before the consent read: it is the host's
+            // own press. This is the moment that covers an app closed with a queue standing and
+            // a stop that skipped it for the Windows power-off. The start that follows a restart
+            // window or Stop, install and start again skips it, because that step just ran it.
+            // Off this thread and waited for: the start is waiting on the loader anyway.
+            if (!_bepInExQueueSkipStart.TryRemove(profile ?? "", out _) && BepInExQueued() != null)
+            {
+                try
+                {
+                    Task.Run(() => TryRunQueuedBepInExAsync(profile, LiveInstalls(),
+                        CancellationToken.None, slotHeld: false)).GetAwaiter().GetResult();
+                }
+                catch (Exception e)
+                {
+                    AppLogger.Warning("The queued BepInEx update did not run before this start: {0}", e.Message);
+                }
+            }
+
             // The switch and the answer together. A host upgrading from 1.1.x has the switch on
             // by default and has not been asked anything yet, and a profile that auto-starts
             // never reaches the question at all: reading the preference alone would put a
@@ -8457,6 +8775,130 @@ namespace ValheimBakaLoader.Forms
 
             RegisterRpc("bepinex.update", async p =>
                 await WriteBepInExAsync(null, update: true, options: BepInExOptionsFrom(p)));
+
+            // The host's yes to a write that cannot run while a server on this install is up,
+            // kept on disk for the next moment every one of them is down: a plain stop, a
+            // restart window, or a start. It carries the answers the write would have carried.
+            // When nothing is up by the time it lands, it runs now.
+            RegisterRpc("bepinex.queue", p =>
+            {
+                var queued = Tools.BepInExQueuedUpdate.From(p?.Value<string>("version"),
+                    BepInExOptionsFrom(p), DateTime.UtcNow);
+                UserPrefsProvider.Mutate(prefs => { prefs.BepInExQueuedUpdate = queued; return true; });
+                _bepInExQueueReasonId = null;
+                _bepInExQueueReasonParams = null;
+                Logger.Information("A BepInEx update is queued for the next time every server on this install is stopped.");
+
+                if (BepInEx.ServersHoldingBase(GetCanonicalBaseServerExe(), KnownInstalls()).Count == 0)
+                    _ = Task.Run(() => TryRunQueuedBepInExAsync(ActiveProfileName, LiveInstalls(),
+                        CancellationToken.None, slotHeld: false));
+
+                PostBepInExChanged();
+                return Task.FromResult<object>(BuildBepInExDto());
+            });
+
+            RegisterRpc("bepinex.unqueue", p =>
+            {
+                ClearBepInExQueue(null);
+                _bepInExQueueReasonId = null;
+                _bepInExQueueReasonParams = null;
+                PostBepInExChanged();
+                return Task.FromResult<object>(BuildBepInExDto());
+            });
+
+            // Stop, install and start again (D1). Stops every server on this install that is up,
+            // writes the queued pack, and starts again only the ones it stopped. One latch with
+            // the write itself, so a second press is told the write is busy.
+            RegisterRpc("bepinex.stopAndInstall", async p =>
+            {
+                if (BepInExQueued() == null)
+                {
+                    var queued = Tools.BepInExQueuedUpdate.From(p?.Value<string>("version"),
+                        BepInExOptionsFrom(p), DateTime.UtcNow);
+                    UserPrefsProvider.Mutate(prefs => { prefs.BepInExQueuedUpdate = queued; return true; });
+                }
+
+                var baseExe = GetCanonicalBaseServerExe();
+                Tools.BepInExStopAndInstallResult done;
+                try
+                {
+                    _bepInExStoppingForInstall = true;
+                    done = await Tools.BepInExStopAndInstall.RunAsync(new Tools.BepInExStopAndInstallSteps
+                    {
+                        TryBegin = TryBeginBepInExWrite,
+                        End = EndBepInExWrite,
+                        Busy = BepInExBusy,
+                        ForeignHolders = () => BepInEx.ForeignServersHoldingBase(baseExe, KnownInstalls()),
+                        Realms = () => BepInExRealmsOn(baseExe),
+                        RunQueued = () => TryRunQueuedBepInExAsync(ActiveProfileName, LiveInstalls(),
+                            CancellationToken.None, slotHeld: true),
+                        Deadline = ValheimServer.CloseDeadlineFor,
+                    });
+                }
+                catch (HostFacingException e)
+                {
+                    if (HostFacingException.IdOf(e) != "bepinex.busy")
+                    {
+                        _bepInExQueueReasonId = HostFacingException.IdOf(e);
+                        _bepInExQueueReasonParams = HostFacingException.ParamsOf(e);
+                    }
+                    PostBepInExChanged();
+                    throw;
+                }
+                finally
+                {
+                    _bepInExStoppingForInstall = false;
+                }
+
+                return BuildBepInExDto(done.Run?.Result, done.Started);
+            });
+
+            // Check BepInEx now: asks the site what the write would read, writes nothing and
+            // takes no write slot. A newer pack puts the bar back, a current one says so, and a
+            // site that did not answer says that and records nothing.
+            RegisterRpc("bepinex.check", async p =>
+            {
+                var baseExe = GetCanonicalBaseServerExe();
+                var found = await BepInEx.CheckAsync(baseExe, LiveInstalls(), BepInExCheckBudget);
+
+                var prefs = UserPrefsProvider.LoadPreferences();
+                var status = BepInEx.Status(baseExe, GetPluginsDirectory(), KnownInstalls());
+                var wouldApply = Tools.BepInExUnattended.Decide(
+                    Tools.BepInExConsent.Effective(prefs.BepInExMaintained, prefs.BepInExMaintenanceAsked),
+                    status.Installed, status.PackVersion, found.Version, false,
+                    status.DrivenElsewhere, status.ForeignCore, status.Drifted, status.Unrecognised,
+                    status.MissingFiles.Count > 0) == Tools.BepInExUnattendedAction.Apply;
+
+                var plan = BepInExCheckPlan(found, wouldApply, DateTime.UtcNow);
+                if (plan.Outcome != null)
+                {
+                    _bepInExLastUnattended = plan.Outcome;
+                    var key = plan.Outcome.Key;
+                    UserPrefsProvider.Mutate(pr =>
+                    {
+                        if (!string.Equals(pr.BepInExNoticeSeenKey, key, StringComparison.Ordinal)) return false;
+                        pr.BepInExNoticeSeenKey = null;
+                        return true;
+                    });
+                }
+                if (plan.Waiting != null) _bepInExUpdateWaiting = plan.Waiting;
+
+                Logger.Information("BepInEx was checked by hand: the site lists {0}, this install has {1}.",
+                    found.Version, found.InstalledPackVersion ?? found.InstalledCoreVersion ?? "no version on record");
+
+                // The bar rides on server.status and nothing else, so it is posted here.
+                PostBepInExChanged();
+                try { PostEvent("server.status", BuildServerState()); }
+                catch (Exception e) { AppLogger.Debug("Could not post the status after a check: {0}", e.Message); }
+
+                return BuildBepInExDto(null, null, new
+                {
+                    kind = plan.Kind,
+                    version = found.Version,
+                    installed = found.InstalledPackVersion ?? found.InstalledCoreVersion,
+                    eligibleUtc = found.EligibleUtc,
+                });
+            });
 
             // Puts the newest backup back, or the one a stamp names. Offered on the row when
             // there is a backup and the core is missing or will not load, which is the state an

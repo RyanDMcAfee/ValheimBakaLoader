@@ -166,6 +166,7 @@ function harness() {
     goPage: () => {},
     sectSet: () => {},
     bepInExUpdateFlow: () => { called.push("update"); },
+    bepInExRunning: () => [],
     bepInExRepairPackGone: () => false,
     S: { bepinex: {} },
     Native: { available: true, call: (m, p) => { called.push(m); return Promise.resolve(null); } },
@@ -181,6 +182,8 @@ function harness() {
   vm.runInContext(table("CONDITION_ORDER", "];"), context, { filename: "app.js#order" });
   vm.runInContext(fn1("const CONDITIONS=new Map();"), context, { filename: "app.js#conditions" });
   vm.runInContext(fn1("let BEP_WRITE_CHRONICLED=null;"), context, { filename: "app.js#chronicled" });
+  // 1.3.2: the refusal a bar's own press met, which the left-alone painter reads.
+  vm.runInContext("let BEP_BAR_FAIL=null; let BEP_REFUSAL=null;", context, { filename: "app.js#refusal" });
   vm.runInContext(table("HOST_SENTENCES", "];"), context, { filename: "app.js#host" });
   vm.runInContext(table("LANG_REASONS", "];"), context, { filename: "app.js#lang" });
   vm.runInContext(table("BEPINEX_REASONS", "];"), context, { filename: "app.js#reasons" });
@@ -339,7 +342,11 @@ test("a status event in that gap does not stand the bar back up", () => {
     "a replay off the answer the bar was raised with brought it back");
 });
 
-test("pressing the offer marks it too, not only the close", () => {
+/* 1.3.2 (issue 31): the offer marks the notice read once its write has answered, not before.
+   Marked before, a refused write took the bar down with it and a five second toast was all the
+   host had left; the write path marks it on success and scripts/ui/bepinex_queue_selftest.js
+   holds that half. What stands here is that the press alone no longer marks anything. */
+test("pressing the offer leaves the notice standing until the write answers", () => {
   const h = harness();
   h.LAST = refused({
     reason: "soak", version: "5.4.2352", eligibleUtc: "2026-10-02T00:00:00Z",
@@ -349,11 +356,11 @@ test("pressing the offer marks it too, not only the close", () => {
   vm.runInContext("conditionBepInExLeftAlone(LAST)", h);
 
   press(h.bar, "#cbBepLeftAct");
-  assert.strictEqual(h.LAST.seen, true, "the offer is a read notice and did not mark it");
-  assert.strictEqual(h.S.bepinex.lastUnattended.seen, true,
-    "the offer left the held outcome saying seen:false, so the next push raises it again");
-  vm.runInContext("conditionBepInExLeftAlone(LAST)", h);
-  assert.strictEqual(h.bar.style.display, "none", "the bar came back after the offer");
+  assert.ok(h.called.indexOf("update") >= 0, "the offer no longer writes");
+  assert.strictEqual(h.LAST.seen, false, "the offer marked the notice read before the write answered");
+  assert.strictEqual(h.called.indexOf("bepinex.noticeSeen"), -1,
+    "the offer closed the notice on the host before the write answered");
+  assert.strictEqual(h.bar.style.display, "", "the bar went down before the write answered");
 });
 
 test("the inline link opens the wiki, and its words come out of the catalog", () => {

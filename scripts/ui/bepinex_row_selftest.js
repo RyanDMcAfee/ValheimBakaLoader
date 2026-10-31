@@ -515,8 +515,10 @@ test("the press the host makes before the question carries no takeover answers",
      says which PACK to write, never whose files to write over, and without it the offer this
      row makes to move off a pack the site has taken down is an offer the code cannot keep.
      The five that ARE about somebody else's install are held to one writer each above. */
+  /* 1.3.2: the press goes through bepInExWriteOrQueue, which is that same write unless a server
+     on this install is up, when it is the queue question carrying the same params instead. */
   const update = fn("function bepInExUpdateFlow(");
-  assert.ok(update.indexOf("bepInExWrite(\"bepinex.update\",Object.assign({},extra||{}),null)") > 0,
+  assert.ok(update.indexOf("bepInExWriteOrQueue(\"bepinex.update\",Object.assign({},extra||{}),null,bar)") > 0,
     "the Update press sends something other than the one answer it may carry");
   assert.ok(update.indexOf("bepInExWriteFlags(") < 0,
     "the Update press fills in a takeover answer the host was never asked for");
@@ -525,10 +527,12 @@ test("the press the host makes before the question carries no takeover answers",
   // and the only place those answers are handed to a WRITE is the confirm's own yes. The
   // page names the chooser once more, in the preview seam, where a walk asks what a given
   // answer would come to and nothing is written.
-  const handed = SOURCE.match(/bepInExWrite\([^;]*bepInExWriteFlags\(/g) || [];
+  // 1.3.2: the confirm's yes hands them to bepInExWriteOrQueue, which is the write or, with a
+  // server on this install up, the queue question carrying the very same answers.
+  const handed = SOURCE.match(/bepInExWrite(?:OrQueue)?\([^;]*bepInExWriteFlags\(/g) || [];
   assert.strictEqual(handed.length, 1,
     "the answers are handed to " + handed.length + " writes, so one of them skips the question");
-  assert.ok(fn("function bepInExTakeoverModal(").indexOf("bepInExWrite(method,Object.assign(bepInExWriteFlags(b),extra||{})") > 0,
+  assert.ok(fn("function bepInExTakeoverModal(").indexOf("bepInExWriteOrQueue(method,Object.assign(bepInExWriteFlags(b),extra||{})") > 0,
     "the one write that carries the answers is not the confirm's yes, or it drops the press's own answer");
 });
 
