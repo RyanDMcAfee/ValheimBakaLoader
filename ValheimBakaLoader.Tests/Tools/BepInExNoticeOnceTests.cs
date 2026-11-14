@@ -524,7 +524,7 @@ namespace ValheimBakaLoader.Tests.Tools
 
             // The same sentence at both levels: a host reading the log sees the same words
             // whether it is the first window or the fortieth.
-            var line = "\"BepInEx for profile {0} was left as it was at the restart window ({1}).\"";
+            var line = "\"BepInEx for profile {0} was left as it was {1} ({2}).\"";
             Assert.Equal(2, CountOf(bridge, line));
 
             var at = bridge.IndexOf("private bool BepInExWindowStateChanged(", StringComparison.Ordinal);

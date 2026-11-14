@@ -241,6 +241,18 @@ namespace ValheimBakaLoader.Tools
         /// <summary>Stops it. The server saves its world on the way down.</summary>
         void Stop();
 
+        /// <summary>
+        /// Stops it after warning the players on it, the way a manual restart warns them, and
+        /// says how long that warning lasts: zero when nobody is on and it stopped at once.
+        /// </summary>
+        TimeSpan WarnedStop();
+
+        /// <summary>
+        /// True while its warning is still running. A plain <see cref="Stop"/> now would cut
+        /// the countdown short and drop the server on the players without the last warnings.
+        /// </summary>
+        bool Warning { get; }
+
         /// <summary>Starts it again through the ordinary start path, launch guard included.</summary>
         void Start();
     }
@@ -271,6 +283,13 @@ namespace ValheimBakaLoader.Tools
         /// <summary>How long to wait for every server to be down, given their save waits.</summary>
         public Func<IEnumerable<TimeSpan>, TimeSpan> Deadline { get; init; }
 
+        /// <summary>
+        /// Told the servers whose players were just warned, once, before the wait. Nothing when
+        /// nobody was on anywhere. The page says it in a toast, because the wait that follows is
+        /// a minute long and a press that answers nothing for a minute reads as one that failed.
+        /// </summary>
+        public Action<IReadOnlyList<string>> Warned { get; init; }
+
         /// <summary>The pause between looks. A test hands in one that returns at once.</summary>
         public Func<TimeSpan, Task> Delay { get; init; } = d => Task.Delay(d);
 
@@ -289,6 +308,12 @@ namespace ValheimBakaLoader.Tools
     /// <summary>
     /// Stop, install and start again (owner decision D1): stops the servers on this base that
     /// are up, writes the queued BepInEx, and starts again ONLY the servers it stopped.
+    /// <para>
+    /// Since 1.3.3 the stops are warned ones (decision D1 of that release): a server with
+    /// players on gets the one-minute countdown a manual restart gives before it goes down, and
+    /// an empty one stops at once. Every server is warned at the same moment, so the wait is
+    /// one countdown however many there are, and nothing is written until the last one is down.
+    /// </para>
     /// <para>
     /// A realm that was already stopped stays stopped, because the host stopped it. A server
     /// BakaLoader did not start is refused up front and nothing is stopped, because nothing
@@ -315,14 +340,25 @@ namespace ValheimBakaLoader.Tools
                     .Where(r => r != null && !r.IsStopped)
                     .ToList();
 
-                foreach (var realm in snapshot) realm.Stop();
+                // Side by side: each one starts its own warning and returns at once.
+                var longest = TimeSpan.Zero;
+                var warned = new List<string>();
+                foreach (var realm in snapshot)
+                {
+                    var warning = realm.WarnedStop();
+                    if (warning <= TimeSpan.Zero) continue;
+                    warned.Add(realm.Name);
+                    if (warning > longest) longest = warning;
+                }
+                if (warned.Count > 0) steps.Warned?.Invoke(warned);
 
-                var deadline = steps.Clock() + steps.Deadline(snapshot.Select(r => r.StopSaveBound));
+                var deadline = steps.Clock() + longest + steps.Deadline(snapshot.Select(r => r.StopSaveBound));
                 while (snapshot.Any(r => !r.IsStopped) && steps.Clock() < deadline)
                 {
                     // Stop() does nothing while a server is still Starting, so it is asked again
-                    // on every look, the way the app close asks.
-                    foreach (var realm in snapshot.Where(r => !r.IsStopped)) realm.Stop();
+                    // on every look, the way the app close asks. Never while its warning is still
+                    // running: a plain stop then would cut the countdown short.
+                    foreach (var realm in snapshot.Where(r => !r.IsStopped && !r.Warning)) realm.Stop();
                     await steps.Delay(Poll).ConfigureAwait(false);
                 }
 

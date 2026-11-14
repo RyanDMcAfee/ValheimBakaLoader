@@ -260,6 +260,17 @@ namespace ValheimBakaLoader.Forms
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _bepInExQueueSkipStart =
             new(StringComparer.OrdinalIgnoreCase);
 
+        // Profiles whose next start must not run the unattended step again, for the same reason:
+        // the restart window that start is the relaunch of has just run it, and a second turn
+        // would ask Thunderstore twice per restart for one answer.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _bepInExUnattendedSkipStart =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // The step the last plain stop started (the queue, or the unattended write the stop of
+        // the last server runs). A start waits for it before it decides anything, so a server is
+        // never launched over a loader that is half way through being replaced.
+        private Task _bepInExStopStep = Task.CompletedTask;
+
         // True while Stop, install and start again is stopping servers to write the queue
         // itself. Those stops are its own, so the plain-stop hook leaves the queue to it rather
         // than racing it for the write slot and fetching the pack a second time.
@@ -2690,6 +2701,11 @@ namespace ValheimBakaLoader.Forms
                 if (Session.Server.CanStop) Session.Server.Stop();
             }
 
+            /// <summary>The warned stop a manual restart's countdown is made of (D1, 1.3.3).</summary>
+            public TimeSpan WarnedStop() => Session.Server.RequestWarnedStop();
+
+            public bool Warning => Session.Server.IsWarningBeforeStop;
+
             /// <summary>
             /// The ordinary start: the options a fresh Start would build (launch history included,
             /// which the launch guard reads), on the window's own thread. The queue was just run,
@@ -2698,6 +2714,7 @@ namespace ValheimBakaLoader.Forms
             public void Start()
             {
                 Window._bepInExQueueSkipStart[Session.ProfileName] = true;
+                Window._bepInExUnattendedSkipStart[Session.ProfileName] = true;
                 var options = Session.Server.RefreshOptions?.Invoke() ?? Session.Server.Options;
                 void Go()
                 {
@@ -3388,24 +3405,54 @@ namespace ValheimBakaLoader.Forms
         {
             try
             {
-                if (_bepInExStoppingForInstall || BepInExQueued() == null) return;
+                // Its own stops are Stop, install and start again's, which writes the queue
+                // itself. Asked first and asked cheaply: every status transition comes through
+                // here, and an install with nothing queued and nothing known costs nothing.
+                if (_bepInExStoppingForInstall) return;
+                var queued = BepInExQueued() != null;
+                if (!queued && BepInExNewerKnown() == null) return;
 
                 var server = session.Server;
-                if (!Tools.BepInExQueue.FiresAtStop(server.RelaunchPending, server.StoppedWithWindowsPowerOffDue))
-                {
-                    if (server.StoppedWithWindowsPowerOffDue)
-                        Logger.Information(
-                            "The queued BepInEx update waits for the next start: Windows is about to shut down.");
-                    return;
-                }
+                var fires = Tools.BepInExQueue.FiresAtStop(server.RelaunchPending, server.StoppedWithWindowsPowerOffDue);
+                if (!fires && queued && server.StoppedWithWindowsPowerOffDue)
+                    Logger.Information(
+                        "The queued BepInEx update waits for the next start: Windows is about to shut down.");
+                if (!fires) return;
 
-                _ = Task.Run(() => TryRunQueuedBepInExAsync(session.ProfileName, LiveInstalls(),
-                    CancellationToken.None, slotHeld: false));
+                var profile = session.ProfileName;
+                var baseExe = GetCanonicalBaseServerExe();
+
+                // D2 (1.3.3): the stop of the LAST server on this BepInEx is a moment every one
+                // of them is down, the same as a restart window, so a pack already known goes in
+                // here. Off the status thread: the write takes seconds.
+                _bepInExStopStep = Task.Run(() => Tools.BepInExAtRest.RunAsync(new Tools.BepInExAtRestSteps
+                {
+                    Allowed = true,
+                    Queued = () => BepInExQueued() != null,
+                    RunQueue = () => TryRunQueuedBepInExAsync(profile, LiveInstalls(),
+                        CancellationToken.None, slotHeld: false),
+                    NewerKnown = BepInExNewerKnown,
+                    OthersUp = () => BepInEx.ServersHoldingBase(baseExe, KnownInstalls()),
+                    RunUnattended = () => RunUnattendedBepInExAsync(profile, LiveInstalls(),
+                        CancellationToken.None, "at the last stop"),
+                }));
             }
             catch (Exception e)
             {
-                AppLogger.Debug("The queued BepInEx update was not tried at this stop: {0}", e.Message);
+                AppLogger.Debug("The BepInEx step was not tried at this stop: {0}", e.Message);
             }
+        }
+
+        /// <summary>
+        /// The newer pack this window already knows about, or null. Read off what is in memory
+        /// (the waiting pack and the last unattended outcome), so asking costs nothing and asks
+        /// nobody: the stop and start moments read it before they would reach Thunderstore.
+        /// </summary>
+        private string BepInExNewerKnown()
+        {
+            var last = _bepInExLastUnattended;
+            return Tools.BepInExAtRest.KnownNewer(_bepInExUpdateWaiting, last?.Outcome, last?.Reason,
+                last?.Version, last?.EligibleUtc, DateTime.UtcNow);
         }
 
         /// <summary>
@@ -3489,17 +3536,34 @@ namespace ValheimBakaLoader.Forms
             // A queued yes is the whole of this step when there is one. See below.
             if (await RunBepInExQueueInWindowAsync(profile, stop)) return;
 
+            // The relaunch this window ends in does not run the step a second time.
+            _bepInExUnattendedSkipStart[profile ?? ""] = true;
+
+            // Left lazy on purpose: the writer asks its refusal again after the download,
+            // and this sequence answers with whoever is up at the moment it is asked.
+            var installs = LiveInstalls()
+                .Where(i => !string.Equals(i.ProfileName, profile, StringComparison.OrdinalIgnoreCase));
+
+            await RunUnattendedBepInExAsync(profile, installs, stop, "at the restart window");
+        }
+
+        /// <summary>
+        /// The unattended step itself, for every moment that runs it: a restart window, the stop
+        /// of the last server on this BepInEx, and a start with nothing else up (D2, 1.3.3). One
+        /// method so the three cannot disagree about consent, the order of the questions, a
+        /// refusal, the write slot, what is recorded or what is logged; only the words saying
+        /// WHEN differ (<paramref name="at"/>, "at the restart window" and so on).
+        /// </summary>
+        private async Task RunUnattendedBepInExAsync(string profile,
+            IEnumerable<Tools.BepInExProfileInstall> installs, CancellationToken stop, string at)
+        {
             try
             {
                 var prefs = UserPrefsProvider.LoadPreferences();
                 var baseExe = GetCanonicalBaseServerExe();
-                // Left lazy on purpose: the writer asks its refusal again after the download,
-                // and this sequence answers with whoever is up at the moment it is asked.
-                var installs = LiveInstalls()
-                    .Where(i => !string.Equals(i.ProfileName, profile, StringComparison.OrdinalIgnoreCase));
 
                 // A write that did not finish is finished here, before anything else looks at
-                // the install: the window is the one moment this server is down.
+                // the install: the moment this runs at is one when this server is down.
                 HealInterruptedBepInExWrite(baseExe, installs);
 
                 // The answer is read BEFORE anything is asked of Thunderstore, and it is the
@@ -3566,12 +3630,12 @@ namespace ValheimBakaLoader.Forms
                     // short writes this every window, and the second one is not news.
                     if (BepInExWindowStateChanged(profile, "expired:" + (latest ?? "")))
                         Logger.Information(
-                            "A newer BepInEx pack ({0}) is waiting: the restart window ran out before the write began.",
-                            latest);
+                            "A newer BepInEx pack ({0}) is waiting: the clock {1} ran out before the write began.",
+                            latest, at);
                     else
                         Logger.Debug(
-                            "A newer BepInEx pack ({0}) is waiting: the restart window ran out before the write began.",
-                            latest);
+                            "A newer BepInEx pack ({0}) is waiting: the clock {1} ran out before the write began.",
+                            latest, at);
 
                     PostBepInExChanged();
                     return;
@@ -3622,23 +3686,23 @@ namespace ValheimBakaLoader.Forms
                     {
                         if (BepInExWindowStateChanged(profile, "refused:" + (result.SkipReason ?? "")))
                             Logger.Information(
-                                "BepInEx for profile {0} was left as it was at the restart window ({1}).",
-                                profile, result.SkipReason);
+                                "BepInEx for profile {0} was left as it was {1} ({2}).",
+                                profile, at, result.SkipReason);
                         else
                             Logger.Debug(
-                                "BepInEx for profile {0} was left as it was at the restart window ({1}).",
-                                profile, result.SkipReason);
+                                "BepInEx for profile {0} was left as it was {1} ({2}).",
+                                profile, at, result.SkipReason);
                     }
                     else if (result.NothingChanged)
                     {
                         if (BepInExWindowStateChanged(profile, "current"))
                             Logger.Information(
-                                "BepInEx for profile {0} already held the current pack at the restart window.",
-                                profile);
+                                "BepInEx for profile {0} already held the current pack {1}.",
+                                profile, at);
                         else
                             Logger.Debug(
-                                "BepInEx for profile {0} already held the current pack at the restart window.",
-                                profile);
+                                "BepInEx for profile {0} already held the current pack {1}.",
+                                profile, at);
                     }
                     else
                     {
@@ -3646,9 +3710,9 @@ namespace ValheimBakaLoader.Forms
                         // state so a refusal after it is news again.
                         BepInExWindowStateChanged(profile, "written:" + (result.Version ?? ""));
                         Logger.Information(
-                            "BepInEx for profile {0} went from {1} to {2} at the restart window; what it "
-                            + "replaced is in BepInEx\\{3}\\{4}.",
-                            profile, result.PreviousVersion ?? "nothing", result.Version,
+                            "BepInEx for profile {0} went from {1} to {2} {3}; what it "
+                            + "replaced is in BepInEx\\{4}\\{5}.",
+                            profile, result.PreviousVersion ?? "nothing", result.Version, at,
                             Tools.BepInExService.BackupDirName,
                             result.BackupStamp ?? "(nothing was replaced)");
                     }
@@ -3730,12 +3794,22 @@ namespace ValheimBakaLoader.Forms
         /// </summary>
         private void PrepareBepInExForStart(string profile, string exePath)
         {
+            // A stop that is still writing (the queue, or the unattended step the stop of the
+            // last server runs) is waited for before anything here decides, and certainly before
+            // the server launches: a start that went ahead now would load a half replaced core.
+            // Bounded by the wait every start already gives the write slot.
+            if (!Tools.BepInExAtRest.WaitFor(_bepInExStopStep, BepInExWriteWait))
+                AppLogger.Warning("The BepInEx step a stop started is still running; the start goes ahead.");
+
             // A queued yes, before anything else and before the consent read: it is the host's
             // own press. This is the moment that covers an app closed with a queue standing and
             // a stop that skipped it for the Windows power-off. The start that follows a restart
             // window or Stop, install and start again skips it, because that step just ran it.
             // Off this thread and waited for: the start is waiting on the loader anyway.
-            if (!_bepInExQueueSkipStart.TryRemove(profile ?? "", out _) && BepInExQueued() != null)
+            var skipUnattended = _bepInExUnattendedSkipStart.TryRemove(profile ?? "", out _);
+            var skipQueue = _bepInExQueueSkipStart.TryRemove(profile ?? "", out _);
+            var queuedAtStart = BepInExQueued() != null;
+            if (!skipQueue && queuedAtStart)
             {
                 try
                 {
@@ -3755,6 +3829,14 @@ namespace ValheimBakaLoader.Forms
             var startPrefs = UserPrefsProvider.LoadPreferences();
             if (!Tools.BepInExConsent.Effective(
                     startPrefs.BepInExMaintained, startPrefs.BepInExMaintenanceAsked)) return;
+
+            // D2 (1.3.3): a start with nothing else on this BepInEx up is a moment every server
+            // on it is down, so a pack already known goes in here, on the restart window's clock
+            // and waited for. Not when a queued yes was there (it was the whole step), and not on
+            // the relaunch a restart window or Stop, install and start again makes: that step has
+            // just had its turn.
+            if (!skipUnattended && !skipQueue)
+                RunUnattendedBepInExBeforeStart(profile, queuedAtStart);
 
             // The base this profile's loader really lives in, resolved from the profile's own
             // preferences rather than from the path: an isolated install cannot say which of
@@ -3852,6 +3934,43 @@ namespace ValheimBakaLoader.Forms
             {
                 EndBepInExWrite();
                 PostBepInExChanged(startResult);
+            }
+        }
+
+        /// <summary>
+        /// The start moment of D2, kept out of PrepareBepInExForStart so that method still reads
+        /// as the order it runs in. Runs the shared step on the restart window's own clock
+        /// (<see cref="ValheimServer.RestartHookBudget"/>) and blocks on it: the start is waiting
+        /// for the loader anyway, and launching while it is being written is the one thing a
+        /// start must never do.
+        /// </summary>
+        private void RunUnattendedBepInExBeforeStart(string profile, bool queuedAtStart)
+        {
+            try
+            {
+                var baseExe = GetCanonicalBaseServerExe(profile);
+                var others = LiveInstalls()
+                    .Where(i => !string.Equals(i.ProfileName, profile, StringComparison.OrdinalIgnoreCase));
+
+                Task.Run(() => Tools.LaunchBudget.StopWithinAsync(
+                        token => Tools.BepInExAtRest.RunAsync(new Tools.BepInExAtRestSteps
+                        {
+                            Allowed = true,
+                            Queued = () => queuedAtStart,
+                            RunQueue = null,
+                            NewerKnown = BepInExNewerKnown,
+                            OthersUp = () => BepInEx.ServersHoldingBase(baseExe, others),
+                            RunUnattended = () => RunUnattendedBepInExAsync(profile, others, token, "before the start"),
+                        }),
+                        ValheimServer.RestartHookBudget,
+                        line => AppLogger.Warning("{0}", line),
+                        "The BepInEx step before this start"))
+                    .GetAwaiter().GetResult();
+            }
+            catch (Exception e)
+            {
+                // A loader a version behind is no reason for a world to stay down.
+                AppLogger.Warning("The BepInEx step did not run before this start: {0}", e.Message);
             }
         }
 
@@ -8908,6 +9027,13 @@ namespace ValheimBakaLoader.Forms
                         RunQueued = () => TryRunQueuedBepInExAsync(ActiveProfileName, LiveInstalls(),
                             CancellationToken.None, slotHeld: true),
                         Deadline = ValheimServer.CloseDeadlineFor,
+                        // The reply comes a minute later, after the countdown, so the page hears
+                        // the warning went out now.
+                        Warned = names =>
+                        {
+                            Logger.Information("Players on {0} were warned before BepInEx goes in.", string.Join(", ", names));
+                            PostEvent("bepinex.warned", new { names });
+                        },
                     });
                 }
                 catch (HostFacingException e)

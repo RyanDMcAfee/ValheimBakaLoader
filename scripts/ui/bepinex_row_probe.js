@@ -108,6 +108,8 @@ const ROWS = [
   // the outside row with the host's yes already given: the note about the next restart and
   // the press that reaches the switch
   ["outside-consented", dto({ consent: true, maintenanceAsked: true })],
+  // 1.3.3: looked after, with a newer pack known, so Install now stands beside Check BepInEx now
+  ["install-now", dto(Object.assign({}, MINE, { updateWaiting: "5.4.2361" }))],
   // a pack the window is holding back, which is the sentence section M asks the row for
   ["soaking", dto(Object.assign({}, MINE, {
     lastUnattended: {
@@ -119,7 +121,12 @@ const ROWS = [
 ];
 
 /* The standing rows: the answer that raises each one, the server state it is raised
-   under, and the fewest buttons it may carry (the dismissal always counts as one). */
+   under, and the fewest buttons it may carry (the dismissal always counts as one).
+   Two of them carry ONE on purpose since 1.2.6 (commit 3e61e2a): the written bar used to draw
+   a second ghost Close that did exactly what the bar's own dismiss did, and the left-alone bar
+   for a reason only the wiki can explain carries that link inside its sentence rather than on
+   an ember button. The probe was written before that (4ebca4e) and still asked for two, so
+   the link is asked for by id instead (the fifth field). */
 const CONDITIONS = [
   ["ask", dto({ consent: false, consentUnanswered: true, maintenanceAsked: false }), "Stopped", 3],
   ["missing-files", dto(Object.assign({}, MINE, {
@@ -137,14 +144,18 @@ const CONDITIONS = [
       outcome: "refused", reason: "drivenElsewhere", leftAsItWas: true,
       whenUtc: "2026-09-20T04:00:00Z",
     },
-  }), "Stopped", 2],
+  }), "Stopped", 1, "#cbBepWikiLink"],
   ["written", dto(Object.assign({}, MINE, {
     lastUnattended: {
       outcome: "written", fromVersion: "5.4.2350", toVersion: "5.4.2400",
       backupStamp: "20260920-011500", backupFolder: ".bakaloader-bepinex-backups",
       leftAsItWas: false, whenUtc: "2026-09-20T04:00:00Z",
     },
-  })), "Stopped", 2],
+  })), "Stopped", 1],
+  // 1.3.3: the waiting bar carries Stop, install and start again
+  ["waiting", dto(Object.assign({}, MINE, {
+    updateWaiting: "5.4.2361", waitingProfiles: ["Final Sunset", "Midgard Test"],
+  })), "Running", 1, "#cbBepStopNow"],
 ];
 
 /* The question, in each of the four shapes it takes, and the three confirms. */
@@ -157,6 +168,8 @@ const DIALOGS = [
   ["takeover-elsewhere", dto({ drivenElsewhere: true, consent: true }), "bepinexTakeover"],
   ["takeover-unrecognised", dto({ unrecognised: true, damaged: true, installed: false, coreVersion: null, newestBackup: "20260920-011500" }), "bepinexTakeover"],
   ["downgrade", dto({}), "bepinexDowngrade"],
+  // 1.3.3: the queue question, which now says the players are warned
+  ["queue", dto(Object.assign({}, MINE, { updateWaiting: "5.4.2361", runningProfiles: ["Final Sunset", "Midgard Test"] })), "bepinexQueue"],
   ["restore", dto({ damaged: true, installed: false, coreVersion: null, newestBackup: "20260920-011500" }), "bepinexRestore"],
 ];
 
@@ -240,6 +253,19 @@ async function shot(page, name) {
           if (seen.clipped.length) problems.push(...seen.clipped);
           if (seen.pageScrollsSideways) problems.push("the page scrolls sideways");
           if (seen.buttonsOut) problems.push(seen.buttonsOut + " button is off the window");
+          // The new press has to sit on one line with Check BepInEx now, in the padded locale as
+          // well. The pair may drop below the name as a group, which the looked-after row with
+          // Check alone already does in the padded locale; what must not happen is the pair
+          // splitting, which pushes everything under the row down a line.
+          if (name === "install-now") {
+            const line = await page.evaluate(() => {
+              const top = s => { const e = document.querySelector(s); return e ? Math.round(e.getBoundingClientRect().top) : null; };
+              return { now: top("#bepInstallNow"), check: top("#bepCheck") };
+            });
+            if (line.now == null) problems.push("Install now is not on the row");
+            else if (line.check == null) problems.push("Check BepInEx now is not on the row");
+            else if (Math.abs(line.now - line.check) > 4) problems.push("Install now wrapped apart from Check BepInEx now");
+          }
         }
         await shot(page, language + "-row-" + name);
         say(!problems.length, language, name,
@@ -250,7 +276,7 @@ async function shot(page, name) {
       // The standing rows, which are condition bar entries rather than dialogs. The bar
       // draws one at a time and worst first, so each is raised on its own with the rest of
       // the answer clean, or a higher row would hide the one being looked at.
-      for (const [name, answer, status, least] of CONDITIONS) {
+      for (const [name, answer, status, least, needs] of CONDITIONS) {
         await page.evaluate(([a, s]) => {
           modalClose();
           window.BakaPreview.bepinexStatus(a);
@@ -263,6 +289,8 @@ async function shot(page, name) {
         else {
           if (bar.clipped.length) problems.push(...bar.clipped);
           if (bar.buttons < least) problems.push("it carries " + bar.buttons + " buttons, not " + least);
+          if (needs && !(await page.evaluate(s => !!document.querySelector("#launchHold " + s), needs)))
+            problems.push("it has no " + needs);
           if (bar.buttonsOut) problems.push(bar.buttonsOut + " button is off the window");
           if (bar.pageScrollsSideways) problems.push("the page scrolls sideways");
         }

@@ -6027,7 +6027,12 @@ function bepInExRowVersion(b){
 function bepInExRowActions(b){
   const state=bepInExState(b);
   if(!state) return [];
-  if(state==="maintained") return [];
+  /* Looked after by BakaLoader, with a newer pack already known: Install now, beside Check
+     BepInEx now. Two servers on one BepInEx that restart on schedules of their own are never
+     both down in a window, so without this press the pack waits for a moment that may never
+     come (issue 31, 2026-11-03). Every other state that writes already offers update, and that
+     button is this press there; a second one doing the same thing would be one too many. */
+  if(state==="maintained") return bepInExKnownNewer(b)?["installNow"]:[];
   if(state==="missing") return ["install"];
   /* Repair is the right offer for files that went: they came out of the pack the note names
      and that is the pack they go back from. It stops being the right offer on its own once
@@ -6049,7 +6054,22 @@ function bepInExRepairPackGone(b){
   const last=b&&b.lastUnattended;
   return !!(last&&last.leftAsItWas&&last.reason==="bepinex.repairPackGone");
 }
+/* The newer pack this page already knows about, or null. Read off what the host has already
+   sent, so the row asks nobody anything to decide whether to offer Install now: a pack a window
+   or a check is holding back (waiting), the one a queued yes names, or the one a standing
+   left-alone answer names where the press that answers it is a write. A pack still inside its
+   72 hour wait counts: the host's own press does not wait for it. */
+function bepInExKnownNewer(b){
+  if(!b) return null;
+  if(b.updateWaiting) return b.updateWaiting;
+  if(b.queued&&b.queued.version) return b.queued.version;
+  const last=b.lastUnattended;
+  if(last&&last.leftAsItWas&&last.version&&
+     (last.reason==="soak"||last.reason==="prerelease"||last.reason==="bepinex.locked")) return last.version;
+  return null;
+}
 const BEPINEX_ACTION_WORDS={
+  installNow:{labelId:"bepinex.row.action.install_now"},
   install:{labelId:"bepinex.row.action.install"},
   update: {labelId:"bepinex.row.action.update"},
   restore:{labelId:"bepinex.row.action.restore"},
@@ -6171,6 +6191,7 @@ function bepInExRunning(){
    below can find it again. "restore" leads with the ember: where there is a saved copy of
    a broken install, putting it back is the thing to press. */
 const BEPINEX_ACTION_ELEMENTS={
+  installNow:{id:"bepInstallNow",cls:"btn-ember"},
   install:{id:"bepInstall",cls:"btn-ember"},
   update: {id:"bepUpdate", cls:"btn-ghost"},
   restore:{id:"bepRestore",cls:"btn-ember"},
@@ -6202,9 +6223,13 @@ function renderBepInExRow(){
   const cls=words.tone;
   const pill=T(words.pillId);
   const msg=T(words.msgId,bepInExRowParams(b));
+  /* Install now and Update are never greyed for a server being up: with one up, the press asks
+     the queue question, which can stop them and do it now. Only a write already out greys them. */
+  const busyGate=busy?` disabled title="${esc(T("bepinex.row.note.busy"))}"`:"";
   const acts=bepInExRowActions(b).map(name=>{
     const el2=BEPINEX_ACTION_ELEMENTS[name];
-    return `<button class="btn ${el2.cls} btn-sm" id="${el2.id}"${gate}>`+
+    const g=(name==="installNow"||name==="update")?busyGate:gate;
+    return `<button class="btn ${el2.cls} btn-sm" id="${el2.id}"${g}>`+
       `${esc(T(BEPINEX_ACTION_WORDS[name].labelId))}</button>`;
   }).join("")+
     /* Check BepInEx now writes nothing, so a server being up is no reason to grey it: only
@@ -6278,6 +6303,8 @@ function renderBepInExRow(){
      and fetches the same missing pack. Everywhere else Update carries no answer at all. */
   el.querySelector("#bepUpdate")?.addEventListener("click",
     ()=>bepInExUpdateFlow(bepInExRepairPackGone(S.bepinex)?{takeCurrentPack:true}:null));
+  /* Install now is the same press as Update: nothing up, the write; something up, the question. */
+  el.querySelector("#bepInstallNow")?.addEventListener("click",()=>bepInExUpdateFlow(null));
   el.querySelector("#bepRepair")?.addEventListener("click",()=>bepInExRepairFlow());
   el.querySelector("#bepRestore")?.addEventListener("click",()=>bepInExRestoreFlow());
   el.querySelector("#bepRemove")?.addEventListener("click",()=>bepInExRemoveFlow());
@@ -6501,10 +6528,12 @@ function bepInExQueueModal(params,names,bar){
   const again=()=>{
     const m=modalOpen(
       `<div class="mtitle">${esc(T("bepinex.dialog.queue.title"))}</div>`+
-      `<div class="mbody"><div class="mbody-note">${esc(T("bepinex.dialog.queue.body",{version,names:up.join(", ")}))}</div></div>`+
+      `<div class="mbody"><div class="mbody-note">${esc(T("bepinex.dialog.queue.body.warned",{version,names:up.join(", ")}))}</div></div>`+
+      /* Stop, install and start again is the ember now: it does what the host pressed for,
+         today, and since 1.3.3 it warns the players first, which the sentence says. */
       `<div class="mbtns"><button class="btn btn-ghost btn-sm" id="mCancel">${esc(T("common.button.cancel"))}</button>`+
-      `<button class="btn btn-ghost btn-sm" id="mBepStopNow">${esc(T("bepinex.condition.queued.stop_now"))}</button>`+
-      `<button class="btn btn-ember btn-sm" id="mOk">${esc(T("bepinex.dialog.queue.ok"))}</button></div>`,
+      `<button class="btn btn-ghost btn-sm" id="mOk">${esc(T("bepinex.dialog.queue.ok"))}</button>`+
+      `<button class="btn btn-ember btn-sm" id="mBepStopNow">${esc(T("bepinex.condition.queued.stop_now"))}</button></div>`,
       again);
     m.querySelector("#mCancel").addEventListener("click",modalClose);
     m.querySelector("#mOk").addEventListener("click",()=>{modalClose();bepInExQueue(params,bar);});
@@ -12996,6 +13025,8 @@ window.BakaPreview={
        bepinexRestore    the question the saved-copy button asks
      Each answers whether a dialog is open, so a walk can photograph it and know it did. */
   bepinexTakeover:()=>{bepInExTakeoverModal("bepinex.update",null);return modalIsOpen();},
+  /* The queue question a press meets while a server on this BepInEx is up. */
+  bepinexQueue:names=>{bepInExQueueModal(null,names||["Final Sunset"],null);return modalIsOpen();},
   bepinexDowngrade:slots=>{
     bepInExDowngradeModal("bepinex.update",{},null,slots||{installed:"5.4.23.5",pack:"5.4.2200"});
     return modalIsOpen();
@@ -13890,9 +13921,22 @@ function conditionBepInExWaiting(version,names){
   // the list can be empty before the next restart window applies it: say so, never "Still up: .".
   setCondition("bepinexWaiting",{sev:"info",title:T("bepinex.condition.waiting.title"),
     msg:up.length?T("bepinex.condition.waiting.body",{version,names:up.join(", ")})
-                 :T("bepinex.condition.waiting.body.none",{version}),
+                 :T("bepinex.condition.waiting.body.down",{version}),
+    /* The same press as the queued bar's, under the same id and the same latch. Two servers on
+       one BepInEx are never all down by themselves, so this is the way to make that moment. */
+    actionsHtml:`<button class="btn btn-ember btn-sm" id="cbBepStopNow"${BEP_WRITING?" disabled":""}>`+
+      `${esc(T("bepinex.condition.queued.stop_now"))}</button>`,
     again:()=>conditionBepInExWaiting(version,names),
+    wire:bar=>bar.querySelector("#cbBepStopNow")?.addEventListener("click",()=>bepInExWaitingStopNow()),
   });
+}
+/* The waiting bar's press. A pack waiting on an install BakaLoader did not make (the first
+   adoption a restart would do) is a write over somebody else's files, so it asks that question
+   first, as every manual write does (section O); its yes then meets the queue question, which
+   carries the answers. Otherwise it is Stop, install and start again straight away. */
+function bepInExWaitingStopNow(){
+  if(bepInExNeedsConfirm(S.bepinex,"update")){bepInExTakeoverModal("bepinex.update",null);return;}
+  bepInExStopAndInstall(null,null);
 }
 /* The host's yes to a BepInEx write that waits for every server on this install to stop
    (issue 31). It stands until the write runs or the host cancels it, because it is a promise
@@ -13920,8 +13964,10 @@ function conditionBepInExQueued(q){
 }
 /* The queued bar drawn again from what it already holds, so its button follows the latch. */
 function bepInExQueuedRedraw(){
-  const c=CONDITIONS.get("bepinexQueued");
-  if(c&&typeof c.again==="function") c.again();
+  for(const kind of ["bepinexQueued","bepinexWaiting"]){
+    const c=CONDITIONS.get(kind);
+    if(c&&typeof c.again==="function") c.again();
+  }
 }
 /* The server came up, the grace passed, and BepInEx never wrote its log. Nothing else in
    the app can see this: on Windows the whole loader mechanism is a DLL beside the
@@ -19243,6 +19289,12 @@ if(Native.available){
     try{renderWorldMods();}catch(_){}
   });
   Native.on("bepinex.progress",onBepInExProgress);
+  /* Stop, install and start again's reply comes after the countdown, a minute later, so the
+     host hears now that the players were warned. */
+  Native.on("bepinex.warned",d=>{
+    const names=bepInExNamesOf(d&&d.names);
+    if(names.length) toast("ᛒ "+T("bepinex.stop_install.warning.toast",{names:names.join(", ")}));
+  });
   /* The chip. A tick with no id is the countdown ending and says nothing. */
   Native.on("server.countdown",d=>{
     if(!isActiveProfile(d?.profile)) return;

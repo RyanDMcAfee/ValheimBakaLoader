@@ -2342,8 +2342,31 @@ namespace ValheimBakaLoader.Game
 
             var cts = new CancellationTokenSource();
             CountdownCts = cts;
+
+            if (await CountdownAsync(points, updateNote, cts, stopping: false))
+            {
+                ApplyUpdatesOnRestart = modUpdateCount > 0;
+                Restart(reason: reason);
+            }
+        }
+
+        /// <summary>
+        /// The announcements a restart and a warned stop share: the same tiers, the same
+        /// broadcasts and the same chips on the page. True when the server should go down now,
+        /// which is also the answer when the warning could not be sent (players are better
+        /// served by the stop they were going to get than by a server that never goes down).
+        /// <para>
+        /// A countdown that another one REPLACED ends here without a word to the players and
+        /// without going down: the one that replaced it is the one they hear. Its last chip is
+        /// left alone too, because the page is already drawing the new countdown's.
+        /// </para>
+        /// </summary>
+        private async Task<bool> CountdownAsync(int[] points, string updateNote, CancellationTokenSource cts, bool stopping)
+        {
             var token = cts.Token;
             var shouldRestart = false;
+            var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            CountdownFinished = done.Task;
 
             try
             {
@@ -2364,11 +2387,15 @@ namespace ValheimBakaLoader.Game
                 if (!connected)
                 {
                     ApplicationLogger.Warning("RCON unavailable; restarting without in-game countdown.");
-                    shouldRestart = true;
-                    return;
+                    // Out of here through the finally, and the caller goes down as the line says.
+                    // This was a bare return before 1.3.3, which left the restart undone.
+                    return true;
                 }
 
-                ApplicationLogger.Information("Starting restart countdown ({minutes} minutes)", points[0] / 60);
+                if (stopping)
+                    ApplicationLogger.Information("Warning the players before a stop ({seconds} seconds)", points[0]);
+                else
+                    ApplicationLogger.Information("Starting restart countdown ({minutes} minutes)", points[0] / 60);
 
                 // Schedule every announcement off one absolute deadline so send latency can't
                 // accumulate into drift, and re-validate the shared RCON client before each
@@ -2396,6 +2423,11 @@ namespace ValheimBakaLoader.Game
                 await Task.Delay(1500, token);
 
                 shouldRestart = true;
+            }
+            catch (OperationCanceledException) when (ReferenceEquals(ReplacedCountdown, cts))
+            {
+                // A warned stop took over. The players hear that one, and only that one.
+                ApplicationLogger.Information("The restart countdown gave way to a warned stop.");
             }
             catch (OperationCanceledException)
             {
@@ -2435,15 +2467,121 @@ namespace ValheimBakaLoader.Game
                 try { RconClient.Disconnect(); }
                 finally { RconGate.Release(); }
 
+                var replaced = ReferenceEquals(ReplacedCountdown, cts);
+                if (replaced) ReplacedCountdown = null;
                 if (CountdownCts == cts) CountdownCts = null;
                 cts.Dispose();
-                CountdownTick?.Invoke(this, null);
+                if (!replaced) CountdownTick?.Invoke(this, null);
+                done.TrySetResult(true);
             }
 
-            if (shouldRestart)
+            return shouldRestart;
+        }
+
+        /// <summary>The countdown that is ending because a warned stop replaced it, until it has.</summary>
+        private volatile CancellationTokenSource ReplacedCountdown;
+
+        /// <summary>Completes when the countdown running now (or the last one) has wound down.</summary>
+        private Task CountdownFinished = Task.CompletedTask;
+
+        /// <summary>The pause between "restarting NOW" and the stop itself, inside every countdown.</summary>
+        internal static readonly TimeSpan CountdownFinalPause = TimeSpan.FromMilliseconds(1500);
+
+        /// <summary>
+        /// True from the moment a warned stop is asked for until its countdown has ended,
+        /// whether that end was the stop or a cancel. Stop, install and start again reads it so
+        /// its poll does not cut the warning short with a plain stop.
+        /// </summary>
+        public bool IsWarningBeforeStop => Volatile.Read(ref WarningBeforeStop) == 1;
+        private int WarningBeforeStop;
+
+        /// <summary>The warning a warned stop is running now, for a test to wait on.</summary>
+        internal Task WarnedStopRun { get; private set; } = Task.CompletedTask;
+
+        /// <summary>
+        /// A stop that warns the players first, the way a manual restart does (owner decision
+        /// D1 in 1.3.3): with players on, the 60/30/10 second countdown and its broadcasts and
+        /// chips, then <see cref="Stop"/>; with nobody on, or RCON off, or a server still
+        /// Starting, the stop at once. The words are the restart words on purpose: the one
+        /// caller is Stop, install and start again, and the server does come back.
+        /// <para>
+        /// A countdown already running (a scheduled restart, a manual one) is replaced: it ends
+        /// without its "cancelled" broadcast and without restarting, and this one runs in its
+        /// place, so the players hear one countdown and the server goes down once. Returns how
+        /// long the warning lasts, zero for a stop at once; the countdown runs on its own.
+        /// </para>
+        /// <para>
+        /// No app self-update is staged here. A restart gives the updater its turn because the
+        /// app is about to relaunch the world anyway; this stop belongs to a BepInEx write, and
+        /// an updater closing the app in the middle of it would leave the world down.
+        /// </para>
+        /// </summary>
+        public TimeSpan RequestWarnedStop(int[] countdownSeconds = null)
+        {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
+            if (!CanStop) return TimeSpan.Zero;
+
+            var points = (countdownSeconds ?? ManualRestartCountdownSeconds)
+                .Where(s => s > 0)
+                .Distinct()
+                .OrderByDescending(s => s)
+                .ToArray();
+
+            // The same answers RequestSmartRestart gives: nobody to warn, no way to warn them
+            // (RestartWithCountdown goes straight to the restart with RCON off), or a world
+            // that is not up yet, which nobody can have joined.
+            if (Status != ServerStatus.Running || points.Length == 0 || Options == null || !Options.RconEnabled
+                || CountActivePlayers(PlayerDataRepository.Data) == 0)
             {
-                ApplyUpdatesOnRestart = modUpdateCount > 0;
-                Restart(reason: reason);
+                Stop();
+                return TimeSpan.Zero;
+            }
+
+            Interlocked.Exchange(ref WarningBeforeStop, 1);
+
+            var previous = CountdownCts;
+            var previousDone = CountdownFinished;
+            var cts = new CancellationTokenSource();
+            if (previous != null)
+            {
+                ReplacedCountdown = previous;
+                try { previous.Cancel(); } catch (ObjectDisposedException) { /* already over */ }
+            }
+            else
+            {
+                previousDone = Task.CompletedTask;
+            }
+
+            // Set before anything is awaited, so a scheduled restart arriving now finds a
+            // countdown running and leaves it alone.
+            CountdownCts = cts;
+            WarnedStopRun = WarnThenStopAsync(points, cts, previousDone);
+            return TimeSpan.FromSeconds(points[0]) + CountdownFinalPause;
+        }
+
+        private async Task WarnThenStopAsync(int[] points, CancellationTokenSource cts, Task previousDone)
+        {
+            using var realmScope = AppLog.ForRealm(ServerKey);
+
+            try
+            {
+                // The countdown it replaced winds down first, so its last chip and its RCON
+                // disconnect cannot land in the middle of this one.
+                try { await previousDone.WaitAsync(TimeSpan.FromSeconds(10)); }
+                catch (TimeoutException) { /* it is cancelled; it ends on its own */ }
+
+                if (await CountdownAsync(points, string.Empty, cts, stopping: true)) Stop();
+            }
+            catch (Exception e)
+            {
+                // A warning that went wrong is still a stop that was asked for.
+                ApplicationLogger.Error(e, "The warning before a stop failed; stopping now.");
+                Stop();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref WarningBeforeStop, 0);
             }
         }
 

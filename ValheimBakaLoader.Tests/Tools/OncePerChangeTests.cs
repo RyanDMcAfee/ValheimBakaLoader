@@ -120,7 +120,7 @@ namespace ValheimBakaLoader.Tests.Tools
         /// </summary>
         [Theory]
         [InlineData("defer:", "A newer BepInEx pack ({0}) is waiting for every server on this install to stop.")]
-        [InlineData("expired:", "A newer BepInEx pack ({0}) is waiting: the restart window ran out before the write began.")]
+        [InlineData("expired:", "A newer BepInEx pack ({0}) is waiting: the clock {1} ran out before the write began.")]
         [InlineData("busy:", "A newer BepInEx pack ({0}) is waiting: another BepInEx write is running.")]
         public void Every_window_ending_is_gated_and_keeps_its_wording(string state, string sentence)
         {
@@ -148,16 +148,16 @@ namespace ValheimBakaLoader.Tests.Tools
         /// whole of how this rule is exact: everything else in the method has to be gated.
         /// </summary>
         private const string TheWriteItself =
-            "BepInEx for profile {0} went from {1} to {2} at the restart window; what it ";
+            "BepInEx for profile {0} went from {1} to {2} {3}; what it ";
 
         /// <summary>Every sentence the window writes at Information, in the order it writes them.</summary>
         private static readonly string[] WindowSentences =
         {
             "A newer BepInEx pack ({0}) is waiting for every server on this install to stop.",
-            "A newer BepInEx pack ({0}) is waiting: the restart window ran out before the write began.",
+            "A newer BepInEx pack ({0}) is waiting: the clock {1} ran out before the write began.",
             "A newer BepInEx pack ({0}) is waiting: another BepInEx write is running.",
-            "BepInEx for profile {0} was left as it was at the restart window ({1}).",
-            "BepInEx for profile {0} already held the current pack at the restart window.",
+            "BepInEx for profile {0} was left as it was {1} ({2}).",
+            "BepInEx for profile {0} already held the current pack {1}.",
             TheWriteItself,
         };
 
@@ -379,8 +379,10 @@ namespace ValheimBakaLoader.Tests.Tools
 
         private static string ApplyWindow(string bridge)
         {
-            var at = bridge.IndexOf("private async Task ApplyBepInExUpdateAsync(", StringComparison.Ordinal);
-            Assert.True(at > 0, "the bridge no longer applies a BepInEx update at a restart window");
+            // Since 1.3.3 the window's step is shared with the stop of the last server and a
+            // start with nothing else up, so the endings live in that one method.
+            var at = bridge.IndexOf("private async Task RunUnattendedBepInExAsync(", StringComparison.Ordinal);
+            Assert.True(at > 0, "the bridge no longer runs the unattended BepInEx step");
             var end = bridge.IndexOf("\n        }", at, StringComparison.Ordinal);
             Assert.True(end > at);
             return bridge.Substring(at, end - at);

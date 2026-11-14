@@ -129,6 +129,15 @@ namespace ValheimBakaLoader.Tests.Tools
                 Starts++;
                 IsStopped = false;
             }
+
+            /// <summary>Nobody on: the warned stop is the plain one, at once.</summary>
+            public TimeSpan WarnedStop()
+            {
+                Stop();
+                return TimeSpan.Zero;
+            }
+
+            public bool Warning => false;
         }
 
         private static HostFacingException Busy() => new("bepinex.busy", "BepInEx is already being written.");
@@ -245,12 +254,17 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void The_window_runs_the_queue_before_the_plan_and_only_the_queue()
         {
+            // Since 1.3.3 the consent and the plan live in the step the window shares with the
+            // stop and start moments, which the window calls only after the queue.
             var body = Body(Bridge(), "private async Task ApplyBepInExUpdateAsync(");
             var queue = body.IndexOf("if (await RunBepInExQueueInWindowAsync(profile, stop)) return;", StringComparison.Ordinal);
-            var consent = body.IndexOf("BepInExConsent.Effective(", StringComparison.Ordinal);
-            var plan = body.IndexOf("BepInExUnattended.PlanAsync(", StringComparison.Ordinal);
+            var step = body.IndexOf("await RunUnattendedBepInExAsync(", StringComparison.Ordinal);
             Assert.True(queue >= 0, "the window no longer runs the queue");
-            Assert.True(queue < consent && consent < plan, "the queue no longer comes before the consent and the plan");
+            Assert.True(step > queue, "the queue no longer comes before the consent and the plan");
+            var shared = Body(Bridge(), "private async Task RunUnattendedBepInExAsync(");
+            var consent = shared.IndexOf("BepInExConsent.Effective(", StringComparison.Ordinal);
+            var plan = shared.IndexOf("BepInExUnattended.PlanAsync(", StringComparison.Ordinal);
+            Assert.True(consent >= 0 && consent < plan, "the step no longer reads the answer before the plan");
 
             var turn = Body(Bridge(), "private async Task<bool> RunBepInExQueueInWindowAsync(");
             var none = turn.IndexOf("if (BepInExQueued() == null) return false;", StringComparison.Ordinal);
@@ -571,7 +585,7 @@ namespace ValheimBakaLoader.Tests.Tools
         [Fact]
         public void Its_own_stops_and_starts_do_not_run_the_queue_a_second_time()
         {
-            Assert.Contains("if (_bepInExStoppingForInstall || BepInExQueued() == null) return;",
+            Assert.Contains("if (_bepInExStoppingForInstall) return;",
                 Body(Bridge(), "private void RunBepInExQueueAtStop(ServerSession session)"));
             Assert.Contains("_bepInExStoppingForInstall = true;", Rpc("bepinex.stopAndInstall"));
             Assert.Contains("slotHeld: true", Rpc("bepinex.stopAndInstall"));

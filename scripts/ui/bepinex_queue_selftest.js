@@ -374,6 +374,212 @@ test("the queued kind sits just above the waiting one, and the timeout has its s
     "the row does not offer Check BepInEx now");
 });
 
+/* ---------------------------------------------------------- 1.3.3, queue item 20 (issue 31, 2026-11-03)
+   Install now on the row, the waiting bar's Stop, install and start again, and the queue question
+   that says the players are warned. The row is drawn by the real renderBepInExRow over the real
+   BEPINEX-STATE block; the rest of the painters are the ones harness() already lifts. */
+/* The bar harness with the waiting bar's painter lifted as well. */
+function waitingHarness() {
+  const h = harness();
+  vm.runInContext(fn("function conditionBepInExWaiting(version,names){"), h, { filename: "app.js#waiting" });
+  vm.runInContext(fn("function bepInExWaitingStopNow(){"), h, { filename: "app.js#waiting-press" });
+  h.bepInExTakeoverModal = method => { h.calls.push({ method: "takeover:" + method }); };
+  return h;
+}
+
+function rowHarness() {
+  const h = harness();
+  // The row's notes include a plural (how many other servers share the install), which the
+  // plain english() above does not pick a form for.
+  h.T = (id, params) => {
+    const entry = KEYS[id];
+    if (!entry || !entry.lore || typeof entry.lore !== "object") return english(id, params);
+    let text = String(entry.lore.other || id);
+    for (const slot of Object.keys(params || {})) text = text.split("{" + slot + "}").join(String(params[slot]));
+    return text;
+  };
+  const row = element();
+  h.ROW = row;
+  h.$ = selector => (selector === "#launchHold" ? h.bar : selector === "#bepinexRow" ? row : null);
+  h.renderBepInExConditions = () => {};
+  vm.runInContext(SOURCE.slice(SOURCE.indexOf("/* BEPINEX-STATE-BEGIN"), SOURCE.indexOf("/* BEPINEX-STATE-END */")),
+    h, { filename: "app.js#bepinex-state" });
+  vm.runInContext(table("BEPINEX_ACTION_ELEMENTS", "};"), h);
+  for (const opening of ["function renderBepInExRow(){", "function bepInExRowOffersCheck(b){"])
+    vm.runInContext(fn(opening), h, { filename: "app.js#" + opening });
+  return h;
+}
+
+/* The looked-after install, as bepinex.status sends it, with what is known about a newer pack. */
+function maintained(changed) {
+  return Object.assign({
+    installed: true, maintainedByBakaLoader: true, packVersion: "5.4.2350", coreVersion: "5.4.23.5",
+    loaderFilePresent: true, maintained: true, maintenanceAsked: true, consent: true,
+    consentUnanswered: false, missingFiles: [], runningProfiles: [], sharingProfiles: ["A", "B"],
+    updateWaiting: null, queued: null, lastUnattended: null, busy: false,
+  }, changed || {});
+}
+
+function drawRow(h, b) {
+  h.S.bepinex = b;
+  vm.runInContext("renderBepInExRow()", h);
+  return h.ROW.innerHTML;
+}
+
+const has = (html, id) => html.indexOf('id="' + id + '"') >= 0;
+const greyed = (html, id) => new RegExp('id="' + id + '"[^>]*disabled').test(html);
+
+/* Scenario 15. */
+test("a looked-after install with a newer pack known offers Install now beside Check BepInEx now", () => {
+  const h = rowHarness();
+  const html = drawRow(h, maintained({ updateWaiting: "5.4.2361" }));
+  assert.ok(has(html, "bepInstallNow"), "Install now is not on the row");
+  assert.ok(has(html, "bepCheck"), "Check BepInEx now went");
+  assert.ok(html.indexOf(english("bepinex.row.action.install_now")) > 0, "the button does not say Install now");
+  assert.ok(html.indexOf('id="bepInstallNow"') < html.indexOf('id="bepCheck"'), "Install now is not beside Check, first");
+});
+
+test("with no newer pack known the looked-after row offers only Check BepInEx now", () => {
+  const h = rowHarness();
+  const html = drawRow(h, maintained());
+  assert.ok(!has(html, "bepInstallNow"), "Install now with nothing to install");
+  assert.ok(has(html, "bepCheck"));
+});
+
+test("a pack inside its 72 hour wait, or one a yes is queued for, is known to the row", () => {
+  const h = rowHarness();
+  const soaking = maintained({ lastUnattended: soak({ seen: true }) });
+  assert.ok(has(drawRow(h, soaking), "bepInstallNow"), "a soaking pack is not offered, even closed");
+  assert.ok(has(drawRow(h, maintained({ queued: { version: "5.4.2361", names: ["A"] } })), "bepInstallNow"));
+  const refusedOnRule = maintained({ lastUnattended: soak({ reason: "drivenElsewhere", version: null }) });
+  assert.ok(!has(drawRow(h, refusedOnRule), "bepInstallNow"), "a refusal on a rule offered Install now");
+});
+
+test("a state that offers Update with a newer pack known shows one button, not two", () => {
+  const h = rowHarness();
+  const outside = maintained({ maintainedByBakaLoader: false, packVersion: null, updateWaiting: "5.4.2361" });
+  const html = drawRow(h, outside);
+  assert.ok(has(html, "bepUpdate"), "the Update press is gone");
+  assert.ok(!has(html, "bepInstallNow"), "Install now stands beside Update doing the same thing");
+});
+
+test("Install now and Update are greyed only while a write is out, never for a server being up", () => {
+  const h = rowHarness();
+  let html = drawRow(h, maintained({ updateWaiting: "5.4.2361", runningProfiles: ["A", "B"] }));
+  assert.ok(!greyed(html, "bepInstallNow"), "Install now is greyed because a server is up");
+  html = drawRow(h, maintained({ maintainedByBakaLoader: false, packVersion: null, runningProfiles: ["A"] }));
+  assert.ok(!greyed(html, "bepUpdate"), "Update is greyed because a server is up");
+  vm.runInContext("BEP_WRITING=true", h);
+  html = drawRow(h, maintained({ updateWaiting: "5.4.2361" }));
+  assert.ok(greyed(html, "bepInstallNow"), "Install now is live while a write is out");
+  // Install, repair and restore keep today's gate.
+  vm.runInContext("BEP_WRITING=false", h);
+  html = drawRow(h, maintained({ installed: false, coreVersion: null, packVersion: null, runningProfiles: ["A"] }));
+  assert.ok(greyed(html, "bepInstall"), "Install lost its servers-up gate");
+});
+
+test("Install now with a server up asks the queue question and sends no write", async () => {
+  const h = rowHarness();
+  drawRow(h, maintained({ updateWaiting: "5.4.2361", runningProfiles: ["A", "B"] }));
+  press(h.ROW, "#bepInstallNow");
+  await flush();
+  assert.strictEqual(sent(h, "bepinex.update").length, 0, "a write the host would refuse went out");
+  assert.ok(h.modal.open, "the queue question did not open");
+  assert.ok(h.modal.html.indexOf("Still up: A, B") > 0, "the question does not name who is up");
+});
+
+/* Scenario 14. */
+test("Install now with nothing up writes at once with no question, and says the pack actually written", async () => {
+  const h = rowHarness();
+  h.answers["bepinex.update"] = maintained({ updateWaiting: null, result: { version: "5.4.2362", skipped: false } });
+  drawRow(h, maintained({ updateWaiting: "5.4.2361" }));
+  press(h.ROW, "#bepInstallNow");
+  await flush(); await flush();
+  assert.strictEqual(sent(h, "bepinex.update").length, 1, "Install now did not write");
+  assert.ok(!h.modal.open, "a question opened with nothing up");
+  assert.ok(h.toasts.indexOf("report:5.4.2362") >= 0, "the answer does not name the pack that went in");
+});
+
+/* Scenario 4, page half. */
+test("the queue question says the players get a one-minute warning, and Stop, install and start again leads", () => {
+  const h = harness();
+  vm.runInContext("bepInExQueueModal(null,['A','B'],null)", h);
+  const html = h.modal.html;
+  const said = english("bepinex.dialog.queue.body.warned", { version: english("bepinex.row.version.unknown"), names: "A, B" });
+  assert.ok(html.indexOf(said) > 0, "the question is not the warned one");
+  assert.ok(/one-minute warning/.test(said), "the sentence does not say players are warned");
+  assert.ok(/id="mBepStopNow"[^>]*>/.test(html) && /btn-ember btn-sm" id="mBepStopNow"/.test(html),
+    "Stop, install and start again is not the ember");
+  const cancel = html.indexOf('id="mCancel"'), queue = html.indexOf('id="mOk"'), stop = html.indexOf('id="mBepStopNow"');
+  assert.ok(cancel > 0 && queue > cancel && stop > queue, "the buttons are not Cancel, Queue it, Stop, install and start again");
+  assert.ok(html.indexOf(english("bepinex.dialog.queue.ok")) > 0, "Queue it went");
+  assert.strictEqual(SOURCE.indexOf('T("bepinex.dialog.queue.body"'), -1, "the retired body is still read");
+});
+
+/* Scenario 1, page half: fails on 1.3.2, where the waiting bar had no action at all. */
+test("the waiting bar offers Stop, install and start again under the queued bar's id and latch", async () => {
+  const h = waitingHarness();
+  let release;
+  h.answers["bepinex.stopAndInstall"] = new Promise(r => { release = r; });
+  vm.runInContext("conditionBepInExWaiting('5.4.2361',['A','B'])", h);
+  assert.strictEqual(h.bar.dataset.kind, "bepinexWaiting");
+  assert.ok(h.bar.innerHTML.indexOf(english("bepinex.condition.queued.stop_now")) > 0, "the waiting bar has no action");
+  press(h.bar, "#cbBepStopNow");
+  await flush();
+  const calls = sent(h, "bepinex.stopAndInstall");
+  assert.strictEqual(calls.length, 1, "the press did not send Stop, install and start again");
+  assert.ok(h.bar.querySelector("#cbBepStopNow").disabled, "the button is live while the stop is out");
+  press(h.bar, "#cbBepStopNow");
+  await flush();
+  assert.strictEqual(sent(h, "bepinex.stopAndInstall").length, 1, "a second press sent a second stop");
+  release({ result: { version: "5.4.2361", skipped: false }, started: ["A", "B"], updateWaiting: null });
+  await flush(); await flush();
+  assert.ok(h.toasts.some(t => t.indexOf(english("bepinex.stop_install.done.toast",
+    { version: "5.4.2361", names: "A, B" })) >= 0), "the done toast does not name both servers");
+});
+
+test("with nobody named up, the waiting bar says the pack goes in the next time every server is down", () => {
+  const h = waitingHarness();
+  vm.runInContext("conditionBepInExWaiting('5.4.2361',[])", h);
+  assert.strictEqual(body(h.bar), english("bepinex.condition.waiting.body.down", { version: "5.4.2361" }));
+  assert.ok(/restart/.test(body(h.bar)) && /last one stops/.test(body(h.bar)) && /next start/.test(body(h.bar)),
+    "the sentence does not name all three moments");
+  assert.strictEqual(SOURCE.indexOf('T("bepinex.condition.waiting.body.none"'), -1, "the retired body is still read");
+});
+
+test("the waiting bar's press over an install BakaLoader did not make asks the takeover question first", async () => {
+  const h = waitingHarness();
+  h.bepInExNeedsConfirm = () => true;
+  vm.runInContext("conditionBepInExWaiting('5.4.2361',['A'])", h);
+  press(h.bar, "#cbBepStopNow");
+  await flush();
+  assert.strictEqual(sent(h, "takeover:bepinex.update").length, 1, "the write over somebody else's install was not asked about");
+  assert.strictEqual(sent(h, "bepinex.stopAndInstall").length, 0, "servers were stopped before the question was answered");
+});
+
+/* Scenario 16. */
+test("a language switch redraws the waiting bar in the new words with its button, no toast and no call", () => {
+  const h = waitingHarness();
+  vm.runInContext("conditionBepInExWaiting('5.4.2361',['A'])", h);
+  const calls = h.calls.length, toasts = h.toasts.length;
+  h.T = (id, params) => "[xx] " + english(id, params);
+  vm.runInContext("rerenderConditions()", h);
+  assert.ok(body(h.bar).indexOf("[xx] ") === 0, "the bar kept its English");
+  assert.ok(h.bar.innerHTML.indexOf("[xx] " + english("bepinex.condition.queued.stop_now")) > 0,
+    "the button kept its English, or went");
+  assert.strictEqual(h.calls.length, calls, "the redraw made a call");
+  assert.strictEqual(h.toasts.length, toasts, "the redraw toasted");
+});
+
+test("the page says the players were warned the moment the host does, naming the servers", () => {
+  const on = SOURCE.indexOf('Native.on("bepinex.warned"');
+  assert.ok(on > 0, "nothing listens for the warning");
+  const handler = SOURCE.slice(on, SOURCE.indexOf("});", on));
+  assert.ok(handler.indexOf('T("bepinex.stop_install.warning.toast",{names:names.join(", ")})') > 0,
+    "the warning toast does not name the servers");
+  assert.ok(/one-minute warning/.test(english("bepinex.stop_install.warning.toast", { names: "A" })));
+});
+
 (async () => {
   for (const run of pending) await run();
   console.log(failures.length ? "bepinex queue selftest: " + failures.length + " FAILED" :

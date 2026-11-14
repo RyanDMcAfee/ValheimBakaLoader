@@ -171,7 +171,10 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // the buttons each state offers, and the two that offer nothing to press
             var acts = Body("bepInExRowActions");
-            Assert.Contains("if(state===\"maintained\") return [];", acts, StringComparison.Ordinal);
+            // 1.3.3: the looked-after install offers Install now once a newer pack is known, and
+            // nothing to press otherwise (Check BepInEx now is drawn beside the actions).
+            Assert.Contains("if(state===\"maintained\") return bepInExKnownNewer(b)?[\"installNow\"]:[];", acts,
+                StringComparison.Ordinal);
             Assert.Contains("if(state===\"missing\") return [\"install\"];", acts, StringComparison.Ordinal);
             // Repair, and Update beside it in the one shape where repair can never finish: the
             // pack the note names is the pack a repair fetches, and Thunderstore has taken it
@@ -227,10 +230,16 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("T(\"bepinex.row.blocked.title\")", body, StringComparison.Ordinal);
 
             // every button the row can draw comes out of the one builder, and that builder
-            // puts the gate on all of them
-            foreach (var button in new[] { "bepInstall", "bepUpdate", "bepRestore", "bepRepair" })
+            // puts the gate on all of them. Since 1.3.3 Install now and Update take the
+            // busy-only gate: with a server up they ask the queue question instead of greying,
+            // so only a write already out refuses them.
+            foreach (var button in new[] { "bepInstallNow", "bepInstall", "bepUpdate", "bepRestore", "bepRepair" })
                 Assert.Contains("id:\"" + button + "\"", elements, StringComparison.Ordinal);
-            Assert.Contains("id=\"${el2.id}\"${gate}", body, StringComparison.Ordinal);
+            Assert.Contains("const busyGate=busy?` disabled title=\"${esc(T(\"bepinex.row.note.busy\"))}\"`:\"\";", body,
+                StringComparison.Ordinal);
+            Assert.Contains("const g=(name===\"installNow\"||name===\"update\")?busyGate:gate;", body,
+                StringComparison.Ordinal);
+            Assert.Contains("id=\"${el2.id}\"${g}", body, StringComparison.Ordinal);
 
             // and the one button that is not a loader write at all is gated the same way
             var remove = body.IndexOf("id=\"bepRemove\"", StringComparison.Ordinal);
@@ -603,7 +612,14 @@ namespace ValheimBakaLoader.Tests.Forms
             var mine = Catalog().Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal)).ToList();
 
             Assert.NotEmpty(mine);
-            foreach (var id in mine)
+
+            // Retired ids stay in the catalog (released ids are additive) and sit on RETIRED_IDS
+            // in scripts/i18n/check_catalog.py. Nothing may ask for one any more.
+            var retired = new[] { "bepinex.dialog.queue.body", "bepinex.condition.waiting.body.none" };
+            foreach (var id in retired)
+                Assert.DoesNotContain("T(\"" + id + "\"", js, StringComparison.Ordinal);
+
+            foreach (var id in mine.Except(retired))
             {
                 var asked = js.Contains("T(\"" + id + "\"", StringComparison.Ordinal)
                     || Regex.IsMatch(js, @"(?<![A-Za-z0-9_$])[A-Za-z0-9_$]*Id\s*:\s*""" + Regex.Escape(id) + @"""");

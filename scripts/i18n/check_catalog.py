@@ -545,6 +545,12 @@ RETIRED_IDS = {
     # never said whether a server was running, only whether the Log was following.
     "saga.stream.live": "1.3.0",
     "saga.stream.paused": "1.3.0",
+    # 1.3.3 (issue 31, the 2026-11-03 follow-up): Stop, install and start again warns the players
+    # first, so the queue question says so under bepinex.dialog.queue.body.warned. A known pack
+    # now goes in at the stop of the last server and before a start as well as at a restart, so
+    # the waiting bar says that under bepinex.condition.waiting.body.down.
+    "bepinex.dialog.queue.body": "1.3.3",
+    "bepinex.condition.waiting.body.none": "1.3.3",
 }
 
 
