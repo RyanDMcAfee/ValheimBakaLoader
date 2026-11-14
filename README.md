@@ -81,7 +81,16 @@ Nine screens, most with a Norse name as a caption you can switch off. A header o
 
 ---
 
-## What is new in 1.3.2
+## What is new in 1.3.3
+
+- **Install now for BepInEx.** Once a newer BepInEx is known, the BepInEx row offers Install now beside Check BepInEx now, and the waiting bar offers Stop, install and start again. With a server up it asks first; then players on each server get the one-minute warning, the servers stop and save, BepInEx goes in, and the same servers start again. [Install now](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx#install-now)
+- **A found BepInEx update goes in at the last stop or the next start**, not only at a scheduled restart, once every server on that BepInEx is down and BakaLoader is keeping it up to date. [When a known update goes in on its own](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx#when-a-known-update-goes-in-on-its-own)
+- **Mods table sorting.** Status sorts by a fixed order the same in every language, an empty Updated or Installed on date counts as the lowest, and nothing in the head moves when you click a header. [The table](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods#the-table)
+- **Restart with players online restarts even when RCON cannot be reached.** It used to say it was restarting without the in-game warning and then leave the server running.
+
+This release carries language packs for Japanese, Russian, Simplified Chinese and Traditional Chinese, and the client companion zip as a second asset. Update from inside the app, or download the latest zip from the [GitHub release page](https://github.com/RyanDMcAfee/ValheimBakaLoader/releases/latest). Every release before this one is on the wiki [Release notes](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Release-notes).
+
+## What was new in 1.3.2
 
 - **A BepInEx update waits for the next stop.** Install it now while a server is up queues the update for the moment every server on that BepInEx is stopped, and the bar offers Stop, install and start again. Check BepInEx now asks Thunderstore by hand. [BepInEx](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/BepInEx#install-it-now-with-a-server-up-the-queue)
 - **Add from link takes a .zip on this PC**, pasted or picked with Browse, for test builds a Gale profile cannot carry. A mod installed that way is marked Local and never updated behind your back. [Installing from a zip](https://github.com/RyanDMcAfee/ValheimBakaLoader/wiki/Mods#installing-from-a-zip-on-this-pc)
