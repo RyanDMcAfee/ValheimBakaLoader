@@ -449,10 +449,15 @@ namespace ValheimBakaLoader.Tests.Forms
             var render = Between(AppJs(), "function renderMods(){", "/* \"showing N of M\", and only while");
 
             // The pill and the Latest cell say the same thing on hover, because they are
-            // the same fact about the row read twice, so they ask for one id.
+            // the same fact about the row read twice, so they ask for one id. Since 1.3.3
+            // (issue 34) the pill draws its kind from modStatusKind through the look table,
+            // so the pill's half of that id lives in the table's not_listed entry.
+            var js = AppJs();
             Assert.Contains(
-                ":m.notListed?`<span class=\"pill grey\" title=\"${esc(T(\"mods.status.not_listed.tip\"))}\">",
-                render);
+                "not_listed:{pill:\"grey\",wordId:\"mods.status.not_listed\",tipId:\"mods.status.not_listed.tip\"}",
+                js);
+            Assert.Contains("const look=MOD_STATUS_LOOK[modStatusKind(m,blind)];", render);
+            Assert.Contains("title=\"${esc(T(look.tipId))}\"", render);
             Assert.Contains(
                 "${blind?` title=\"${esc(T(\"mods.status.unchecked.tip\"))}\"`"
                 + ":(m.notListed?` title=\"${esc(T(\"mods.status.not_listed.tip\"))}\"`:\"\")}",
@@ -460,9 +465,11 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // And it is still read before the up-to-date reading, so a row whose Latest
             // nobody knows never says CURRENT.
+            var kinds = Between(js, "function modStatusKind(m,blind){", "/* How each kind is drawn");
+            var notListed = kinds.IndexOf("if(m.notListed) return \"not_listed\";", StringComparison.Ordinal);
             Assert.True(
-                render.IndexOf("m.notListed?`<span class=\"pill grey\"", StringComparison.Ordinal)
-                < render.IndexOf("T(\"mods.status.current\")", StringComparison.Ordinal),
+                notListed > 0
+                && notListed < kinds.IndexOf("return m.UpdateAvailable?\"update\":\"current\";", StringComparison.Ordinal),
                 "the not-listed pill must be read before the current/update pill");
 
             Assert.Equal("not listed", Lore("mods.status.not_listed"));
@@ -471,12 +478,16 @@ namespace ValheimBakaLoader.Tests.Forms
             // A scan that never reached the site is the whole table's version of the same
             // rule, and it is read BEFORE both of the readings that claim to know a latest
             // version, so no row says CURRENT against a site that was never asked.
+            // Since 1.3.3 that order is modStatusKind's, and the pill draws the unchecked kind
+            // through the look table's grey entry with its own hover sentence.
             Assert.Contains(
-                ":blind?`<span class=\"pill grey\" title=\"${esc(T(\"mods.status.unchecked.tip\"))}\">",
-                render);
+                "unchecked:{pill:\"grey\",wordId:\"mods.status.unchecked\",tipId:\"mods.status.unchecked.tip\"}",
+                js);
+            var blindFirst = kinds.IndexOf("if(blind) return \"unchecked\";", StringComparison.Ordinal);
             Assert.True(
-                render.IndexOf(":blind?`<span class=\"pill grey\"", StringComparison.Ordinal)
-                < render.IndexOf("m.notListed?`<span class=\"pill grey\"", StringComparison.Ordinal),
+                blindFirst > 0
+                && blindFirst < kinds.IndexOf("if(modIsHeld(m)) return \"held\";", StringComparison.Ordinal)
+                && blindFirst < notListed,
                 "the unchecked pill must be read before the not-listed one");
         }
     }

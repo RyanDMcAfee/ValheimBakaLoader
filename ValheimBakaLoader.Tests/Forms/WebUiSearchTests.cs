@@ -95,6 +95,19 @@ namespace ValheimBakaLoader.Tests.Forms
             System.Text.RegularExpressions.Regex.Matches(block, @"(?<![A-Za-z0-9_$])T\(""([a-z][a-z0-9_.]*)""\)")
                 .Select(m => m.Groups[1].Value).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
 
+        // 1.3.3 (issue 34): the Status pill's words and hover sentences, as the look table in
+        // app.js holds them. The pill, the search and the Status sort all read one kind per row
+        // (modStatusKind) and ask this table for its words, so this is where those ids live.
+        private static (List<string> Words, List<string> Tips) StatusLook()
+        {
+            var look = Between(AppJs(), "const MOD_STATUS_LOOK=Object.freeze({", "});");
+            Assert.False(string.IsNullOrEmpty(look), "app.js no longer has the Status look table");
+            List<string> Read(string key) =>
+                System.Text.RegularExpressions.Regex.Matches(look, key + @":""([a-z][a-z0-9_.]*)""")
+                    .Select(m => m.Groups[1].Value).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+            return (Read("wordId"), Read("tipId"));
+        }
+
         // ---------------------------------------------------------------- A. the Mods hall
 
         [Fact]
@@ -309,7 +322,14 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.status.held", "mods.status.local", "mods.status.not_listed", "mods.status.off", "mods.status.unchecked",
                 "mods.status.update", "mods.tag.hexium", "mods.tag.local", "mods.tag.patcher",
             };
-            Assert.Equal(expected, IdsAskedIn(text).ToArray());
+            // 1.3.3 (issue 34): the Status word is no longer spelled out in a chain here. The
+            // search asks the look table for the word of the kind modStatusKind gives, which is
+            // what the pill draws and what the Status sort ranks, so the eight words come from
+            // that table's wordId entries and the rest are still literal T() calls.
+            Assert.Contains("T(MOD_STATUS_LOOK[modStatusKind(m,!!S.modsIndexBlind)].wordId)", text);
+            var (statusWords, statusTips) = StatusLook();
+            Assert.Equal(expected, IdsAskedIn(text).Concat(statusWords).Distinct()
+                .OrderBy(x => x, StringComparer.Ordinal).ToArray());
 
             // And the row itself draws with exactly those, so neither side can drift. The
             // hall's empty states are asked for in the same function and are deliberately
@@ -363,7 +383,13 @@ namespace ValheimBakaLoader.Tests.Forms
                 "mods.index.line.failed", "mods.index.line.not_scanned",
                 "mods.index.line.scanning", "mods.up_to_date",
             };
-            var drawn = IdsAskedIn(RenderMods())
+            // The row's pill draws through the same table: its word and, where the kind has one,
+            // its hover sentence.
+            Assert.Contains("const look=MOD_STATUS_LOOK[modStatusKind(m,blind)];", RenderMods());
+            Assert.Contains("${esc(T(look.wordId))}", RenderMods());
+            Assert.Contains("title=\"${esc(T(look.tipId))}\"", RenderMods());
+            var drawn = IdsAskedIn(RenderMods()).Concat(statusWords).Concat(statusTips).Distinct()
+                .OrderBy(x => x, StringComparer.Ordinal)
                 .Where(id => !rowTips.Contains(id) && !aroundTheTable.Contains(id)).ToArray();
             Assert.Equal(emptyStates, drawn.Where(id => id.StartsWith("mods.empty.", StringComparison.Ordinal)).ToArray());
             Assert.Equal(expected, drawn.Where(id => !id.StartsWith("mods.empty.", StringComparison.Ordinal)).ToArray());
@@ -802,11 +828,16 @@ namespace ValheimBakaLoader.Tests.Forms
 
             var js = AppJs();
 
-            Assert.Contains("const held=modIsHeld(m);", render);
+            // 1.3.3 (issue 34): the pill draws the kind modStatusKind gives, the one chain the
+            // search and the Status sort read too, and Held is a kind of its own in it.
+            var kinds = Between(js, "function modStatusKind(m,blind){", "/* How each kind is drawn");
+            Assert.Contains("if(modIsHeld(m)) return \"held\";", kinds);
+            Assert.Contains("const look=MOD_STATUS_LOOK[modStatusKind(m,blind)];", render);
             // Both halves of the pill ask the catalog by id now: the word on it, and the
             // sentence behind it that used to stand as a const app.js spelled out. Neither
             // can be left in the old wording while the other moves.
-            Assert.Contains("held?`<span class=\"pill amber\" title=\"${esc(T(\"mods.status.held.tip\"))}\">${esc(T(\"mods.status.held\"))}</span>`", render);
+            Assert.Contains("held:{pill:\"amber\",wordId:\"mods.status.held\",tipId:\"mods.status.held.tip\"}", js);
+            Assert.Contains("return `<span class=\"pill ${look.pill}\"${tip}>${esc(T(look.wordId))}</span>`;", render);
             Assert.Equal("held", Lore("mods.status.held"));
             Assert.Equal("Current", Lore("mods.status.current"));
 
@@ -816,12 +847,14 @@ namespace ValheimBakaLoader.Tests.Forms
             Assert.Contains("if(!m||m.installedSource!==\"hexium\") return false;", rule);
             Assert.Contains("return !!(m.thunderstoreNewer&&m.LatestVersion)||!!(m.hexiumNewer&&m.hexiumLatest);", rule);
 
-            // One rule, read by the pill and by what the search looks at, so the word on the
-            // row and the word the search finds can never drift apart.
-            Assert.Equal(3, Count(js, "modIsHeld"));
+            // One rule, read once by modStatusKind, which the pill, the search and the Status
+            // sort all read, so the word on the row, the word the search finds and the place
+            // the row sorts to can never drift apart. 1.3.3 took it from three mentions (the
+            // rule, the pill's own chain and the search's own chain) to two.
+            Assert.Equal(2, Count(js, "modIsHeld"));
 
-            var current = render.IndexOf("T(\"mods.status.current\")", StringComparison.Ordinal);
-            var heldPill = render.IndexOf("esc(T(\"mods.status.held\"))", StringComparison.Ordinal);
+            var current = kinds.IndexOf("return m.UpdateAvailable?\"update\":\"current\";", StringComparison.Ordinal);
+            var heldPill = kinds.IndexOf("return \"held\";", StringComparison.Ordinal);
             Assert.True(heldPill > 0 && current > heldPill,
                 "the held pill must be decided before the row can fall through to Current");
 

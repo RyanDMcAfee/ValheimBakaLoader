@@ -477,7 +477,10 @@ namespace ValheimBakaLoader.Tests.Forms
 
             // And the HELD pill's sentence, which stood as a const the bridge answered by
             // its English. The const is gone, so it cannot drift from the entry.
-            Assert.Contains("title=\"${esc(T(\"mods.status.held.tip\"))}\"", js);
+            // Since 1.3.3 (issue 34) the pill asks for it through the Status look table, whose
+            // held entry names this id, and draws whichever tipId its kind carries.
+            Assert.Contains("held:{pill:\"amber\",wordId:\"mods.status.held\",tipId:\"mods.status.held.tip\"}", js);
+            Assert.Contains("title=\"${esc(T(look.tipId))}\"", js);
             Assert.DoesNotContain("MOD_HELD_TIP", js);
             Assert.Equal("installed from Hexium; BakaLoader will not replace it on its own",
                          Field(catalog["mods.status.held.tip"], "lore"));
