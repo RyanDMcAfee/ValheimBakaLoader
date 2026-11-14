@@ -607,9 +607,6 @@ html.lang-pending body>*{visibility:hidden}
    own, and the fade would only darken the lowest of them. Opacity rather than display, so the
    fade eases out and back with its own transition as the heads take the foot and leave it. */
 .pages.heads-below::after{opacity:0}
-/* The sentence that says how the Mods table is sorted. Empty while it rests on Name. */
-.pagehead .modsortline{color:var(--ember-hi)}
-.pagehead .modsortline:empty{display:none}
 /* Hall header: plain title, then the Norse name as a caption in the same serif. */
 .hnorse{font-family:var(--serif-small);font-size:var(--t11);font-weight:600;letter-spacing:3px;
   text-transform:uppercase;color:var(--ember);white-space:nowrap}

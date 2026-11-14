@@ -610,9 +610,13 @@
             <span class="sub" id="modsSub">63 loaded · Thunderstore index · last scan 21:38</span>
             <!-- How many rows carry a "Needs" pill, when any do. Empty, and so hidden, otherwise. -->
             <span class="sub modsneeds" id="modsNeeds" role="status"></span>
-            <!-- Quiet while the table rests on Name, A to Z; says the column and the direction
-                 the moment a header has moved it anywhere else. Written by renderMods. -->
-            <span class="sub modsortline" id="modsSortLine" role="status" aria-live="polite"></span>
+            <!-- How the table is sorted, for a screen reader: quiet while the table rests on Name,
+                 A to Z, and the column and the direction the moment a header has moved it
+                 anywhere else. Written by renderMods. It takes no room (vhide), because a
+                 line that came and went pushed the search box and the buttons along and
+                 wrapped the head (issue 34); the header's mark, colour and aria-sort are what
+                 the eye reads. -->
+            <span class="vhide" id="modsSortLine" role="status" aria-live="polite"></span>
             <!-- Narrows the rows on screen and nothing else: every count in this header, the
                  Update all button and the unattended paths keep reading the whole list. -->
             <input id="modSearch" class="pagesearch" placeholder="search the mods…" spellcheck="false" autocomplete="off" aria-label="Search the mods" data-i18n-aria="mods.search.aria" data-i18n-placeholder="mods.search.placeholder">

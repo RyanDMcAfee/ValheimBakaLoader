@@ -5055,26 +5055,72 @@ function verCmp(a,b){
    header wiring, because sortedMods reads it and a const is not there until its line runs. */
 const MOD_DESC_FIRST=new Set(["installed","latest","installedOn","updated"]);
 /* Where the Mods table rests: Name, A to Z. sortReset and the third click of sortCycle both
-   come back here, and the sort statement in the head stays quiet while the table is here. */
+   come back here, and the screen reader's sort line in the head stays quiet while it is here. */
 const MOD_SORT_HOME=Object.freeze({col:"name",dir:1});
+/* MODKIND-BEGIN: the row selftests that draw a Status pill lift this piece on its own.
+   What a row's Status pill says, as a kind rather than a word, so the pill, the search and the
+   sort all read the one chain (issue 34: the sort used to look at UpdateAvailable alone, and a
+   table of Current, Not listed and Local rows tied on every row and never moved). The order of
+   the tests IS the rule: a switched-off mod says Off whatever Thunderstore holds, a copy from a
+   zip on this PC sits out every update whatever either site lists, a scan that could not reach
+   Thunderstore knows nothing newer about anything, and a Hexium copy a site has moved past is
+   Held rather than Update. blind is the scan's S.modsIndexBlind, handed in by the caller the
+   same way the row render hands it to the pill. */
+function modStatusKind(m,blind){
+  if(!m) return "current";
+  if(m.Bundled) return "bundled";
+  if(m.disabled) return "off";
+  if(m.installedSource==="local") return "local";
+  if(blind) return "unchecked";
+  if(modIsHeld(m)) return "held";
+  if(m.notListed) return "not_listed";
+  return m.UpdateAvailable?"update":"current";
+}
+/* How each kind is drawn: the pill's colour, its word, and the hover sentence where it has one.
+   The ids sit in *Id properties so the catalog check sees every one of them asked for. */
+const MOD_STATUS_LOOK=Object.freeze({
+  bundled:{pill:"ember",wordId:"mods.status.bundled"},
+  off:{pill:"grey",wordId:"mods.status.off",tipId:"mods.status.off.tip"},
+  local:{pill:"grey",wordId:"mods.status.local",tipId:"mods.status.local.tip"},
+  unchecked:{pill:"grey",wordId:"mods.status.unchecked",tipId:"mods.status.unchecked.tip"},
+  held:{pill:"amber",wordId:"mods.status.held",tipId:"mods.status.held.tip"},
+  not_listed:{pill:"grey",wordId:"mods.status.not_listed",tipId:"mods.status.not_listed.tip"},
+  update:{pill:"amber",wordId:"mods.status.update"},
+  current:{pill:"green",wordId:"mods.status.current"},
+});
+/* The Status column's order, the same in every language because it ranks the kind and never
+   the word. Something to do comes first (an update, a held copy a site has moved past, a
+   package the list dropped), then what nobody could check, then the rows that are simply as
+   they are. The second click reads it bottom up. */
+const MOD_STATUS_RANK=Object.freeze(["update","held","not_listed","unchecked","local","off","current","bundled"]);
+function modStatusRank(kind){
+  const i=MOD_STATUS_RANK.indexOf(kind);
+  return i<0?MOD_STATUS_RANK.length:i;
+}
+/* MODKIND-END */
 /* A date the scan handed over, as a number, or NaN when there is none worth reading. */
 function modDateValue(iso){
   if(!iso) return NaN;
   const t=Date.parse(iso);
   return isNaN(t)?NaN:t;
 }
-/* Two dates, with a blank one sorted LAST whichever way the column runs: a mod nobody knows
-   the date of is not the oldest mod or the newest, and it should not be the first row either
-   way round. */
+/* Two dates, with a blank one counted as the smallest value there is, so the multiplier turns
+   it round with everything else: first in a low to high column, last in a high to low one. That
+   is what Latest already does with a missing version (verCmp reads it lowest), and a host who
+   reads a sorted column expects the empty cells at its low end, not stuck at the bottom both
+   ways (issue 34). Two blanks tie and fall to name order. */
 function cmpModDate(a,b,m){
   const x=modDateValue(a), y=modDateValue(b);
   const nx=isNaN(x), ny=isNaN(y);
-  if(nx||ny) return nx===ny?0:(nx?1:-1);
+  if(nx&&ny) return 0;
+  if(nx) return -m;
+  if(ny) return m;
   return m*(x-y);
 }
 /* returns a sorted copy per S.modSort. First click: names and authors A to Z, versions and
-   dates high to low, status updates-first. Second click reverses. Rows that tie keep name
-   order, so a column with many equal values still reads as a list someone ordered. */
+   dates high to low, Status down MOD_STATUS_RANK (updates first, bundled last). Second click
+   reverses. Rows that tie keep name order, so a column with many equal values still reads as
+   a list someone ordered. */
 function sortedMods(mods){
   const {col,dir}=S.modSort;
   if(!col||!dir) return mods;
@@ -5087,16 +5133,21 @@ function sortedMods(mods){
   else if(col==="latest") s.sort(then((a,b)=>m*verCmp(a.LatestVersion,b.LatestVersion)));
   else if(col==="installedOn") s.sort(then((a,b)=>cmpModDate(a.installedUtc,b.installedUtc,m)));
   else if(col==="updated") s.sort(then((a,b)=>cmpModDate(a.modUpdatedUtc,b.modUpdatedUtc,m)));
-  else if(col==="status") s.sort(then((a,b)=>m*((b.UpdateAvailable?1:0)-(a.UpdateAvailable?1:0))));
+  else if(col==="status"){
+    const blind=!!S.modsIndexBlind;
+    s.sort(then((a,b)=>m*(modStatusRank(modStatusKind(a,blind))-modStatusRank(modStatusKind(b,blind)))));
+  }
   return s;
 }
 /* The header word for each sortable column, by the same id the header itself is worded
    with, so the sentence in the head names the column exactly as the table does. */
 const MOD_SORT_COLS={name:"mods.col.name",author:"mods.col.author",installed:"mods.col.installed",
   latest:"mods.col.latest",installedOn:"mods.col.installed_on",updated:"mods.col.updated",status:"mods.col.status"};
-/* "sorted by author, descending": one line in the head while the table is anywhere but at
-   rest, and nothing at all while it is. The direction is the one the header's mark shows,
-   so a version column's first click reads descending, as its arrow does. */
+/* "sorted by author, descending": what a screen reader hears from the head while the table is
+   anywhere but at rest, and nothing at all while it is. Since issue 34 the line takes no room
+   (#modsSortLine is vhide); the eye reads the header's mark and colour instead. The direction
+   is the one the header's mark shows, so a version column's first click reads descending, as
+   its arrow does. */
 function modSortStatement(){
   const {col,dir}=S.modSort;
   if(!col||!dir||(col===MOD_SORT_HOME.col&&dir===MOD_SORT_HOME.dir)) return "";
@@ -5138,13 +5189,7 @@ function modSearchText(m){
     /* The pill the row draws, word for word. A search over the table has to carry the
        quiet pill too, or a host looking for the mods that were pulled is the one host
        the box cannot answer. */
-    m.Bundled?T("mods.status.bundled")
-      :m.disabled?T("mods.status.off")
-      :(m.installedSource==="local")?T("mods.status.local")
-      :S.modsIndexBlind?T("mods.status.unchecked")
-      :modIsHeld(m)?T("mods.status.held")
-      :m.notListed?T("mods.status.not_listed")
-      :(m.UpdateAvailable?T("mods.status.update"):T("mods.status.current")),
+    T(MOD_STATUS_LOOK[modStatusKind(m,!!S.modsIndexBlind)].wordId),
     m.possiblyOutdated&&!m.IsPatcher?T("mods.possibly_outdated.yes"):"",
     /* The warning pill, word for word as the row draws it, and the names of what it needs,
        so typing "needs" or the missing library's name finds the rows waiting on it. */
@@ -5703,24 +5748,17 @@ function modDateCell(iso){
 /* The Status pill. A switched-off mod says Off before anything about versions: whatever
    Thunderstore holds, nothing of it loads until it is switched on again. */
 function modStatusPill(m,blind){
-  const has=!!m.UpdateAvailable;
-  /* A copy the host took from Hexium is HELD, not CURRENT: BakaLoader leaves it where
-     it is even when a site has moved past it, and the pill has to say so rather than
-     reading like the row is level with the world. */
-  const held=modIsHeld(m);
-  /* A row whose package the list came back without has no Latest to be level with, so
-     it cannot read CURRENT either. It says the one thing that is known: Thunderstore is
-     not listing it at the moment, and nothing has been done about that. */
-  /* A copy from a zip on this PC says so before anything about either site: it sits out every
-     update whatever Thunderstore lists, and a test build Thunderstore has never heard of would
-     otherwise read as not listed, which is true and beside the point. */
-  return m.Bundled?`<span class="pill ember">${esc(T("mods.status.bundled"))}</span>`
-    :m.disabled?`<span class="pill grey" title="${esc(T("mods.status.off.tip"))}">${esc(T("mods.status.off"))}</span>`
-    :(m.installedSource==="local")?`<span class="pill grey" title="${esc(T("mods.status.local.tip"))}">${esc(T("mods.status.local"))}</span>`
-    :blind?`<span class="pill grey" title="${esc(T("mods.status.unchecked.tip"))}">${esc(T("mods.status.unchecked"))}</span>`
-    :held?`<span class="pill amber" title="${esc(T("mods.status.held.tip"))}">${esc(T("mods.status.held"))}</span>`
-    :m.notListed?`<span class="pill grey" title="${esc(T("mods.status.not_listed.tip"))}">${esc(T("mods.status.not_listed"))}</span>`
-    :`<span class="pill ${has?"amber":"green"}">${esc(has?T("mods.status.update"):T("mods.status.current"))}</span>`;
+  /* Which pill is modStatusKind's answer (in the MODSORT block), the same one the search and
+     the Status sort read, so the three can never disagree. Why the chain runs in that order:
+     a copy the host took from Hexium is HELD, not CURRENT, because BakaLoader leaves it where
+     it is even when a site has moved past it. A row whose package the list came back without
+     has no Latest to be level with, so it says Thunderstore is not listing it rather than
+     CURRENT. A copy from a zip on this PC says so before anything about either site: it sits
+     out every update whatever Thunderstore lists, and a test build Thunderstore has never
+     heard of would otherwise read as not listed, which is true and beside the point. */
+  const look=MOD_STATUS_LOOK[modStatusKind(m,blind)];
+  const tip=look.tipId?` title="${esc(T(look.tipId))}"`:"";
+  return `<span class="pill ${look.pill}"${tip}>${esc(T(look.wordId))}</span>`;
 }
 /* The Installed cell. The version sits in a pill when the scan knows which site the files
    came from, so a row whose Installed and Thunderstore latest disagree reads as two sites

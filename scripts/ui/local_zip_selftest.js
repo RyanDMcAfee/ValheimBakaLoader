@@ -124,6 +124,8 @@ function page(opts) {
     line("const pad=").replace(/^const /, "var "),
     line("const PATH_QUOTE="),
     between("function unquotePath(", "\n/* The two boxes"),
+    /* 1.3.3, issue 34: the Status pill and the search read modStatusKind and its look table. */
+    between("/* MODKIND-BEGIN", "/* MODKIND-END */"),
     between("function modSearchText(", "\nfunction ") ,
     between("function modDateValue(", "\n/* Two dates, with a blank"),
     between("function galeModUrl(", "\n/* The Mods hall's own sentence"),

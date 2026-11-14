@@ -872,7 +872,7 @@ fi
 # realm chip's rune and colour, which come off a file a hand can edit.
 UI_DIR="$(dirname "$(dirname "$HERE")")/scripts/ui"
 for spec in \
-  "51|the Mods table rests on Name, sorts Author and both dates, and says how it is sorted|mod_sort_selftest.js" \
+  "51|the Mods table rests on Name, sorts Author, both dates and Status, and tells a screen reader how it is sorted|mod_sort_selftest.js" \
   "52|a Mods row's dates, its Installed pill, the Off state and the row menu's new entries|mod_row_selftest.js" \
   "53|the Configs list draws each file's folders ahead of its name and finds it by them|cfg_list_selftest.js" \
   "54|a realm chip's rune and colour, and the letter for anything the lists do not hold|chip_look_selftest.js"
@@ -1280,6 +1280,25 @@ elif ! ready=$(node "$SWITCH_PROBE" --check); then
   printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
 else
   if out=$(node "$TICKS_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
+  else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
+fi
+
+echo "== 80. issue 34 in a real browser: the Mods head holds still while the headers sort =="
+# Up to 1.3.2 a sentence saying how the table was sorted appeared in the head the moment a header
+# moved it off Name, pushed the search box and the buttons along and wrapped the head at narrower
+# widths. It is a screen reader's line now. The probe clicks every sortable header twice at 1280x800
+# and 980x700, in English and in the pseudo catalog, and holds the head, the search box and Add from
+# Thunderstore to their resting boxes within 1px. Same readiness question as 40; on a box where it
+# prints NOT RUN, run it by hand before a release with the other browser probes.
+HEAD_PROBE="$UI_DIR/mods_head_steady_probe.js"
+if [ ! -f "$HEAD_PROBE" ]; then
+  echo "  the Mods head probe is missing: $HEAD_PROBE"; fail=1
+elif ! command -v node >/dev/null 2>&1; then
+  echo "  NOT RUN: there is no node on this box, so nothing read the page in a browser."
+elif ! ready=$(node "$SWITCH_PROBE" --check); then
+  printf '%s\n' "  NOT RUN: ${ready#switch names probe: }"
+else
+  if out=$(node "$HEAD_PROBE"); then printf '%s\n' "$out" | tail -1 | sed 's/^/  /'
   else printf '%s\n' "$out" | sed 's/^/  /'; fail=1; fi
 fi
 

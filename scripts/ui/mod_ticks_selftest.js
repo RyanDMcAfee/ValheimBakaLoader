@@ -219,6 +219,8 @@ function page(opts) {
     line("const esc=").replace(/^const /, "var "),
     between("function modByKey(", "\n/* Which site an install answer"),
     between("/* The transient status a row shows", "\n/* The bulk-update bar's own record"),
+    /* 1.3.3, issue 34: the Status pill is drawn from modStatusKind and its look table. */
+    between("/* MODKIND-BEGIN", "/* MODKIND-END */"),
     between("/* MODROW-BEGIN", "/* MODROW-END */"),
     between("function modRealmUp(){", "\n/* right-click a mod row"),
     between("const MOD_SWITCH_REASONS=[", "\n/* Switch a mod off (every .dll"),

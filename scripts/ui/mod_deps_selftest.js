@@ -152,6 +152,8 @@ function page(opts) {
     between("function modDateValue(", "\n/* Two dates, with a blank"),
     between("function galeModUrl(", "\n/* The Mods hall's own sentence"),
     between("/* CFGITEM-BEGIN", "/* CFGITEM-END */"),
+    /* 1.3.3, issue 34: the Status pill is drawn from modStatusKind and its look table. */
+    between("/* MODKIND-BEGIN", "/* MODKIND-END */"),
     between("/* MODROW-BEGIN", "/* MODROW-END */"),
     between("/* MODMENU-BEGIN", "\n/* What one check's answer does to the row"),
     between("/* MODDEPS-BEGIN", "/* MODDEPS-END */"),
